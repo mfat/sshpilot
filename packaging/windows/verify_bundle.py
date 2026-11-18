@@ -18,6 +18,8 @@ REQUIRED_FILES = [
     "sshPilot.exe",
     "sshpilot-cli.exe",
     "_internal/libvterm-0.dll",
+    "_internal/ghostty-vt.dll",
+    "_internal/share/licenses/libghostty-vt/LICENSE",
     "_internal/conpty.dll",
     "_internal/OpenConsole.exe",
     # gtk4-frdp and what it loads, for RDP connections in a tab.
@@ -30,6 +32,14 @@ REQUIRED_FILES = [
     "_internal/share/licenses/gtk4-frdp/NOTICE",
 ]
 REQUIRED_TYPELIBS = ["Gtk-4.0", "Gdk-4.0", "Adw-1", "GtkSource-5", "Pango-1.0", "GdkPixbuf-2.0", "Gio-2.0", "GtkFrdp-4.0"]
+#: gtkghostty is optional (bundled once fetch-gtk.py pins a release), but a
+#: bundle that has its DLL must have what it needs at runtime.
+GTKGHOSTTY_DLL = "_internal/gtkghostty-1.dll"
+GTKGHOSTTY_FILES = [
+    "_internal/share/licenses/gtkghostty/COPYING",
+    "_internal/share/licenses/gtkghostty/NOTICE",
+]
+GTKGHOSTTY_TYPELIB = "GtkGhostty-1"
 REQUIRED_GLOBS = [
     ("GSettings schemas", "_internal/share/glib-2.0/schemas/gschemas.compiled"),
     ("pixbuf loaders cache", "_internal/lib/gdk-pixbuf/loaders.cache"),
@@ -48,6 +58,11 @@ def main(argv=None) -> int:
     for name in REQUIRED_TYPELIBS:
         if name not in found:
             problems.append(f"missing typelib {name}")
+    if (root / GTKGHOSTTY_DLL).is_file():
+        problems += [f"missing {relative} (gtkghostty is bundled)"
+                     for relative in GTKGHOSTTY_FILES if not (root / relative).is_file()]
+        if GTKGHOSTTY_TYPELIB not in found:
+            problems.append(f"missing typelib {GTKGHOSTTY_TYPELIB} (gtkghostty is bundled)")
     for label, pattern in REQUIRED_GLOBS:
         if not list(root.glob(pattern)):
             problems.append(f"missing {label} ({pattern})")

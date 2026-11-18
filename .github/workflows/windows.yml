@@ -55,6 +55,19 @@ jobs:
       - name: Build patched libvterm
         run: python packaging/windows/libvterm/build.py --compiler msvc
 
+      # Pinned downloads (Zig + release tarballs) by SHA-256 in build.py, so
+      # the script's contents are the cache key. A cold build takes minutes.
+      - name: Cache libghostty-vt
+        id: libghostty-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/libghostty-vt
+          key: libghostty-vt-${{ hashFiles('packaging/windows/libghostty-vt/build.py') }}
+
+      - name: Build libghostty-vt
+        if: steps.libghostty-cache.outputs.cache-hit != 'true'
+        run: python packaging/windows/libghostty-vt/build.py
+
       - name: Install
         shell: pwsh
         run: |
@@ -78,7 +91,7 @@ jobs:
           SSHPILOT_GUI_TESTS: "1"
         run: |
           $env:PATH = "$PWD\vendor\gtk\bin;$env:PATH"
-          python -m pytest -ra -o addopts="" tests/gui/test_pyte_view_scroll.py tests/gui/test_builtin_local_shell.py tests/gui/test_preferences_backend_choices.py tests/gui/test_gtk_client_bridge_dispatch.py tests/test_windows_transient_close.py
+          python -m pytest -ra -o addopts="" tests/gui/test_pyte_view_scroll.py tests/gui/test_builtin_local_shell.py tests/gui/test_gtkghostty_backend.py tests/gui/test_preferences_backend_choices.py tests/gui/test_gtk_client_bridge_dispatch.py tests/test_windows_transient_close.py
 
   package:
     # Builds the app folder and installer; signs when SignPath is configured
@@ -126,6 +139,19 @@ jobs:
 
       - name: Build patched libvterm
         run: python packaging/windows/libvterm/build.py --compiler msvc
+
+      # Pinned downloads (Zig + release tarballs) by SHA-256 in build.py, so
+      # the script's contents are the cache key. A cold build takes minutes.
+      - name: Cache libghostty-vt
+        id: libghostty-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/libghostty-vt
+          key: libghostty-vt-${{ hashFiles('packaging/windows/libghostty-vt/build.py') }}
+
+      - name: Build libghostty-vt
+        if: steps.libghostty-cache.outputs.cache-hit != 'true'
+        run: python packaging/windows/libghostty-vt/build.py
 
       - name: Install
         shell: pwsh

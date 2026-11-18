@@ -61,25 +61,12 @@ def _use_bundled_gtk4_frdp(libdir: str) -> None:
     """Put the packaged gtk4-frdp ahead of any system copy in GI's paths.
 
     Raises OSError when the library cannot load -- FreeRDP 3 or GTK missing or
-    too old, since the packages only recommend them. GI would merely warn and
-    hand back a namespace whose widget fails when a tab opens.
+    too old, since the packages only recommend them.
     """
 
-    import ctypes
+    from .private_gi import use_private_libdir
 
-    ctypes.CDLL(os.path.join(libdir, _BUNDLED_LIBRARY))
-    typelibs = os.path.join(libdir, "girepository-1.0")
-    repository = gi._gi.Repository.get_default()
-    if hasattr(repository, "prepend_search_path"):  # PyGObject >= 3.52
-        repository.prepend_search_path(typelibs)
-        repository.prepend_library_path(libdir)
-        return
-    # Older PyGObject is built on libgirepository-1.0, where these are static.
-    gi.require_version("GIRepository", "2.0")
-    from gi.repository import GIRepository
-
-    GIRepository.Repository.prepend_search_path(typelibs)
-    GIRepository.Repository.prepend_library_path(libdir)
+    use_private_libdir(libdir, [_BUNDLED_LIBRARY])
 
 
 def embedded_rdp_available() -> bool:

@@ -72,7 +72,10 @@ def _write_fake_ssh(bin_dir: Path) -> None:
     it shells out to the same ``ssh`` on PATH several times for
     config/capability queries: identity-file discovery and the session
     readiness probe both run ``ssh -G ...``, and the readiness probe also
-    runs ``ssh -V``. Real ssh answers those near-instantly. A naive stand-in
+    runs ``ssh -V``; at startup the daemon also asks ``ssh -Q`` which legacy
+    algorithms the installed OpenSSH still has (daemon/legacy_algorithms.py),
+    and connection sharing uses ``ssh -O``. Real ssh answers those
+    near-instantly. A naive stand-in
     that always sleeps would turn each of those into a multi-second stall —
     stacking up to eat the whole PTY-output polling deadline before the
     real login invocation (the one this script cares about) ever runs. Only
@@ -97,7 +100,7 @@ def _write_fake_ssh(bin_dir: Path) -> None:
         "prev=\"\"\n"
         "for arg in \"$@\"; do\n"
         "  case \"$arg\" in\n"
-        "    -G|-V) exit 0 ;;\n"
+        "    -G|-V|-Q|-O) exit 0 ;;\n"
         "  esac\n"
         "  if [ \"$prev\" = \"-E\" ]; then\n"
         "    diag=\"$arg\"\n"
@@ -209,8 +212,13 @@ def main() -> int:
     executable = _bundle_executable(bundle)
 
     with tempfile.TemporaryDirectory(prefix="sshpilot-pty-smoke-") as temp_dir:
-        temp = Path(temp_dir)
-        socket_path = temp / "runtime" / "sshpilotd.sock"
+        # Real path for the fake home and XDG dirs: macOS's temp dir is under
+        # /var, a symlink to /private/var, and the daemon refuses to write the
+        # SSH config through a symlinked path (a home with a symlink in it is
+        # treated as read-only). The socket keeps the short path: the real one
+        # is 8 characters longer and runs past macOS's 104-byte AF_UNIX limit.
+        temp = Path(temp_dir).resolve()
+        socket_path = Path(temp_dir) / "runtime" / "sshpilotd.sock"
         for name in (
             "HOME",
             "XDG_RUNTIME_DIR",

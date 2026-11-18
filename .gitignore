@@ -18,8 +18,10 @@ venv/
 builddir/
 /artifacts
 
-# Flatpak build. scripts/test-flatpak.sh builds flatpak/ in place, so only the
-# build output is ignored -- the manifests there are tracked.
+# Flatpak build. flatpak/ holds the tracked copy of the Flathub manifest; the
+# root manifest is generated from it for local builds
+# (scripts/flatpak-dev-manifest.py, run by scripts/test-flatpak.sh).
+/io.github.mfat.sshpilot.yaml
 /.flatpak-builder
 /repo
 
@@ -54,6 +56,7 @@ whip.md
 # Local notes for the non-SSH protocol rig and e2e runs (kept out of the repo;
 # the rig itself lives in ~/sshpilot-authrig).
 PROTOCOL_RIG.md
+scripts/validate-nixos-flatpak-ssh.sh
 scripts/generate_github_url.sh
 scripts/screenshot_url.sh
 gnome-settings/gnome-control-center/
@@ -83,6 +86,10 @@ graphify-out/
 /vendor/conpty/
 # Patched libvterm built by packaging/windows/libvterm/build.py. Never committed.
 /vendor/libvterm/
+# libghostty-vt built by packaging/windows/libghostty-vt/build.py, and its
+# pinned downloads (Zig, release tarballs). Never committed.
+/vendor/libghostty-vt/
+/vendor/.cache/
 # gvsbuild GTK 4 runtime fetched by scripts/fetch-gtk.py. Never committed.
 /vendor/gtk/
 /vendor/GTK4_Gvsbuild_*.zip

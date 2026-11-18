@@ -1,8 +1,9 @@
 #!/bin/bash
-# Test Flatpak build: builds the in-tree manifest against the working tree.
+# Test Flatpak build: builds the working tree with the Flathub manifest.
 #
-# The manifest lives at the repo root (where GNOME Builder looks for it) and
-# its `path: .` source is the working tree, so it builds in place.
+# flatpak/io.github.mfat.sshpilot.yaml is the copy of the Flathub manifest;
+# scripts/flatpak-dev-manifest.py derives the root manifest from it (sshPilot
+# built from this checkout), at the repo root where GNOME Builder looks for it.
 
 set -e
 
@@ -17,6 +18,8 @@ echo "=== Test Flatpak Build ==="
 if [ -e repo ] && [ ! -d repo/objects ]; then
     rm -rf repo
 fi
+
+python3 scripts/flatpak-dev-manifest.py
 
 flatpak run --command=flathub-build org.flatpak.Builder \
     --install \

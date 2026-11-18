@@ -169,7 +169,10 @@ jobs:
           # signing policy; the changelog itself stays as written.
           NOTES="${RUNNER_TEMP}/release-notes.md"
           cp "${RUNNER_TEMP}/changelog.txt" "$NOTES"
+          # The release RPMs are unsigned, and RPM 6.1 (Fedora 45+) refuses
+          # unsigned packages under plain `rpm -U`; dnf installs them (#1383).
           printf '\n---\nWindows installer: [Code signing policy](https://sshpilot.app/code-signing.html) · [Privacy](https://sshpilot.app/privacy.html)\n' >> "$NOTES"
+          printf '\nFedora/RHEL: install the .rpm with `sudo dnf install ./sshpilot-*.rpm` (plain `rpm -U` rejects it on Fedora 45+ as unsigned), or use the [COPR repository](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/).\n' >> "$NOTES"
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             ARGS=(
               release edit "v$VERSION"
@@ -204,6 +207,36 @@ jobs:
           scripts/update-arch-pkgbuild.sh "$VERSION"
           git commit -am "Update Arch PKGBUILD for v$VERSION"
           git push origin '${{ inputs.main_branch }}'
+
+      # Publish that PKGBUILD to the AUR package `sshpilot`. Nothing on the AUR
+      # side follows releases: users' AUR helpers only see a new version once
+      # a new .SRCINFO is pushed. The key is a CI-only one registered on the
+      # mfat AUR account. Non-fatal, like the PPA nudge: the release is already
+      # out, and the AUR can be pushed by hand.
+      - name: Check for the AUR key
+        id: aur
+        if: inputs.prerelease != true
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -n "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No AUR_SSH_PRIVATE_KEY secret; skipping the AUR push."
+          fi
+
+      - name: Publish to the AUR
+        if: steps.aur.outputs.publish == 'true'
+        continue-on-error: true
+        # v4.2.0, pinned by commit: this step is handed the AUR key.
+        uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050
+        with:
+          pkgname: sshpilot
+          pkgbuild: packaging/ArchLinux/PKGBUILD
+          commit_username: mfat
+          commit_email: 423263+mfat@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to ${{ steps.check.outputs.version }}
 
       # Same nudge scripts/release.sh gives: without it the release reaches
       # ppa:mfat/sshpilot only after Launchpad's scheduled import + daily

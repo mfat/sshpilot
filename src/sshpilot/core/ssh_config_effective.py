@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import socket
+import stat
 import subprocess
 import tempfile
 from collections import Counter
@@ -33,6 +34,9 @@ from ..ssh_config_document import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Unmapped host UID inside user namespaces (Flatpak #6982, sshPilot #1384).
+_SANDBOX_OVERFLOW_UID = 65534
 
 _PATH_DIRECTIVES = frozenset(
     {
@@ -191,14 +195,62 @@ def openssh_reachable_files(root_path: str) -> FrozenSet[str]:
         return frozenset()
 
 
+def trusted_default_user_ssh_config_owner(config_path: str) -> bool:
+    """Whether ``stat()`` shows a user or root owner for *config_path*.
+
+    This checks **only** the owning user id (``st_uid``), not permission bits.
+    OpenSSH also rejects group/world-writable configs; that policy is left to
+    OpenSSH itself.  Flatpak and similar sandboxes can report root-owned host
+    files as UID 65534 (``nfsnobody``), which makes plain ``ssh host`` reject
+    the default ``~/.ssh/config`` path even though the file is readable.
+    """
+    try:
+        owner = os.stat(config_path).st_uid
+    except OSError:
+        return True
+    return owner in (0, os.geteuid())
+
+
+def direct_f_workaround_for_unmapped_user_ssh_config(config_path: str) -> bool:
+    """Whether to use direct ``-F`` on ``realpath`` for #1384 / Flatpak #6982.
+
+    Only when ``stat()`` shows the sandbox overflow UID, the mode is not
+    group/world-writable, the process runs inside Flatpak, and the resolved
+    path lies under ``/nix/store/``.  Any other unexpected owner keeps plain
+    ``ssh host`` so OpenSSH's own rejection still applies.
+    """
+    from ..platform.detect import is_flatpak
+
+    try:
+        st = os.stat(config_path)
+    except OSError:
+        return False
+    if st.st_uid != _SANDBOX_OVERFLOW_UID:
+        return False
+    if stat.S_IMODE(st.st_mode) & (stat.S_IWGRP | stat.S_IWOTH):
+        return False
+    resolved = os.path.realpath(config_path)
+    return is_flatpak() and resolved.startswith("/nix/store/")
+
+
 def launch_config_file(
     root_path, source_path=None, *, cache: Optional["ConfigScanCache"] = None
 ) -> Optional[str]:
     """The ``-F`` argument for resolving a saved host, or ``None`` for no ``-F``.
 
-    ``None`` when the root is the user's own ``~/.ssh/config``: plain
-    ``ssh host`` reads that file and then ``/etc/ssh/ssh_config``, and ``-F``
-    would drop the system file. Any other root is passed whole, so its
+    ``None`` when the root is the user's own ``~/.ssh/config`` and ``stat()``
+    shows a trusted owner (the user or root): plain ``ssh host`` reads that
+    file and then ``/etc/ssh/ssh_config``.  When
+    :func:`direct_f_workaround_for_unmapped_user_ssh_config` applies (overflow
+    UID on a ``/nix/store/`` configuration inside Flatpak), the resolved path is
+    returned
+    for ``-F`` instead.  OpenSSH does
+    not apply the default ``~/.ssh/config`` ownership check to the ``-F`` file
+    itself, but it **does** check every file reached through ``Include`` — so
+    the launch must pass the store-backed file directly, never wrap it in
+    another config that ``Include``s it.  That workaround skips the
+    system-wide ``/etc/ssh/ssh_config`` file (same tradeoff as ``ssh -F`` in a
+    terminal).  Any other root is passed whole, so its
     ``Host *`` and ``Match`` blocks apply to hosts declared in included
     files too.
 
@@ -210,6 +262,17 @@ def launch_config_file(
     root = os.path.abspath(os.path.expanduser(str(root_path))) if root_path else ""
     source = os.path.abspath(os.path.expanduser(str(source_path))) if source_path else ""
     if root and is_openssh_user_config(root):
+        if trusted_default_user_ssh_config_owner(root):
+            return None
+        if direct_f_workaround_for_unmapped_user_ssh_config(root):
+            forced = os.path.realpath(root)
+            logger.info(
+                "Default ~/.ssh/config shows sandbox overflow ownership on %s; "
+                "launching with -F %s (no system ssh_config)",
+                root,
+                forced,
+            )
+            return forced
         return None
     if root and os.path.isfile(root):
         reachable = (

@@ -77,6 +77,16 @@ def asset_dir() -> str:
                         "vendor", "pyxtermjs", "xterm")
 
 
+def assets_available() -> bool:
+    """Whether xterm.js can be loaded from ``asset_dir()``.
+
+    The Debian package drops the bundled copy for the system libjs-xterm;
+    repackaged elsewhere (the AUR ``sshpilot-bin`` unpacks the .deb on Arch,
+    which has no libjs-xterm) neither exists and the page stays blank (#1382).
+    """
+    return os.path.isfile(os.path.join(asset_dir(), _CORE))
+
+
 def _read(rel: str) -> str:
     with open(os.path.join(asset_dir(), rel), encoding="utf-8") as f:
         return f.read()

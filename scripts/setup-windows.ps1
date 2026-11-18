@@ -44,4 +44,8 @@ if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
     Write-Warning "No C compiler found: skipping libvterm. Run packaging\windows\libvterm\build.py from a Visual Studio developer prompt to build it."
 }
 
+# libghostty-vt, the optional third emulator (Preferences > Terminal Backend).
+# No compiler needed: the script downloads its pinned Zig toolchain.
+& $venv packaging\windows\libghostty-vt\build.py
+
 Write-Host "Done. Start the app with: powershell -File scripts\run-windows.ps1"

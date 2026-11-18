@@ -762,10 +762,9 @@ class SSHConfigAdvancedTab(Gtk.Box):
         """Set extra SSH config from a string"""
         logger.debug(f"set_extra_ssh_config called with: '{config_string}'")
 
-        if not config_string.strip():
-            logger.debug("Config string is empty, returning")
-            return
-
+        # A blank snapshot must clear previously loaded Advanced options, not
+        # leave stale options (and their convenience switches) in the editor.
+        config_string = config_string or ""
         entries = []
         for line in config_string.split('\n'):
             line = line.strip()
@@ -784,6 +783,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.update_config_preview()
         # Update the parent connection object if we're editing
         self._update_parent_connection()
+        # set_options trusts loaded rows and emits nothing, so the ssh -N and
+        # ExitOnForwardFailure switches would otherwise stay at their empty-list
+        # state (#1389).
+        self._notify_parent_session_type_changed()
 
 
 _KEY_BADGE_CSS_REGISTERED = False
@@ -3127,9 +3130,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 extra_config = getattr(self.connection, 'extra_ssh_config', '') or ''
                 logger.debug(f"Loading extra SSH config from connection: {extra_config}")
                 if hasattr(self, 'advanced_tab'):
-                    if extra_config:
-                        self.advanced_tab.set_extra_ssh_config(extra_config)
-                        logger.debug(f"Set extra SSH config in advanced tab: {extra_config}")
+                    self.advanced_tab.set_extra_ssh_config(extra_config)
+                    logger.debug(f"Set extra SSH config in advanced tab: {extra_config}")
                     # Update the preview to show existing connection data
                     self.advanced_tab.update_config_preview()
             except Exception as e:
@@ -3164,16 +3166,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 pass
             
-            # Initialize forwarding rules list if it doesn't exist
-            if not hasattr(self, 'forwarding_rules'):
-                self.forwarding_rules = []
-                
-            # Load port forwarding rules
-            if hasattr(self.connection, 'forwarding_rules') and self.connection.forwarding_rules:
-                self.forwarding_rules = self.connection.forwarding_rules
-                logger.debug(f"Loaded forwarding rules: {self.forwarding_rules}")
-                
-                self.load_port_forwarding_rules()
+            # Always replace the editor-owned forwarding draft, including
+            # empty snapshots; editing must not mutate a live Connection.
+            self._load_forwarding_rule_draft(self.connection)
 
         except Exception as e:
             logger.error(f"Error loading connection data: {e}")

@@ -26,12 +26,13 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Latest main: $SHA"
 
-      - name: Checkout current Flathub manifest
+      # The copy of the Flathub manifest on main (flatpak/), which carries
+      # build changes main needs before they reach Flathub with a release.
+      - name: Checkout the manifest copy on main
         uses: actions/checkout@v4
         with:
-          repository: flathub/io.github.mfat.sshpilot
-          ref: master
-          path: flatpak
+          ref: ${{ steps.main.outputs.sha }}
+          sparse-checkout: flatpak
 
       - name: Prepare standalone test manifest
         env:

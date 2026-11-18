@@ -1,3 +1,9 @@
 option('rdp_tab',
        type: 'feature', value: 'auto',
        description: 'Build the bundled gtk4-frdp (subprojects/gtk4-frdp) into <libdir>/sshpilot so RDP connections open in a tab. Needs FreeRDP >= 3.11 and GObject Introspection; auto builds it when they are found.')
+option('gtkghostty',
+       type: 'feature', value: 'auto',
+       description: 'Build the bundled gtkghostty terminal widget (subprojects/gtkghostty) into <libdir>/sshpilot, offered in Preferences as a terminal backend. Needs libghostty-vt >= 1.0 (pkg-config; packaging/windows/libghostty-vt/build.py --prefix builds it) and GObject Introspection; auto builds it when they are found.')
+option('bundle_libghostty_vt',
+       type: 'boolean', value: true,
+       description: 'Copy libghostty-vt into <libdir>/sshpilot next to the widget. Turn off where the distribution packages libghostty-vt itself.')

@@ -106,6 +106,49 @@ def _exit_on_forward_failure_dialog(advanced, active=False):
     return dialog
 
 
+class _SilentOptionList:
+    """Model SshOptionList.set_options(): load rows without change signals."""
+
+    def __init__(self):
+        self.options = []
+
+    def set_options(self, options):
+        self.options = list(options)
+
+    def get_options(self):
+        return list(self.options)
+
+
+def test_loaded_advanced_options_sync_both_switches_without_change_signals():
+    """#1389: a silent load must still notify the dialog's convenience switches."""
+    advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
+    advanced.option_list = _SilentOptionList()
+    # Parent projection is irrelevant here; no GTK window or ancestor needed.
+    advanced._update_parent_connection = lambda: None
+    dialog = _session_type_dialog(advanced)
+    advanced.parent_dialog = dialog
+
+    assert dialog.port_forwarding_only_row.get_active() is False
+    assert dialog.exit_on_forward_failure_row.get_active() is False
+
+    # Unlike a user edit, set_options() deliberately emits no change signal.
+    # Before the #1389 fix, these options loaded but both switches stayed off.
+    advanced.set_extra_ssh_config(
+        "sessiontype none\nExitOnForwardFailure yes"
+    )
+    assert advanced.get_option("SESSIONTYPE") == "none"
+    assert advanced.get_option("exitonforwardfailure") == "yes"
+    assert dialog.port_forwarding_only_row.get_active() is True
+    assert dialog.exit_on_forward_failure_row.get_active() is True
+
+    # Replacing the saved options must also clear stale switch states.
+    advanced.set_extra_ssh_config(
+        "SessionType default\nexitonforwardfailure no"
+    )
+    assert dialog.port_forwarding_only_row.get_active() is False
+    assert dialog.exit_on_forward_failure_row.get_active() is False
+
+
 def test_session_type_helpers_are_case_insensitive_and_deduplicate():
     advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
     advanced.entries = [
@@ -315,3 +358,127 @@ class TestApplyRuleEditorDefaultsForType:
 
     def test_autosave_is_a_noop(self):
         assert _dialog()._autosave_forwarding_changes() is None
+
+
+def test_empty_advanced_snapshot_clears_options_and_both_switches():
+    """A loaded empty Host block must not retain options from the prior one."""
+    advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
+    advanced.option_list = _SilentOptionList()
+    advanced._update_parent_connection = lambda: None
+    dialog = _session_type_dialog(advanced)
+    advanced.parent_dialog = dialog
+
+    advanced.set_extra_ssh_config(
+        "SessionType none\nExitOnForwardFailure yes"
+    )
+    assert dialog.port_forwarding_only_row.get_active()
+    assert dialog.exit_on_forward_failure_row.get_active()
+
+    advanced.set_extra_ssh_config("")
+
+    assert advanced.get_config_entries() == []
+    assert advanced.get_extra_ssh_config() == ""
+    assert dialog.port_forwarding_only_row.get_active() is False
+    assert dialog.exit_on_forward_failure_row.get_active() is False
+
+
+def test_forwarding_rule_reload_is_private_and_replaces_empty_snapshots():
+    """Dialog edits must not change a live Connection until Save succeeds."""
+    from types import SimpleNamespace
+
+    original_rule = {
+        "type": "local",
+        "listen_addr": "localhost",
+        "listen_port": 8080,
+        "remote_host": "web",
+        "remote_port": 80,
+    }
+    connection = SimpleNamespace(forwarding_rules=[original_rule])
+    dialog = _dialog()
+    snapshots = []
+    dialog.load_port_forwarding_rules = lambda: snapshots.append(
+        [dict(rule) for rule in dialog.forwarding_rules]
+    )
+
+    dialog._load_forwarding_rule_draft(connection)
+    assert dialog.forwarding_rules == connection.forwarding_rules
+    assert dialog.forwarding_rules is not connection.forwarding_rules
+    assert dialog.forwarding_rules[0] is not original_rule
+
+    dialog.forwarding_rules[0]["remote_host"] = "changed"
+    dialog.forwarding_rules.append({"type": "dynamic", "listen_port": 1080})
+    assert connection.forwarding_rules == [original_rule]
+    assert original_rule["remote_host"] == "web"
+
+    dialog._load_forwarding_rule_draft(SimpleNamespace(forwarding_rules=[]))
+    assert dialog.forwarding_rules == []
+    assert snapshots[-1] == []
+
+
+def test_connection_loader_clears_advanced_and_forwarding_on_empty_snapshot():
+    """Exercise loader wiring, including its populated-to-empty reload path."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
+    advanced.option_list = _SilentOptionList()
+    advanced._update_parent_connection = lambda: None
+    dialog = _session_type_dialog(advanced)
+    advanced.parent_dialog = dialog
+    dialog.is_editing = True
+    dialog._loading_connection_data = False
+    dialog.is_daemon_editor = lambda: False
+
+    # Only unrelated controls/services and row rendering are stubbed. Keep
+    # load_connection_data, both draft loaders, and switch synchronization real.
+    for name in (
+        "display_name_row", "nickname_row", "hostname_row", "username_row",
+        "port_row", "proxy_jump_row", "forward_agent_row", "auth_toggle",
+        "key_editor", "cert_editor", "password_row", "key_select_row",
+        "key_only_row", "pubkey_auth_row", "x11_row", "identity_agent_row",
+    ):
+        setattr(dialog, name, Mock())
+    for name in (
+        "_load_shared_meta_rows", "_load_password_async",
+        "_on_forward_agent_mode_changed", "_on_identity_agent_mode_changed",
+        "on_auth_method_changed", "_capture_editor_delta_baseline",
+    ):
+        setattr(dialog, name, Mock())
+    dialog.show_error = Mock()
+    rendered_rules = []
+    dialog.load_port_forwarding_rules = lambda: rendered_rules.append(
+        [dict(rule) for rule in dialog.forwarding_rules]
+    )
+    rule = {
+        "type": "local", "listen_addr": "localhost", "listen_port": 8080,
+        "remote_host": "web", "remote_port": 80,
+    }
+    dialog.connection = SimpleNamespace(
+        nickname="populated", extra_ssh_config=(
+            "SessionType none\nExitOnForwardFailure yes\nCompression yes"
+        ), forwarding_rules=[rule],
+    )
+
+    dialog.load_connection_data()
+
+    assert advanced.get_config_entries() == [
+        ("SessionType", "none"), ("ExitOnForwardFailure", "yes"),
+        ("Compression", "yes"),
+    ]
+    assert dialog.port_forwarding_only_row.get_active() is True
+    assert dialog.exit_on_forward_failure_row.get_active() is True
+    assert dialog.forwarding_rules == [rule]
+    assert rendered_rules == [[rule]]
+
+    dialog.connection = SimpleNamespace(
+        nickname="empty", extra_ssh_config="", forwarding_rules=[],
+    )
+    dialog.load_connection_data()
+
+    assert advanced.get_config_entries() == []
+    assert advanced.get_extra_ssh_config() == ""
+    assert dialog.port_forwarding_only_row.get_active() is False
+    assert dialog.exit_on_forward_failure_row.get_active() is False
+    assert dialog.forwarding_rules == []
+    assert rendered_rules == [[rule], []]
+    dialog.show_error.assert_not_called()

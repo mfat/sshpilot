@@ -35,6 +35,16 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
+    <release version="6.4.3" date="2026-11-18">
+      <description>
+        <p>Added experimental terminal backend powered by libghostty</p>
+        <p>Non-UTF8 encoding support thanks to libghostty (experimental)</p>
+        <p>Added ProxyCommand support to Login Profiles</p>
+        <p>Fixed NixOS connection issues in Flatpak</p>
+        <p>Added official AUR PKGBUILD updates with every new release</p>
+        <p>Fixed &quot;SessionType&quot; toggle not working correctly</p>
+      </description>
+    </release>
     <release version="6.4.2" date="2026-11-14">
       <description>
         <p>Fixes error in loading connection dialog on older libadwaita versions</p>

@@ -10,10 +10,15 @@ from sshpilot.core.errors import CoreError
 from sshpilot.core.login_profiles.models import (
     LINK_EXPLICIT,
     LINK_INHERIT,
+    REASON_EXTRA_MANAGED_OPTION,
     LoginProfile,
     LoginProfileState,
+    LoginProfileValueError,
     apply_profile_to_data,
+    auth_projection,
+    diff_projections,
     parse_link,
+    profile_owned_keywords,
 )
 from sshpilot.core.login_profiles.service import (
     DETACH_DELETED,
@@ -452,3 +457,124 @@ def test_group_profile_unknown_member_changes_nothing(env):
     with pytest.raises(CoreError):
         service.set_group_profile(group, deploy.id, link_members=["missing"])
     assert service.group_profile_id(group) is None
+
+
+def test_profile_proxy_command_replaces_connection_field_and_preserves_when_empty():
+    data = {
+        "proxy_command": "ssh old",
+        "extra_ssh_config": "Compression yes\nProxyCommand ssh extra",
+    }
+    profile = LoginProfile(
+        id="lp-0123456789abcdef",
+        name="Proxy",
+        proxy_command="  ssh -W %h:%p bastion  ",
+    )
+    assert profile.proxy_command == "ssh -W %h:%p bastion"
+    applied = apply_profile_to_data(data, profile)
+    assert applied["proxy_command"] == "ssh -W %h:%p bastion"
+    assert applied["extra_ssh_config"] == "Compression yes"
+    assert data["proxy_command"] == "ssh old"
+
+    plain = LoginProfile(id="lp-0123456789abcdef", name="Plain")
+    kept = apply_profile_to_data(data, plain)
+    assert kept["proxy_command"] == "ssh old"
+    assert "ProxyCommand ssh extra" in kept["extra_ssh_config"]
+
+    keys = profile_owned_keywords(profile)
+    assert "proxycommand" in keys
+    changes = {
+        change.field: (change.before, change.after)
+        for change in diff_projections(
+            auth_projection(data, keys, expand_paths=True),
+            auth_projection(applied, keys, expand_paths=True),
+        )
+    }
+    assert changes["proxy_command"] == ("ssh old", "ssh -W %h:%p bastion")
+    assert "proxycommand" not in profile_owned_keywords(plain)
+
+    with pytest.raises(LoginProfileValueError) as info:
+        LoginProfile(
+            id="lp-0123456789abcdef",
+            name="Invalid",
+            extra_ssh_config="ProxyCommand ssh -W %h:%p bastion",
+        )
+    assert info.value.reason == REASON_EXTRA_MANAGED_OPTION
+
+    loaded = LoginProfile.from_dict({
+        "id": "lp-0123456789abcdef",
+        "name": "Legacy",
+        "extra_ssh_config": (
+            "Compression yes\nproxycommand=ssh -W %h:%p bastion\nProxyCommand ssh second"
+        ),
+    })
+    assert loaded.proxy_command == "ssh -W %h:%p bastion"
+    assert loaded.extra_ssh_config == "Compression yes"
+    with pytest.raises(ValueError, match="ProxyCommand requires a value"):
+        LoginProfile.from_dict({
+            "id": "lp-0123456789abcdef",
+            "name": "Broken",
+            "extra_ssh_config": "ProxyCommand",
+        })
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_proxy_command_preserves_quoted_whitespace(env, legacy):
+    repo, service, root, _secrets, _events = env
+    command = '"/tmp/proxy  helper" --label "two\t words" %h %p'
+    values = {'id': 'lp-0123456789abcdef', 'name': 'Proxy'}
+    values['extra_ssh_config' if legacy else 'proxy_command'] = (
+        'ProxyCommand ' + command if legacy else command
+    )
+    profile = LoginProfile.from_dict(values)
+    assert profile.proxy_command == command
+    created = service.create_profile(profile.settings())
+    service.assign_connections(('web1',), LINK_EXPLICIT, created.id)
+    assert 'ProxyCommand ' + command in root.read_text()
+    assert service.reconcile() == ()
+    assert read_login_profiles(service._path).get(created.id).proxy_command == command
+    repo.update_connection('web1', {'proxy_command': command.replace('proxy  helper', 'proxy helper')})
+    service.reconcile()
+    assert _link(repo, 'web1') is None
+
+
+@pytest.mark.parametrize('representation', ['extra', 'field'])
+@pytest.mark.parametrize('drift', [False, True])
+def test_legacy_proxy_fingerprint_upgrade(env, representation, drift):
+    import hashlib
+
+    repo, service, root, _secrets, _events = env
+    profile = service.create_profile({'name': 'Proxy', 'proxy_command': 'ssh -W %h:%p bastion'})
+    service.assign_connections(('web1',), LINK_EXPLICIT, profile.id)
+    # The exact projection formats persisted by the two previous releases.
+    historical = {
+        'username': '', 'auth_method': 0, 'key_select_mode': 0,
+        'identity_files': [], 'certificate_files': [], 'identity_agent': '',
+        'add_keys_to_agent': '', 'pkcs11_provider': '', 'security_key_provider': '',
+        'pubkey_auth_no': False, 'forward_agent': False, 'forward_agent_target': '',
+        'extra': [],
+    }
+    if representation == 'extra':
+        historical['extra'] = ['ProxyCommand ssh -W %h:%p bastion']
+    else:
+        historical['proxy_command'] = 'ssh -W %h:%p bastion'
+    old_hash = hashlib.sha256(json.dumps(
+        historical, sort_keys=True, separators=(',', ':')
+    ).encode()).hexdigest()[:32]
+    link = _link(repo, 'web1').to_metadata()
+    link['applied'] = old_hash
+    with service._operation():  # simulate persisted metadata before reconciliation
+        repo.update_connection_metadata('web1', {'login_profile': link})
+        if drift:
+            repo.update_connection('web1', {'proxy_command': 'ssh changed'})
+    before = root.read_text()
+    detached = service.reconcile()
+    assert root.read_text() == before
+    if drift:
+        assert len(detached) == 1 and detached[0].reason == DETACH_DRIFT
+        assert _link(repo, 'web1') is None
+    else:
+        assert detached == ()
+        assert _link(repo, 'web1').applied.startswith('v2:')
+        assert service.reconcile() == ()
+        service.update_profile(profile.id, {'proxy_command': 'ssh updated'})
+        assert 'ProxyCommand ssh updated' in root.read_text()

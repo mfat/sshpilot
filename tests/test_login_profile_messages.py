@@ -45,6 +45,7 @@ def test_every_field_has_a_label():
     for field in LoginProfileField:
         assert field_label(field)
     assert field_label(LoginProfileField.IDENTITY_AGENT) == "IdentityAgent"
+    assert field_label(LoginProfileField.PROXY_COMMAND) == "Proxy command"
 
 
 def test_raw_values_are_worded_by_the_frontend():

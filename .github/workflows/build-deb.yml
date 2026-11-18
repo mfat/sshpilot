@@ -47,6 +47,15 @@ jobs:
       # installs the launcher, package, gresource, desktop entry, metainfo, icon
       # and sshpilot-agent, and its desktop/AppStream validators run as the
       # build-time test suite.
+      # libghostty-vt for the bundled gtkghostty widget (meson option
+      # gtkghostty, auto): the archive gtkghostty's CI builds and tests,
+      # pinned by checksum, so no Zig here. Launchpad builds have no network
+      # and leave the widget out.
+      - name: Fetch libghostty-vt
+        run: |
+          python3 packaging/windows/libghostty-vt/build.py --prebuilt --prefix "$RUNNER_TEMP/ghostty-vt"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/ghostty-vt/lib/pkgconfig" >> "$GITHUB_ENV"
+
       - name: Build package
         run: dpkg-buildpackage -us -uc -b
 
@@ -72,6 +81,10 @@ jobs:
             ./usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg \
             ./usr/lib/$MULTIARCH/sshpilot/libgtk4-frdp-4.0.so.0 \
             ./usr/lib/$MULTIARCH/sshpilot/girepository-1.0/GtkFrdp-4.0.typelib \
+            ./usr/lib/$MULTIARCH/sshpilot/libgtkghostty-1.so.0 \
+            ./usr/lib/$MULTIARCH/sshpilot/libghostty-vt.so.1 \
+            ./usr/lib/$MULTIARCH/sshpilot/girepository-1.0/GtkGhostty-1.typelib \
+            ./usr/lib/$MULTIARCH/sshpilot/licenses/libghostty-vt/LICENSE \
           ; do
             # Symlinks are listed as "path -> target".
             grep -q -e " $path\$" -e " $path -> " <<<"$contents" || { echo "::error::missing $path"; exit 1; }

@@ -141,6 +141,69 @@ class SessionProcessRunner(Protocol):
     def close(self) -> None: ...
 
 
+TerminalOutputCallback = Callable[[bytes], None]
+TerminalEofCallback = Callable[[], None]
+
+
+class TerminalSessionProcessHandle(SessionProcessHandle, Protocol):
+    """Handle of a terminal session: a process handle plus terminal I/O.
+
+    ``SessionRuntime`` looks these up with ``getattr`` so a test fake may omit
+    one; a missing ``write``/``input_status`` reports the terminal as
+    unavailable and a missing ``resize`` drops the resize. Production handles
+    implement all three.
+    """
+
+    def write(self, data: bytes) -> bool:
+        """Queue input; ``False`` when the input buffer is full."""
+        ...
+
+    def input_status(self) -> Tuple[int, int]:
+        """Return ``(queued_bytes, capacity_bytes)`` of the input buffer."""
+        ...
+
+    def resize(self, dimensions: TerminalDimensions) -> None: ...
+
+
+class TerminalSessionProcessRunner(Protocol):
+    """Terminal launch boundary: a runner that also streams terminal bytes.
+
+    The runtime tells it apart from a plain :class:`SessionProcessRunner` by
+    ``terminal_capable`` (see :func:`runner_is_terminal_capable`), then calls
+    ``start(spec, on_exit, on_output, on_eof)``.
+
+    Callback contract (what the PTY and ConPTY runners do today):
+
+    * ``on_output`` delivers every output byte before ``on_eof``.
+    * ``on_exit`` and ``on_eof`` are independent and may arrive in either
+      order: a handle reports exit as soon as its process is reaped, which can
+      precede the final reads. The runtime holds the session's final exit
+      events until both have arrived (``_process_exited``/``_terminal_eof``).
+      Do not add a stronger ordering rule here; no runner guarantees one.
+    * ``on_exit`` and ``on_eof`` are each delivered at most once per handle.
+    * Any callback may fire before ``start()`` returns, from a runner thread;
+      the runtime handles that startup race.
+    """
+
+    terminal_capable: bool
+
+    def start(
+        self,
+        spec: SessionLaunchSpec,
+        on_exit: SessionExitCallback,
+        on_output: TerminalOutputCallback,
+        on_eof: TerminalEofCallback,
+    ) -> TerminalSessionProcessHandle: ...
+
+    def close(self) -> None: ...
+
+
+def runner_is_terminal_capable(runner: object) -> bool:
+    """Whether ``runner`` follows :class:`TerminalSessionProcessRunner`."""
+
+    return bool(getattr(runner, "terminal_capable", False))
+
+
 class UnsupportedSessionProcessRunner:
     """Production Phase 6 runner until prompt-safe PTY startup is implemented."""
 
@@ -476,7 +539,7 @@ class SessionRuntime:
 
     @property
     def terminal_supported(self) -> bool:
-        return bool(getattr(self._runner, "terminal_capable", False))
+        return runner_is_terminal_capable(self._runner)
 
     def subscribe_terminal(
         self,
@@ -651,9 +714,7 @@ class SessionRuntime:
                 return
             record.startup_scheduled = False
             record.startup_started = True
-            record.terminal_capable = bool(
-                getattr(self._runner, "terminal_capable", False)
-            )
+            record.terminal_capable = runner_is_terminal_capable(self._runner)
             spec = record.launch_spec
             if spec is None:
                 raise RuntimeError("starting session has no launch specification")
@@ -665,7 +726,7 @@ class SessionRuntime:
                     self._on_ssh_diagnostic_result,
                     self._on_ssh_grace_expired,
                 )
-            if getattr(self._runner, "terminal_capable", False):
+            if runner_is_terminal_capable(self._runner):
                 handle = self._runner.start(
                     spec,
                     lambda exit_info: self._process_exited(session_id, exit_info),

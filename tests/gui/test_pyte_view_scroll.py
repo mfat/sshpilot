@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests._gui_harness import requires_gui
+from tests._gui_harness import require_model, requires_gui
 
 Gtk, _Adw, _Gio, GLib = requires_gui()
 
@@ -22,10 +22,11 @@ class _Event:
         return Gdk.ModifierType(0)
 
 
-@pytest.mark.parametrize("model", ["pyte", "vterm"])
+@pytest.mark.parametrize("model", ["pyte", "vterm", "ghostty"])
 def test_wheel_and_shift_page_keys_scroll_the_right_way(model, monkeypatch):
     monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
     view = PyteTerminalView()
+    require_model(view, model)
     view.model.resize(40, 10)
     view.feed(b"".join(b"%d\r\n" % n for n in range(1, 101)))
     assert view.model.history_length > 20
@@ -46,22 +47,24 @@ def test_wheel_and_shift_page_keys_scroll_the_right_way(model, monkeypatch):
 
 
 @pytest.mark.parametrize("platform, pulls", [("win32", False), ("linux", True), ("darwin", True)])
-@pytest.mark.parametrize("model", ["pyte", "vterm"])
+@pytest.mark.parametrize("model", ["pyte", "vterm", "ghostty"])
 def test_daemon_sessions_pull_history_on_grow_only_without_conpty(model, platform, pulls, monkeypatch):
     from sshpilot import terminal_backend_pyte
 
     monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
     backend = terminal_backend_pyte.PyteTerminalBackend(object())
+    require_model(backend.view, model)
     assert backend.view.model.pull_history_on_grow
-    monkeypatch.setattr(terminal_backend_pyte.sys, "platform", platform)
+    monkeypatch.setattr("sys.platform", platform)
     backend.prepare_pty_less_emulation()
     assert backend.view.model.pull_history_on_grow is pulls
 
 
-@pytest.mark.parametrize("model", ["pyte", "vterm"])
+@pytest.mark.parametrize("model", ["pyte", "vterm", "ghostty"])
 def test_synchronized_update_holds_the_repaint(model, monkeypatch):
     monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
     view = PyteTerminalView()
+    require_model(view, model)
     draws = []
     monkeypatch.setattr(view, "queue_draw", lambda: draws.append(1))
     sent = []
@@ -84,10 +87,11 @@ def test_synchronized_update_holds_the_repaint(model, monkeypatch):
     assert len(draws) == 2
 
 
-@pytest.mark.parametrize("model", ["pyte", "vterm"])
+@pytest.mark.parametrize("model", ["pyte", "vterm", "ghostty"])
 def test_console_host_title_is_not_shown(model, monkeypatch):
     monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
     view = PyteTerminalView()
+    require_model(view, model)
     titles = []
     view.connect("window-title-changed", lambda v: titles.append(v.get_window_title()))
     view.feed(b"\x1b]0;" + rb"C:\Windows\System32\OpenSSH\ssh.exe" + b"\x07")
@@ -96,7 +100,7 @@ def test_console_host_title_is_not_shown(model, monkeypatch):
     assert titles == ["root@router: ~"]
 
 
-@pytest.mark.parametrize("model", ["pyte", "vterm"])
+@pytest.mark.parametrize("model", ["pyte", "vterm", "ghostty"])
 def test_plain_text_link_under_the_pointer(model, monkeypatch):
     from types import SimpleNamespace
 
@@ -105,6 +109,7 @@ def test_plain_text_link_under_the_pointer(model, monkeypatch):
     monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
     backend = PyteTerminalBackend(SimpleNamespace(config=None))
     view = backend.view
+    require_model(view, model)
     view.model.resize(80, 5)
     view.feed(b"docs at https://example.org/guide now\r\n")
     assert backend.supports_feature("hyperlinks")
@@ -116,4 +121,26 @@ def test_plain_text_link_under_the_pointer(model, monkeypatch):
     assert view._cell_at(x, y) == (row, column)
     assert backend.hyperlink_at(x, y) == "https://example.org/guide"
     assert backend.hyperlink_at(_PAD_X + 0.5 * view._cell_w, y) is None
+    backend.destroy()
+
+
+def test_osc8_link_under_the_pointer_with_libghostty(monkeypatch):
+    from types import SimpleNamespace
+
+    from sshpilot.terminal_backend_pyte import PyteTerminalBackend
+
+    monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", "ghostty")
+    backend = PyteTerminalBackend(SimpleNamespace(config=None))
+    view = backend.view
+    require_model(view, "ghostty")
+    view.model.resize(80, 5)
+    view.feed(b"see \x1b]8;;https://example.org/osc8\x1b\\docs\x1b]8;;\x1b\\ https://plain.example/x\r\n")
+    y = _PAD_Y + 0.5 * view._cell_h
+
+    def x(column):
+        return _PAD_X + (column + 0.5) * view._cell_w
+
+    assert backend.hyperlink_at(x(5), y) == "https://example.org/osc8"
+    assert backend.hyperlink_at(x(2), y) is None
+    assert backend.hyperlink_at(x(12), y) == "https://plain.example/x"
     backend.destroy()

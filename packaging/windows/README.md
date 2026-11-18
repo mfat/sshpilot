@@ -23,7 +23,7 @@ The result:
 | --- | --- |
 | `build\windows\dist\sshPilot\sshPilot.exe` | the GUI (windowed) |
 | `build\windows\dist\sshPilot\sshpilot-cli.exe` | the daemon (`--daemon`), askpass (`--internal-askpass`) and rbw's pinentry (`--internal-rbw-pinentry`); console subsystem |
-| `build\windows\dist\sshPilot\_internal\` | Python, GTK 4, typelibs, `libvterm-0.dll`, `conpty.dll`, `OpenConsole.exe`, gtk4-frdp with FreeRDP and OpenSSL (RDP tabs) |
+| `build\windows\dist\sshPilot\_internal\` | Python, GTK 4, typelibs, `libvterm-0.dll`, `ghostty-vt.dll`, `conpty.dll`, `OpenConsole.exe`, gtk4-frdp with FreeRDP and OpenSSL (RDP tabs) |
 | `build\windows\SSHPilot-<version>-windows-<arch>-setup.exe` | the installer (about 60 MiB) |
 
 `build.ps1` runs `verify_bundle.py`, which fails the build when a file the app
@@ -46,6 +46,17 @@ developer prompt) builds the patched `libvterm-0.dll` into
 `vendor\libvterm\x64`. The Windows workflow does this with
 `ilammy/msvc-dev-cmd`. A MinGW build (`--compiler gcc`) also works: it
 imports only system UCRT DLLs.
+
+## libghostty-vt
+
+`packaging\windows\libghostty-vt\build.py` builds `ghostty-vt.dll` (Ghostty's
+terminal core, the optional third emulator) into `vendor\libghostty-vt\x64`,
+with its LICENSE and third-party manifest, which the bundle ships under
+`share\licenses\libghostty-vt`. It needs no compiler: it downloads the
+release tarballs and the Zig toolchain the release requires, all pinned by
+SHA-256, and builds offline. Zig cross-compiles, so the same command run on
+Linux produces the Windows DLL; `--target native` builds the host's library
+into the same folder, where the model tests on Linux find it.
 
 ## Installer
 

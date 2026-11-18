@@ -87,12 +87,13 @@ mkdir -p "$BUILD_DIR" "$OUTDIR"
 log "Installing with Meson"
 # Prepend PYTHON_BIN's directory so python.find_installation() cannot pick a
 # different interpreter than the one being bundled.
-# rdp_tab=disabled: the private copy records an absolute /usr/lib path, which
-# would point outside the AppImage; the bundle carries the gtk4-frdp that
-# scripts/build-gtk4-frdp.sh installed system-wide, like its other typelibs.
+# rdp_tab/gtkghostty=disabled: a private copy records an absolute /usr/lib
+# path, which would point outside the AppImage; the bundle carries the
+# gtk4-frdp and gtkghostty that scripts/build-gtk4-frdp.sh and
+# scripts/build-gtkghostty.sh installed system-wide, like its other typelibs.
 PATH="$(dirname "$PY_REAL"):$PATH" \
     meson setup "$BUILD_DIR/meson" "$ROOT" --prefix=/usr --buildtype=release \
-    -Drdp_tab=disabled
+    -Drdp_tab=disabled -Dgtkghostty=disabled
 meson install -C "$BUILD_DIR/meson" --destdir "$APPDIR"
 
 # Where Meson put the Python package. Asking the AppDir rather than sysconfig:
@@ -274,6 +275,10 @@ WANTED = [
     # the library closure below. Skipped (RDP then opens in FreeRDP's own
     # window) when the build machine does not have it.
     ("GtkFrdp", "4.0"),
+    # The gtkghostty terminal widget (an opt-in backend); brings libghostty-vt
+    # along through the library closure. Skipped (the backend is then not
+    # offered) when the build machine does not have it.
+    ("GtkGhostty", "1"),
     ("Gio", "2.0"),
     ("GLib", "2.0"),
     ("GLibUnix", "2.0"),

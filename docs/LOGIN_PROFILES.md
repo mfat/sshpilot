@@ -5,6 +5,7 @@ A **login profile** is a named, reusable bundle of authentication settings:
 - key-based or password authentication
 - key selection, private keys and certificates
 - agent and hardware options (`IdentityAgent`, `AddKeysToAgent`, PKCS#11, FIDO provider, agent forwarding)
+- an optional ProxyCommand
 - extra `ssh_config` directives
 - a login password and a sudo password
 

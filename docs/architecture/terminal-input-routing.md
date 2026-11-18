@@ -47,6 +47,18 @@ VTE's own docs forbid putting a `VteTerminal` inside a `Gtk.ScrolledWindow`
 (see the comment at `terminal.py:320`), so there is no intervening scroll
 container to swallow the event first.
 
+### Backends that wrap the terminal in a box
+
+The built-in and gtkghostty backends hand SSH Pilot a `Gtk.Box` (terminal +
+scrollbar) as `backend.widget`. A `BUBBLE` controller on that box runs only
+after the terminal declined the key. The built-in view declines what it
+cannot encode, but libghostty-vt encodes Ctrl+=, Ctrl+Shift+C and friends,
+so zoom and copy/paste never fired. Such a backend sets
+`backend.controller_widget` to the terminal itself and `controller_host()`
+returns it, which puts the shortcut controllers ahead of the terminal's own
+key handling, as on VTE. Click gestures (context menu, Ctrl+click links)
+stay on `backend.widget`, so their coordinates include the padding.
+
 ## What VTE still owns after `set_enable_fallback_scrolling(False)`
 
 Disabling fallback scrolling does **not** hand SSH Pilot the wheel. It only

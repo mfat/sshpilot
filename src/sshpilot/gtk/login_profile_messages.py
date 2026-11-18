@@ -39,6 +39,7 @@ _FIELD_LABELS = {
     LoginProfileField.PUBKEY_AUTH_NO: N_("Disable public key authentication"),
     LoginProfileField.FORWARD_AGENT: N_("Forward agent"),
     LoginProfileField.FORWARD_AGENT_TARGET: N_("Agent socket to forward"),
+    LoginProfileField.PROXY_COMMAND: N_("Proxy command"),
     LoginProfileField.EXTRA: N_("Extra SSH options"),
 }
 _UNTRANSLATED_FIELD_LABELS = {

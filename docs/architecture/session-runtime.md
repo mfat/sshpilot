@@ -71,8 +71,31 @@ safe startup/termination failure data are distinct.
 
 ## Process runner boundary
 
-`SessionProcessRunner.start(SessionLaunchSpec, on_exit)` is the only launch
-boundary. `SessionLaunchSpec` is built from authoritative secret-free
+The runner is the only launch boundary. There are two contracts in
+`daemon/session_runtime.py`:
+
+- `SessionProcessRunner.start(SessionLaunchSpec, on_exit)` for a runner with
+  no terminal stream.
+- `TerminalSessionProcessRunner.start(SessionLaunchSpec, on_exit, on_output,
+  on_eof)` for a runner that declares `terminal_capable = True` (the PTY and
+  ConPTY runners). Its handle, `TerminalSessionProcessHandle`, adds `write`,
+  `input_status` and `resize`. The runtime tells the two apart with
+  `runner_is_terminal_capable()`.
+
+Terminal callback contract, as the production runners behave today:
+
+- every output byte is delivered before `on_eof`;
+- `on_exit` and `on_eof` are independent and may arrive in either order (a
+  handle reports exit as soon as its process is reaped); the runtime publishes
+  the final exit events only after both;
+- `on_exit` and `on_eof` are each delivered at most once per handle;
+- any callback may fire before `start()` returns, from a runner thread.
+
+There is deliberately no "output drained before `on_exit`" rule; no runner
+guarantees one. `tests/daemon/test_terminal_runner_contract.py` pins the
+runners' shape to these protocols.
+
+`SessionLaunchSpec` is built from authoritative secret-free
 `ConnectionDetails`; frontends cannot provide argv, executable paths, shell
 fragments, or environment values.
 

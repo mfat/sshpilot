@@ -36,6 +36,8 @@ def _require(path: Path, hint: str) -> str:
 binaries = [
     (_require(VENDOR / "libvterm" / ARCH / "libvterm-0.dll",
               "run packaging/windows/libvterm/build.py --compiler msvc"), "."),
+    (_require(VENDOR / "libghostty-vt" / ARCH / "ghostty-vt.dll",
+              "run packaging/windows/libghostty-vt/build.py"), "."),
     (_require(VENDOR / "conpty" / ARCH / "conpty.dll", "run scripts/fetch-conpty.py"), "."),
     (_require(VENDOR / "conpty" / ARCH / "OpenConsole.exe", "run scripts/fetch-conpty.py"), "."),
 ]
@@ -64,13 +66,33 @@ if not frdp.available:
 frdp_binaries, frdp_datas, frdp_hiddenimports = frdp.collect_typelib_data()
 binaries += frdp_binaries
 datas += frdp_datas
+for _name in ("LICENSE", "third-party.json"):
+    datas.append((_require(VENDOR / "libghostty-vt" / ARCH / _name,
+                           "run packaging/windows/libghostty-vt/build.py"), "share/licenses/libghostty-vt"))
 datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtk4-frdp" / "NOTICE",
                        "run scripts/fetch-gtk.py"), "share/licenses/gtk4-frdp"))
 datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtk4-frdp" / "COPYING",
                        "run scripts/fetch-gtk.py"), "share/licenses/gtk4-frdp"))
 
+# gtkghostty, the widget behind the opt-in "gtkghostty" terminal backend.
+# Optional until fetch-gtk.py pins a release: without it the backend is
+# simply not offered. Its ghostty-vt.dll is the same libghostty-vt 1.0.0 as
+# the one above, so the bundle keeps a single copy.
+ghostty_widget = GiModuleInfo("GtkGhostty", "1")
+ghostty_hiddenimports = []
+if ghostty_widget.available:
+    _binaries, _datas, ghostty_hiddenimports = ghostty_widget.collect_typelib_data()
+    binaries += _binaries
+    datas += _datas
+    for _name in ("COPYING", "NOTICE"):
+        datas.append((_require(VENDOR / "gtk" / "share" / "licenses" / "gtkghostty" / _name,
+                               "run scripts/fetch-gtk.py"), "share/licenses/gtkghostty"))
+else:
+    print("gtkghostty not installed: the gtkghostty terminal backend is not bundled")
+
 hiddenimports = collect_submodules("gi")
 hiddenimports += frdp_hiddenimports
+hiddenimports += ghostty_hiddenimports
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
 hiddenimports += ["sshpilot.daemon.cli", "sshpilot.daemon.askpass_helper"]
 hiddenimports += collect_submodules("sshpilot")

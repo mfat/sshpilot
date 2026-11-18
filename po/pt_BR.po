@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-14 04:16+0330\n"
+"POT-Creation-Date: 2026-11-15 22:52+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -77,10 +77,10 @@ msgstr "{connections} e {subgroups}"
 #. current (possibly overridden) accelerators like every other group.
 #: src/sshpilot/actions.py:346 src/sshpilot/actions.py:409
 #: src/sshpilot/shortcut_editor.py:258 src/sshpilot/split_view.py:2321
-#: src/sshpilot/window_help.py:219 src/sshpilot/window_session.py:150
+#: src/sshpilot/window_help.py:250 src/sshpilot/window_session.py:150
 #: src/sshpilot/window_tabs.py:1560 src/sshpilot/window_tabs.py:1708
 #: src/sshpilot/window_tabs.py:1917
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:990
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:1006
 msgid "Split View"
 msgstr "Visualização dividida"
 
@@ -140,8 +140,8 @@ msgstr "Abrir conexões?"
 #: src/sshpilot/preferences.py:4464 src/sshpilot/preferences.py:4576
 #: src/sshpilot/preferences.py:5417 src/sshpilot/preferences.py:5568
 #: src/sshpilot/preferences.py:5614 src/sshpilot/preferences.py:6339
-#: src/sshpilot/rdp_tab.py:470 src/sshpilot/rdp_tab.py:538
-#: src/sshpilot/rdp_tab.py:571 src/sshpilot/rbw_setup.py:167
+#: src/sshpilot/rdp_tab.py:457 src/sshpilot/rdp_tab.py:525
+#: src/sshpilot/rdp_tab.py:558 src/sshpilot/rbw_setup.py:167
 #: src/sshpilot/scp_window.py:320 src/sshpilot/scp_window.py:1142
 #: src/sshpilot/shortcut_editor.py:605 src/sshpilot/terminal_manager.py:1032
 #: src/sshpilot/terminal_manager.py:1691
@@ -193,7 +193,7 @@ msgstr "Visualização dividida — {name}"
 
 #: src/sshpilot/actions.py:519 src/sshpilot/actions.py:671
 #: src/sshpilot/connection_dialog.py:5880 src/sshpilot/file_manager/pane.py:57
-#: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1186
+#: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1197
 #: src/sshpilot/terminal_manager.py:1179 src/sshpilot/text_editor.py:1840
 #: src/sshpilot/window.py:6648 src/sshpilot/window.py:8471
 #: src/sshpilot/window.py:8495 src/sshpilot/window_broadcast.py:160
@@ -223,7 +223,7 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:558 src/sshpilot/preferences.py:4103
 #: src/sshpilot/preferences.py:4226 src/sshpilot/preferences.py:4638
-#: src/sshpilot/preferences.py:5251 src/sshpilot/preferences.py:6947
+#: src/sshpilot/preferences.py:5251 src/sshpilot/preferences.py:7001
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
 #: src/sshpilot/secret_unlock_dialog.py:83
 #: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:667
@@ -533,7 +533,7 @@ msgstr "Chave de segurança"
 #: src/sshpilot/machine_info_dialog.py:1037
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:449
 #: src/sshpilot/preferences.py:5359 src/sshpilot/sshcopyid_window.py:678
-#: src/sshpilot/terminal.py:1223 src/sshpilot/window.py:3267
+#: src/sshpilot/terminal.py:1234 src/sshpilot/window.py:3267
 #: src/sshpilot/window.py:7935 src/sshpilot/window_tabs.py:328
 #: src/sshpilot/window_tabs.py:1178 src/sshpilot/window_tabs.py:1354
 #: src/sshpilot/window_tabs.py:1404
@@ -700,8 +700,8 @@ msgstr "Erro ao carregar authorized_keys"
 
 #: src/sshpilot/authorized_keys_window.py:293
 #: src/sshpilot/file_manager/pane.py:3177
-#: src/sshpilot/file_manager_window.py:497 src/sshpilot/rdp_tab.py:172
-#: src/sshpilot/rdp_tab.py:258 src/sshpilot/rdp_tab.py:482
+#: src/sshpilot/file_manager_window.py:497 src/sshpilot/rdp_tab.py:159
+#: src/sshpilot/rdp_tab.py:245 src/sshpilot/rdp_tab.py:469
 #: src/sshpilot/scp_window.py:1009 src/sshpilot/scp_window.py:1106
 msgid "Connecting…"
 msgstr "Conectando…"
@@ -1526,7 +1526,7 @@ msgstr "Abrir sessões de terminal para comandos que exigem um PTY ou Ctrl+C"
 #: src/sshpilot/command_blocks.py:1158 src/sshpilot/omni_search.py:181
 #: src/sshpilot/preferences.py:3272 src/sshpilot/shortcut_editor.py:72
 #: src/sshpilot/settings_index.py:55 src/sshpilot/window.py:3967
-#: src/sshpilot/window_help.py:172
+#: src/sshpilot/window_help.py:203
 msgid "Command Snippets"
 msgstr "Trechos de comando"
 
@@ -1652,7 +1652,7 @@ msgstr "Duplicar"
 #: src/sshpilot/command_blocks.py:2370 src/sshpilot/macos_menubar.py:90
 #: src/sshpilot/shortcut_editor.py:63 src/sshpilot/window.py:4017
 #: src/sshpilot/window.py:4042 src/sshpilot/window.py:4273
-#: src/sshpilot/window_help.py:171
+#: src/sshpilot/window_help.py:202
 msgid "Broadcast Command"
 msgstr "Comando de transmissão"
 
@@ -1789,16 +1789,16 @@ msgstr "Editar conexão"
 
 #: src/sshpilot/connection_dialog.py:1691 src/sshpilot/macos_menubar.py:49
 #: src/sshpilot/shortcut_editor.py:51 src/sshpilot/sidebar.py:4758
-#: src/sshpilot/window.py:4265 src/sshpilot/window_help.py:149
+#: src/sshpilot/window.py:4265 src/sshpilot/window_help.py:180
 msgid "New Connection"
 msgstr "Nova conexão"
 
 #: src/sshpilot/connection_dialog.py:1817
 #: src/sshpilot/forwarding_only_ui.py:236
 #: src/sshpilot/forwarding_only_ui.py:241
-#: src/sshpilot/login_profile_dialogs.py:800 src/sshpilot/terminal.py:1175
-#: src/sshpilot/terminal.py:1180 src/sshpilot/terminal.py:1493
-#: src/sshpilot/terminal.py:1522 src/sshpilot/window.py:3255
+#: src/sshpilot/login_profile_dialogs.py:800 src/sshpilot/terminal.py:1186
+#: src/sshpilot/terminal.py:1191 src/sshpilot/terminal.py:1504
+#: src/sshpilot/terminal.py:1533 src/sshpilot/window.py:3255
 msgid "Connection"
 msgstr "Conexão"
 
@@ -1874,7 +1874,7 @@ msgstr "Senha (opcional)"
 #: src/sshpilot/login_profile_dialogs.py:46
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:51
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:320
-#: src/sshpilot/rdp_tab.py:463 src/sshpilot/rdp_tab.py:566
+#: src/sshpilot/rdp_tab.py:450 src/sshpilot/rdp_tab.py:553
 #: src/sshpilot/window_dialogs.py:584
 msgid "Password"
 msgstr "Senha"
@@ -2125,7 +2125,7 @@ msgstr "Nome do host / Endereço IP"
 #: src/sshpilot/login_profile_dialogs.py:228
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:48
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:316
-#: src/sshpilot/rdp_tab.py:562
+#: src/sshpilot/rdp_tab.py:549
 msgid "Username"
 msgstr "Nome de usuário"
 
@@ -2525,7 +2525,7 @@ msgstr "Dispositivo"
 #: src/sshpilot/split_view.py:611 src/sshpilot/split_view.py:809
 #: src/sshpilot/split_view.py:832 src/sshpilot/split_view.py:834
 #: src/sshpilot/split_view.py:1000 src/sshpilot/split_view.py:1647
-#: src/sshpilot/terminal.py:881 src/sshpilot/terminal.py:3623
+#: src/sshpilot/terminal.py:881 src/sshpilot/terminal.py:3634
 #: src/sshpilot/terminal_manager.py:1067 src/sshpilot/terminal_manager.py:1109
 #: src/sshpilot/terminal_manager.py:1671 src/sshpilot/window_tabs.py:1597
 #: src/sshpilot/window_tabs.py:1695
@@ -3292,7 +3292,7 @@ msgid "Quit SSH Pilot?"
 msgstr "Sair do SSH Pilot?"
 
 #: src/sshpilot/daemon_quit_policy.py:629 src/sshpilot/shortcut_editor.py:50
-#: src/sshpilot/window.py:4332 src/sshpilot/window_help.py:25
+#: src/sshpilot/window.py:4332 src/sshpilot/window_help.py:55
 msgid "Quit"
 msgstr "Sair"
 
@@ -3574,7 +3574,7 @@ msgstr "Enviar"
 
 #: src/sshpilot/file_manager/pane.py:667 src/sshpilot/file_manager/pane.py:2259
 #: src/sshpilot/key_sources.py:275 src/sshpilot/macos_menubar.py:72
-#: src/sshpilot/terminal.py:1222 src/sshpilot/terminal.py:3557
+#: src/sshpilot/terminal.py:1233 src/sshpilot/terminal.py:3568
 #: src/sshpilot/window_dialogs.py:3598
 msgid "Copy"
 msgstr "Copiar"
@@ -7535,7 +7535,7 @@ msgstr ""
 #: src/sshpilot/machine_info_dialog.py:1023 src/sshpilot/omni_search.py:585
 #: src/sshpilot/omni_search.py:597 src/sshpilot/sidebar.py:1997
 #: src/sshpilot/welcome_page.py:336
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:982
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:998
 msgid "Dashboard"
 msgstr "Painel"
 
@@ -7889,7 +7889,7 @@ msgstr "Refazer"
 
 #: src/sshpilot/macos_menubar.py:79 src/sshpilot/omni_search.py:179
 #: src/sshpilot/shortcut_editor.py:73 src/sshpilot/window.py:2411
-#: src/sshpilot/window_help.py:22
+#: src/sshpilot/window_help.py:52
 msgid "Toggle Sidebar"
 msgstr "Alternar barra lateral"
 
@@ -7898,7 +7898,7 @@ msgid "Toggle Full Screen"
 msgstr "Alternar tela cheia"
 
 #: src/sshpilot/macos_menubar.py:81 src/sshpilot/shortcut_editor.py:70
-#: src/sshpilot/window_help.py:204
+#: src/sshpilot/window_help.py:235
 msgid "Tab Overview"
 msgstr "Visão geral das abas"
 
@@ -7909,20 +7909,20 @@ msgstr "Ver"
 #: src/sshpilot/macos_menubar.py:89 src/sshpilot/omni_search.py:71
 #: src/sshpilot/shortcut_editor.py:57 src/sshpilot/sidebar.py:5173
 #: src/sshpilot/sidebar.py:5553 src/sshpilot/sshcopyid_window.py:1167
-#: src/sshpilot/window.py:4272 src/sshpilot/window_help.py:153
+#: src/sshpilot/window.py:4272 src/sshpilot/window_help.py:184
 msgid "Copy Key to Server"
 msgstr "Copiar chave para o servidor"
 
 #: src/sshpilot/macos_menubar.py:91 src/sshpilot/shortcut_editor.py:58
 #: src/sshpilot/sidebar.py:1985 src/sshpilot/sidebar.py:5172
 #: src/sshpilot/sidebar.py:5573 src/sshpilot/split_view.py:455
-#: src/sshpilot/window.py:4274 src/sshpilot/window_help.py:154
+#: src/sshpilot/window.py:4274 src/sshpilot/window_help.py:185
 #: src/sshpilot/window_tabs.py:309
 msgid "Manage Files"
 msgstr "Gerenciar arquivos"
 
 #: src/sshpilot/macos_menubar.py:94 src/sshpilot/shortcut_editor.py:59
-#: src/sshpilot/window.py:4278 src/sshpilot/window_help.py:29
+#: src/sshpilot/window.py:4278 src/sshpilot/window_help.py:59
 msgid "SSH Config Editor"
 msgstr "Editor de configuração SSH"
 
@@ -7941,12 +7941,12 @@ msgid "Tools"
 msgstr "Ferramentas"
 
 #: src/sshpilot/macos_menubar.py:110 src/sshpilot/shortcut_editor.py:66
-#: src/sshpilot/window_help.py:199
+#: src/sshpilot/window_help.py:230
 msgid "Next Tab"
 msgstr "Próxima aba"
 
 #: src/sshpilot/macos_menubar.py:111 src/sshpilot/shortcut_editor.py:67
-#: src/sshpilot/window_help.py:200
+#: src/sshpilot/window_help.py:231
 msgid "Previous Tab"
 msgstr "Aba anterior"
 
@@ -7958,13 +7958,13 @@ msgstr "Janela"
 
 #: src/sshpilot/macos_menubar.py:121 src/sshpilot/preferences.py:2156
 #: src/sshpilot/shortcut_editor.py:65 src/sshpilot/window.py:4321
-#: src/sshpilot/window_help.py:28 src/sshpilot/window_help.py:109
-#: src/sshpilot/window_help.py:115
+#: src/sshpilot/window_help.py:58 src/sshpilot/window_help.py:140
+#: src/sshpilot/window_help.py:146
 msgid "Keyboard Shortcuts"
 msgstr "Atalhos de teclado"
 
 #: src/sshpilot/macos_menubar.py:122 src/sshpilot/shortcut_editor.py:64
-#: src/sshpilot/window.py:4322 src/sshpilot/window_help.py:27
+#: src/sshpilot/window.py:4322 src/sshpilot/window_help.py:57
 msgid "Documentation"
 msgstr "Documentação"
 
@@ -7987,7 +7987,7 @@ msgid "Help"
 msgstr "Ajuda"
 
 #: src/sshpilot/omni_search.py:63
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:986
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:1002
 msgid "SFTP File Manager"
 msgstr "Gerenciador de arquivos SFTP"
 
@@ -8285,7 +8285,7 @@ msgstr "Não foi possível analisar o destino SSH: {command}"
 
 #: src/sshpilot/omni_search.py:946 src/sshpilot/preferences.py:215
 #: src/sshpilot/shortcut_editor.py:61 src/sshpilot/window.py:4315
-#: src/sshpilot/window_help.py:26
+#: src/sshpilot/window_help.py:56
 #: src/sshpilot/resources/ui/preferences_window.ui:10
 #: src/sshpilot/resources/ui/preferences_window.ui:30
 #: src/sshpilot/resources/ui/preferences_window.ui:123
@@ -9629,7 +9629,7 @@ msgid "(asked when connecting)"
 msgstr "(nenhuma conexão)"
 
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:318
-#: src/sshpilot/rdp_tab.py:564
+#: src/sshpilot/rdp_tab.py:551
 msgid "Domain"
 msgstr "Domínio"
 
@@ -11860,165 +11860,188 @@ msgstr "VTE (padrão)"
 msgid "Native GTK terminal"
 msgstr "Terminal GTK nativo"
 
-#: src/sshpilot/preferences.py:6775
+#: src/sshpilot/preferences.py:6784
 #, fuzzy
 msgid "pyte (default)"
 msgstr "Adaptativo (padrão)"
 
-#: src/sshpilot/preferences.py:6775
+#: src/sshpilot/preferences.py:6784
 msgid "pyte"
 msgstr ""
 
-#: src/sshpilot/preferences.py:6776
+#: src/sshpilot/preferences.py:6785
 #, fuzzy
 msgid "pyte (unavailable)"
 msgstr "xterm.js (indisponível)"
 
-#: src/sshpilot/preferences.py:6779
+#: src/sshpilot/preferences.py:6788
 msgid "Pure-Python terminal emulator drawn with GTK"
 msgstr ""
 
-#: src/sshpilot/preferences.py:6780
+#: src/sshpilot/preferences.py:6789
 msgid "Requires the pyte Python package"
 msgstr ""
 
-#: src/sshpilot/preferences.py:6797
+#: src/sshpilot/preferences.py:6806
 #, fuzzy
 msgid "libvterm (default)"
 msgstr "Adaptativo (padrão)"
 
-#: src/sshpilot/preferences.py:6797
+#: src/sshpilot/preferences.py:6806
 msgid "libvterm"
 msgstr ""
 
-#: src/sshpilot/preferences.py:6798
+#: src/sshpilot/preferences.py:6807
 #, fuzzy
 msgid "libvterm (unavailable)"
 msgstr "xterm.js (indisponível)"
 
-#: src/sshpilot/preferences.py:6801
+#: src/sshpilot/preferences.py:6810
 msgid "Native terminal emulator drawn with GTK, faster on bulk output"
 msgstr ""
 
-#: src/sshpilot/preferences.py:6802
+#: src/sshpilot/preferences.py:6811
 msgid "Requires the libvterm library"
 msgstr ""
 
-#: src/sshpilot/preferences.py:6819
+#: src/sshpilot/preferences.py:6828 src/sshpilot/preferences.py:6993
+msgid "libghostty-vt (built-in view)"
+msgstr "libghostty-vt (visualização integrada)"
+
+#: src/sshpilot/preferences.py:6829
+msgid "libghostty-vt (built-in view, unavailable)"
+msgstr "libghostty-vt (visualização integrada, indisponível)"
+
+#: src/sshpilot/preferences.py:6832
+msgid ""
+"Ghostty's engine drawn by SSH Pilot's built-in view, fastest on bulk output"
+msgstr "O motor do Ghostty desenhado pela visualização integrada do SSH Pilot, o mais rápido com saídas volumosas"
+
+#: src/sshpilot/preferences.py:6833
+msgid "Requires the libghostty-vt library"
+msgstr "Requer a biblioteca libghostty-vt"
+
+#: src/sshpilot/preferences.py:6849
+msgid ""
+"Experimental: Ghostty's engine in its own GTK widget, with input methods and "
+"the kitty keyboard protocol"
+msgstr "Experimental: o motor do Ghostty em seu próprio widget GTK, com métodos de entrada e o protocolo de teclado do kitty"
+
+#: src/sshpilot/preferences.py:6864
 msgid "Web-based terminal running in WebKitGTK"
 msgstr "Terminal web executado no WebKitGTK"
 
-#: src/sshpilot/preferences.py:6828
+#: src/sshpilot/preferences.py:6873
 msgid "xterm.js (unavailable)"
 msgstr "xterm.js (indisponível)"
 
-#: src/sshpilot/preferences.py:6829
+#: src/sshpilot/preferences.py:6874
 msgid "Requires WebKitGTK 6.0"
 msgstr "Requer WebKitGTK 6.0"
 
-#: src/sshpilot/preferences.py:6944
+#: src/sshpilot/preferences.py:6998
 #, python-brace-format
 msgid "Terminal backend switched to {backend}"
 msgstr "Backend do terminal alterado para {backend}"
 
-#: src/sshpilot/preferences.py:6945
+#: src/sshpilot/preferences.py:6999
 msgid "Only new terminal tabs will use the selected backend."
 msgstr "Apenas novas abas de terminal usarão o backend selecionado."
 
 #. The stored value remains the technical identifier ``custom``;
 #. only the dropdown's presentation is localized.
-#: src/sshpilot/preferences.py:7497 src/sshpilot/preferences.py:7516
+#: src/sshpilot/preferences.py:7551 src/sshpilot/preferences.py:7570
 #: src/sshpilot/terminal_theme_selector.py:204
 msgid "Custom"
 msgstr "Personalizado"
 
-#: src/sshpilot/rdp_tab.py:145 src/sshpilot/split_view.py:454
+#: src/sshpilot/rdp_tab.py:132 src/sshpilot/split_view.py:454
 #: src/sshpilot/terminal.py:605 src/sshpilot/terminal_manager.py:1692
 #: src/sshpilot/window_tabs.py:308
 msgid "Reconnect"
 msgstr "Reconectar"
 
 #. : Shown only when a typed password could still get the session up.
-#: src/sshpilot/rdp_tab.py:150
+#: src/sshpilot/rdp_tab.py:137
 #, fuzzy
 msgid "Enter Password…"
 msgstr "Digite sua senha."
 
-#: src/sshpilot/rdp_tab.py:154
+#: src/sshpilot/rdp_tab.py:141
 msgid "Open in FreeRDP Window"
 msgstr "Abrir em janela do FreeRDP"
 
 #. The connection is gated on its pre-connect step and the step
 #. failed; the toast says which and why.
-#: src/sshpilot/rdp_tab.py:247 src/sshpilot/rdp_tab.py:416
-#: src/sshpilot/rdp_tab.py:426
+#: src/sshpilot/rdp_tab.py:234 src/sshpilot/rdp_tab.py:403
+#: src/sshpilot/rdp_tab.py:413
 msgid "Could Not Connect"
 msgstr "Não foi possível conectar"
 
-#: src/sshpilot/rdp_tab.py:391 src/sshpilot/sidebar.py:2696
+#: src/sshpilot/rdp_tab.py:378 src/sshpilot/sidebar.py:2696
 msgid "Disconnected"
 msgstr "Desconectado"
 
-#: src/sshpilot/rdp_tab.py:392
+#: src/sshpilot/rdp_tab.py:379
 msgid "The remote session ended."
 msgstr "A sessão remota foi encerrada."
 
-#: src/sshpilot/rdp_tab.py:407
+#: src/sshpilot/rdp_tab.py:394
 #, fuzzy
 msgid "Authentication Failed"
 msgstr "Autenticação necessária"
 
-#: src/sshpilot/rdp_tab.py:408
+#: src/sshpilot/rdp_tab.py:395
 #, fuzzy, python-brace-format
 msgid "The server rejected the logon for {target}."
 msgstr "O daemon rejeitou o reinício forçado."
 
-#: src/sshpilot/rdp_tab.py:417
+#: src/sshpilot/rdp_tab.py:404
 #, python-brace-format
 msgid ""
 "Could not connect to {target}: the host may be unreachable, or the user name "
 "and password may have been rejected."
 msgstr ""
 
-#: src/sshpilot/rdp_tab.py:423
+#: src/sshpilot/rdp_tab.py:410
 #, fuzzy
 msgid "Connection Cancelled"
 msgstr "Falha na conexão"
 
-#: src/sshpilot/rdp_tab.py:424
+#: src/sshpilot/rdp_tab.py:411
 #, fuzzy, python-brace-format
 msgid "The connection to {target} was cancelled."
 msgstr "A operação privilegiada foi cancelada."
 
-#: src/sshpilot/rdp_tab.py:426
+#: src/sshpilot/rdp_tab.py:413
 msgid "Connection Lost"
 msgstr "Conexão perdida"
 
-#: src/sshpilot/rdp_tab.py:459
+#: src/sshpilot/rdp_tab.py:446
 #, fuzzy
 msgid "Enter Password"
 msgstr "Digite sua senha."
 
-#: src/sshpilot/rdp_tab.py:460
+#: src/sshpilot/rdp_tab.py:447
 #, fuzzy, python-brace-format
 msgid "Enter the password for {host}."
 msgstr "Digite a senha mestra para {backend}."
 
-#: src/sshpilot/rdp_tab.py:465
+#: src/sshpilot/rdp_tab.py:452
 #, fuzzy
 msgid "Save this password on the connection"
 msgstr "Salvar como nova conexão"
 
-#: src/sshpilot/rdp_tab.py:471
+#: src/sshpilot/rdp_tab.py:458
 #, fuzzy
 msgid "Connect"
 msgstr "Desconectado"
 
-#: src/sshpilot/rdp_tab.py:526
+#: src/sshpilot/rdp_tab.py:513
 msgid "Server Certificate Changed"
 msgstr "O certificado do servidor mudou"
 
-#: src/sshpilot/rdp_tab.py:527
+#: src/sshpilot/rdp_tab.py:514
 #, python-brace-format
 msgid ""
 "The certificate of {host} is different from the one accepted before. This "
@@ -12029,11 +12052,11 @@ msgstr ""
 "significar que o servidor foi reinstalado ou que alguém está interceptando a "
 "conexão."
 
-#: src/sshpilot/rdp_tab.py:531
+#: src/sshpilot/rdp_tab.py:518
 msgid "Unknown Server Certificate"
 msgstr "Certificado de servidor desconhecido"
 
-#: src/sshpilot/rdp_tab.py:532
+#: src/sshpilot/rdp_tab.py:519
 #, python-brace-format
 msgid ""
 "The identity of {host} cannot be verified. Check the fingerprint before you "
@@ -12042,7 +12065,7 @@ msgstr ""
 "Não é possível verificar a identidade de {host}. Confira a impressão digital "
 "antes de continuar."
 
-#: src/sshpilot/rdp_tab.py:534
+#: src/sshpilot/rdp_tab.py:521
 #, python-brace-format
 msgid ""
 "Common name: {name}\n"
@@ -12053,19 +12076,19 @@ msgstr ""
 "Emissor: {issuer}\n"
 "Impressão digital: {fingerprint}"
 
-#: src/sshpilot/rdp_tab.py:539
+#: src/sshpilot/rdp_tab.py:526
 msgid "Accept Once"
 msgstr "Aceitar uma vez"
 
-#: src/sshpilot/rdp_tab.py:540
+#: src/sshpilot/rdp_tab.py:527
 msgid "Accept and Remember"
 msgstr "Aceitar e lembrar"
 
-#: src/sshpilot/rdp_tab.py:558 src/sshpilot/rdp_tab.py:572
+#: src/sshpilot/rdp_tab.py:545 src/sshpilot/rdp_tab.py:559
 msgid "Log In"
 msgstr "Entrar"
 
-#: src/sshpilot/rdp_tab.py:559
+#: src/sshpilot/rdp_tab.py:546
 #, python-brace-format
 msgid "Enter your credentials for {host}."
 msgstr "Digite suas credenciais para {host}."
@@ -12532,46 +12555,46 @@ msgstr "Desbloqueando seu cofre…"
 msgid "Open New Connection Tab"
 msgstr "Abrir nova aba de conexão"
 
-#: src/sshpilot/shortcut_editor.py:53 src/sshpilot/window_help.py:151
+#: src/sshpilot/shortcut_editor.py:53 src/sshpilot/window_help.py:182
 msgid "Focus Connection List"
 msgstr "Focar lista de conexões"
 
 #: src/sshpilot/shortcut_editor.py:54 src/sshpilot/text_editor.py:426
-#: src/sshpilot/window_help.py:150
+#: src/sshpilot/window_help.py:181
 msgid "Search"
 msgstr "Pesquisar"
 
-#: src/sshpilot/shortcut_editor.py:55 src/sshpilot/window_help.py:24
+#: src/sshpilot/shortcut_editor.py:55 src/sshpilot/window_help.py:54
 msgid "Omnisearch"
 msgstr "Omnibusca"
 
-#: src/sshpilot/shortcut_editor.py:56 src/sshpilot/window_help.py:170
+#: src/sshpilot/shortcut_editor.py:56 src/sshpilot/window_help.py:201
 msgid "Search in Terminal"
 msgstr "Pesquisar no terminal"
 
 #: src/sshpilot/shortcut_editor.py:60 src/sshpilot/sidebar.py:2761
 #: src/sshpilot/sidebar.py:2816 src/sshpilot/sidebar.py:2876
-#: src/sshpilot/window_help.py:169
+#: src/sshpilot/window_help.py:200
 msgid "Local Terminal"
 msgstr "Terminal local"
 
-#: src/sshpilot/shortcut_editor.py:62 src/sshpilot/window_help.py:203
+#: src/sshpilot/shortcut_editor.py:62 src/sshpilot/window_help.py:234
 msgid "Close Tab"
 msgstr "Fechar aba"
 
-#: src/sshpilot/shortcut_editor.py:68 src/sshpilot/window_help.py:201
+#: src/sshpilot/shortcut_editor.py:68 src/sshpilot/window_help.py:232
 msgid "Move Tab Left"
 msgstr "Mover aba para a esquerda"
 
-#: src/sshpilot/shortcut_editor.py:69 src/sshpilot/window_help.py:202
+#: src/sshpilot/shortcut_editor.py:69 src/sshpilot/window_help.py:233
 msgid "Move Tab Right"
 msgstr "Mover aba para a direita"
 
-#: src/sshpilot/shortcut_editor.py:71 src/sshpilot/window_help.py:205
+#: src/sshpilot/shortcut_editor.py:71 src/sshpilot/window_help.py:236
 msgid "New Split View Tab"
 msgstr "Nova aba de visualização dividida"
 
-#: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window_help.py:23
+#: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window_help.py:53
 msgid "Toggle Fullscreen"
 msgstr "Alternar tela cheia"
 
@@ -12638,7 +12661,7 @@ msgid "Active whenever a split view tab is open."
 msgstr "Ativo sempre que uma aba de visualização dividida estiver aberta."
 
 #: src/sshpilot/shortcut_editor.py:290 src/sshpilot/shortcut_editor.py:544
-#: src/sshpilot/window_help.py:187
+#: src/sshpilot/window_help.py:218
 msgid "No shortcut assigned"
 msgstr "Nenhum atalho atribuído"
 
@@ -13280,12 +13303,13 @@ msgstr "Escolher uma palavra-chave"
 msgid "Value"
 msgstr "Valor"
 
-#: src/sshpilot/ssh_option_list.py:272
+#. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
+#: src/sshpilot/ssh_option_list.py:273 src/sshpilot/ssh_option_list.py:277
 msgid "Add Option"
 msgstr "Adicionar opção"
 
 #. Half an option. Saying so beats leaving it out without a word.
-#: src/sshpilot/ssh_option_list.py:411
+#: src/sshpilot/ssh_option_list.py:417
 msgid "Enter both a keyword and a value."
 msgstr "Informe uma palavra-chave e um valor."
 
@@ -13517,13 +13541,13 @@ msgstr "Conexão"
 msgid "Port forwarding"
 msgstr "Redirecionamento de portas"
 
-#: src/sshpilot/terminal.py:522 src/sshpilot/terminal.py:1582
+#: src/sshpilot/terminal.py:522 src/sshpilot/terminal.py:1593
 msgid "Close this tab to disconnect"
 msgstr "Confirmar antes de desconectar"
 
 #. A local shell's exit status is never an ssh error.
-#: src/sshpilot/terminal.py:603 src/sshpilot/terminal.py:2564
-#: src/sshpilot/terminal.py:5915
+#: src/sshpilot/terminal.py:603 src/sshpilot/terminal.py:2575
+#: src/sshpilot/terminal.py:5934
 msgid "Session ended."
 msgstr "Sessão encerrada."
 
@@ -13546,72 +13570,72 @@ msgstr "Salvar como nova conexão"
 msgid "Terminal: {name}"
 msgstr "Terminal: {name}"
 
-#: src/sshpilot/terminal.py:1182
+#: src/sshpilot/terminal.py:1193
 msgid "Reason"
 msgstr "Motivo"
 
-#: src/sshpilot/terminal.py:1190
+#: src/sshpilot/terminal.py:1201
 msgid "--- SSH output ---"
 msgstr "--- Saída SSH ---"
 
-#: src/sshpilot/terminal.py:1196
+#: src/sshpilot/terminal.py:1207
 msgid "No additional details available."
 msgstr "Nenhum detalhe adicional disponível."
 
-#: src/sshpilot/terminal.py:1219
+#: src/sshpilot/terminal.py:1230
 msgid "Connection Error Details"
 msgstr "Detalhes do erro de conexão"
 
-#: src/sshpilot/terminal.py:1251 src/sshpilot/terminal.py:1253
-#: src/sshpilot/terminal.py:1259 src/sshpilot/terminal_manager.py:1797
+#: src/sshpilot/terminal.py:1262 src/sshpilot/terminal.py:1264
+#: src/sshpilot/terminal.py:1270 src/sshpilot/terminal_manager.py:1797
 #: src/sshpilot/terminal_manager.py:1799
 msgid "Reconnect failed to start"
 msgstr "Falha ao iniciar reconexão"
 
-#: src/sshpilot/terminal.py:1258
+#: src/sshpilot/terminal.py:1269
 msgid "Daemon reconnect handler is unavailable"
 msgstr "O manipulador de reconexão do daemon está indisponível"
 
-#: src/sshpilot/terminal.py:1262 src/sshpilot/terminal.py:1263
+#: src/sshpilot/terminal.py:1273 src/sshpilot/terminal.py:1274
 msgid "Reconnect failed"
 msgstr "Falha ao reconectar"
 
-#: src/sshpilot/terminal.py:1542
+#: src/sshpilot/terminal.py:1553
 msgid "No forwarding rules configured"
 msgstr "Nenhuma regra de redirecionamento de portas configurada"
 
-#: src/sshpilot/terminal.py:1584
+#: src/sshpilot/terminal.py:1595
 msgid "Close tab · or reconnect from the error banner"
 msgstr "Não foi possível carregar a conexão a partir do daemon"
 
-#: src/sshpilot/terminal.py:2126
+#: src/sshpilot/terminal.py:2137
 msgid "Terminal input was not delivered; please try again."
 msgstr "A entrada do terminal não foi entregue; por favor, tente novamente."
 
-#: src/sshpilot/terminal.py:2239
+#: src/sshpilot/terminal.py:2250
 msgid "View only — another user controls this terminal"
 msgstr "Apenas visualização — outro usuário controla este terminal"
 
-#: src/sshpilot/terminal.py:2560 src/sshpilot/terminal.py:5912
+#: src/sshpilot/terminal.py:2571 src/sshpilot/terminal.py:5931
 #, python-brace-format
 msgid "SSH exited with status {code}"
 msgstr "O SSH encerrou com status {code}"
 
-#: src/sshpilot/terminal.py:2562
+#: src/sshpilot/terminal.py:2573
 #, python-brace-format
 msgid "Session terminated by signal {sig}"
 msgstr "Sessão encerrada pelo sinal {sig}"
 
-#: src/sshpilot/terminal.py:3277 src/sshpilot/terminal.py:6077
-#: src/sshpilot/terminal.py:6097 src/sshpilot/window.py:2202
+#: src/sshpilot/terminal.py:3288 src/sshpilot/terminal.py:6096
+#: src/sshpilot/terminal.py:6116 src/sshpilot/window.py:2202
 msgid "Copied to clipboard"
 msgstr "Copiado para a área de transferência"
 
-#: src/sshpilot/terminal.py:3298
+#: src/sshpilot/terminal.py:3309
 msgid "Save Terminal Output"
 msgstr "Salvar saída do terminal"
 
-#: src/sshpilot/terminal.py:3526
+#: src/sshpilot/terminal.py:3537
 #, python-brace-format
 msgid "Remote program copied {count} character to the clipboard"
 msgid_plural "Remote program copied {count} characters to the clipboard"
@@ -13620,7 +13644,7 @@ msgstr[0] ""
 msgstr[1] ""
 "Programa remoto copiou {count} caracteres para a área de transferência"
 
-#: src/sshpilot/terminal.py:3553
+#: src/sshpilot/terminal.py:3564
 #, python-brace-format
 msgid "Remote program wants to copy {count} character to the clipboard"
 msgid_plural "Remote program wants to copy {count} characters to the clipboard"
@@ -13629,81 +13653,81 @@ msgstr[0] ""
 msgstr[1] ""
 "Programa remoto quer copiar {count} caracteres para a área de transferência"
 
-#: src/sshpilot/terminal.py:3606
+#: src/sshpilot/terminal.py:3617
 #, python-brace-format
 msgid "Encoding '{requested}' is not supported. Using {fallback} instead."
 msgstr ""
 "A codificação '{requested}' não é suportada. Usando {fallback} em seu lugar."
 
-#: src/sshpilot/terminal.py:4434
+#: src/sshpilot/terminal.py:4445
 msgid "Open Link"
 msgstr "Abrir link"
 
-#: src/sshpilot/terminal.py:4435
+#: src/sshpilot/terminal.py:4446
 msgid "Copy Link"
 msgstr "Copiar link"
 
-#: src/sshpilot/terminal.py:4438
+#: src/sshpilot/terminal.py:4449
 msgid "Copy\t⌘C"
 msgstr "Copiar\t⌘C"
 
-#: src/sshpilot/terminal.py:4441 src/sshpilot/terminal.py:4458
+#: src/sshpilot/terminal.py:4452 src/sshpilot/terminal.py:4469
 msgid "Copy as HTML"
 msgstr "Copiar como HTML"
 
-#: src/sshpilot/terminal.py:4442
+#: src/sshpilot/terminal.py:4453
 msgid "Paste\t⌘V"
 msgstr "Colar\t⌘V"
 
-#: src/sshpilot/terminal.py:4443
+#: src/sshpilot/terminal.py:4454
 msgid "Select All\t⌘A"
 msgstr "Selecionar tudo\t⌘A"
 
-#: src/sshpilot/terminal.py:4445
+#: src/sshpilot/terminal.py:4456
 msgid "Zoom In\t⌘="
 msgstr "Ampliar\t⌘="
 
-#: src/sshpilot/terminal.py:4446
+#: src/sshpilot/terminal.py:4457
 msgid "Zoom Out\t⌘-"
 msgstr "Reduzir\t⌘-"
 
-#: src/sshpilot/terminal.py:4447
+#: src/sshpilot/terminal.py:4458
 msgid "Reset Zoom\t⌘0"
 msgstr "Redefinir zoom\t⌘0"
 
-#: src/sshpilot/terminal.py:4450
+#: src/sshpilot/terminal.py:4461
 msgid "Search\t⌘F"
 msgstr "Pesquisar\t⌘F"
 
-#: src/sshpilot/terminal.py:4451 src/sshpilot/terminal.py:4469
+#: src/sshpilot/terminal.py:4462 src/sshpilot/terminal.py:4480
 msgid "Save Output…"
 msgstr "Salvar saída…"
 
-#: src/sshpilot/terminal.py:4455
+#: src/sshpilot/terminal.py:4466
 msgid "Copy\tCtrl+Shift+C"
 msgstr "Copiar\tCtrl+Shift+C"
 
-#: src/sshpilot/terminal.py:4460
+#: src/sshpilot/terminal.py:4471
 msgid "Paste\tCtrl+Shift+V"
 msgstr "Colar\tCtrl+Shift+V"
 
-#: src/sshpilot/terminal.py:4461
+#: src/sshpilot/terminal.py:4472
 msgid "Select All\tCtrl+Shift+A"
 msgstr "Selecionar tudo\tCtrl+Shift+A"
 
-#: src/sshpilot/terminal.py:4463
+#: src/sshpilot/terminal.py:4474
 msgid "Zoom In\tCtrl++"
 msgstr "Ampliar\tCtrl++"
 
-#: src/sshpilot/terminal.py:4464
+#: src/sshpilot/terminal.py:4475
 msgid "Zoom Out\tCtrl+-"
 msgstr "Reduzir\tCtrl+-"
 
-#: src/sshpilot/terminal.py:4465
+#: src/sshpilot/terminal.py:4476
 msgid "Reset Zoom\tCtrl+0"
 msgstr "Redefinir zoom\tCtrl+0"
 
-#: src/sshpilot/terminal.py:4468
+#: src/sshpilot/terminal.py:4479
 msgid "Search\tCtrl+Shift+F"
 msgstr "Pesquisar\tCtrl+Shift+F"
 
@@ -15835,11 +15859,11 @@ msgstr ""
 msgid "Opening file manager…"
 msgstr "Abrindo gerenciador de arquivos…"
 
-#: src/sshpilot/window_help.py:85
+#: src/sshpilot/window_help.py:116
 msgid "Failed to open help"
 msgstr "Falha ao abrir a ajuda"
 
-#: src/sshpilot/window_help.py:86
+#: src/sshpilot/window_help.py:117
 #, python-brace-format
 msgid ""
 "Please open this page manually:\n"
@@ -15848,51 +15872,51 @@ msgstr ""
 "Abra esta página manualmente:\n"
 "{url}"
 
-#: src/sshpilot/window_help.py:152
+#: src/sshpilot/window_help.py:183
 msgid "Open New Tab"
 msgstr "Abrir nova aba"
 
-#: src/sshpilot/window_help.py:221
+#: src/sshpilot/window_help.py:252
 msgid "Focus pane left"
 msgstr "Focar painel à esquerda"
 
-#: src/sshpilot/window_help.py:222
+#: src/sshpilot/window_help.py:253
 msgid "Focus pane down"
 msgstr "Focar painel abaixo"
 
-#: src/sshpilot/window_help.py:223
+#: src/sshpilot/window_help.py:254
 msgid "Focus pane up"
 msgstr "Focar painel acima"
 
-#: src/sshpilot/window_help.py:224
+#: src/sshpilot/window_help.py:255
 msgid "Focus pane right"
 msgstr "Focar painel à direita"
 
-#: src/sshpilot/window_help.py:225
+#: src/sshpilot/window_help.py:256
 msgid "Resize pane left"
 msgstr "Redimensionar painel para a esquerda"
 
-#: src/sshpilot/window_help.py:226
+#: src/sshpilot/window_help.py:257
 msgid "Resize pane down"
 msgstr "Redimensionar painel para baixo"
 
-#: src/sshpilot/window_help.py:227
+#: src/sshpilot/window_help.py:258
 msgid "Resize pane up"
 msgstr "Redimensionar painel para cima"
 
-#: src/sshpilot/window_help.py:228
+#: src/sshpilot/window_help.py:259
 msgid "Resize pane right"
 msgstr "Redimensionar painel para a direita"
 
-#: src/sshpilot/window_help.py:229
+#: src/sshpilot/window_help.py:260
 msgid "Side-by-side layout"
 msgstr "Layout lado a lado"
 
-#: src/sshpilot/window_help.py:230
+#: src/sshpilot/window_help.py:261
 msgid "Top / bottom layout"
 msgstr "Layout superior / inferior"
 
-#: src/sshpilot/window_help.py:231
+#: src/sshpilot/window_help.py:262
 msgid "Add pane"
 msgstr "Adicionar painel"
 
@@ -16053,480 +16077,522 @@ msgid "mFat"
 msgstr "mFat"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:40
+msgid "Fixes error in loading connection dialog on older libadwaita versions"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:45
+msgid ""
+"Closing a connected tab asks once instead of twice; cancelling no longer "
+"leaves a session running with no tab"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:46
+msgid "Quitting can be confirmed with the same \"Don't ask me again\" option"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:47
+msgid ""
+"If the app crashes or is killed, its SSH sessions, forwards and transfers "
+"now stop with it instead of running on unreachable"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:48
+msgid ""
+"Detach and restore-sessions-on-startup are retired: detached sessions could "
+"never be reopened, and restore never covered a crash"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:49
+msgid ""
+"Settings: Interface is now General and holds Ask before closing a tab and "
+"Ask before quitting; Background Service moves to Advanced and shows the real "
+"idle shutdown time"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:50
+msgid ""
+"The About dialog shows the bundled app icon, not an outdated system copy"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:51
+msgid "Spanish: \"Close\" now reads \"Cerrar\""
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:56
 msgid ""
 "Saved hosts now connect exactly as `ssh <alias>` does in a terminal: earlier "
 "Host * and Match blocks, /etc/ssh/ssh_config and the main config of hosts in "
 "included files all apply as OpenSSH applies them"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:41
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:57
 msgid ""
 "If a setting you typed is no longer the one used, a banner in the main "
 "window says so and the connection editor marks the field with the value that "
 "wins and where it comes from; open Effective Config for details"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:42
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:58
 msgid ""
 "Saved passwords are looked up by the user and host OpenSSH resolves, so a "
 "Host * that changes User or HostName may ask for the password once more"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:43
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:59
 msgid ""
 "The app keepalive is now only a fallback; a ServerAliveInterval in your SSH "
 "config wins"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:44
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:60
 msgid ""
 "Host key checking is left to your SSH config unless you set it in Settings"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:45
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:61
 msgid ""
 "Settings > SSH Options is now a page of overrides that win over the SSH "
 "config, with Not set by default, keyword suggestions, an address family "
 "option, a legacy device compatibility switch and free-form extra options"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:46
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:62
 msgid ""
 "Clear messages when the SSH config cannot be read, is read-only, is a link "
 "the app cannot see, or is rejected by OpenSSH; no more .bak copy beside it"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:47
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:63
 msgid "A linked ~/.ssh/config is followed the way OpenSSH does"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:48
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:64
 msgid ""
 "File manager: Windows servers keep nested folders on upload and show their "
 "paths as the server gives them; Flatpak users get Request Access for folders "
 "the sandbox cannot reach"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:49
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:65
 msgid "Dashboard keeps its data and tab while refreshing"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:50
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:66
 #, fuzzy
 msgid "New Colored Text style for sidebar group colours"
 msgstr "Novo estilo \"Compacto\" para a barra lateral"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:51
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:67
 msgid ""
 "RDP: gtk4-frdp 0.2.4, OpenSSL legacy provider bundled on Windows, FreeRDP "
 "diagnostics in the app log"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:52
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:68
 msgid ""
 "Fixed a crash in the shortcuts overview, an X11 ibus crash when closing the "
 "SSH config editor, and a corrupt process registry after a power cut on "
 "Windows"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:57
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:73
 #, fuzzy
 msgid "more rdp fixes"
 msgstr "Pequenas correções na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:62
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:78
 msgid ""
 "Added terminal output highlighter - network addresses and important debug "
 "messages are now highlighted with profiles for several network devices"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:63
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:79
 msgid "RDP tab ships gtk4-frdp 0.2.1 everywhere"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:64
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:80
 msgid "Recent and Pinned titles stay in sync when a connection is renamed"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:69
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:85
 msgid ""
 "RDP connections can open in an embedded tab, and the tab can move to its own "
 "window and back without reconnecting"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:70
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:86
 msgid ""
 "Sleeping hosts are woken before connecting, and pre-connect steps now run "
 "for RDP tabs too"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:71
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:87
 msgid "X11 forwarding now works on Windows (#1365)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:72
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:88
 msgid "Serial connections: new \"Backspace key sends\" option (#1366)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:73
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:89
 msgid ""
 "The key passphrase prompt offers remember options, and a rejected saved "
 "passphrase is no longer retried"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:74
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:90
 msgid "Large pastes into the terminal arrive whole instead of failing"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:75
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:91
 #, fuzzy
 msgid "Bitwarden backups that are too large are stored as a note attachment"
 msgstr ""
 "Backups deste tamanho são armazenados como anexo, o que requer o Bitwarden "
 "Premium."
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:76
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:92
 #, fuzzy
 msgid "View menu: new toggle for the tab overview button"
 msgstr "Novos alternadores para botões da barra de cabeçalho"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:77
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:93
 msgid ""
 "Files edited through Manage Files, including \"Edit as root\", no longer "
 "create automatic backups"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:78
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:94
 msgid ""
 "Fixed: quitting could be blocked by \"multiplexed SSH connection could not "
 "be checked\" (#1361)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:79
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:95
 msgid ""
 "Fixed: lost clicks and a flood of terminal input on wheel scroll on macOS; "
 "the main window dropping behind when a dialog closes on Windows; GSSAPI in "
 "Flatpak; the sidebar recovering when loading rows fails (#1363)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:84
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:100
 msgid "New app icon on every platform"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:85
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:101
 msgid ""
 "Sidebar: actions moved into a single title row, and they come along in the "
 "hover/search popup"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:86
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:102
 msgid "Sidebar view menu: new Filter by Tag and Privacy sections"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:87
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:103
 msgid ""
 "Omnisearch centred over the tab area; Start tab shows only while no other "
 "tab is open"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:88
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:104
 msgid ""
 "Terminal theme and command snippets buttons hidden by default (theme button "
 "kept in the header bar)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:89
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:105
 msgid "Dragging a connection shows its name on an accent chip"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:90
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:106
 msgid "A newly added split pane scrolls into view"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:91
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:107
 msgid ""
 "Docker Console: filter field on the Images, Volumes, Networks and Compose "
 "tabs (#1335)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:92
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:108
 msgid ""
 "Tag picker shows existing tags and an empty state when there are none (#1336)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:93
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:109
 msgid ""
 "Server Metrics: \"Show more\" now expands the established connection lists, "
 "and Top processes lists up to 50 (#1337)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:94
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:110
 msgid ""
 "Windows installer: asks about the startup update check, new artwork, "
 "prepared for SignPath code signing"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:95
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:111
 msgid "Fixed a crash when a drag left the sidebar over the drop gap (#1334)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:100
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:116
 msgid ""
 "A session saved while Settings is open now appears in Settings' startup "
 "session list without restarting"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:101
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:117
 msgid ""
 "Starting the app with a saved session now opens the session shown in Settings"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:106
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:122
 msgid ""
 "Using a right-click menu action on several selected connections (such as "
 "Delete) keeps all of them selected"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:107
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:123
 msgid "Clicking a terminal's own tab pill keeps that terminal active"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:108
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:124
 msgid "The window controls stay visible in a narrow window"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:109
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:125
 msgid "Restoring a backup puts keys kept outside ~/.ssh into the key directory"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:110
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:126
 msgid "Restoring a backup made on Windows also restores its Include files"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:111
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:127
 msgid ""
 "After a merge restore, the app tells you what was left as it was on this "
 "machine"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:112
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:128
 msgid "The connection-sort message is worded more clearly"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:113
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:129
 msgid ""
 "The Windows installer is now named SSHPilot-<version>-windows-<arch>-"
 "setup.exe"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:118
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:134
 msgid "Initial release of Windows port"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:119
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:135
 msgid ""
 "Option to remember a password for the current session (until SSH Pilot quits)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:120
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:133
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:136
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:149
 msgid ""
 "Security hardening: refuse shell text in HostName/ProxyJump, control "
 "characters typed into terminals, and unsafe paths in SCP downloads and "
 "backup restores"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:121
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:134
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:137
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:150
 msgid "Old config.json files are upgraded instead of reset to defaults"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:122
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:135
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:138
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:151
 #, fuzzy
 msgid "Various fixes and improvements"
 msgstr "Várias correções de bugs e melhorias"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:127
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:143
 msgid ""
 "Experimental Windows port: run from source or install with the new NSIS "
 "installer"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:128
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:144
 msgid ""
 "Local shell tabs on the built-in terminal backend, with ConPTY and libvterm "
 "on Windows"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:129
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:145
 msgid ""
 "Faster startup: the daemon starts while the GUI loads and the sidebar shows "
 "in the first frame"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:130
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:146
 msgid ""
 "Faster full-screen redraws and synchronized output support in the built-in "
 "terminal"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:131
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:147
 #, fuzzy
 msgid "Option to remember a password until SSH Pilot quits"
 msgstr "Adicionada opção para lembrar senhas nas solicitações de senha"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:132
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:148
 msgid "Save search-box connections with options inherited from Host *"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:140
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:156
 msgid ""
 "New Settings dialog with built-in search and dedicated pages for Appearance "
 "and Sidebar"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:141
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:157
 #, fuzzy
 msgid "Improved look and feel for split view terminals"
 msgstr ""
 "Aparência e usabilidade aprimoradas para o gerenciador de arquivos integrado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:142
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:158
 msgid ""
 "New layout chooser in settings - choose between default look with sidebar "
 "and plain terminal look"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:143
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:159
 msgid "Reveal a hidden sidebar by hovering over the sidebar toggle"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:144
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:160
 msgid "Improved Broadcast command experience, disable autohide"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:145
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:161
 #, fuzzy
 msgid "Various UI fixes and improvements"
 msgstr "Várias correções de bugs e melhorias"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:150
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:166
 msgid "Connections are now automatically tagged by protocol"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:151
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:167
 #, fuzzy
 msgid "Improved sorting behavior in connection list"
 msgstr "Adicionada ordenação à lista de conexões"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:152
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:168
 #, fuzzy
 msgid "Create your own custom terminal themes"
 msgstr "Criar um esquema de cores do terminal"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:157
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:236
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:254
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:265
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:303
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:314
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:173
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:252
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:270
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:281
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:319
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:424
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:436
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:507
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:512
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:517
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:522
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:565
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:571
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:576
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:584
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:612
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:617
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:624
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:658
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:670
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:676
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:681
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:696
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:701
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:728
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:748
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:330
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:335
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:440
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:452
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:523
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:528
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:533
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:538
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:581
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:587
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:592
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:600
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:628
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:633
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:640
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:674
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:686
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:692
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:697
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:712
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:717
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:744
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:764
 msgid "Bug fixes"
 msgstr "Correções de bugs"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:158
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:174
 #, fuzzy
 msgid "New logo"
 msgstr "Nova pasta"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:163
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:179
 #, fuzzy
 msgid "New \"Open in Terminal\" option in file manager"
 msgstr "Falha ao abrir o gerenciador de arquivos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:164
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:180
 msgid ""
 "Open local and remote terminal panes in file manager with optional "
 "synchronized browsing"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:169
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:185
 #, fuzzy
 msgid "SFTP file manager improvements"
 msgstr "Melhorias na interface do gerenciador de arquivos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:174
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:180
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:190
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:196
 msgid "Added RDP support (requries freerdp3)"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:175
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:181
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:191
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:197
 #, fuzzy
 msgid "Improved UX for non-SSH protocol plugins"
 msgstr "Melhorias nos plugins de protocolos não SSH"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:186
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:202
 msgid ""
 "Introducing \"Login Profiles\", reusable, saved idenities you can assign to "
 "any connection or group"
 msgstr ""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:187
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:203
 #, fuzzy
 msgid "New \"Dashboard\" button in connection rows"
 msgstr "Mostrar o ícone do computador nas linhas de conexão"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:188
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:204
 #, fuzzy
 msgid "UI improvements"
 msgstr "Pequenas melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:189
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:205
 #, fuzzy
 msgid "Updated translations"
 msgstr "Notificações de atualização"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:194
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:210
 msgid "More SFTP improvemnets"
 msgstr "Pequenas melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:195
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:211
 msgid "Added support for OSC 52"
 msgstr "Adicionado suporte para grupos aninhados"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:200
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:216
 msgid "Various improvemnets to SFTP file manager"
 msgstr "Melhorias de desempenho no gerenciador de arquivos SFTP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:201
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:379
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:217
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:395
 msgid "Minor bug fixes"
 msgstr "Pequenas correções de bugs"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:206
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:222
 msgid ""
 "Fixed KeePass database creation failing with a false \"pykeepass is not "
 "installed\" error"
@@ -16534,13 +16600,13 @@ msgstr ""
 "Corrigida a criação de banco de dados KeePass falhando com um erro falso "
 "\"pykeepass não está instalado\""
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:207
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:223
 msgid "Fixed auto-unlock after creating a KeePass database"
 msgstr ""
 "Corrigido o desbloqueio automático após a criação de um banco de dados "
 "KeePass"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:208
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:224
 msgid ""
 "Fixed Bitwarden US cloud setup leaving a previous EU or self-hosted server "
 "URL in place"
@@ -16548,26 +16614,26 @@ msgstr ""
 "Corrigida a configuração da nuvem Bitwarden US que mantinha o URL de um "
 "servidor EU ou auto-hospedado anterior"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:209
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:225
 msgid ""
 "Secret vault sessions now lock when the database or account target changes"
 msgstr ""
 "As sessões do cofre de segredos agora bloqueiam quando o destino da conta ou "
 "banco de dados muda"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:210
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:226
 msgid "Bitwarden idle timeout is now enforced on credential lookups"
 msgstr ""
 "O tempo limite de inatividade do Bitwarden agora é aplicado em consultas de "
 "credenciais"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:211
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:227
 msgid ""
 "New preference to set how many lines the mouse wheel scrolls in the terminal"
 msgstr ""
 "Nova preferência para definir quantas linhas a roda do mouse rola no terminal"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:212
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:228
 msgid ""
 "Localized File Manager, text editor, session failure, and Ásbrú import "
 "messages"
@@ -16575,7 +16641,7 @@ msgstr ""
 "Mensagens do Gerenciador de Arquivos, editor de texto, falhas de sessão e "
 "importação do Ásbrú localizadas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:217
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:233
 msgid ""
 "Local shell now follows the window size, so full-screen programs use the "
 "whole terminal"
@@ -16583,18 +16649,18 @@ msgstr ""
 "O shell local agora acompanha o tamanho da janela, para que programas em "
 "tela cheia usem todo o terminal"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:218
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:234
 msgid "Fixed scrolling being far too fast with a touchpad on macOS"
 msgstr "Corrigida a rolagem excessivamente rápida com touchpad no macOS"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:219
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:235
 msgid ""
 "Fixed the scroll wheel not working while terminal shortcut pass-through is on"
 msgstr ""
 "Corrigida a roda de rolagem que não funcionava enquanto o repasse de atalhos "
 "do terminal estava ativado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:220
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:236
 msgid ""
 "Fixed a local terminal tab staying open with an SSH error after pressing "
 "Ctrl+C and typing exit"
@@ -16602,42 +16668,42 @@ msgstr ""
 "Corrigida uma aba de terminal local que permanecia aberta com um erro SSH "
 "após pressionar Ctrl+C e digitar exit"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:225
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:241
 msgid "New port-knocking/pre-connect command configuration dialog"
 msgstr ""
 "Novo diálogo de configuração para comandos de port knocking e pré-conexão"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:230
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:246
 msgid "Fixed arrow keys not working on macOS after recent GTK update"
 msgstr ""
 "Corrigidas as teclas de seta que não funcionavam no macOS após atualização "
 "recente do GTK"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:231
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:247
 msgid "Fixed macOS Intel builds"
 msgstr "Corrigidas as compilações Intel do macOS"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:241
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:257
 msgid "New \"Compact\" style for sidebar"
 msgstr "Novo estilo \"Compacto\" para a barra lateral"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:242
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:258
 msgid "Fixed mosh connection failure"
 msgstr "Falha na reconexão"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:243
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:259
 msgid "New option to add a pinned local shell to connection list"
 msgstr "Nova exibição de tags para a lista de conexões"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:248
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:264
 msgid "Improvements to SplitView mode"
 msgstr "Melhorias na visualização dividida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:249
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:265
 msgid "Added ProxyCommand entry to connection dialog"
 msgstr "Adicionada ordenação à lista de conexões"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:259
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:275
 msgid ""
 "Added support for importing authorized keys from GitHub, GitLab, Launchpad "
 "or a URL"
@@ -16645,17 +16711,17 @@ msgstr ""
 "Adicionado suporte para importação de chaves autorizadas do GitHub, GitLab, "
 "Launchpad ou uma URL"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:260
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:276
 msgid "Fixed overlapping scrollbars in splitview"
 msgstr ""
 "Corrigido o problema de sobreposição de barras de rolagem na visualização "
 "dividida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:270
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:286
 msgid "Host Info renamed to Dashboard, opens in a new tab now"
 msgstr "Informações do Host renomeado para Painel, agora abre em uma nova aba"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:271
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:287
 msgid ""
 "Open common web UIs from Dashboard - you can open web UIs for remote "
 "services right from the dashboard"
@@ -16663,72 +16729,72 @@ msgstr ""
 "Abra interfaces web comuns a partir do Painel - você pode abrir interfaces "
 "web para serviços remotos diretamente do painel"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:272
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:288
 msgid ""
 "Port-forwarding sessions now show forwarding status instead of empty terminal"
 msgstr ""
 "As sessões de redirecionamento de portas agora mostram o status do "
 "redirecionamento em vez de um terminal vazio"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:273
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:289
 msgid "Added option to exit on port forwarding failure"
 msgstr "Adicionar uma nova regra de redirecionamento de portas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:274
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:290
 msgid "Improved responsive design for dashboard"
 msgstr "Design responsivo aprimorado para o painel"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:279
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:295
 msgid "Fixed keyboard shortcuts not working under non-Latin layouts"
 msgstr ""
 "Corrigidos atalhos de teclado que não funcionavam sob layouts não latinos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:280
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:296
 msgid "Added terminal cursor customization"
 msgstr "Adicionada personalização do cursor do terminal"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:281
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:297
 msgid "Added experimental Ásbrú importer"
 msgstr "Adicionado importador experimental do Ásbrú"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:282
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:298
 msgid "Minor UI tweaks"
 msgstr "Pequenas correções na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:287
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:303
 msgid "Sidebar is now resizable"
 msgstr "A barra lateral agora é redimensionável"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:288
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:304
 msgid "Added option to use monospace font for the user interface"
 msgstr "Adicionada opção para usar fonte monoespaçada na interface de usuário"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:293
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:309
 msgid "Redesigned backup dialog"
 msgstr "Caixa de diálogo SCP reprojetada"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:294
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:310
 msgid "Improved Host Info dialog"
 msgstr "Editor de configuração SSH aprimorado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:295
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:311
 msgid "Added option to paste public key to ssh-copy-id dialog"
 msgstr "Adicionada opção para colar chave pública no diálogo do ssh-copy-id"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:296
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:312
 msgid "Fixed bug that prevented deleting multiple groups at once"
 msgstr "Corrigido bug que impedia a exclusão de múltiplos grupos de uma só vez"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:297
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:313
 msgid "Added option to reveal scp-downloaded files in file manager"
 msgstr ""
 "Adicionada opção para abrir um terminal em abas do gerenciador de arquivos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:298
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:314
 msgid "Fixed backup decryption bug during restore"
 msgstr "Corrigido problema de criptografia do backup"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:308
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:324
 msgid ""
 "Introducing \"Host Info\" - detailed info about any host, available from the "
 "context menu"
@@ -16736,7 +16802,7 @@ msgstr ""
 "Apresentando \"Informações do Host\" - informações detalhadas sobre qualquer "
 "host, disponíveis a partir do menu de contexto"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:309
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:325
 msgid ""
 "New languages: Spanish, Portuguese, Brazilian Portuguese, Chinese, Russian "
 "and Persian"
@@ -16744,133 +16810,133 @@ msgstr ""
 "Novos idiomas: espanhol, português, português brasileiro, chinês, russo e "
 "persa"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:324
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:330
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:340
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:346
 msgid "Improvements to isolated workspace mode"
 msgstr "Melhorias no modo de espaço de trabalho isolado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:325
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:331
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:341
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:347
 msgid "Middle-click a group to open all connections in splitview"
 msgstr ""
 "Clique com o botão do meio em um grupo para abrir todas as conexões em "
 "visualização dividida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:336
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:352
 msgid "Improvements to non-SSH protocol plugins"
 msgstr "Melhorias nos plugins de protocolos não SSH"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:337
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:353
 msgid "Fixes text selection when using remote apps such as tmux and htop"
 msgstr ""
 "Corrige a seleção de texto ao usar aplicativos remotos como tmux e htop"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:338
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:354
 msgid "Fixes SFTP File Manager retry/reconnect flow"
 msgstr "Corrige o fluxo de repetição/reconexão do gerenciador de arquivos SFTP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:343
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:359
 msgid "New \"Copy SSH Command\" context-menu action"
 msgstr "Nova ação de menu de contexto “Copiar comando SSH”"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:344
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:360
 msgid "Fixes rbw secret backend"
 msgstr "Corrige o backend de segredos rbw"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:345
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:361
 msgid "Other bug fixes and improvements"
 msgstr "Outras correções de bugs e melhorias"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:350
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:366
 msgid "Fixed Bitwarden login issue"
 msgstr "Corrigido problema de login no Bitwarden"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:355
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:371
 msgid "Faster startup"
 msgstr "Inicialização mais rápida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:356
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:372
 msgid "Vault unlock prompt now displayed on startup"
 msgstr "Solicitação de desbloqueio do cofre agora exibida na inicialização"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:357
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:373
 msgid "Privacy toggle hides hostnames and IP addresses in start page too"
 msgstr ""
 "Alternador de privacidade também oculta hostnames e endereços IP na página "
 "inicial"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:362
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:378
 msgid "Fixed subgroups not inheriting parent group color"
 msgstr "Corrigido problema de subgrupos não herdarem a cor do grupo pai"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:363
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:379
 msgid "Added option to remember passwords to password prompts"
 msgstr "Adicionada opção para lembrar senhas nas solicitações de senha"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:364
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:380
 msgid "Minor fixes to DnD in sidebar"
 msgstr "Pequenas correções em arrastar e soltar na barra lateral"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:369
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:385
 msgid ""
 "Added new terminal theme selector, added option to access it from tab bar"
 msgstr ""
 "Adicionado novo seletor de tema do terminal, adicionada opção para acessá-lo "
 "na barra de abas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:370
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:386
 msgid "Fixed vault unlock issue"
 msgstr "Corrigido problema ao desbloquear o cofre"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:371
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:387
 msgid "Fixed backup encryption issue"
 msgstr "Corrigido problema de criptografia do backup"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:372
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:955
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:388
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:971
 msgid "Minor UI fixes"
 msgstr "Pequenas correções na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:377
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:393
 msgid "Improved drag & drop for connections across groups"
 msgstr "Arrastar e soltar aprimorado para conexões entre grupos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:378
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:394
 msgid "Improved connection status reporting"
 msgstr "Relatório de status da conexão aprimorado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:384
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:497
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:502
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:686
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:400
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:513
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:518
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:702
 msgid "Bug fixes and UI improvements"
 msgstr "Correções de bugs e melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:389
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:405
 msgid "Fixes drag and drop reordering not working"
 msgstr "Corrige reordenação por arrastar e soltar que não funcionava"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:390
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:406
 msgid "Adds manual sorting option"
 msgstr "Adiciona opção de ordenação manual"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:395
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:411
 msgid "Added French translation"
 msgstr "Adicionada tradução para o francês"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:396
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:405
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:412
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:421
 msgid "Minor UI improvements"
 msgstr "Pequenas melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:401
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:417
 msgid ""
 "Integrated tab bar into header for a cleaner, more minimal user interface"
 msgstr ""
 "Barra de abas integrada ao cabeçalho para uma interface de usuário mais "
 "limpa e minimalista"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:402
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:418
 msgid ""
 "Revamped Command Snippets panel - the snippets are now displayed in a "
 "floating panel"
@@ -16878,7 +16944,7 @@ msgstr ""
 "Painel de Snippets de Comandos reformulado — os snippets agora são exibidos "
 "em um painel flutuante"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:403
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:419
 msgid ""
 "Added keyboard support to Snippets - you can assign your desired shortcut "
 "for the popup"
@@ -16886,22 +16952,22 @@ msgstr ""
 "Adicionado suporte ao teclado para Snippets — você pode atribuir o atalho "
 "desejado para a janela flutuante"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:404
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:420
 msgid "Added theme selector to main menu, inspired by Ptyxis"
 msgstr "Adicionado seletor de tema ao menu principal, inspirado no Ptyxis"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:410
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:419
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:429
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:441
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:446
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:451
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:456
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:721
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:426
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:435
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:445
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:457
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:462
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:467
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:472
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:737
 msgid "Bug fixes and improvements"
 msgstr "Correções de bugs e melhorias"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:415
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:431
 msgid ""
 "Improved full-screen experience (activated with F11 on linux, Cmd+Ctrl+F on "
 "macOS)"
@@ -16909,36 +16975,36 @@ msgstr ""
 "Experiência de tela cheia aprimorada (ativada com F11 no Linux, Cmd+Ctrl+F "
 "no macOS)"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:416
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:432
 msgid "Improved app menu on macOS"
 msgstr "Menu do aplicativo aprimorado no macOS"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:417
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:433
 msgid "Added animated effect to omnisearch"
 msgstr "Adicionado efeito animado à omnibusca"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:418
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:434
 msgid "Added workaround for French keyboard layout on macOS"
 msgstr "Adicionada solução alternativa para layout de teclado francês no macOS"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:434
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:450
 msgid "Improved effective config diff tool"
 msgstr "Ferramenta de comparação de configuração efetiva aprimorada"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:435
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:451
 msgid "Improved experience when switching operation mode"
 msgstr "Experiência aprimorada ao alternar o modo de operação"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:461
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:477
 msgid "Migrated the code base to a new daemon-based system"
 msgstr "Base de código migrada para um novo sistema baseado em daemon"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:462
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:478
 msgid "Introducing SSH Pilot API"
 msgstr "Apresentando a API do SSH Pilot"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:467
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:478
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:483
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:494
 msgid ""
 "Introducing Omnisearch—a powerful, versatile pop-up search box accessible "
 "from anywhere by double-pressing the Shift key"
@@ -16946,8 +17012,8 @@ msgstr ""
 "Apresentando a Omnibusca — uma caixa de pesquisa flutuante poderosa e "
 "versátil acessível de qualquer lugar pressionando a tecla Shift duas vezes"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:468
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:479
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:484
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:495
 msgid ""
 "Added a minimal sidebar mode that uses a narrow, icon-only strip to free up "
 "horizontal screen space"
@@ -16955,8 +17021,8 @@ msgstr ""
 "Adicionado modo de barra lateral minimalista que usa uma faixa estreita "
 "apenas com ícones para liberar espaço horizontal na tela"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:469
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:480
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:485
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:496
 msgid ""
 "Added an option to open the file manager in SSH terminal panes from the tab "
 "context menu"
@@ -16964,20 +17030,20 @@ msgstr ""
 "Adicionada opção para abrir o gerenciador de arquivos em painéis de terminal "
 "SSH a partir do menu de contexto da aba"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:470
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:481
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:486
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:497
 msgid "Added an option to open a terminal in file manager tabs"
 msgstr ""
 "Adicionada opção para abrir um terminal em abas do gerenciador de arquivos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:471
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:482
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:487
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:498
 msgid "Improved the appearance and overall experience of the SFTP file manager"
 msgstr ""
 "Aparência e experiência geral do gerenciador de arquivos SFTP aprimoradas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:472
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:483
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:488
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:499
 msgid ""
 "Fixed an issue that delayed application shutdown when local terminal tabs "
 "were open"
@@ -16985,13 +17051,13 @@ msgstr ""
 "Corrigido problema que atrasava o fechamento do aplicativo quando abas de "
 "terminal local estavam abertas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:473
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:484
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:738
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:489
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:500
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:754
 msgid "Various bug fixes and UI improvements"
 msgstr "Várias correções de bugs e melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:489
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:505
 msgid ""
 "Introducing Omnisearch - a powerful, versatile pop-up search box you can "
 "activate from anywhere by double-pressing the Shift key"
@@ -17000,7 +17066,7 @@ msgstr ""
 "versátil que você pode ativar de qualquer lugar pressionando a tecla Shift "
 "duas vezes"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:490
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:506
 msgid ""
 "Introducing a minimal mode for the sidebar - use a narrow, icon-only strip "
 "instead of the default full sidebar to reclaim more horizontal screen space"
@@ -17009,12 +17075,12 @@ msgstr ""
 "estreita apenas de ícones em vez da barra lateral completa padrão para "
 "liberar mais espaço horizontal na tela"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:491
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:528
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:507
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:544
 msgid "Various bug fixes and improvements"
 msgstr "Várias correções de bugs e melhorias"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:496
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:512
 msgid ""
 "Enhanced CLI interface - start sshpilot from commandline like \"sshpilot "
 "user@host\", use --sftp to open the file manager"
@@ -17022,69 +17088,69 @@ msgstr ""
 "Interface CLI aprimorada — inicie o sshpilot na linha de comando como "
 "“sshpilot usuário@host”, use --sftp para abrir o gerenciador de arquivos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:527
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:543
 msgid "German translation"
 msgstr "Tradução para o alemão"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:533
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:549
 msgid "Meson build system"
 msgstr "Sistema de compilação Meson"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:534
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:550
 msgid "Migrated to GNOME rcommended project structure"
 msgstr "Migrado para a estrutura de projeto recomendada pelo GNOME"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:539
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:555
 msgid "Migrated to meson build system"
 msgstr "Migrado para o sistema de compilação Meson"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:544
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:560
 msgid "Enhanced support for multi-step authentication challenges"
 msgstr "Suporte aprimorado para desafios de autenticação em várias etapas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:545
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:553
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:561
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:569
 msgid "Better support for FIDO hardware keys"
 msgstr "Melhor suporte para chaves de hardware FIDO"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:546
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:554
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:562
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:570
 msgid "More robust password autofill flow"
 msgstr "Fluxo de preenchimento automático de senhas mais robusto"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:547
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:563
 msgid "Redesigned SCP dialog"
 msgstr "Caixa de diálogo SCP reprojetada"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:552
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:568
 msgid "Enhanced suppot for multi-sttep authentication challenges"
 msgstr "Suporte aprimorado para desafios de autenticação em várias etapas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:555
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:571
 msgid "Revamped SCP dialogs"
 msgstr "Caixas de diálogo SCP reformuladas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:560
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:576
 msgid "Bug fixes and minor UI improvements"
 msgstr "Correções de bugs e pequenas melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:570
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:586
 msgid "Improvements for Xterm.js terminal backend"
 msgstr "Melhorias no backend de terminal Xterm.js"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:581
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:597
 msgid "Docker Console UI improvements"
 msgstr "Melhorias na interface do console Docker"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:582
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:598
 msgid "File manager UI improvements"
 msgstr "Melhorias na interface do gerenciador de arquivos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:583
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:599
 msgid "Reorganized main menu"
 msgstr "Menu principal reorganizado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:589
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:605
 msgid ""
 "Backup settings and credentials to Bitwarden/Vaultwarden right from SSH "
 "Pilot and restore on other devices"
@@ -17092,142 +17158,142 @@ msgstr ""
 "Faça backup de configurações e credenciais no Bitwarden/Vaultwarden direto "
 "do SSH Pilot e restaure em outros dispositivos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:590
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:606
 msgid "More credential storage backends including Keepass, Bitwarden and rbw"
 msgstr ""
 "Mais backends de armazenamento de credenciais, incluindo KeePass, Bitwarden "
 "e rbw"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:591
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:607
 msgid "Improvements to Pyxtermjs terminal backend"
 msgstr "Melhorias no backend de terminal Pyxtermjs"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:592
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:608
 msgid "Various bug fixes and performance improvements"
 msgstr "Várias correções de bugs e melhorias de desempenho"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:597
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:613
 msgid "Fixes SCP bug in Flatpak"
 msgstr "Corrige bug do SCP no Flatpak"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:598
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:614
 msgid ""
 "Adds \"Edit as Root\" button to text editor. Edit eny remote files with sudo"
 msgstr ""
 "Adiciona o botão “Editar como root” ao editor de texto. Edite quaisquer "
 "arquivos remotos com sudo"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:599
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:615
 msgid "Better logging and diagnostics suite"
 msgstr "Pacote de logs e diagnósticos aprimorado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:604
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:620
 msgid "Improved drag and drop and group nesting experience"
 msgstr "Arrastar e soltar e aninhamento de grupos aprimorados"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:609
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:625
 msgid "Added support for nested groups"
 msgstr "Adicionado suporte para grupos aninhados"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:610
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:626
 msgid "Improvements to Drag & Drop experience in connection list"
 msgstr "Melhorias na experiência de arrastar e soltar na lista de conexões"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:611
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:627
 msgid "Fixed scp failing to download directories"
 msgstr "Corrigida falha do scp ao baixar diretórios"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:618
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:634
 msgid "Performance improvements for SFTP file manager"
 msgstr "Melhorias de desempenho no gerenciador de arquivos SFTP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:619
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:635
 msgid "Added option to copy text on select"
 msgstr "Adicionada opção para copiar texto ao selecionar"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:629
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:645
 msgid "New Docker/Podman management console"
 msgstr "Novo console de gerenciamento Docker/Podman"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:630
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:646
 msgid "New plugin feature + plugin SDk with a bunch of experimental plugins"
 msgstr ""
 "Novo recurso de plugins + SDK de plugins com vários plugins experimentais"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:631
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:647
 msgid "Support for additional protocols (mosh, serial, etc.)"
 msgstr "Suporte para protocolos adicionais (mosh, serial, etc.)"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:632
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:641
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:648
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:657
 msgid "UI fixes and improvements"
 msgstr "Correções e melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:637
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:653
 msgid "Docker/Podman container management console"
 msgstr "Console de gerenciamento de contêineres Docker/Podman"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:638
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:654
 msgid "New plugin framework and SDK"
 msgstr "Novo framework de plugins e SDK"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:639
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:655
 msgid "New plugin settings to install and manage plugins"
 msgstr "Novas configurações de plugins para instalar e gerenciar plugins"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:640
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:656
 msgid "Improved SSH config editor"
 msgstr "Editor de configuração SSH aprimorado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:642
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:658
 msgid "Additional protocols"
 msgstr "Protocolos adicionais"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:647
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:663
 msgid "New \"Tags\" feature: add tags to connections"
 msgstr "Novo recurso de “Tags”: adicione tags a conexões"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:648
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:664
 msgid "Search now supports tags"
 msgstr "Pesquisa agora suporta tags"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:649
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:665
 msgid "New tags view for the connection list"
 msgstr "Nova exibição de tags para a lista de conexões"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:650
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:666
 msgid "Drag and drop a connection on a tag group to apply tag"
 msgstr "Arraste e solte uma conexão sobre um grupo de tags para aplicar a tag"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:651
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:667
 msgid "Added inline autocompletion for tags"
 msgstr "Adicionado autocompletar em linha para tags"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:652
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:668
 msgid "Added inline autocompletion for jump hosts"
 msgstr "Adicionado autocompletar em linha para jump hosts"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:653
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:669
 msgid "Added support for selecting connections with space key"
 msgstr "Adicionado suporte para selecionar conexões com a tecla de espaço"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:663
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:679
 msgid "Updated ssh-copy-id dialog"
 msgstr "Caixa de diálogo ssh-copy-id atualizada"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:664
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:680
 msgid "Fixes macOS keychain prompting repeatedly"
 msgstr "Corrige solicitações repetidas das chaves no macOS"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:665
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:681
 msgid "Minor UI improvements and bug fixes"
 msgstr "Pequenas melhorias na interface e correções de bugs"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:675
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:691
 msgid "Improved connection editor"
 msgstr "Editor de conexões aprimorado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:691
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:707
 msgid ""
 "Added fallback for older libadwaita versions failing to load connection "
 "editor"
@@ -17235,58 +17301,58 @@ msgstr ""
 "Adicionado fallback para versões antigas da libadwaita que falhavam ao "
 "carregar o editor de conexões"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:706
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:722
 msgid ""
 "Drag and drop a connection on an existing terminal to create a split view"
 msgstr ""
 "Arraste e solte uma conexão em um terminal existente para criar uma "
 "visualização dividida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:707
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:723
 msgid "New first-run dialog and option to back up .ssh/config"
 msgstr ""
 "Nova caixa de diálogo de primeira execução e opção para fazer backup de .ssh/"
 "config"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:708
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:724
 msgid "Updated connection status indicators"
 msgstr "Indicadores de status de conexão atualizados"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:709
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:725
 msgid "Updated port forwarding indicators"
 msgstr "Indicadores de redirecionamento de portas atualizados"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:710
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:726
 msgid "New sidebar behavior options — configure autohide from Settings"
 msgstr ""
 "Novas opções de comportamento da barra lateral — configure a ocultação "
 "automática nas Configurações"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:711
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:727
 msgid "Improvements to Split View"
 msgstr "Melhorias na visualização dividida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:712
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:728
 msgid "Added local terminal button to the headerbar"
 msgstr "Adicionado botão de terminal local à barra de cabeçalho"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:713
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:729
 msgid "New toggles for headerbar buttons"
 msgstr "Novos alternadores para botões da barra de cabeçalho"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:714
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:730
 msgid "More improvements for the command sidebar"
 msgstr "Mais melhorias na barra lateral de comandos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:715
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:731
 msgid "New option to add multiple private keys and certificates"
 msgstr "Nova opção para adicionar várias chaves privadas e certificados"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:716
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:732
 msgid "Improved .ssh/config parsing logic"
 msgstr "Lógica de análise de .ssh/config aprimorada"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:726
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:742
 msgid ""
 "Added type-ahead search - open the app, start typing and press enter. The "
 "first matching host will be connected"
@@ -17294,7 +17360,7 @@ msgstr ""
 "Adicionada pesquisa ao digitar — abra o app, comece a digitar e pressione "
 "Enter. O primeiro host correspondente será conectado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:727
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:743
 msgid ""
 "Made it easier to switch between the terminal and connection list with "
 "Ctrl+Shift+L"
@@ -17302,29 +17368,29 @@ msgstr ""
 "Facilitada a alternância entre o terminal e a lista de conexões com "
 "Ctrl+Shift+L"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:733
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:743
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:749
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:759
 msgid "Better look and feel for built-in file manager"
 msgstr ""
 "Aparência e usabilidade aprimoradas para o gerenciador de arquivos integrado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:734
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:750
 msgid "Zoom control for file manager"
 msgstr "Controle de zoom para o gerenciador de arquivos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:735
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:751
 msgid "New option to always show Commands sidebar"
 msgstr "Nova opção para sempre mostrar a barra lateral de comandos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:736
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:752
 msgid "More reliable SFTP file transfers"
 msgstr "Transferências de arquivos SFTP mais confiáveis"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:737
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:753
 msgid "Changed default connection list shortcut to Ctrl+Shift+L"
 msgstr "Alterado o atalho padrão da lista de conexões para Ctrl+Shift+L"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:753
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:769
 msgid ""
 "Introducing Command Blocks - Organize your favorite commands in folders, "
 "insert them into terminal with a simple double-click"
@@ -17332,7 +17398,7 @@ msgstr ""
 "Apresentando os Blocos de Comandos — organize seus comandos favoritos em "
 "pastas e insira-os no terminal com um simples duplo clique"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:754
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:770
 msgid ""
 "Choose a command from your command snippet intventory to run on a single "
 "host or a group of machines"
@@ -17340,11 +17406,11 @@ msgstr ""
 "Escolha um comando do seu inventário de snippets para executar em um único "
 "host ou grupo de máquinas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:755
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:771
 msgid "More improvements to Split View"
 msgstr "Mais melhorias na visualização dividida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:760
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:776
 msgid ""
 "New \"Sessions\" feature — Save, open, rename, and delete snapshots of your "
 "open tabs and restore them automatically"
@@ -17352,11 +17418,11 @@ msgstr ""
 "Novo recurso de “Sessões” — salve, abra, renomeie e exclua instantâneos de "
 "suas abas abertas e restaure-os automaticamente"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:761
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:777
 msgid "Pin saved sessions to the start page for one-click restore"
 msgstr "Fixe sessões salvas na página inicial para restauração com um clique"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:762
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:778
 msgid ""
 "Copy to group — Add a connection to another group without removing it from "
 "its current group(s). Same connection can appear in multiple groups."
@@ -17365,7 +17431,7 @@ msgstr ""
 "seu(s) grupo(s) atual(ais). A mesma conexão pode aparecer em múltiplos "
 "grupos."
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:763
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:779
 msgid ""
 "Jump host picker — Pick jump hosts from your saved connections when editing "
 "a connection."
@@ -17373,7 +17439,7 @@ msgstr ""
 "Seletor de jump host — escolha jump hosts a partir de suas conexões salvas "
 "ao editar uma conexão."
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:764
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:780
 msgid ""
 "Better Split View - Resize terminal panes freely, drag and drop an entire "
 "group onto a Split View"
@@ -17381,22 +17447,22 @@ msgstr ""
 "Visualização dividida aprimorada — redimensione os painéis de terminal "
 "livremente, arraste e solte um grupo inteiro sobre uma visualização dividida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:765
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:781
 msgid "Minor UI fixes and improvements"
 msgstr "Pequenas correções e melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:771
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:791
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:797
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:819
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:840
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:860
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:935
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:787
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:807
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:813
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:835
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:856
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:876
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:899
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:951
 msgid "- Bug fixes"
 msgstr "- Correções de bugs"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:777
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:793
 msgid ""
 "- New \"Splt View\" feature - view terminals side by side inside any "
 "terminal tab"
@@ -17404,190 +17470,190 @@ msgstr ""
 "- Novo recurso de “Visualização dividida” — veja terminais lado a lado "
 "dentro de qualquer aba de terminal"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:778
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:794
 msgid "- New context menu item to copy host address"
 msgstr "- Novo item de menu de contexto para copiar endereço do host"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:784
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:800
 msgid "- Updated flatpak to GNOME Platform 50"
 msgstr "- Flatpak atualizado para GNOME Platform 50"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:790
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:806
 msgid "- Added URL support to terminal"
 msgstr "- Adicionado suporte a URL no terminal"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:803
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:819
 msgid "- Fixes for Quick Connect function"
 msgstr "- Correções para a função de conexão rápida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:804
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:820
 msgid "- Add option to save Quick Connect host"
 msgstr "- Adicionada opção para salvar host da conexão rápida"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:805
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:821
 msgid ""
 "- Added option to rename a tab - Double-click any terminal tab to rename"
 msgstr ""
 "- Adicionada opção para renomear uma aba — dê um duplo clique em qualquer "
 "aba de terminal para renomear"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:806
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:822
 msgid "- Added support for Wake on Lan"
 msgstr "- Adicionado suporte a Wake on LAN"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:807
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:823
 msgid "- Added pre-connection command support"
 msgstr "- Adicionado suporte a comando pré-conexão"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:813
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:829
 msgid "- Minor bug fixes"
 msgstr "- Pequenas correções de bugs"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:825
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:841
 msgid "- Fixed saved secrets not used for login"
 msgstr "- Corrigido segredos salvos que não eram usados no login"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:831
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:847
 msgid "- Support for sidebar resizing"
 msgstr "- Suporte para redimensionamento da barra lateral"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:832
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:848
 msgid "- Toggles for info labels in sidebar"
 msgstr "- Alternadores para rótulos de informação na barra lateral"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:833
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:849
 msgid "- Updated color badges"
 msgstr "- Distintivos de cor atualizados"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:834
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:850
 msgid "- Various bug fixes and UI improvements"
 msgstr "- Várias correções de bugs e melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:846
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:862
 msgid "- Added option to resize sidebar"
 msgstr "- Adicionada opção para redimensionar a barra lateral"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:847
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:863
 msgid "- Fixed long host values making sidebar too wide"
 msgstr ""
 "- Corrigidos valores longos de host que deixavam a barra lateral larga demais"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:848
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:864
 msgid "- Bug fixes and UI improvements"
 msgstr "- Correções de bugs e melhorias na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:854
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:870
 msgid "- Drag and drop files and folders on terminal to upload via SCP"
 msgstr "- Arraste e solte arquivos e pastas no terminal para enviar via SCP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:866
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:875
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:882
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:891
 msgid "- Make terminal fullscreen with F11"
 msgstr "- Deixe o terminal em tela cheia com F11"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:867
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:883
 msgid "- Improvements for SCP file transfers"
 msgstr "- Melhorias nas transferências de arquivos SCP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:868
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:884
 msgid "- Drag and drop files and folders directly on terminal widget"
 msgstr "- Arraste e solte arquivos e pastas diretamente no widget do terminal"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:869
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:885
 msgid "- Updated password/passphrase prompts with option to store secrets"
 msgstr ""
 "- Solicitações de senha/frase secreta atualizadas com opção de salvar "
 "segredos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:876
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:892
 msgid "- Added xterm.js as an alternative terminal backend"
 msgstr "- Adicionado xterm.js como backend alternativo de terminal"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:877
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:893
 msgid "- Added graphical prompts for passwords/passphrases"
 msgstr "- Adicionadas solicitações gráficas para senhas/frases secretas"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:889
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:905
 msgid "- Fixed black toolbar in file manager"
 msgstr "- Corrigida barra de ferramentas preta no gerenciador de arquivos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:890
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:906
 msgid "- Fixed nano editor issue when run under KDE Plasma desktop"
 msgstr ""
 "- Corrigido problema no editor nano quando executado no ambiente de desktop "
 "KDE Plasma"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:896
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:912
 msgid "- Enhanced text editor for built-in file manager"
 msgstr "- Editor de texto aprimorado para o gerenciador de arquivos integrado"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:902
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:918
 msgid "- Bug fixes for SFTP file manager"
 msgstr "- Correções de bugs no gerenciador de arquivos SFTP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:908
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:924
 msgid "- Improvements to built-in file manager, new text editor"
 msgstr "- Melhorias no gerenciador de arquivos integrado, novo editor de texto"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:909
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:925
 msgid "- Added file mmanager button to connection rows"
 msgstr "- Adicionado botão do gerenciador de arquivos às linhas de conexão"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:910
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:926
 msgid "- Sort button now sorts groups too"
 msgstr "- Botão de ordenar agora também ordena grupos"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:916
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:932
 msgid "- Fixed file manager bug when password authentication is selected"
 msgstr ""
 "- Corrigido bug no gerenciador de arquivos quando autenticação por senha "
 "está selecionada"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:922
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:938
 msgid "- Redesigned start page, with card and list layouts"
 msgstr "- Página inicial redesenhada, com layouts em cards e lista"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:923
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:939
 msgid "- Minor UI fixes"
 msgstr "- Pequenas correções na interface"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:929
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:945
 msgid "- Update notifier fixes"
 msgstr "- Correções no notificador de atualizações"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:941
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:957
 msgid "- Added update notifier"
 msgstr "- Adicionado notificador de atualizações"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:947
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:963
 msgid "- New feature: Import/Export configuration"
 msgstr "- Novo recurso: Importar/Exportar configuração"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:948
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:964
 msgid "- Better log output"
 msgstr "- Melhor saída de log"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:954
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:970
 msgid "Added sorting to connection list"
 msgstr "Adicionada ordenação à lista de conexões"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:970
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:986
 msgid "Start Page"
 msgstr "Página inicial"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:974
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:990
 msgid "Main Window"
 msgstr "Janela principal"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:978
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:994
 msgid "Terminal and File Manager in One Tab"
 msgstr "Terminal e gerenciador de arquivos em uma só aba"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:994
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:1010
 msgid "Transfer SSH Keys"
 msgstr "Transferir chaves SSH"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:998
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:1014
 msgid "Backup and Restore"
 msgstr "Backup / Restaurar"
 
@@ -17785,6 +17851,12 @@ msgstr "Passagem direta"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copiar chave para o servidor"
+
+#~ msgid "gtkghostty (experimental)"
+#~ msgstr "gtkghostty (experimental)"
+
+#~ msgid "Ghostty's terminal emulator as a native GTK widget"
+#~ msgstr "O emulador de terminal do Ghostty como widget GTK nativo"
 
 #~ msgid "Only when the tab has an open connection"
 #~ msgstr "Somente quando a aba tem uma conexão aberta"

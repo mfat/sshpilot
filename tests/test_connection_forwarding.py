@@ -322,3 +322,67 @@ class TestSaveRuleFromEditor:
         assert dialog.forwarding_rules[0]["remote_host"] == "new"
         assert dialog.forwarding_rules[0]["remote_port"] == 443
         assert dialog.forwarding_rules[1] is other  # untouched
+
+
+class _FakeRuleEditor:
+    def __init__(self):
+        self.destroyed = False
+
+    def destroy(self):
+        self.destroyed = True
+
+
+def test_invalid_rule_keeps_nested_editor_open(monkeypatch):
+    dialog = _make_dialog(monkeypatch)
+    editor = _FakeRuleEditor()
+
+    dialog._finish_rule_editor_save(
+        editor, None, _Combo(0), _Entry("localhost"), _Entry("0"),
+        _Entry("web"), _Entry("80"),
+    )
+
+    assert editor.destroyed is False
+    assert dialog.forwarding_rules == []
+    assert dialog._save_errors
+
+
+def test_valid_rule_closes_nested_editor(monkeypatch):
+    dialog = _make_dialog(monkeypatch)
+    editor = _FakeRuleEditor()
+
+    dialog._finish_rule_editor_save(
+        editor, None, _Combo(0), _Entry("localhost"), _Entry("8080"),
+        _Entry("web"), _Entry("80"),
+    )
+
+    assert editor.destroyed is True
+    assert len(dialog.forwarding_rules) == 1
+    assert dialog._save_errors == []
+
+
+def test_port_conflict_keeps_nested_editor_open(monkeypatch):
+    dialog = _make_dialog(monkeypatch)
+    editor = _FakeRuleEditor()
+
+    class OccupiedPort:
+        process_name = "listener"
+        pid = 42
+
+    class ConflictChecker:
+        def get_port_conflicts(self, ports, addr):
+            return [(8080, OccupiedPort())]
+
+        def find_available_port(self, port, addr):
+            return 8081
+
+    pf_mod = importlib.import_module("sshpilot.connection_dialog_port_forwarding")
+    monkeypatch.setattr(pf_mod, "get_port_checker", ConflictChecker)
+
+    dialog._finish_rule_editor_save(
+        editor, None, _Combo(0), _Entry("localhost"), _Entry("8080"),
+        _Entry("web"), _Entry("80"),
+    )
+
+    assert editor.destroyed is False
+    assert dialog.forwarding_rules == []
+    assert dialog._save_errors

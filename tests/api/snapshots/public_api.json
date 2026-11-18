@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.101",
+  "api_implementation_version": "0.102",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -4723,6 +4723,7 @@
       "pubkey_auth_no",
       "forward_agent",
       "forward_agent_target",
+      "proxy_command",
       "extra_ssh_config"
     ],
     "LoginProfileSnapshot": [
@@ -5820,6 +5821,7 @@
       "pubkey_auth_no",
       "forward_agent",
       "forward_agent_target",
+      "proxy_command",
       "extra"
     ],
     "LoginProfileLinkMode": [

@@ -283,3 +283,9 @@ class GuiApp:
 # is shared across every GUI test module. Importing it into each module would
 # give each module its own FixtureDef and boot a second SshPilotApplication —
 # which fails, since only one GApplication can register per process.
+
+
+def require_model(view, model):
+    """Skip unless the view really runs ``model`` (a missing library falls back)."""
+    if view.model_name != model:
+        pytest.skip(f"{model} emulator model unavailable (got {view.model_name})")

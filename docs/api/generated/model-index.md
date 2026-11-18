@@ -3581,6 +3581,7 @@ Synthetic representation:
 | `pubkey_auth_no` | `bool` | No | `false` | No |
 | `forward_agent` | `bool` | No | `false` | No |
 | `forward_agent_target` | `str` | No | `` | No |
+| `proxy_command` | `str` | No | `` | No |
 | `extra_ssh_config` | `str` | No | `` | No |
 
 Synthetic representation:
@@ -3598,6 +3599,7 @@ Synthetic representation:
   "key_select_mode": 0,
   "name": "example",
   "pkcs11_provider": "",
+  "proxy_command": "",
   "pubkey_auth_no": false,
   "security_key_provider": "",
   "username": ""

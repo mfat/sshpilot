@@ -50,6 +50,10 @@ gtk_libs_patterns = [
     # gtk4-frdp and FreeRDP 3, for RDP connections in a tab (present only
     # when the workflow's gtk4-frdp step succeeded).
     "libgtk4-frdp-4.0.*.dylib",
+    # The gtkghostty terminal widget (an opt-in backend), with libghostty-vt
+    # linked in statically (present only when the workflow's gtkghostty step
+    # succeeded).
+    "libgtkghostty-1.*.dylib",
     "libfreerdp3.*.dylib",
     "libfreerdp-client3.*.dylib",
     "libwinpr3.*.dylib",
@@ -92,6 +96,17 @@ datas += [
     (os.path.join(ROOT, "data", "icons", "hicolor", "scalable", "apps",
                   "io.github.mfat.sshpilot.svg"), "share/icons"),
 ]
+
+# Licences of the gtkghostty widget and the libghostty-vt linked into it,
+# when the workflow built them.
+if glob.glob(os.path.join(hb_lib, "libgtkghostty-1.*.dylib")):
+    for licence in ("LICENSE", "third-party.json"):
+        path = os.path.join(hb_share, "licenses", "libghostty-vt", licence)
+        if os.path.exists(path):
+            datas.append((path, "Resources/share/licenses/libghostty-vt"))
+    for licence in ("COPYING", "NOTICE"):
+        datas.append((os.path.join(ROOT, "subprojects", "gtkghostty", licence),
+                      "Resources/share/licenses/gtkghostty"))
 
 # Find libadwaita share data in Cellar if not in standard share location
 libadwaita_share_standard = os.path.join(hb_share, "libadwaita-1")

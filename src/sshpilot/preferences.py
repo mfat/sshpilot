@@ -27,6 +27,7 @@ from .shortcut_utils import install_esc_to_close
 from .monospace_font_dialog import MonospaceFontDialog
 from .core.settings import INTEGER_RANGES as _SSH_OVERRIDE_RANGES
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
+from .terminal_encodings import LEGACY_ENCODINGS
 from .terminal_osc52 import (
     OSC52_MAX_MAX_KIB,
     OSC52_MIN_MAX_KIB,
@@ -106,8 +107,8 @@ def _detect_pyxterm_backend():
     except Exception as exc:
         return False, f'WebKit 6.0 not available: {exc}'
     try:
-        from .xterm_shell import asset_dir
-        if not os.path.isfile(os.path.join(asset_dir(), 'xterm.js')):
+        from .xterm_shell import assets_available
+        if not assets_available():
             return False, 'xterm.js assets not found'
     except Exception as exc:
         return False, f'xterm.js assets error: {exc}'
@@ -6532,6 +6533,10 @@ class PreferencesWindow(Adw.Window):
         backend = (self.config.get_setting('terminal.backend', 'vte') or 'vte').lower()
         return backend in ('pyxterm', 'pyxterm2')
 
+    def _is_gtkghostty_backend(self) -> bool:
+        backend = (self.config.get_setting('terminal.backend', 'vte') or 'vte').lower()
+        return backend == 'gtkghostty'
+
     def _collect_supported_encodings(self):
         """Collect supported encodings based on current backend"""
         # For PyXterm.js backend, provide xterm.js compatible encodings
@@ -6544,24 +6549,14 @@ class PreferencesWindow(Adw.Window):
                 ('UTF-16', 'Unicode (UTF-16)'),
             ]
 
-            # Add common legacy encodings that can be handled via luit/iconv
-            # These will be transcoded at the PTY bridge level
-            legacy_encodings = [
-                ('ISO-8859-1', 'Latin-1 (ISO-8859-1)'),
-                ('ISO-8859-15', 'Latin-9 (ISO-8859-15)'),
-                ('Windows-1252', 'Western European (Windows-1252)'),
-                ('GB2312', 'Simplified Chinese (GB2312)'),
-                ('GBK', 'Chinese (GBK)'),
-                ('GB18030', 'Chinese (GB18030)'),
-                ('Big5', 'Traditional Chinese (Big5)'),
-                ('Shift_JIS', 'Japanese (Shift_JIS)'),
-                ('EUC-JP', 'Japanese (EUC-JP)'),
-                ('EUC-KR', 'Korean (EUC-KR)'),
-                ('KOI8-R', 'Cyrillic (KOI8-R)'),
-                ('KOI8-U', 'Ukrainian (KOI8-U)'),
-            ]
-            options.extend(legacy_encodings)
+            # Legacy encodings, transcoded at the PTY bridge level (luit)
+            options.extend(LEGACY_ENCODINGS)
             return options
+
+        # gtkghostty converts legacy encodings in the widget (UTF-16 is not
+        # ASCII-compatible, so it is not offered).
+        if self._is_gtkghostty_backend():
+            return [('UTF-8', 'Unicode (UTF-8)'), *LEGACY_ENCODINGS]
 
         # VTE (GTK4) is UTF-8-only and set_encoding is unsupported, so there is
         # nothing to enumerate — and the encoding row is hidden for VTE anyway
@@ -6685,9 +6680,9 @@ class PreferencesWindow(Adw.Window):
             logger.debug("Hiding encoding dropdown for VTE backend")
             return
 
-        if self._is_pyxterm_backend():
+        if self._is_pyxterm_backend() or self._is_gtkghostty_backend():
             self.encoding_row.set_visible(True)
-            # Refresh encoding options for PyXterm.js
+            # Refresh the encoding options for this backend
             self._encoding_options = self._collect_supported_encodings()
             self._encoding_codes = [code for code, _unused in self._encoding_options]
 
@@ -6698,12 +6693,19 @@ class PreferencesWindow(Adw.Window):
                 if description and description != code:
                     display_label = f"{code} — {description}"
                 encoding_list.append(display_label)
-            self.encoding_row.set_model(encoding_list)
+            # A new model resets the selection to UTF-8; that is not the
+            # user's choice, so it must not be saved (the sync below restores
+            # the configured encoding).
+            self._encoding_selection_sync = True
+            try:
+                self.encoding_row.set_model(encoding_list)
+            finally:
+                self._encoding_selection_sync = False
 
             # Sync selection
             current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
             self._sync_encoding_row_selection(current_encoding, notify_user=False)
-            logger.debug("Showing encoding dropdown for PyXterm.js backend")
+            logger.debug("Showing encoding dropdown for %s", current_backend)
             return
 
         # Default: show for unknown backends
@@ -6757,9 +6759,17 @@ class PreferencesWindow(Adw.Window):
         import importlib.util
 
         pyte_available = importlib.util.find_spec('pyte') is not None
+        try:
+            from .ghostty_terminal_model import load_libghostty
+            load_libghostty()
+            ghostty_error = None
+        except Exception as exc:  # noqa: BLE001
+            ghostty_error = str(exc)
         # Where VTE exists the built-in backend is opt-in: list it only once
-        # pyte is installed, so Linux/macOS Preferences are unchanged otherwise.
-        if pyte_available or not VTE_AVAILABLE:
+        # pyte or libghostty-vt is installed, so Linux/macOS Preferences are
+        # unchanged otherwise.
+        legacy_models = pyte_available or not VTE_AVAILABLE
+        if legacy_models or ghostty_error is None:
             # The built-in backend is listed once per emulator model
             # (``terminal.builtin_model``); both entries share the 'pyte' id.
             from .terminal_model_common import default_builtin_model
@@ -6767,47 +6777,84 @@ class PreferencesWindow(Adw.Window):
             # built-in backend is the only one (no VTE): libvterm on Windows.
             default_model = None if VTE_AVAILABLE else default_builtin_model()
             builtin = []
-            builtin.append(
-                {
-                    'id': 'pyte',
-                    'model': 'pyte',
-                    'label': (
-                        (_('pyte (default)') if default_model == 'pyte' else _('pyte'))
-                        if pyte_available else _('pyte (unavailable)')
-                    ),
-                    'description': (
-                        _('Pure-Python terminal emulator drawn with GTK')
-                        if pyte_available else _('Requires the pyte Python package')
-                    ),
-                    'available': pyte_available,
-                    'error': None if pyte_available else 'pyte is not installed',
-                }
-            )
-            try:
-                from .vterm_terminal_model import load_libvterm
-                load_libvterm()
-                vterm_error = None
-            except Exception as exc:  # noqa: BLE001
-                vterm_error = str(exc)
-            builtin.append(
-                {
-                    'id': 'pyte',
-                    'model': 'vterm',
-                    'label': (
-                        (_('libvterm (default)') if default_model == 'vterm' else _('libvterm'))
-                        if vterm_error is None else _('libvterm (unavailable)')
-                    ),
-                    'description': (
-                        _('Native terminal emulator drawn with GTK, faster on bulk output')
-                        if vterm_error is None else _('Requires the libvterm library')
-                    ),
-                    'available': vterm_error is None,
-                    'error': vterm_error,
-                }
-            )
+            if legacy_models:
+                builtin.append(
+                    {
+                        'id': 'pyte',
+                        'model': 'pyte',
+                        'label': (
+                            (_('pyte (default)') if default_model == 'pyte' else _('pyte'))
+                            if pyte_available else _('pyte (unavailable)')
+                        ),
+                        'description': (
+                            _('Pure-Python terminal emulator drawn with GTK')
+                            if pyte_available else _('Requires the pyte Python package')
+                        ),
+                        'available': pyte_available,
+                        'error': None if pyte_available else 'pyte is not installed',
+                    }
+                )
+                try:
+                    from .vterm_terminal_model import load_libvterm
+                    load_libvterm()
+                    vterm_error = None
+                except Exception as exc:  # noqa: BLE001
+                    vterm_error = str(exc)
+                builtin.append(
+                    {
+                        'id': 'pyte',
+                        'model': 'vterm',
+                        'label': (
+                            (_('libvterm (default)') if default_model == 'vterm' else _('libvterm'))
+                            if vterm_error is None else _('libvterm (unavailable)')
+                        ),
+                        'description': (
+                            _('Native terminal emulator drawn with GTK, faster on bulk output')
+                            if vterm_error is None else _('Requires the libvterm library')
+                        ),
+                        'available': vterm_error is None,
+                        'error': vterm_error,
+                    }
+                )
             if default_model == 'vterm':
                 builtin.reverse()  # the default first
+            # Bundled on Windows only; elsewhere listed once the library loads.
+            if ghostty_error is None or is_windows():
+                builtin.append(
+                    {
+                        'id': 'pyte',
+                        'model': 'ghostty',
+                        # Same engine as the gtkghostty entry below, drawn by
+                        # sshPilot's own (Python) view; the name says which.
+                        'label': (
+                            _('libghostty-vt (built-in view)') if ghostty_error is None
+                            else _('libghostty-vt (built-in view, unavailable)')
+                        ),
+                        'description': (
+                            _("Ghostty's engine drawn by SSH Pilot's built-in view, fastest on bulk output")
+                            if ghostty_error is None else _('Requires the libghostty-vt library')
+                        ),
+                        'available': ghostty_error is None,
+                        'error': ghostty_error,
+                    }
+                )
             choices.extend(builtin)
+        # The gtkghostty widget: listed wherever its typelib is installed.
+        gtkghostty_available, gtkghostty_error = self._detect_gtkghostty_backend()
+        if gtkghostty_available:
+            choices.append(
+                {
+                    'id': 'gtkghostty',
+                    # Named after its project (github.com/mfat/gtkghostty).
+                    'label': 'gtkghostty',
+                    'description': _(
+                        "Experimental: Ghostty's engine in its own GTK widget, "
+                        "with input methods and the kitty keyboard protocol"
+                    ),
+                    'available': True,
+                    'error': None,
+                }
+            )
         # PyXterm.js is not supported on macOS or Windows (no WebKitGTK there)
         if not is_macos() and not is_windows():
             pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
@@ -6832,6 +6879,14 @@ class PreferencesWindow(Adw.Window):
                     }
                 )
         return choices
+
+    @staticmethod
+    def _detect_gtkghostty_backend():
+        try:
+            from .terminal_backend_gtkghostty import gtkghostty_available
+        except ImportError as exc:
+            return False, str(exc)
+        return gtkghostty_available()
 
     def _backend_choice_index(self, backend_id) -> int:
         """Index of the choice for ``backend_id`` and the configured built-in model."""
@@ -6937,7 +6992,8 @@ class PreferencesWindow(Adw.Window):
         """Switch, then say that only new tabs use the new backend."""
         self._apply_backend_change(index, backend_id)
         model = self._backend_choice_data[index].get('model')
-        backend_name = {'pyxterm': 'xterm.js', 'pyte': 'libvterm' if model == 'vterm' else 'pyte'}.get(
+        builtin_name = {'vterm': 'libvterm', 'ghostty': _('libghostty-vt (built-in view)')}.get(model, 'pyte')
+        backend_name = {'pyxterm': 'xterm.js', 'pyte': builtin_name, 'gtkghostty': 'gtkghostty'}.get(
             backend_id.lower(), 'VTE'
         )
         dialog = Adw.AlertDialog(

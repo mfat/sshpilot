@@ -217,6 +217,15 @@ def test_validation_error_is_mapped(env):
         LOGIN_PROFILE_ERROR_REASON_DETAIL: "extra_managed_option",
         LOGIN_PROFILE_ERROR_KEYWORD_DETAIL: "user",
     }
+    with pytest.raises(SshPilotError) as info:
+        client.create_login_profile(
+            CreateLoginProfileRequest(
+                LoginProfileSettings(
+                    name="x", extra_ssh_config="ProxyCommand ssh -W %h:%p bastion"
+                )
+            )
+        )
+    assert info.value.details[LOGIN_PROFILE_ERROR_KEYWORD_DETAIL] == "proxycommand"
 
     client.create_login_profile(CreateLoginProfileRequest(LoginProfileSettings(name="Ops")))
     with pytest.raises(SshPilotError) as info:
@@ -253,3 +262,56 @@ def test_drift_detach_publishes_event(env):
     assert info.connection_id == "web1"
     assert info.reason is LoginProfileDetachReason.DRIFT
     assert client.get_login_profiles().link_for("web1") is None
+
+
+def test_profile_proxy_command_roundtrip_and_drift(env):
+    client, repo, root, _secrets, service = env
+    repo.update_connection('web1', {'proxy_command': 'ssh -W %h:%p old'})
+    created = client.create_login_profile(CreateLoginProfileRequest(
+        LoginProfileSettings(name='Proxy', proxy_command='ssh -W %h:%p bastion')
+    ))
+    (preview,) = client.preview_login_profile_assignment(
+        PreviewLoginProfileAssignmentRequest(('web1',), LoginProfileLinkMode.EXPLICIT, created.id)
+    )
+    change = next(
+        item for item in preview.changes if item.field is LoginProfileField.PROXY_COMMAND
+    )
+    assert (change.before, change.after) == ('ssh -W %h:%p old', 'ssh -W %h:%p bastion')
+    client.assign_login_profile(
+        AssignLoginProfileRequest(('web1',), LoginProfileLinkMode.EXPLICIT, created.id)
+    )
+    assert root.read_text().count('ProxyCommand ') == 1
+    assert 'ProxyCommand ssh -W %h:%p bastion' in root.read_text()
+    assert service.reconcile() == ()
+    stored = client.get_login_profiles().profile(created.id).settings
+    assert stored.proxy_command == 'ssh -W %h:%p bastion'
+    assert 'ProxyCommand' not in stored.extra_ssh_config
+    client.update_login_profile(UpdateLoginProfileRequest(
+        created.id, LoginProfileSettings(name='Proxy', proxy_command='none'),
+        expected_revision=1,
+    ))
+    assert root.read_text().count('ProxyCommand ') == 1
+    assert 'ProxyCommand none' in root.read_text()
+    assert service.reconcile() == ()
+    repo.update_connection('web1', {'proxy_command': 'ssh -W %h:%p edited'})
+    assert len(service.reconcile()) == 1
+
+
+def test_profile_without_proxy_command_keeps_the_connection_command(env):
+    client, repo, root, _secrets, service = env
+    repo.update_connection('web1', {'proxy_command': 'ssh -W %h:%p old'})
+    created = client.create_login_profile(CreateLoginProfileRequest(
+        LoginProfileSettings(name='Plain')
+    ))
+    (preview,) = client.preview_login_profile_assignment(
+        PreviewLoginProfileAssignmentRequest(('web1',), LoginProfileLinkMode.EXPLICIT, created.id)
+    )
+    assert all(change.field is not LoginProfileField.PROXY_COMMAND for change in preview.changes)
+    client.assign_login_profile(
+        AssignLoginProfileRequest(('web1',), LoginProfileLinkMode.EXPLICIT, created.id)
+    )
+    assert root.read_text().count('ProxyCommand ') == 1
+    assert 'ProxyCommand ssh -W %h:%p old' in root.read_text()
+    repo.update_connection('web1', {'proxy_command': 'ssh -W %h:%p edited'})
+    assert service.reconcile() == ()
+    assert 'ProxyCommand ssh -W %h:%p edited' in root.read_text()

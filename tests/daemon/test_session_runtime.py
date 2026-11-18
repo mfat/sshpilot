@@ -90,6 +90,94 @@ class SynchronousExitRunner(ControlledRunner):
         return handle
 
 
+@pytest.mark.parametrize(
+    "before,after,expected_specs,expected_resolved",
+    [
+        pytest.param(
+            "Host retry\n HostName old.example\n User olduser\n Port 2201\n",
+            "Host retry\n HostName fixed.example\n User fixeduser\n Port 2202\n",
+            [("old.example", "olduser", 2201), ("fixed.example", "fixeduser", 2202)],
+            [("old.example", "olduser", "2201"), ("fixed.example", "fixeduser", "2202")],
+            id="edit-host",
+        ),
+        pytest.param(
+            "Host *\n User admin\n Port 2222\n\n"
+            "Host retry\n HostName 10.0.0.5\n User root\n Port 22\n",
+            "# Host *\n# User admin\n# Port 2222\n\n"
+            "Host retry\n HostName 10.0.0.5\n User root\n Port 22\n",
+            [("10.0.0.5", "root", 22), ("10.0.0.5", "root", 22)],
+            [("10.0.0.5", "admin", "2222"), ("10.0.0.5", "root", "22")],
+            id="comment-out-earlier-host-star",
+        ),
+    ],
+)
+def test_reopen_failed_session_uses_saved_ssh_config(
+    tmp_path, before, after, expected_specs, expected_resolved,
+):
+    """The config editor's save must affect a retry without a new client/store."""
+    import shutil
+    import subprocess
+
+    from sshpilot.api.models.connections import SaveSshConfigTextRequest
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+    from sshpilot.daemon.connection_launch_provider import DaemonConnectionLaunchProvider
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs OpenSSH")
+
+    config = tmp_path / "config"
+    config.write_text(before)
+    repository = ConnectionRepository(
+        ssh_store=SshConfigStore(config),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "legacy.json",
+        isolated=False,
+    )
+    provider = DaemonConnectionLaunchProvider(
+        repository.get_record, config_root=lambda: config,
+    )
+    service = ConnectionApplicationService(repository, launch_provider=provider)
+    resolved = []
+
+    class PreparingRunner(ControlledRunner):
+        def start(self, spec, on_exit):
+            argv, _env = provider.prepare_terminal_launch(spec.connection_id)
+            # Ask OpenSSH to resolve the actual launch arguments, without
+            # contacting either host or starting authentication.
+            output = subprocess.run(
+                [argv[0], "-G", *argv[1:]],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            options = dict(line.split(" ", 1) for line in output.splitlines())
+            resolved.append(tuple(options[key] for key in ("hostname", "user", "port")))
+            return super().start(spec, on_exit)
+
+    runner = PreparingRunner(fail=True)
+    runtime = SessionRuntime(service, runner=runner)
+    request = OpenSessionRequest(connection_id="retry")
+    client_id = ClientId("client:retry")
+    try:
+        failed = runtime.open_session(request, client_id=client_id)
+        assert failed.state is SessionState.FAILED
+
+        loaded = service.get_ssh_config_text()
+        service.save_ssh_config_text(SaveSshConfigTextRequest(
+            text=after,
+            expected_revision=loaded.revision,
+        ))
+        runtime.close_session(CloseSessionRequest(session_id=failed.id))
+        runner.fail = False
+        reopened = runtime.open_session(request, client_id=client_id)
+
+        assert reopened.id != failed.id
+        assert reopened.state is SessionState.RUNNING
+        assert [(s.hostname, s.username, s.port) for s in runner.specs] == expected_specs
+        assert resolved == expected_resolved
+    finally:
+        runtime.shutdown()
+
+
 class RetryableTerminationHandle(ControlledHandle):
     def __init__(self, on_exit):
         super().__init__(on_exit, exit_on_terminate=False)

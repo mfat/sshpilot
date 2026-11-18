@@ -43,6 +43,44 @@ def _write_state(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2))
 
 
+@pytest.mark.parametrize("external", [False, True], ids=["save", "external-reload"])
+def test_forwarding_only_changes_publish_store_generation(tmp_path, external):
+    base = "Host web\n    HostName example.com\n    User alice\n"
+    repo, root, _ = _repo(tmp_path, base)
+    events = []
+    repo.add_listener(events.append)
+    summaries = repo.snapshot().connections
+
+    # Add, change the listening port, then remove the last rule. None of
+    # these edits changes the secret-free connection-list summary.
+    for generation, port in enumerate((1080, 1081, None), start=1):
+        before = repo.snapshot()
+        if external:
+            root.write_text(base + (f"    DynamicForward localhost:{port}\n" if port else ""))
+            repo.reload()
+        else:
+            data = dict(repo.get_editor_record("web").data)
+            data["forwarding_rules"] = (
+                [{"type": "dynamic", "listen_addr": "localhost", "listen_port": port}]
+                if port else []
+            )
+            repo.update_connection("web", data)
+
+        after = repo.snapshot()
+        assert after.connections == summaries
+        assert after.generation == generation
+        assert len(events) == generation
+        assert events[-1].before == before
+        assert events[-1].after == after
+        rules = repo.get_editor_record("web").data.get("forwarding_rules", [])
+        assert [rule["listen_port"] for rule in rules] == ([port] if port else [])
+
+        # An unchanged reload must remain quiet.
+        repo.reload()
+        assert repo.snapshot().generation == generation
+        assert len(events) == generation
+
+
 def _state(path: Path) -> dict:
     raw = json.loads(path.read_text())
     if raw.get("version") != 2:

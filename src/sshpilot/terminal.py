@@ -909,10 +909,24 @@ class TerminalWidget(Gtk.Box):
                     logger.info("Using PyXterm.js embedded terminal backend")
                     self._backend_name = "pyxterm"
                     return backend
-                logger.warning("PyXterm backend unavailable, falling back to VTE")
+                logger.warning(
+                    "PyXterm backend unavailable (%s), falling back to VTE",
+                    getattr(backend, "import_error", None),
+                )
             except Exception as e:
                 logger.error(f"Failed to create PyXterm backend: {e}")
                 logger.warning("PyXterm backend creation failed, falling back to VTE")
+
+        if backend_name == "gtkghostty":
+            # libghostty-vt as a C GTK widget (mfat/gtkghostty), opt-in.
+            try:
+                from .terminal_backend_gtkghostty import GtkGhosttyTerminalBackend
+            except ImportError as exc:
+                logger.warning("gtkghostty is unavailable (%s), falling back", exc)
+            else:
+                logger.info("Using gtkghostty terminal backend")
+                self._backend_name = "gtkghostty"
+                return GtkGhosttyTerminalBackend(self)
 
         if backend_name == "pyte" or not VTE_AVAILABLE:
             # The pure-GTK emulator: the only option where GTK 4 has no VTE
@@ -2016,7 +2030,20 @@ class TerminalWidget(Gtk.Box):
                     bool(after),
                     list(after),
                 )
-        backend.feed(self._highlighter.feed(data))
+        highlighter = self._highlighter
+        if highlighter.enabled and not getattr(backend, "output_highlight_safe", True):
+            # Shift_JIS, GBK, GB18030 and Big5 can put ASCII bytes inside a
+            # character, and colouring by ASCII patterns would split it: pass
+            # the bytes through untouched while still tracking state.
+            # configure() keeps the stream state consistent across the switch.
+            shown = highlighter.configure(False, highlighter.profile)
+            try:
+                shown += highlighter.feed(data)
+            finally:
+                highlighter.configure(True, highlighter.profile)
+        else:
+            shown = highlighter.feed(data)
+        backend.feed(shown)
         if tracker is not None and self._needs_legacy_mouse_translation():
             # Settles on top of whatever the remote just set, so the emulator
             # ends up in SGR whenever the remote asked for a legacy mode.
@@ -3195,6 +3222,7 @@ class TerminalWidget(Gtk.Box):
                 "scrollback_lines": 10000,
                 "cursor_shape": cursor_shape,
                 "cursor_blink": cursor_blink,
+                "wheel_scroll_lines": self._wheel_scroll_lines(),
             }
         )
         self.backend.apply_theme()
@@ -5185,7 +5213,15 @@ class TerminalWidget(Gtk.Box):
         The VTE backend exposes a `vte` widget; PyXterm only has `terminal_widget`.
         Attach and detach must agree on the target, or a teardown silently leaves
         the controller on the widget it was added to.
+
+        A backend whose ``widget`` wraps the terminal in a box names the
+        terminal as ``controller_widget``: a BUBBLE controller on the box runs
+        only after the terminal declined the key, and an emulator that encodes
+        Ctrl+= or Ctrl+Shift+C never declines them (gtkghostty).
         """
+        host = getattr(getattr(self, 'backend', None), 'controller_widget', None)
+        if host is not None:
+            return host
         return getattr(self, 'terminal_widget', None) or getattr(
             getattr(self, 'backend', None), 'widget', None
         )
@@ -5321,6 +5357,12 @@ class TerminalWidget(Gtk.Box):
             GLib.idle_add(self._apply_terminal_encoding_idle, value or '')
         elif key == 'terminal.macos_option_key_passthrough':
             GLib.idle_add(self._apply_macos_option_key_passthrough, bool(value))
+        elif key == 'terminal.wheel_scroll_lines':
+            # Backends that handle the wheel themselves (gtkghostty); VTE's
+            # wheel goes through _on_history_scroll, which reads the setting.
+            setter = getattr(getattr(self, 'backend', None), 'set_wheel_scroll_lines', None)
+            if callable(setter):
+                setter(self._wheel_scroll_lines())
 
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation

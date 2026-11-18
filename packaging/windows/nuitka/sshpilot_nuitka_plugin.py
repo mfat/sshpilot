@@ -14,9 +14,10 @@ GTK libraries
     libraries to Nuitka as DLLs; it then collects their own dependencies.
 
 Vendored binaries
-    libvterm, ConPTY and OpenConsole (vendor/), GLib's gspawn helpers and the
-    SVG pixbuf loader are loaded by path at runtime, not linked. Nuitka's
-    documentation says DLLs and EXEs must not be included as data files.
+    libvterm, libghostty-vt, ConPTY and OpenConsole (vendor/), GLib's gspawn
+    helpers and the SVG pixbuf loader are loaded by path at runtime, not
+    linked. Nuitka's documentation says DLLs and EXEs must not be included as
+    data files.
 
 Modules kept as bytecode
     MSVC spent 2 h 23 min optimising the C that Nuitka generates for
@@ -38,6 +39,7 @@ PIXBUF_LOADER = "lib/gdk-pixbuf-2.0/2.10.0/loaders/pixbufloader_svg.dll"
 # (source relative to ROOT, destination in the app folder, is an executable)
 VENDORED = (
     ("vendor/libvterm/x64/libvterm-0.dll", "libvterm-0.dll", False),
+    ("vendor/libghostty-vt/x64/ghostty-vt.dll", "ghostty-vt.dll", False),
     ("vendor/conpty/x64/conpty.dll", "conpty.dll", False),
     ("vendor/conpty/x64/OpenConsole.exe", "OpenConsole.exe", True),
     ("vendor/gtk/bin/gspawn-win64-helper.exe", "gspawn-win64-helper.exe", True),

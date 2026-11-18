@@ -23,6 +23,22 @@ Files: sshpilot/vendor/pyxtermjs/xterm/*
 Copyright: 2017 The xterm.js authors
 License: Expat
 
+Files: subprojects/gtkghostty/*
+Copyright: 2026 mFat and the gtkghostty contributors
+Comment: gtkghostty, vendored from https://github.com/mfat/gtkghostty
+ (scripts/update-gtkghostty.sh); ported code and credits in
+ subprojects/gtkghostty/NOTICE. Built packages that include it also carry
+ libghostty-vt (MIT), with its licence and third-party manifest in
+ /usr/lib/<triplet>/sshpilot/licenses/libghostty-vt.
+License: LGPL-2.1+
+ This library is free software; you can redistribute it and/or modify it
+ under the terms of the GNU Lesser General Public License as published by
+ the Free Software Foundation; either version 2.1 of the License, or (at
+ your option) any later version.
+ .
+ On Debian systems, the complete text of the GNU Lesser General Public
+ License version 2.1 can be found in "/usr/share/common-licenses/LGPL-2.1".
+
 Files: subprojects/gtk4-frdp/*
 Copyright: 2018 Felipe Borges
            2019 Armin Novak

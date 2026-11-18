@@ -1,4 +1,4 @@
-"""The Terminal Backend picker lists pyte and libvterm as separate entries."""
+"""The Terminal Backend picker lists pyte, libvterm and libghostty-vt as separate entries."""
 
 from unittest import mock
 
@@ -8,6 +8,7 @@ CHOICES = [
     {'id': 'vte', 'available': True},
     {'id': 'pyte', 'model': 'pyte', 'available': True},
     {'id': 'pyte', 'model': 'vterm', 'available': True},
+    {'id': 'pyte', 'model': 'ghostty', 'available': True},
 ]
 
 
@@ -40,6 +41,14 @@ def test_choosing_libvterm_saves_backend_and_model():
     preferences.PreferencesWindow._apply_backend_change(prefs, 2, 'pyte')
 
     assert prefs._settings == {'terminal.backend': 'pyte', 'terminal.builtin_model': 'vterm'}
+
+
+def test_choosing_libghostty_saves_backend_and_model():
+    prefs = _prefs()
+    preferences.PreferencesWindow._apply_backend_change(prefs, 3, 'pyte')
+    assert prefs._settings == {'terminal.backend': 'pyte', 'terminal.builtin_model': 'ghostty'}
+    prefs = _prefs(backend='pyte', model='ghostty')
+    assert preferences.PreferencesWindow._backend_choice_index(prefs, 'pyte') == 3
 
 
 def test_switching_between_models_counts_as_a_change():
@@ -80,3 +89,62 @@ def test_missing_model_setting_uses_the_platform_default(monkeypatch):
     prefs = _prefs(backend='pyte')
     prefs._settings.pop('terminal.builtin_model')
     assert preferences.PreferencesWindow._backend_choice_index(prefs, 'pyte') == 2
+
+
+def _choices(monkeypatch, *, vte, pyte, ghostty, windows=False, gtkghostty=False):
+    import importlib.util
+
+    from sshpilot import ghostty_terminal_model, terminal_backends
+
+    monkeypatch.setattr(terminal_backends, "VTE_AVAILABLE", vte)
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util, "find_spec",
+        lambda name, *a: (object() if pyte else None) if name == "pyte" else real_find_spec(name, *a),
+    )
+
+    def load():
+        if not ghostty:
+            raise ghostty_terminal_model.GhosttyUnavailable("not built")
+
+    monkeypatch.setattr(ghostty_terminal_model, "load_libghostty", load)
+    monkeypatch.setattr(preferences, "is_windows", lambda: windows)
+    monkeypatch.setattr(preferences, "is_macos", lambda: False)
+    prefs = preferences.PreferencesWindow.__new__(preferences.PreferencesWindow)
+    prefs._detect_pyxterm_backend = lambda: (False, "no webkit")
+    prefs._detect_gtkghostty_backend = lambda: (gtkghostty, None if gtkghostty else "no typelib")
+    return [(c["id"], c.get("model"), c["available"]) for c in prefs._build_backend_choices()]
+
+
+def test_linux_lists_libghostty_once_it_loads_even_without_pyte(monkeypatch):
+    builtin = [c for c in _choices(monkeypatch, vte=True, pyte=False, ghostty=True) if c[0] == "pyte"]
+    assert builtin == [("pyte", "ghostty", True)]
+
+
+def test_linux_without_any_builtin_engine_is_unchanged(monkeypatch):
+    choices = _choices(monkeypatch, vte=True, pyte=False, ghostty=False)
+    assert [c for c in choices if c[0] == "pyte"] == []
+
+
+def test_windows_lists_libghostty_even_when_missing(monkeypatch):
+    builtin = [c[1:] for c in _choices(monkeypatch, vte=False, pyte=True, ghostty=False, windows=True) if c[0] == "pyte"]
+    assert ("ghostty", False) in builtin
+    assert {model for model, _available in builtin} == {"pyte", "vterm", "ghostty"}
+
+
+def test_gtkghostty_is_listed_only_where_the_widget_is_installed(monkeypatch):
+    with_widget = _choices(monkeypatch, vte=True, pyte=False, ghostty=False, gtkghostty=True)
+    assert ("gtkghostty", None, True) in with_widget
+    without = _choices(monkeypatch, vte=True, pyte=False, ghostty=False)
+    assert [c for c in without if c[0] == "gtkghostty"] == []
+
+
+def test_choosing_gtkghostty_saves_only_the_backend():
+    prefs = _prefs()
+    prefs._backend_choice_data.append(
+        {"id": "gtkghostty", "label": "gtkghostty", "available": True, "error": None}
+    )
+    index = len(prefs._backend_choice_data) - 1
+    prefs._apply_backend_change(index, "gtkghostty")
+    assert prefs.config.get_setting("terminal.backend") == "gtkghostty"
+    assert prefs._backend_choice_index("gtkghostty") == index

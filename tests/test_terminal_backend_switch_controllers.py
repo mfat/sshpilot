@@ -148,3 +148,21 @@ def test_backend_switch_detaches_from_old_widget_and_reinstalls(monkeypatch):
     # ...and reinstalled on the new one.
     assert installed_on == [new_widget]
     assert terminal._shortcut_controller == 'new-shortcut'
+
+
+def test_a_backend_can_host_controllers_on_its_inner_terminal():
+    """gtkghostty wraps its terminal in a box; key controllers belong on the
+    terminal, ahead of its own key handling, and come off the same widget."""
+    terminal = _bare_terminal()
+    terminal.vte = None
+    terminal.terminal_widget = DummyWidget('box')
+    terminal.terminal_container = DummyWidget('container')
+    inner = DummyWidget('terminal')
+    terminal.backend = types.SimpleNamespace(controller_widget=inner)
+
+    assert terminal.controller_host() is inner
+
+    terminal._remove_custom_shortcut_controllers()
+
+    assert inner.removed == ['shortcut-controller', 'zoom-controller']
+    assert terminal.terminal_widget.removed == []

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 mFat <newmfat@gmail.com> and the gtkghostty contributors
+option('introspection', type: 'boolean', value: true, description: 'Generate the GtkGhostty GIR and typelib')
+option('private_libdir', type: 'string', value: '',
+       description: 'Install for one application only: put the library and its typelib in this directory under libdir (e.g. "myapp", giving <libdir>/myapp and <libdir>/myapp/girepository-1.0), and install no headers, pkg-config file or GIR XML. The application adds both directories to its GObject Introspection search paths.')

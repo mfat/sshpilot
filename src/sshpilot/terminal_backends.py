@@ -1581,6 +1581,11 @@ class PyXtermTerminalBackend:
             self._vendored_pyxterm = None
             pyxterm_module = None
 
+            from .xterm_shell import asset_dir, assets_available
+
+            if not assets_available():
+                raise FileNotFoundError(f"xterm.js not found in {asset_dir()}")
+
             # Use WebKit 6.0 (GTK4 compatible) - this is the preferred approach
             try:
                 gi.require_version("WebKit", "6.0")
@@ -2553,9 +2558,11 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
             self.available = False
-            self.import_error = RuntimeError(
-                "PyXterm bridge backend requires WebKit 6.0 (UserContentManager)"
-            )
+            # Keep the base class's reason (e.g. missing xterm.js) when it has one.
+            if getattr(self, "import_error", None) is None:
+                self.import_error = RuntimeError(
+                    "PyXterm bridge backend requires WebKit 6.0 (UserContentManager)"
+                )
             return
 
     # ---- construction: WebView with a JS->Python bridge ----------------------

@@ -40,6 +40,8 @@ from .session_runtime import (
     SessionExitCallback,
     SessionLaunchSpec,
     SessionProcessHandle,
+    TerminalEofCallback,
+    TerminalOutputCallback,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,8 +54,6 @@ _EOF_DRAIN_TIMEOUT = 1.0
 # Upper bound on one console read (bytes on pywinpty 2.x, characters on 3.x).
 _READ_CHUNK = 64 * 1024
 
-TerminalOutputCallback = Callable[[bytes], None]
-TerminalEofCallback = Callable[[], None]
 LaunchBuilder = Callable[
     [SessionLaunchSpec],
     tuple[Sequence[str], Mapping[str, str]],

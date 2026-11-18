@@ -13,7 +13,6 @@ import importlib.util
 import logging
 import os
 import re
-import sys
 import threading
 from collections import deque
 from typing import Any, Callable, Deque, Mapping, Optional, Sequence, Tuple
@@ -42,13 +41,19 @@ from .terminal_backends import (  # noqa: E402
     TerminalBackendCapabilityError,
     _log_clipboard_copy,
 )
-from .terminal_color_utils import get_contrast_color  # noqa: E402
 from .terminal_cursor import normalize_cursor_shape  # noqa: E402
+from .terminal_theme_resolve import (  # noqa: E402
+    DEFAULT_PALETTE as _DEFAULT_PALETTE,
+    Rgb,
+    daemon_output_is_rendered,
+    parse_rgb as _parse_rgb,
+    resolve_theme,
+)
 
 logger = logging.getLogger(__name__)
 
 #: Emulator models the view can draw: ``terminal.builtin_model`` in the
-#: config, overridden by this environment variable ("pyte" or "vterm").
+#: config, overridden by this environment variable ("pyte", "vterm" or "ghostty").
 MODEL_ENV = "SSHPILOT_TERMINAL_MODEL"
 DEFAULT_MODEL = default_builtin_model()
 
@@ -65,7 +70,17 @@ def _vterm_model(columns: int, lines: int, on_reply):
     return VtermTerminalModel(columns, lines, on_reply=on_reply)
 
 
-_MODELS = {"pyte": _pyte_model, "vterm": _vterm_model}
+def _ghostty_model(columns: int, lines: int, on_reply):
+    from .ghostty_terminal_model import GhosttyTerminalModel
+
+    return GhosttyTerminalModel(columns, lines, on_reply=on_reply)
+
+
+#: Fallback order after the preferred model: the native libraries first.
+_MODELS = {"vterm": _vterm_model, "ghostty": _ghostty_model, "pyte": _pyte_model}
+
+#: Models that parse in native code: fed larger slices per GTK dispatch.
+NATIVE_MODELS = frozenset({"vterm", "ghostty"})
 
 
 def create_terminal_model(preferred: Optional[str], columns: int, lines: int, on_reply):
@@ -91,17 +106,6 @@ def create_terminal_model(preferred: Optional[str], columns: int, lines: int, on
     raise ImportError("No terminal emulator model available (" + "; ".join(errors) + ")")
 
 
-def daemon_output_is_rendered() -> bool:
-    """True when daemon session output was already rendered by ConPTY.
-
-    The daemon is always local (a Unix socket, or loopback TCP on Windows) and
-    ``daemon/server.py`` runs sessions under ConPTY on Windows. conhost then
-    sends repaints of its own screen rather than the remote's raw stream.
-    """
-
-    return sys.platform == "win32"
-
-
 def _any_model_importable() -> bool:
     if importlib.util.find_spec("pyte") is not None:
         return True
@@ -109,22 +113,23 @@ def _any_model_importable() -> bool:
 
     try:
         load_libvterm()
+        return True
     except VtermUnavailable:
+        pass
+    from .ghostty_terminal_model import GhosttyUnavailable, load_libghostty
+
+    try:
+        load_libghostty()
+        return True
+    except GhosttyUnavailable:
         return False
-    return True
 
 
 if not _any_model_importable():
-    # Keeps TerminalWidget's "fall back to VTE" path working where neither
+    # Keeps TerminalWidget's "fall back to VTE" path working where no
     # emulator is installed.
-    raise ImportError("The built-in terminal needs pyte or libvterm")
+    raise ImportError("The built-in terminal needs pyte, libvterm or libghostty-vt")
 
-_DEFAULT_PALETTE = (
-    "#000000", "#CC0000", "#4E9A06", "#C4A000",
-    "#3465A4", "#75507B", "#06989A", "#D3D7CF",
-    "#555753", "#EF2929", "#8AE234", "#FCE94F",
-    "#729FCF", "#AD7FA8", "#34E2E2", "#EEEEEC",
-)
 # pyte's color names (and its "bfightmagenta" typo) -> palette index.
 _NAMED_COLORS = {
     "black": 0, "red": 1, "green": 2, "brown": 3, "yellow": 3,
@@ -138,16 +143,6 @@ _SEARCH_HIT = (0xF5 / 255, 0xA6 / 255, 0x23 / 255)
 #: Drawn for a column a line does not store, indexed like pyte's ``Char``
 #: (data fg bg bold italics underscore strikethrough reverse blink).
 _BLANK_CHAR = (" ", "default", "default", False, False, False, False, False, False)
-
-Rgb = Tuple[float, float, float]
-
-
-def _parse_rgb(value: str, fallback: Rgb = (0.0, 0.0, 0.0)) -> Rgb:
-    rgba = Gdk.RGBA()
-    if value and rgba.parse(value):
-        return (rgba.red, rgba.green, rgba.blue)
-    return fallback
-
 
 # Inner padding around the text grid, matching the CSS padding VTE gets on
 # Linux/macOS (terminal.py) so text clears the card's rounded corners.
@@ -952,7 +947,7 @@ class PyteTerminalBackend:
         #: Most daemon output bytes fed per GTK dispatch, about one frame's
         #: worth of parsing at 120 columns (libvterm ~20 ms per 64 KB, pyte
         #: ~180 ms), so typing and repaints run between slices.
-        self.output_slice_bytes = 32 * 1024 if self.view.model_name == "vterm" else 8 * 1024
+        self.output_slice_bytes = 32 * 1024 if self.view.model_name in NATIVE_MODELS else 8 * 1024
         # A local shell this backend spawned (spawn_async), if any.
         self._local = None
         self._local_handlers: list = []
@@ -1006,33 +1001,11 @@ class PyteTerminalBackend:
         self.view.set_cursor_shape(normalize_cursor_shape(shape))
 
     def apply_theme(self, theme_name: Optional[str] = None) -> None:
-        owner = self.owner
-        config = getattr(owner, "config", None)
-        try:
-            if theme_name is None and config:
-                theme_name = config.get_setting("terminal.theme", "default")
-            profile = config.get_terminal_profile(theme_name) if config else {}
-        except Exception:
-            logger.debug("Could not read terminal profile", exc_info=True)
-            profile = {}
-        fg = _parse_rgb(profile.get("foreground", "#000000"))
-        bg = _parse_rgb(profile.get("background", "#FFFFFF"), (1.0, 1.0, 1.0))
-        cursor = _parse_rgb(profile.get("cursor_color", profile.get("foreground", "#000000")))
-        try:
-            use_group = bool(config.get_setting("ui.use_group_color_in_terminal", False)) if config else False
-            override = owner._get_group_color_rgba() if hasattr(owner, "_get_group_color_rgba") else None
-            if use_group and override is not None:
-                bg = (override.red, override.green, override.blue)
-                contrast = get_contrast_color(override)
-                fg = cursor = (contrast.red, contrast.green, contrast.blue)
-        except Exception:
-            logger.debug("Group color override failed", exc_info=True)
-        palette = [_parse_rgb(c) for c in (profile.get("palette") or _DEFAULT_PALETTE)]
+        fg, bg, cursor, palette, font = resolve_theme(self.owner, theme_name)
         self.view.set_colors(fg, bg, palette, cursor)
-        highlighter = getattr(owner, "_highlighter", None)
+        highlighter = getattr(self.owner, "_highlighter", None)
         if highlighter is not None:
             highlighter.set_theme(bg, palette)
-        font = profile.get("font")
         if font:
             self.view.set_font(Pango.FontDescription.from_string(font))
 
@@ -1373,8 +1346,18 @@ class PyteTerminalBackend:
         return None
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
-        # Neither model keeps OSC 8 targets per cell, so plain-text links are
-        # the only kind.
+        # OSC 8 first, then plain-text links, as the VTE backend does. Only
+        # the libghostty-vt model keeps OSC 8 targets per cell.
+        view = self.view
+        lookup = getattr(view.model, "hyperlink_uri", None)
+        if lookup is not None:
+            row, column = view._cell_at(x, y)
+            try:
+                uri = lookup(row, column)
+            except Exception:
+                uri = None
+            if uri:
+                return uri
         return self.plain_text_link_at(x, y)
 
     def plain_text_link_at(self, x: float, y: float) -> Optional[str]:

@@ -1,10 +1,11 @@
 project('sshpilot',
-  version: '6.4.2',  # keep in sync with src/sshpilot/__init__.py (scripts/bump-version.sh bumps both)
+  version: '6.4.3',  # keep in sync with src/sshpilot/__init__.py (scripts/bump-version.sh bumps both)
   license: 'GPL-3.0-or-later',
   meson_version: '>= 0.59.0',
 )
 
 gnome = import('gnome')
+fs = import('fs')
 python = import('python')
 i18n = import('i18n')
 
@@ -56,6 +57,47 @@ if rdp_tab_deps_found and not get_option('rdp_tab').disabled()
   rdp_tab_libdir = prefix / get_option('libdir') / 'sshpilot'
 endif
 
+# The gtkghostty terminal widget (an opt-in backend), built from the copy in
+# subprojects/gtkghostty (scripts/update-gtkghostty.sh) and installed privately
+# into <libdir>/sshpilot like gtk4-frdp. It needs libghostty-vt, which
+# distributions do not package yet: builds that have it (CI-built deb/rpm,
+# Arch) build the widget, the others (Launchpad, COPR) leave it out and the
+# backend is simply not offered.
+gtkghostty_libdir = ''
+gtkghostty_deps_found = true
+foreach dep : [['libghostty-vt', '>= 1.0.0'], ['gtk4', '>= 4.14'],
+               ['gobject-introspection-1.0', '>= 1.66']]
+  if gtkghostty_deps_found
+    gtkghostty_deps_found = dependency(dep[0], version: dep[1],
+      required: get_option('gtkghostty')).found()
+  endif
+endforeach
+if gtkghostty_deps_found and not get_option('gtkghostty').disabled()
+  subproject('gtkghostty', default_options: [
+    'private_libdir=sshpilot',
+    'introspection=true',
+  ])
+  gtkghostty_libdir = prefix / get_option('libdir') / 'sshpilot'
+  if get_option('bundle_libghostty_vt') and host_machine.system() == 'linux'
+    # Under its soname, so the widget's DT_NEEDED resolves to this copy once
+    # terminal_backend_gtkghostty.py has loaded it from here.
+    ghostty_vt = dependency('libghostty-vt')
+    install_data(ghostty_vt.get_variable(pkgconfig: 'libdir') / 'libghostty-vt.so.' + ghostty_vt.version(),
+      rename: 'libghostty-vt.so.1',
+      install_dir: get_option('libdir') / 'sshpilot',
+    )
+    # Its MIT licence and third-party manifest travel with the copy, which
+    # packaging/windows/libghostty-vt/build.py --prefix puts in the prefix.
+    ghostty_vt_licences = ghostty_vt.get_variable(pkgconfig: 'prefix') / 'share' / 'licenses' / 'libghostty-vt'
+    foreach licence : ['LICENSE', 'third-party.json']
+      if fs.is_file(ghostty_vt_licences / licence)
+        install_data(ghostty_vt_licences / licence,
+          install_dir: get_option('libdir') / 'sshpilot' / 'licenses' / 'libghostty-vt')
+      endif
+    endforeach
+  endif
+endif
+
 subdir('data')
 subdir('src')
 subdir('po')
@@ -76,7 +118,8 @@ install_data('packaging/systemd/sshpilot-daemon.service',
   install_dir: datadir / 'sshpilot' / 'systemd',
 )
 
-summary({'RDP tab (bundled gtk4-frdp)': rdp_tab_libdir != '' ? rdp_tab_libdir : 'no'},
+summary({'RDP tab (bundled gtk4-frdp)': rdp_tab_libdir != '' ? rdp_tab_libdir : 'no',
+         'gtkghostty terminal (bundled)': gtkghostty_libdir != '' ? gtkghostty_libdir : 'no'},
   section: 'Features')
 
 gnome.post_install(

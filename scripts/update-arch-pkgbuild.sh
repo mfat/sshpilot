@@ -45,5 +45,5 @@ fi
 
 sed -i -e "s/^pkgver=.*/pkgver=${VERSION}/" \
        -e "s/^pkgrel=.*/pkgrel=1/" \
-       -e "s/^sha256sums=.*/sha256sums=('${SHA}')/" "$PKGBUILD_FILE"
+       -e "s/^sha256sums=('[^']*'/sha256sums=('${SHA}'/" "$PKGBUILD_FILE"
 echo "  pkgver=$VERSION, sha256sums=($SHA)"

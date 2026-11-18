@@ -9,7 +9,7 @@ reading every screen row once (what one redraw of the GTK view does).
 * sgr:   the same text with every word wrapped in SGR (bold/italic/16-colour,
          256-colour and truecolour foregrounds and backgrounds, then reset).
 
-Usage: PYTHONPATH=src python scripts/bench_terminal_models.py [pyte] [vterm]
+Usage: PYTHONPATH=src python scripts/bench_terminal_models.py [pyte] [vterm] [ghostty]
 """
 
 from __future__ import annotations
@@ -45,6 +45,10 @@ def make(name: str):
         from sshpilot.pyte_terminal_model import TerminalModel
 
         return TerminalModel(80, 24, scrollback_limit=10000)
+    if name == "ghostty":
+        from sshpilot.ghostty_terminal_model import GhosttyTerminalModel
+
+        return GhosttyTerminalModel(80, 24, scrollback_limit=10000)
     from sshpilot.vterm_terminal_model import VtermTerminalModel
 
     return VtermTerminalModel(80, 24, scrollback_limit=10000)
@@ -71,14 +75,14 @@ def bench(name: str, data: bytes, repeats: int) -> tuple:
 
 
 def main(argv) -> None:
-    names = argv or ["pyte", "vterm"]
+    names = argv or ["pyte", "vterm", "ghostty"]
     workloads = {"plain": plain_workload(), "sgr": sgr_workload()}
     print(f"python {sys.version.split()[0]}, {SIZE / 1e6:.1f} MB per workload, {CHUNK} B chunks")
     for name in names:
         repeats = 1 if name == "pyte" else 5
         for label, data in workloads.items():
             rate, redraw = bench(name, data, repeats)
-            print(f"{name:6} {label:6} {rate:8.2f} MB/s   row read for one redraw: {redraw:6.2f} ms")
+            print(f"{name:7} {label:6} {rate:8.2f} MB/s   row read for one redraw: {redraw:6.2f} ms")
 
 
 if __name__ == "__main__":

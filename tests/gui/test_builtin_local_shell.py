@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests._gui_harness import requires_gui
+from tests._gui_harness import require_model, requires_gui
 
 Gtk, _Adw, _Gio, GLib = requires_gui()
 
@@ -31,10 +31,11 @@ def _shell():
     return ["/bin/sh"], b"echo typed-$((40+2))\n", "typed-42"
 
 
-@pytest.mark.parametrize("model", ["pyte", "vterm"])
+@pytest.mark.parametrize("model", ["pyte", "vterm", "ghostty"])
 def test_local_shell_round_trip(model, monkeypatch):
     monkeypatch.setenv("SSHPILOT_TERMINAL_MODEL", model)
     backend = PyteTerminalBackend(SimpleNamespace(config=None))
+    require_model(backend.view, model)
     view = backend.view
     started, exited = [], []
     backend.connect_child_exited(lambda _view, status: exited.append(status))
