@@ -347,19 +347,27 @@ class ConnectionDialogPortForwardingMixin:
             dialog.destroy()
 
         def _on_save_clicked(button):
-            # Keep the editor (and the user's draft) open when validation or
-            # the local port-conflict check rejects the rule.
-            if self._save_rule_from_editor(
-                existing_rule, type_row, listen_addr_row, listen_port_row,
-                remote_host_row, remote_port_row,
-            ):
-                dialog.destroy()
+            self._finish_rule_editor_save(
+                dialog, existing_rule, type_row, listen_addr_row,
+                listen_port_row, remote_host_row, remote_port_row,
+            )
 
         cancel_button.connect('clicked', _on_cancel_clicked)
         save_button.connect('clicked', _on_save_clicked)
 
         # Show the window
         dialog.present()
+
+    def _finish_rule_editor_save(
+        self, editor, existing_rule, type_row, listen_addr_row,
+        listen_port_row, remote_host_row, remote_port_row,
+    ):
+        """Dismiss the nested editor only when its rule was accepted."""
+        if self._save_rule_from_editor(
+            existing_rule, type_row, listen_addr_row, listen_port_row,
+            remote_host_row, remote_port_row,
+        ):
+            editor.destroy()
 
     def _save_rule_from_editor(self, existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row):
         from sshpilot.core.forwards import validate_forwarding_rule
