@@ -358,3 +358,58 @@ class TestApplyRuleEditorDefaultsForType:
 
     def test_autosave_is_a_noop(self):
         assert _dialog()._autosave_forwarding_changes() is None
+
+
+def test_empty_advanced_snapshot_clears_options_and_both_switches():
+    """A loaded empty Host block must not retain options from the prior one."""
+    advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
+    advanced.option_list = _SilentOptionList()
+    advanced._update_parent_connection = lambda: None
+    dialog = _session_type_dialog(advanced)
+    advanced.parent_dialog = dialog
+
+    advanced.set_extra_ssh_config(
+        "SessionType none\nExitOnForwardFailure yes"
+    )
+    assert dialog.port_forwarding_only_row.get_active()
+    assert dialog.exit_on_forward_failure_row.get_active()
+
+    advanced.set_extra_ssh_config("")
+
+    assert advanced.get_config_entries() == []
+    assert advanced.get_extra_ssh_config() == ""
+    assert dialog.port_forwarding_only_row.get_active() is False
+    assert dialog.exit_on_forward_failure_row.get_active() is False
+
+
+def test_forwarding_rule_reload_is_private_and_replaces_empty_snapshots():
+    """Dialog edits must not change a live Connection until Save succeeds."""
+    from types import SimpleNamespace
+
+    original_rule = {
+        "type": "local",
+        "listen_addr": "localhost",
+        "listen_port": 8080,
+        "remote_host": "web",
+        "remote_port": 80,
+    }
+    connection = SimpleNamespace(forwarding_rules=[original_rule])
+    dialog = _dialog()
+    snapshots = []
+    dialog.load_port_forwarding_rules = lambda: snapshots.append(
+        [dict(rule) for rule in dialog.forwarding_rules]
+    )
+
+    dialog._load_forwarding_rule_draft(connection)
+    assert dialog.forwarding_rules == connection.forwarding_rules
+    assert dialog.forwarding_rules is not connection.forwarding_rules
+    assert dialog.forwarding_rules[0] is not original_rule
+
+    dialog.forwarding_rules[0]["remote_host"] = "changed"
+    dialog.forwarding_rules.append({"type": "dynamic", "listen_port": 1080})
+    assert connection.forwarding_rules == [original_rule]
+    assert original_rule["remote_host"] == "web"
+
+    dialog._load_forwarding_rule_draft(SimpleNamespace(forwarding_rules=[]))
+    assert dialog.forwarding_rules == []
+    assert snapshots[-1] == []
