@@ -993,6 +993,22 @@ class TerminalWidget(Gtk.Box):
         """Get the name of the current backend."""
         return getattr(self, '_backend_name', 'vte')
 
+    def _active_backend_label(self) -> str:
+        """Describe this tab's instantiated renderer, independent of settings."""
+        backend = self.backend
+        name = {
+            'VTETerminalBackend': 'VTE',
+            'GtkGhosttyTerminalBackend': 'gtkghostty',
+            'PyXtermBridgeBackend': 'xterm.js',
+            'PyXtermTerminalBackend': 'xterm.js',
+            'PyteTerminalBackend': 'Built-in',
+        }.get(type(backend).__name__, type(backend).__name__)
+        if type(backend).__name__ == 'PyteTerminalBackend':
+            model = getattr(backend.view, 'model_name', '')
+            name = {'vterm': 'libvterm', 'ghostty': 'libghostty-vt',
+                    'pyte': 'pyte'}.get(model, model or name)
+        return _("Active terminal: {backend}").format(backend=name)
+
     def ensure_backend(self, backend_name: Optional[str] = None) -> None:
         """Switch to the specified backend if different from current."""
         if backend_name is None:
@@ -4496,6 +4512,13 @@ class TerminalWidget(Gtk.Box):
                 search_section.append(_("Search\tCtrl+Shift+F"), "term.search")
                 search_section.append(_("Save Output…"), "term.save_contents")
                 self._menu_model.append_section(None, search_section)
+            backend_action = Gio.SimpleAction.new("backend_info", None)
+            backend_action.set_enabled(False)
+            self._menu_actions.add_action(backend_action)
+            backend_section = Gio.Menu()
+            backend_section.append(self._active_backend_label(), "term.backend_info")
+            self._menu_model.append_section(None, backend_section)
+
             # Popover parent + dismissal strategy.
             #
             # A grabbing (autohide) GtkPopover cannot establish its input grab over a
