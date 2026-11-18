@@ -49,6 +49,7 @@ from .models import (
     ProfileLink,
     apply_profile_to_data,
     auth_fingerprint,
+    matches_legacy_auth_fingerprint,
     auth_projection,
     diff_projections,
     profile_owned_keywords,
@@ -731,10 +732,18 @@ class LoginProfileService:
                 continue
             previous = self._state.get((link.rev or "").split(":", 1)[0])
             previous_name = previous.name if previous else ""
-            if link.applied and auth_fingerprint(record.data, link.extra_keys) != link.applied:
-                self._detach_locked(cid)
-                detached.append(DetachedConnection(cid, previous_name, DETACH_DRIFT))
-                continue
+            fingerprint = auth_fingerprint(record.data, link.extra_keys)
+            if link.applied and fingerprint != link.applied:
+                if matches_legacy_auth_fingerprint(record.data, link.extra_keys, link.applied):
+                    # Upgrade only the metadata after validating the old hash;
+                    # never rewrite the Host block or accept real drift.
+                    migrated = link.to_metadata()
+                    migrated["applied"] = fingerprint
+                    self._repository.update_connection_metadata(cid, {LINK_METADATA_KEY: migrated})
+                else:
+                    self._detach_locked(cid)
+                    detached.append(DetachedConnection(cid, previous_name, DETACH_DRIFT))
+                    continue
             eff = effective_profile(cid, link, snapshot.groups, links, self._state)
             if eff is None:
                 if link.mode == LINK_EXPLICIT:

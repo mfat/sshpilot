@@ -467,7 +467,7 @@ def test_profile_proxy_command_replaces_connection_field_and_preserves_when_empt
     profile = LoginProfile(
         id="lp-0123456789abcdef",
         name="Proxy",
-        proxy_command="  ssh  -W %h:%p   bastion  ",
+        proxy_command="  ssh -W %h:%p bastion  ",
     )
     assert profile.proxy_command == "ssh -W %h:%p bastion"
     applied = apply_profile_to_data(data, profile)
@@ -515,3 +515,66 @@ def test_profile_proxy_command_replaces_connection_field_and_preserves_when_empt
             "name": "Broken",
             "extra_ssh_config": "ProxyCommand",
         })
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_proxy_command_preserves_quoted_whitespace(env, legacy):
+    repo, service, root, _secrets, _events = env
+    command = '"/tmp/proxy  helper" --label "two\t words" %h %p'
+    values = {'id': 'lp-0123456789abcdef', 'name': 'Proxy'}
+    values['extra_ssh_config' if legacy else 'proxy_command'] = (
+        'ProxyCommand ' + command if legacy else command
+    )
+    profile = LoginProfile.from_dict(values)
+    assert profile.proxy_command == command
+    created = service.create_profile(profile.settings())
+    service.assign_connections(('web1',), LINK_EXPLICIT, created.id)
+    assert 'ProxyCommand ' + command in root.read_text()
+    assert service.reconcile() == ()
+    assert read_login_profiles(service._path).get(created.id).proxy_command == command
+    repo.update_connection('web1', {'proxy_command': command.replace('proxy  helper', 'proxy helper')})
+    service.reconcile()
+    assert _link(repo, 'web1') is None
+
+
+@pytest.mark.parametrize('representation', ['extra', 'field'])
+@pytest.mark.parametrize('drift', [False, True])
+def test_legacy_proxy_fingerprint_upgrade(env, representation, drift):
+    import hashlib
+
+    repo, service, root, _secrets, _events = env
+    profile = service.create_profile({'name': 'Proxy', 'proxy_command': 'ssh -W %h:%p bastion'})
+    service.assign_connections(('web1',), LINK_EXPLICIT, profile.id)
+    # The exact projection formats persisted by the two previous releases.
+    historical = {
+        'username': '', 'auth_method': 0, 'key_select_mode': 0,
+        'identity_files': [], 'certificate_files': [], 'identity_agent': '',
+        'add_keys_to_agent': '', 'pkcs11_provider': '', 'security_key_provider': '',
+        'pubkey_auth_no': False, 'forward_agent': False, 'forward_agent_target': '',
+        'extra': [],
+    }
+    if representation == 'extra':
+        historical['extra'] = ['ProxyCommand ssh -W %h:%p bastion']
+    else:
+        historical['proxy_command'] = 'ssh -W %h:%p bastion'
+    old_hash = hashlib.sha256(json.dumps(
+        historical, sort_keys=True, separators=(',', ':')
+    ).encode()).hexdigest()[:32]
+    link = _link(repo, 'web1').to_metadata()
+    link['applied'] = old_hash
+    with service._operation():  # simulate persisted metadata before reconciliation
+        repo.update_connection_metadata('web1', {'login_profile': link})
+        if drift:
+            repo.update_connection('web1', {'proxy_command': 'ssh changed'})
+    before = root.read_text()
+    detached = service.reconcile()
+    assert root.read_text() == before
+    if drift:
+        assert len(detached) == 1 and detached[0].reason == DETACH_DRIFT
+        assert _link(repo, 'web1') is None
+    else:
+        assert detached == ()
+        assert _link(repo, 'web1').applied.startswith('v2:')
+        assert service.reconcile() == ()
+        service.update_profile(profile.id, {'proxy_command': 'ssh updated'})
+        assert 'ProxyCommand ssh updated' in root.read_text()

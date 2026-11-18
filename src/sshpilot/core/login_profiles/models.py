@@ -140,7 +140,7 @@ def _clean_paths(values: Any, name: str) -> Tuple[str, ...]:
 
 def _clean_proxy_command(value: Any) -> str:
     """A single ProxyCommand value, or ``""`` when the profile leaves it alone."""
-    return " ".join(_clean_text(value, "proxy_command").split())
+    return _clean_text(value, "proxy_command")
 
 
 def _partition_proxy_command(extra: str) -> Tuple[str, str, bool]:
@@ -161,7 +161,7 @@ def _partition_proxy_command(extra: str) -> Tuple[str, str, bool]:
         _key, value = _split_config_option(line)
         if not value:
             raise ValueError("ProxyCommand requires a value")
-        commands.append(" ".join(value.split()))
+        commands.append(_clean_proxy_command(value))
     return (commands[0] if commands else ""), "\n".join(kept), found
 
 
@@ -489,15 +489,40 @@ def auth_projection(
     # Included only for a profile that sets a Proxy command, so links that
     # leave the connection's own command alone keep their recorded fingerprint.
     if "proxycommand" in owned:
-        projection["proxy_command"] = " ".join(_norm_str(data.get("proxy_command")).split())
+        projection["proxy_command"] = _norm_str(data.get("proxy_command"))
     return projection
 
 
-def auth_fingerprint(data: Mapping[str, Any], owned_keywords: Iterable[str] = ()) -> str:
-    encoded = json.dumps(
-        auth_projection(data, owned_keywords), sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+def _projection_fingerprint(projection: Mapping[str, Any]) -> str:
+    encoded = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:32]
+
+
+def auth_fingerprint(data: Mapping[str, Any], owned_keywords: Iterable[str] = ()) -> str:
+    projection = auth_projection(data, owned_keywords)
+    # Version command-owning links so legacy whitespace folding is only used
+    # during migration, never to mask subsequent edits inside shell quotes.
+    prefix = "v2:" if "proxy_command" in projection else ""
+    return prefix + _projection_fingerprint(projection)
+
+
+def matches_legacy_auth_fingerprint(
+    data: Mapping[str, Any], owned_keywords: Iterable[str], applied: str,
+) -> bool:
+    """Recognize both historical ProxyCommand projections before upgrading a link."""
+    if applied.startswith("v2:"):
+        return False
+    projection = auth_projection(data, owned_keywords)
+    if "proxy_command" not in projection:
+        return False
+    command = " ".join(projection["proxy_command"].split())
+    projection["proxy_command"] = command
+    if _projection_fingerprint(projection) == applied:
+        return True
+    del projection["proxy_command"]
+    if command:
+        projection["extra"] = sorted([*projection["extra"], "ProxyCommand " + command])
+    return _projection_fingerprint(projection) == applied
 
 
 # Profile-owned fields compared by the assignment preview diff, in display
