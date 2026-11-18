@@ -47,25 +47,27 @@ fi
 
 echo
 echo "=== bubblewrap (unmapped host root → UID 65534 in the sandbox) ==="
+echo "Note: OpenSSH picks the user config from passwd homedir, not HOME alone."
+echo "This section tests the store-backed file path and the -F workaround."
 bwrap --unshare-user --uid "$(id -u)" --gid "$(id -g)" \
   --ro-bind / / \
   --bind "$REPRO" "$REPRO" \
   --proc /proc --dev /dev \
-  --setenv HOME "$REPRO" \
   --chdir "$REPRO" \
   sh -c '
+    CFG="'"$REPRO"'/.ssh/config"
     id
-    stat -Lc "owner=%u group=%g mode=%a" "$HOME/.ssh/config"
+    stat -Lc "owner=%u group=%g mode=%a path=%n" "$CFG"
     cat /proc/self/uid_map
-    echo "--- ssh -G localhost (default config, no -F) ---"
-    if out=$(ssh -G localhost 2>&1 | head -8); then
-      printf '%s\n' "$out"
-    else
-      printf '%s\n' "$out"
-      echo "(ssh -G failed — expected when system snippets are root-owned)"
+    echo "--- ssh -F repro config -G localhost (Nix/Flatpak workaround) ---"
+    set +e
+    out=$(ssh -F "$CFG" -G localhost 2>&1)
+    code=$?
+    set -e
+    printf "%s\n" "$out"
+    if [ "$code" -ne 0 ]; then
+      echo "(ssh -G exit $code — often system ssh_config.d ownership in bwrap)"
     fi
-    echo "--- ssh -F \"\$HOME/.ssh/config\" -G localhost (workaround) ---"
-    ssh -F "$HOME/.ssh/config" -G localhost 2>&1 | head -5 || true
   '
 
 if [[ "$WITH_FLATPAK" -eq 1 ]]; then
@@ -83,11 +85,14 @@ if [[ "$WITH_FLATPAK" -eq 1 ]]; then
     --filesystem="$REPRO" \
     --filesystem="$STORE:ro" \
     --command=sh "$APP_ID" -c "
-      export HOME=$REPRO
+      CFG=$REPRO/.ssh/config
       id
-      stat -Lc 'owner=%u group=%g mode=%a' \"\$HOME/.ssh/config\"
+      stat -Lc 'owner=%u group=%g mode=%a' \"\$CFG\"
       cat /proc/self/uid_map
-      /app/bin/ssh -G localhost 2>&1 | head -6 || true
+      set +e
+      out=\$(/app/bin/ssh -F \"\$CFG\" -G localhost 2>&1)
+      printf '%s\n' \"\$out\"
+      set -e
     "
   echo
   echo "On NixOS + /nix/store:ro, stat here often shows owner=65534 and ssh"
