@@ -381,7 +381,7 @@ msgstr "Nombre de la sesión"
 #: src/sshpilot/resources/ui/connection_dialog.ui:65
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:31
 msgid "Save"
-msgstr "Ahorrar"
+msgstr "Guardar"
 
 #: src/sshpilot/actions.py:887
 msgid "Overwrite Session?"
@@ -718,7 +718,7 @@ msgstr "Aún no hay claves: use \"Agregar clave\" para instalar una."
 
 #: src/sshpilot/authorized_keys_window.py:335 src/sshpilot/text_editor.py:1407
 msgid "Saving…"
-msgstr "Ahorro…"
+msgstr "Guardando…"
 
 #: src/sshpilot/authorized_keys_window.py:347 src/sshpilot/text_editor.py:1473
 #, python-brace-format
@@ -3310,7 +3310,7 @@ msgstr "Directorio de trabajo"
 
 #: src/sshpilot/daemon_sftp_backend.py:829
 msgid "Moving…"
-msgstr "Ahorro…"
+msgstr "Moviendo…"
 
 #: src/sshpilot/daemon_sftp_backend.py:829
 msgid "Copying…"
