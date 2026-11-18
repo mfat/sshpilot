@@ -57,6 +57,18 @@ def _format_forwarding_validation_error(message: str) -> str:
 
 
 class ConnectionDialogPortForwardingMixin:
+    def _load_forwarding_rule_draft(self, connection):
+        """Replace the dialog's forwarding draft without sharing mutable rules.
+
+        A local editor may hold the application's live Connection object.
+        Forward edits must remain private until the connection is saved, and a
+        subsequent snapshot with no forwards must clear the previous rows.
+        """
+        self.forwarding_rules = [
+            dict(rule) for rule in (getattr(connection, 'forwarding_rules', None) or [])
+        ]
+        self.load_port_forwarding_rules()
+
     def load_port_forwarding_rules(self):
         """Load port forwarding rules from the connection and update UI"""
         if not hasattr(self, 'rules_list') or not hasattr(self, 'forwarding_rules'):
@@ -335,14 +347,27 @@ class ConnectionDialogPortForwardingMixin:
             dialog.destroy()
 
         def _on_save_clicked(button):
-            self._save_rule_from_editor(existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row)
-            dialog.destroy()
+            self._finish_rule_editor_save(
+                dialog, existing_rule, type_row, listen_addr_row,
+                listen_port_row, remote_host_row, remote_port_row,
+            )
 
         cancel_button.connect('clicked', _on_cancel_clicked)
         save_button.connect('clicked', _on_save_clicked)
 
         # Show the window
         dialog.present()
+
+    def _finish_rule_editor_save(
+        self, editor, existing_rule, type_row, listen_addr_row,
+        listen_port_row, remote_host_row, remote_port_row,
+    ):
+        """Dismiss the nested editor only when its rule was accepted."""
+        if self._save_rule_from_editor(
+            existing_rule, type_row, listen_addr_row, listen_port_row,
+            remote_host_row, remote_port_row,
+        ):
+            editor.destroy()
 
     def _save_rule_from_editor(self, existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row):
         from sshpilot.core.forwards import validate_forwarding_rule
@@ -388,7 +413,7 @@ class ConnectionDialogPortForwardingMixin:
         errors = validate_forwarding_rule(rule)
         if errors:
             self.show_error(_format_forwarding_validation_error(errors[0].message))
-            return
+            return False
 
         # Check for port conflicts (for local and dynamic forwarding)
         if rtype in ['local', 'dynamic']:
@@ -412,7 +437,7 @@ class ConnectionDialogPortForwardingMixin:
 
                     # Show error dialog with conflict information
                     self.show_error(conflict_msg)
-                    return
+                    return False
 
             except Exception as e:
                 logger.debug(f"Could not check port conflict for {listen_port}: {e}")
@@ -428,6 +453,7 @@ class ConnectionDialogPortForwardingMixin:
             self.forwarding_rules.append(rule)
 
         self.load_port_forwarding_rules()
+        return True
 
     def _apply_rule_editor_defaults_for_type(
         self,
