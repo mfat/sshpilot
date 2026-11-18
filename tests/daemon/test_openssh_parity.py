@@ -227,6 +227,26 @@ def test_users_own_config_is_launched_without_dash_f(tmp_path, monkeypatch):
     assert view._resolve_config_override_path() is None
 
 
+def test_unmapped_owner_forces_dash_f_for_user_config(tmp_path, monkeypatch):
+    """Flatpak can surface store-backed configs as UID 65534 (sshpilot#1384)."""
+    home_ssh = tmp_path / ".ssh"
+    home_ssh.mkdir()
+    root = home_ssh / "config"
+    store = tmp_path / "store" / "hm_.sshconfig"
+    store.parent.mkdir(parents=True)
+    store.write_text("Host plain\n    HostName 192.0.2.10\n")
+    root.symlink_to(store)
+    monkeypatch.setattr(paths, "openssh_user_dir", lambda: home_ssh)
+    monkeypatch.setattr(
+        "sshpilot.core.ssh_config_effective.openssh_accepts_default_user_config",
+        lambda _path: False,
+    )
+    assert launch_config_file(root) == str(store.resolve())
+    records, provider = _provider(root)
+    view = provider._view(records["plain"])
+    assert view._resolve_config_override_path() == str(store.resolve())
+
+
 # --- Include discovery -------------------------------------------------------
 
 

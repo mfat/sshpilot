@@ -191,6 +191,21 @@ def openssh_reachable_files(root_path: str) -> FrozenSet[str]:
         return frozenset()
 
 
+def openssh_accepts_default_user_config(config_path: str) -> bool:
+    """Whether plain ``ssh host`` may load *config_path* by ownership alone.
+
+    OpenSSH rejects the default user configuration when it is not owned by the
+    current user or root.  Flatpak and similar sandboxes can report root-owned
+    host files as UID 65534 (``nfsnobody``), which fails unless the launch
+    passes an explicit ``-F`` path.
+    """
+    try:
+        owner = os.stat(config_path).st_uid
+    except OSError:
+        return True
+    return owner in (0, os.geteuid())
+
+
 def launch_config_file(
     root_path, source_path=None, *, cache: Optional["ConfigScanCache"] = None
 ) -> Optional[str]:
@@ -210,7 +225,16 @@ def launch_config_file(
     root = os.path.abspath(os.path.expanduser(str(root_path))) if root_path else ""
     source = os.path.abspath(os.path.expanduser(str(source_path))) if source_path else ""
     if root and is_openssh_user_config(root):
-        return None
+        if openssh_accepts_default_user_config(root):
+            return None
+        forced = os.path.realpath(root)
+        logger.info(
+            "OpenSSH would reject default ownership on %s in this environment; "
+            "launching with -F %s",
+            root,
+            forced,
+        )
+        return forced
     if root and os.path.isfile(root):
         reachable = (
             cache.reachable_files(root) if cache is not None
