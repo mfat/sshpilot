@@ -38,6 +38,7 @@ SETTINGS = LoginProfileSettings(
     identity_files=("/k/a", "/k/b"),
     extra_ssh_config="ServerAliveInterval 30",
     forward_agent=True,
+    proxy_command="ssh -W %h:%p bastion",
 )
 PID = "lp-0123456789abcdef"
 

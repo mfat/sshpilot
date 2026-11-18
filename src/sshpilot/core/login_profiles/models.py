@@ -1,8 +1,9 @@
 """Login profile value objects and pure connection-data helpers (GTK-free).
 
 A :class:`LoginProfile` is a named, reusable bundle of authentication settings
-(username, key selection, agent/hardware options, extra directives) that can
-be linked to any number of SSH connections, directly or through a group.
+(username, key selection, agent/hardware options, an optional ProxyCommand,
+extra directives) that can be linked to any number of SSH connections,
+directly or through a group.
 
 The daemon resolves a linked profile *into* the connection's ``Host`` block,
 so plain ``ssh`` keeps working; the link itself is sshPilot metadata. Field
@@ -137,6 +138,41 @@ def _clean_paths(values: Any, name: str) -> Tuple[str, ...]:
     return tuple(cleaned)
 
 
+def _clean_proxy_command(value: Any) -> str:
+    """A single ProxyCommand value, or ``""`` when the profile leaves it alone."""
+    return " ".join(_clean_text(value, "proxy_command").split())
+
+
+def _partition_proxy_command(extra: str) -> Tuple[str, str, bool]:
+    """Split ``ProxyCommand`` lines out of extra text.
+
+    Returns ``(first command, remaining text, found)``. OpenSSH uses the first
+    value, so later commands are dropped. A bare ``ProxyCommand`` is refused.
+    """
+    commands: List[str] = []
+    kept: List[str] = []
+    found = False
+    for line in split_config_lines(extra or ""):
+        if _extra_keyword(line) != "proxycommand":
+            if line.strip():
+                kept.append(line)
+            continue
+        found = True
+        _key, value = _split_config_option(line)
+        if not value:
+            raise ValueError("ProxyCommand requires a value")
+        commands.append(" ".join(value.split()))
+    return (commands[0] if commands else ""), "\n".join(kept), found
+
+
+def _drop_keyword(extra: str, keyword: str) -> str:
+    return "\n".join(
+        line
+        for line in split_config_lines(extra or "")
+        if line.strip() and _extra_keyword(line) != keyword
+    )
+
+
 def _extra_keyword(line: str) -> str:
     stripped = line.strip()
     if not stripped or stripped.startswith("#"):
@@ -156,10 +192,7 @@ def _clean_extra(value: Any) -> str:
                 "extra_ssh_config must not contain Host, Match or Include lines",
                 REASON_EXTRA_FORBIDDEN_BLOCK,
             )
-        if keyword == "proxycommand" and not _split_config_option(line)[1]:
-            raise ValueError("ProxyCommand requires a value")
-        # ProxyCommand has a connection field, but no dedicated profile field.
-        if keyword in MANAGED_HOST_OPTIONS and keyword != "proxycommand":
+        if keyword in MANAGED_HOST_OPTIONS:
             raise LoginProfileValueError(
                 f"{keyword} has a dedicated field and cannot be set in extra_ssh_config",
                 REASON_EXTRA_MANAGED_OPTION,
@@ -186,6 +219,7 @@ class LoginProfile:
     pubkey_auth_no: bool = False
     forward_agent: bool = False
     forward_agent_target: str = ""
+    proxy_command: str = ""
     extra_ssh_config: str = ""
     has_password: bool = False
     has_sudo_password: bool = False
@@ -229,6 +263,7 @@ class LoginProfile:
             "forward_agent_target",
         ):
             object.__setattr__(self, name_, _clean_text(getattr(self, name_), name_))
+        object.__setattr__(self, "proxy_command", _clean_proxy_command(self.proxy_command))
         add_keys = _clean_text(self.add_keys_to_agent, "add_keys_to_agent").lower()
         if add_keys not in _VALID_ADD_KEYS and not re.fullmatch(
             r"(yes|no|ask|confirm)?\s*\d+[smhdw]?", add_keys
@@ -260,6 +295,7 @@ class LoginProfile:
             "pubkey_auth_no": self.pubkey_auth_no,
             "forward_agent": self.forward_agent,
             "forward_agent_target": self.forward_agent_target,
+            "proxy_command": self.proxy_command,
             "extra_ssh_config": self.extra_ssh_config,
             "has_password": self.has_password,
             "has_sudo_password": self.has_sudo_password,
@@ -275,6 +311,16 @@ class LoginProfile:
         for key in ("identity_files", "certificate_files"):
             if key in values and isinstance(values[key], list):
                 values[key] = tuple(values[key])
+        # Profiles saved while ProxyCommand lived in extra text keep working:
+        # the first command becomes the dedicated field.
+        extra = values.get("extra_ssh_config")
+        if isinstance(extra, str) and extra:
+            command, cleaned, found = _partition_proxy_command(extra)
+            if found:
+                values["extra_ssh_config"] = cleaned
+                current = values.get("proxy_command")
+                if command and not (isinstance(current, str) and current.strip()):
+                    values["proxy_command"] = command
         return cls(**values)
 
     def with_changes(self, **changes: Any) -> "LoginProfile":
@@ -351,21 +397,12 @@ def apply_profile_to_data(data: Mapping[str, Any], profile: LoginProfile) -> Dic
     out["extra_ssh_config"] = _merge_extra(
         str(out.get("extra_ssh_config") or ""), profile.extra_ssh_config
     )
-    # Route the profile directive through the existing connection field so the
-    # formatter replaces an old command instead of appending a losing duplicate.
-    # OpenSSH uses the first occurrence of a directive.
-    extra_lines = split_config_lines(out["extra_ssh_config"])
-    commands = [
-        _split_config_option(line)[1]
-        for line in extra_lines if _extra_keyword(line) == "proxycommand"
-    ]
-    if commands:
-        if not commands[0]:
-            raise ValueError("ProxyCommand requires a value")
-        out["proxy_command"] = commands[0]
-        out["extra_ssh_config"] = "\n".join(
-            line for line in extra_lines if _extra_keyword(line) != "proxycommand"
-        )
+    # An empty profile command leaves the connection's ProxyCommand alone.
+    # A set command owns the field and drops any extra copy: OpenSSH uses the
+    # first occurrence, and the formatter emits the field itself.
+    if profile.proxy_command:
+        out["proxy_command"] = profile.proxy_command
+        out["extra_ssh_config"] = _drop_keyword(out["extra_ssh_config"], "proxycommand")
     return out
 
 
@@ -379,6 +416,19 @@ def _norm_list(values: Any) -> List[str]:
     if not isinstance(values, (list, tuple)):
         return []
     return [str(v).strip() for v in values if str(v).strip()]
+
+
+def profile_owned_keywords(profile: "LoginProfile") -> Tuple[str, ...]:
+    """Directive keywords this profile replaces on a linked connection.
+
+    Extra lines contribute their keywords. ``proxycommand`` is included when
+    the profile's own Proxy command row is set, so drift detection watches
+    the connection field the formatter writes.
+    """
+    keys = list(extra_keywords(profile.extra_ssh_config))
+    if profile.proxy_command and "proxycommand" not in keys:
+        keys.append("proxycommand")
+    return tuple(keys)
 
 
 def extra_keywords(extra: str) -> Tuple[str, ...]:
@@ -414,20 +464,14 @@ def auth_projection(
     extra_lines = sorted(
         " ".join(line.split())
         for line in split_config_lines(str(data.get("extra_ssh_config") or ""))
-        if _extra_keyword(line) in owned
+        if _extra_keyword(line) in owned and _extra_keyword(line) != "proxycommand"
     )
-
-    # The loader stores ProxyCommand in its connection field, not extra text.
-    # Include it in the existing extra projection for previews and drift checks.
-    if "proxycommand" in owned and data.get("proxy_command"):
-        extra_lines.append("ProxyCommand " + " ".join(str(data["proxy_command"]).split()))
-        extra_lines.sort()
 
     def paths(key: str) -> List[str]:
         values = _norm_list(data.get(key))
         return [_expand(v) for v in values] if expand_paths else values
 
-    return {
+    projection = {
         "username": _norm_str(data.get("username")),
         "auth_method": auth_method,
         "key_select_mode": key_mode,
@@ -442,6 +486,11 @@ def auth_projection(
         "forward_agent_target": _norm_str(data.get("forward_agent_target")),
         "extra": extra_lines,
     }
+    # Included only for a profile that sets a Proxy command, so links that
+    # leave the connection's own command alone keep their recorded fingerprint.
+    if "proxycommand" in owned:
+        projection["proxy_command"] = " ".join(_norm_str(data.get("proxy_command")).split())
+    return projection
 
 
 def auth_fingerprint(data: Mapping[str, Any], owned_keywords: Iterable[str] = ()) -> str:
@@ -466,6 +515,7 @@ DIFF_FIELDS: Tuple[str, ...] = (
     "pubkey_auth_no",
     "forward_agent",
     "forward_agent_target",
+    "proxy_command",
     "extra",
 )
 

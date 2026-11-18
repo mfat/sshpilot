@@ -51,7 +51,7 @@ from .models import (
     auth_fingerprint,
     auth_projection,
     diff_projections,
-    extra_keywords,
+    profile_owned_keywords,
     new_profile_id,
     parse_link,
     revision_token,
@@ -606,7 +606,7 @@ class LoginProfileService:
                 if eff is None:
                     previews.append(AssignmentPreview(cid, "", ()))
                     continue
-                keys = extra_keywords(eff.profile.extra_ssh_config)
+                keys = profile_owned_keywords(eff.profile)
                 before = auth_projection(record.data, keys, expand_paths=True)
                 after = auth_projection(
                     apply_profile_to_data(record.data, eff.profile), keys, expand_paths=True
@@ -695,7 +695,7 @@ class LoginProfileService:
         updated = self._repository.update_connection(connection_id, payload)
         new_id = getattr(updated, "id", None) or connection_id
         written = self._repository.get_record(new_id) or updated
-        keys = extra_keywords(profile.extra_ssh_config)
+        keys = profile_owned_keywords(profile)
         applied = ProfileLink(
             link.mode,
             link.profile_id,

@@ -63,6 +63,7 @@ class LoginProfileField(str, Enum):
     PUBKEY_AUTH_NO = "pubkey_auth_no"
     FORWARD_AGENT = "forward_agent"
     FORWARD_AGENT_TARGET = "forward_agent_target"
+    PROXY_COMMAND = "proxy_command"
     EXTRA = "extra"
 
 
@@ -105,6 +106,7 @@ _SETTINGS_TEXT = (
     "pkcs11_provider",
     "security_key_provider",
     "forward_agent_target",
+    "proxy_command",
 )
 
 
@@ -153,6 +155,7 @@ class LoginProfileSettings:
     pubkey_auth_no: bool = False
     forward_agent: bool = False
     forward_agent_target: str = ""
+    proxy_command: str = ""
     extra_ssh_config: str = ""
 
     def __post_init__(self) -> None:

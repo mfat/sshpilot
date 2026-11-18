@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+- Login profiles gain a `proxy_command` field, shown as its own Proxy command
+  row in the profile editor, matching the connection dialog. When the profile
+  sets a command, that command is written to each linked connection and a
+  later edit of the connection's command detaches the profile. When the row
+  is empty, the connection keeps its own ProxyCommand. Extra SSH options
+  reject a `ProxyCommand` line; a profile file that still stores one loads
+  that command into the field. The API implementation version is 0.102;
+  Protocol remains 1.0.
 - `connections.list_config_syntax_errors()` returns a `ConfigSyntaxError` for
   every line that makes OpenSSH refuse the SSH configuration a launch reads:
   the file, the line and OpenSSH's own text for it (an opaque diagnostic).

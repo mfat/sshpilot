@@ -83,6 +83,7 @@ def login_profile_settings_to_wire(settings: LoginProfileSettings) -> Dict[str, 
         "pubkey_auth_no": settings.pubkey_auth_no,
         "forward_agent": settings.forward_agent,
         "forward_agent_target": settings.forward_agent_target,
+        "proxy_command": settings.proxy_command,
         "extra_ssh_config": settings.extra_ssh_config,
     }
 
@@ -98,6 +99,7 @@ def login_profile_settings_from_wire(value: Any) -> LoginProfileSettings:
             "pkcs11_provider",
             "security_key_provider",
             "forward_agent_target",
+            "proxy_command",
             "extra_ssh_config",
         )
     }

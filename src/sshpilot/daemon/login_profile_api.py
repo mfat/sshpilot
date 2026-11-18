@@ -97,6 +97,7 @@ def settings_from_profile(profile: LoginProfile) -> LoginProfileSettings:
         pubkey_auth_no=profile.pubkey_auth_no,
         forward_agent=profile.forward_agent,
         forward_agent_target=profile.forward_agent_target,
+        proxy_command=profile.proxy_command,
         extra_ssh_config=profile.extra_ssh_config,
     )
 
@@ -116,6 +117,7 @@ def _settings_values(settings: LoginProfileSettings) -> dict:
         "pubkey_auth_no": settings.pubkey_auth_no,
         "forward_agent": settings.forward_agent,
         "forward_agent_target": settings.forward_agent_target,
+        "proxy_command": settings.proxy_command,
         "extra_ssh_config": settings.extra_ssh_config,
     }
 

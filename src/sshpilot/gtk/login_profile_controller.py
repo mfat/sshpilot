@@ -358,5 +358,6 @@ def settings_from_values(values: Mapping[str, object]) -> LoginProfileSettings:
         pubkey_auth_no=bool(values.get("pubkey_auth_no")),
         forward_agent=bool(values.get("forward_agent")),
         forward_agent_target=text("forward_agent_target"),
+        proxy_command=text("proxy_command"),
         extra_ssh_config=str(values.get("extra_ssh_config") or "").strip(),
     )

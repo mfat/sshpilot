@@ -333,6 +333,18 @@ class LoginProfileEditor:
                 self.sudo_row.set_title(_("Sudo password (stored — type to replace)"))
         page.add(secrets)
 
+        routing = Adw.PreferencesGroup(
+            title=_("Routing"),
+            description=_("Optional SSH path settings used before authentication."),
+        )
+        self.proxy_command_row = Adw.EntryRow(title=_("Proxy command"))
+        self.proxy_command_row.set_text(settings.proxy_command)
+        self.proxy_command_row.set_tooltip_text(
+            _("Runs locally to relay the connection, e.g. ssh -W %h:%p bastion. A ProxyCommand executes a local command — only keep values you trust.")
+        )
+        routing.add(self.proxy_command_row)
+        page.add(routing)
+
         extra = Adw.PreferencesGroup(
             title=_("Extra SSH options"),
             description=_("One directive per line, e.g. ServerAliveInterval 30. "
@@ -385,6 +397,7 @@ class LoginProfileEditor:
             "pubkey_auth_no": self.pubkey_no_row.get_active(),
             "forward_agent": self.forward_agent_row.get_active(),
             "forward_agent_target": self.forward_target_row.get_text(),
+            "proxy_command": self.proxy_command_row.get_text(),
             "extra_ssh_config": extra,
         }
 

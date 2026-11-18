@@ -10,10 +10,15 @@ from sshpilot.core.errors import CoreError
 from sshpilot.core.login_profiles.models import (
     LINK_EXPLICIT,
     LINK_INHERIT,
+    REASON_EXTRA_MANAGED_OPTION,
     LoginProfile,
     LoginProfileState,
+    LoginProfileValueError,
     apply_profile_to_data,
+    auth_projection,
+    diff_projections,
     parse_link,
+    profile_owned_keywords,
 )
 from sshpilot.core.login_profiles.service import (
     DETACH_DELETED,
@@ -454,16 +459,59 @@ def test_group_profile_unknown_member_changes_nothing(env):
     assert service.group_profile_id(group) is None
 
 
-def test_profile_proxy_command_uses_first_value_and_preserves_unowned_command():
-    data = {'proxy_command': 'ssh old', 'extra_ssh_config': 'Compression yes'}
-    profile = LoginProfile(id='lp-0123456789abcdef', name='Proxy', extra_ssh_config=(
-        'ProxyCommand ssh -W %h:%p first\nProxyCommand ssh second'
-    ))
+def test_profile_proxy_command_replaces_connection_field_and_preserves_when_empty():
+    data = {
+        "proxy_command": "ssh old",
+        "extra_ssh_config": "Compression yes\nProxyCommand ssh extra",
+    }
+    profile = LoginProfile(
+        id="lp-0123456789abcdef",
+        name="Proxy",
+        proxy_command="  ssh  -W %h:%p   bastion  ",
+    )
+    assert profile.proxy_command == "ssh -W %h:%p bastion"
     applied = apply_profile_to_data(data, profile)
-    assert applied['proxy_command'] == 'ssh -W %h:%p first'
-    assert applied['extra_ssh_config'] == 'Compression yes'
-    assert data['proxy_command'] == 'ssh old'
-    plain = LoginProfile(id='lp-0123456789abcdef', name='Plain')
-    assert apply_profile_to_data(data, plain)['proxy_command'] == 'ssh old'
-    with pytest.raises(ValueError, match='ProxyCommand requires a value'):
-        LoginProfile(id='lp-0123456789abcdef', name='Invalid', extra_ssh_config='ProxyCommand')
+    assert applied["proxy_command"] == "ssh -W %h:%p bastion"
+    assert applied["extra_ssh_config"] == "Compression yes"
+    assert data["proxy_command"] == "ssh old"
+
+    plain = LoginProfile(id="lp-0123456789abcdef", name="Plain")
+    kept = apply_profile_to_data(data, plain)
+    assert kept["proxy_command"] == "ssh old"
+    assert "ProxyCommand ssh extra" in kept["extra_ssh_config"]
+
+    keys = profile_owned_keywords(profile)
+    assert "proxycommand" in keys
+    changes = {
+        change.field: (change.before, change.after)
+        for change in diff_projections(
+            auth_projection(data, keys, expand_paths=True),
+            auth_projection(applied, keys, expand_paths=True),
+        )
+    }
+    assert changes["proxy_command"] == ("ssh old", "ssh -W %h:%p bastion")
+    assert "proxycommand" not in profile_owned_keywords(plain)
+
+    with pytest.raises(LoginProfileValueError) as info:
+        LoginProfile(
+            id="lp-0123456789abcdef",
+            name="Invalid",
+            extra_ssh_config="ProxyCommand ssh -W %h:%p bastion",
+        )
+    assert info.value.reason == REASON_EXTRA_MANAGED_OPTION
+
+    loaded = LoginProfile.from_dict({
+        "id": "lp-0123456789abcdef",
+        "name": "Legacy",
+        "extra_ssh_config": (
+            "Compression yes\nproxycommand=ssh -W %h:%p bastion\nProxyCommand ssh second"
+        ),
+    })
+    assert loaded.proxy_command == "ssh -W %h:%p bastion"
+    assert loaded.extra_ssh_config == "Compression yes"
+    with pytest.raises(ValueError, match="ProxyCommand requires a value"):
+        LoginProfile.from_dict({
+            "id": "lp-0123456789abcdef",
+            "name": "Broken",
+            "extra_ssh_config": "ProxyCommand",
+        })
