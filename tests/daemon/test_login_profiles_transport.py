@@ -253,3 +253,35 @@ def test_drift_detach_publishes_event(env):
     assert info.connection_id == "web1"
     assert info.reason is LoginProfileDetachReason.DRIFT
     assert client.get_login_profiles().link_for("web1") is None
+
+
+@pytest.mark.parametrize('directive', [
+    'ProxyCommand ssh -W %h:%p bastion',
+    'proxycommand=ssh -W %h:%p bastion',
+])
+def test_profile_proxy_command_roundtrip_and_drift(env, directive):
+    client, repo, root, _secrets, service = env
+    repo.update_connection('web1', {'proxy_command': 'ssh -W %h:%p old'})
+    created = client.create_login_profile(CreateLoginProfileRequest(
+        LoginProfileSettings(name='Proxy', extra_ssh_config=directive)
+    ))
+    (preview,) = client.preview_login_profile_assignment(
+        PreviewLoginProfileAssignmentRequest(('web1',), LoginProfileLinkMode.EXPLICIT, created.id)
+    )
+    assert any(change.field is LoginProfileField.EXTRA for change in preview.changes)
+    client.assign_login_profile(
+        AssignLoginProfileRequest(('web1',), LoginProfileLinkMode.EXPLICIT, created.id)
+    )
+    assert root.read_text().count('ProxyCommand ') == 1
+    assert 'ProxyCommand ssh -W %h:%p bastion' in root.read_text()
+    assert service.reconcile() == ()
+    assert client.get_login_profiles().profile(created.id).settings.extra_ssh_config == directive
+    client.update_login_profile(UpdateLoginProfileRequest(
+        created.id, LoginProfileSettings(name='Proxy', extra_ssh_config='ProxyCommand none'),
+        expected_revision=1,
+    ))
+    assert root.read_text().count('ProxyCommand ') == 1
+    assert 'ProxyCommand none' in root.read_text()
+    assert service.reconcile() == ()
+    repo.update_connection('web1', {'proxy_command': 'ssh -W %h:%p edited'})
+    assert len(service.reconcile()) == 1

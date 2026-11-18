@@ -452,3 +452,18 @@ def test_group_profile_unknown_member_changes_nothing(env):
     with pytest.raises(CoreError):
         service.set_group_profile(group, deploy.id, link_members=["missing"])
     assert service.group_profile_id(group) is None
+
+
+def test_profile_proxy_command_uses_first_value_and_preserves_unowned_command():
+    data = {'proxy_command': 'ssh old', 'extra_ssh_config': 'Compression yes'}
+    profile = LoginProfile(id='lp-0123456789abcdef', name='Proxy', extra_ssh_config=(
+        'ProxyCommand ssh -W %h:%p first\nProxyCommand ssh second'
+    ))
+    applied = apply_profile_to_data(data, profile)
+    assert applied['proxy_command'] == 'ssh -W %h:%p first'
+    assert applied['extra_ssh_config'] == 'Compression yes'
+    assert data['proxy_command'] == 'ssh old'
+    plain = LoginProfile(id='lp-0123456789abcdef', name='Plain')
+    assert apply_profile_to_data(data, plain)['proxy_command'] == 'ssh old'
+    with pytest.raises(ValueError, match='ProxyCommand requires a value'):
+        LoginProfile(id='lp-0123456789abcdef', name='Invalid', extra_ssh_config='ProxyCommand')

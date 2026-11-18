@@ -24,7 +24,7 @@ import secrets
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from ...ssh_config_document import split_config_lines
+from ...ssh_config_document import _split_config_option, split_config_lines
 
 # Connection metadata key holding the profile link. Its value is one of:
 #   {"mode": "explicit", "id": <profile id>, "applied": <fingerprint>, "rev": <id:revision>}
@@ -156,7 +156,10 @@ def _clean_extra(value: Any) -> str:
                 "extra_ssh_config must not contain Host, Match or Include lines",
                 REASON_EXTRA_FORBIDDEN_BLOCK,
             )
-        if keyword in MANAGED_HOST_OPTIONS:
+        if keyword == "proxycommand" and not _split_config_option(line)[1]:
+            raise ValueError("ProxyCommand requires a value")
+        # ProxyCommand has a connection field, but no dedicated profile field.
+        if keyword in MANAGED_HOST_OPTIONS and keyword != "proxycommand":
             raise LoginProfileValueError(
                 f"{keyword} has a dedicated field and cannot be set in extra_ssh_config",
                 REASON_EXTRA_MANAGED_OPTION,
@@ -348,6 +351,21 @@ def apply_profile_to_data(data: Mapping[str, Any], profile: LoginProfile) -> Dic
     out["extra_ssh_config"] = _merge_extra(
         str(out.get("extra_ssh_config") or ""), profile.extra_ssh_config
     )
+    # Route the profile directive through the existing connection field so the
+    # formatter replaces an old command instead of appending a losing duplicate.
+    # OpenSSH uses the first occurrence of a directive.
+    extra_lines = split_config_lines(out["extra_ssh_config"])
+    commands = [
+        _split_config_option(line)[1]
+        for line in extra_lines if _extra_keyword(line) == "proxycommand"
+    ]
+    if commands:
+        if not commands[0]:
+            raise ValueError("ProxyCommand requires a value")
+        out["proxy_command"] = commands[0]
+        out["extra_ssh_config"] = "\n".join(
+            line for line in extra_lines if _extra_keyword(line) != "proxycommand"
+        )
     return out
 
 
@@ -398,6 +416,12 @@ def auth_projection(
         for line in split_config_lines(str(data.get("extra_ssh_config") or ""))
         if _extra_keyword(line) in owned
     )
+
+    # The loader stores ProxyCommand in its connection field, not extra text.
+    # Include it in the existing extra projection for previews and drift checks.
+    if "proxycommand" in owned and data.get("proxy_command"):
+        extra_lines.append("ProxyCommand " + " ".join(str(data["proxy_command"]).split()))
+        extra_lines.sort()
 
     def paths(key: str) -> List[str]:
         values = _norm_list(data.get(key))
