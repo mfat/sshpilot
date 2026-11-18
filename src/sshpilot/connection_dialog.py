@@ -784,6 +784,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.update_config_preview()
         # Update the parent connection object if we're editing
         self._update_parent_connection()
+        # set_options trusts loaded rows and emits nothing, so the ssh -N and
+        # ExitOnForwardFailure switches would otherwise stay at their empty-list
+        # state (#1389).
+        self._notify_parent_session_type_changed()
 
 
 _KEY_BADGE_CSS_REGISTERED = False
