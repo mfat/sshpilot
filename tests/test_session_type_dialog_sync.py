@@ -3,6 +3,10 @@
 Issue #1389: the host block has ``SessionType none`` but the connection
 dialog's "Do not start a remote shell" switch is off, and turning it on
 does not stick. The loader always hands the dialog ``sessiontype none``.
+
+``test_session_type_none_is_written_and_removed_in_the_ssh_config`` enables
+and disables that switch and writes each result through the daemon
+connection service into a temporary SSH config.
 """
 
 from types import SimpleNamespace
@@ -166,5 +170,127 @@ def test_exit_on_forward_failure_yes_enables_the_switch_and_survives_save():
     try:
         assert reopened.exit_on_forward_failure_row.get_active() is True
         assert reopened.port_forwarding_only_row.get_active() is True
+    finally:
+        reopened.close()
+
+
+def _session_type_lines(text):
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip().lower().startswith("sessiontype")
+    ]
+
+
+def _loaded_extra(root):
+    from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+
+    loaded = load_ssh_configuration(root, isolated=True)
+    record = next(item for item in loaded.connections if item.id == "tunnel")
+    return record.data.get("extra_ssh_config") or ""
+
+
+def _repository(tmp_path):
+    from sshpilot.core.connection_application_service import (
+        ConnectionApplicationService,
+    )
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    root = tmp_path / "ssh_config"
+    root.write_text(
+        "Host tunnel\n"
+        "    HostName example.com\n"
+        "    User alice\n",
+        encoding="utf-8",
+    )
+    repository = ConnectionRepository(
+        ssh_store=SshConfigStore(root, isolated=True),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=True,
+    )
+    service = ConnectionApplicationService(repository, client_name="test")
+    return service, repository, root
+
+
+def _save_through_daemon(service, repository, dialog):
+    """Persist the dialog payload with the daemon connection service.
+
+    The save signal's completion callback only tells the dialog the write
+    finished. The SSH config file is updated first, by
+    ``ConnectionApplicationService.update_connection``.
+    """
+    from sshpilot.api.models.common import ConnectionId
+    from sshpilot.api.models.connections import UpdateConnectionRequest
+
+    failure = []
+
+    def _on_saved(_dialog, payload, *_rest):
+        try:
+            changed = set(payload.get("__changed_fields") or ())
+            if "extra_ssh_config" not in changed:
+                raise AssertionError(
+                    "dialog save omitted extra_ssh_config from the changed fields"
+                )
+            record = repository.get_record("tunnel")
+            service.update_connection(
+                ConnectionId("tunnel"),
+                UpdateConnectionRequest(
+                    config_patch={
+                        "extra_ssh_config": payload["extra_ssh_config"],
+                    },
+                    expected_generation=record.generation,
+                ),
+            )
+            _rest[-1].complete(True)
+        except Exception as exc:
+            failure.append(exc)
+            _rest[-1].complete(False)
+
+    dialog.connect("connection-saved", _on_saved)
+    dialog.on_save_clicked()
+    if failure:
+        raise failure[0]
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _real_gtk_available(), reason="needs real libadwaita")
+def test_session_type_none_is_written_and_removed_in_the_ssh_config(tmp_path):
+    service, repository, root = _repository(tmp_path)
+    assert repository.get_record("tunnel") is not None
+    assert _session_type_lines(root.read_text(encoding="utf-8")) == []
+
+    dialog = _open_dialog("")
+    try:
+        assert dialog.port_forwarding_only_row.get_active() is False
+        dialog.port_forwarding_only_row.set_active(True)
+        _save_through_daemon(service, repository, dialog)
+    finally:
+        dialog.close()
+
+    enabled = root.read_text(encoding="utf-8")
+    assert _session_type_lines(enabled) == ["SessionType none"]
+    assert "HostName example.com" in enabled
+    assert "User alice" in enabled
+    assert _loaded_extra(root) == "sessiontype none"
+
+    reloaded = _open_dialog(_loaded_extra(root))
+    try:
+        assert reloaded.port_forwarding_only_row.get_active() is True
+        reloaded.port_forwarding_only_row.set_active(False)
+        _save_through_daemon(service, repository, reloaded)
+    finally:
+        reloaded.close()
+
+    disabled = root.read_text(encoding="utf-8")
+    assert _session_type_lines(disabled) == []
+    assert "HostName example.com" in disabled
+    assert "User alice" in disabled
+    assert _loaded_extra(root) == ""
+
+    reopened = _open_dialog(_loaded_extra(root))
+    try:
+        assert reopened.port_forwarding_only_row.get_active() is False
     finally:
         reopened.close()
