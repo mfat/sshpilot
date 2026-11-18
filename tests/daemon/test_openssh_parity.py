@@ -229,6 +229,10 @@ def test_users_own_config_is_launched_without_dash_f(tmp_path, monkeypatch):
 
 def test_unmapped_owner_forces_dash_f_for_user_config(tmp_path, monkeypatch):
     """Flatpak can surface store-backed configs as UID 65534 (sshpilot#1384)."""
+    import os
+    import stat
+    import types
+
     home_ssh = tmp_path / ".ssh"
     home_ssh.mkdir()
     root = home_ssh / "config"
@@ -237,10 +241,20 @@ def test_unmapped_owner_forces_dash_f_for_user_config(tmp_path, monkeypatch):
     store.write_text("Host plain\n    HostName 192.0.2.10\n")
     root.symlink_to(store)
     monkeypatch.setattr(paths, "openssh_user_dir", lambda: home_ssh)
-    monkeypatch.setattr(
-        "sshpilot.core.ssh_config_effective.trusted_default_user_ssh_config_owner",
-        lambda _path: False,
-    )
+    real_stat = os.stat
+
+    def fake_stat(path, *, follow_symlinks=True):
+        if os.path.abspath(str(path)) in {
+            os.path.abspath(str(root)),
+            os.path.abspath(str(store)),
+        }:
+            return types.SimpleNamespace(
+                st_uid=65534, st_mode=stat.S_IFREG | 0o444,
+            )
+        return real_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(os, "stat", fake_stat)
+    monkeypatch.setattr("sshpilot.platform.detect.is_flatpak", lambda: True)
     assert launch_config_file(root) == str(store.resolve())
     records, provider = _provider(root)
     view = provider._view(records["plain"])

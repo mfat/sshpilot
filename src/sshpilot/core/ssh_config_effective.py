@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import socket
+import stat
 import subprocess
 import tempfile
 from collections import Counter
@@ -33,6 +34,9 @@ from ..ssh_config_document import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Unmapped host UID inside user namespaces (Flatpak #6982, sshPilot #1384).
+_SANDBOX_OVERFLOW_UID = 65534
 
 _PATH_DIRECTIVES = frozenset(
     {
@@ -207,6 +211,30 @@ def trusted_default_user_ssh_config_owner(config_path: str) -> bool:
     return owner in (0, os.geteuid())
 
 
+def direct_f_workaround_for_unmapped_user_ssh_config(config_path: str) -> bool:
+    """Whether to use direct ``-F`` on ``realpath`` for #1384 / Flatpak #6982.
+
+    Only when ``stat()`` shows the sandbox overflow UID, the mode is not
+    group/world-writable, and the resolved path is inside Flatpak or under
+    ``/nix/store/``.  Any other unexpected owner keeps plain ``ssh host`` so
+    OpenSSH's own rejection still applies.
+    """
+    from ..platform.detect import is_flatpak
+
+    try:
+        st = os.stat(config_path)
+    except OSError:
+        return False
+    if st.st_uid != _SANDBOX_OVERFLOW_UID:
+        return False
+    if stat.S_IMODE(st.st_mode) & (stat.S_IWGRP | stat.S_IWOTH):
+        return False
+    resolved = os.path.realpath(config_path)
+    if is_flatpak():
+        return True
+    return resolved.startswith("/nix/store/")
+
+
 def launch_config_file(
     root_path, source_path=None, *, cache: Optional["ConfigScanCache"] = None
 ) -> Optional[str]:
@@ -214,9 +242,10 @@ def launch_config_file(
 
     ``None`` when the root is the user's own ``~/.ssh/config`` and ``stat()``
     shows a trusted owner (the user or root): plain ``ssh host`` reads that
-    file and then ``/etc/ssh/ssh_config``.  When ownership is untrusted inside
-    the current environment (common for Nix store paths in Flatpak), the
-    resolved configuration path is returned for ``-F`` instead.  OpenSSH does
+    file and then ``/etc/ssh/ssh_config``.  When
+    :func:`direct_f_workaround_for_unmapped_user_ssh_config` applies (overflow
+    UID on a Nix store configuration in Flatpak), the resolved path is returned
+    for ``-F`` instead.  OpenSSH does
     not apply the default ``~/.ssh/config`` ownership check to the ``-F`` file
     itself, but it **does** check every file reached through ``Include`` — so
     the launch must pass the store-backed file directly, never wrap it in
@@ -236,14 +265,16 @@ def launch_config_file(
     if root and is_openssh_user_config(root):
         if trusted_default_user_ssh_config_owner(root):
             return None
-        forced = os.path.realpath(root)
-        logger.info(
-            "Default ~/.ssh/config is not owned by the user or root in this "
-            "environment (%s); launching with -F %s (no system ssh_config)",
-            root,
-            forced,
-        )
-        return forced
+        if direct_f_workaround_for_unmapped_user_ssh_config(root):
+            forced = os.path.realpath(root)
+            logger.info(
+                "Default ~/.ssh/config shows sandbox overflow ownership on %s; "
+                "launching with -F %s (no system ssh_config)",
+                root,
+                forced,
+            )
+            return forced
+        return None
     if root and os.path.isfile(root):
         reachable = (
             cache.reachable_files(root) if cache is not None
