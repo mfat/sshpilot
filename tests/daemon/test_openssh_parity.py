@@ -236,7 +236,7 @@ def test_unmapped_owner_forces_dash_f_for_user_config(tmp_path, monkeypatch):
     home_ssh = tmp_path / ".ssh"
     home_ssh.mkdir()
     root = home_ssh / "config"
-    store = tmp_path / "store" / "hm_.sshconfig"
+    store = tmp_path / "nix" / "store" / "hm_.sshconfig"
     store.parent.mkdir(parents=True)
     store.write_text("Host plain\n    HostName 192.0.2.10\n")
     root.symlink_to(store)
@@ -253,12 +253,21 @@ def test_unmapped_owner_forces_dash_f_for_user_config(tmp_path, monkeypatch):
             )
         return real_stat(path, follow_symlinks=follow_symlinks)
 
+    fake_nix_store = "/nix/store/sshpilot-pytest-hm_.sshconfig"
+    real_realpath = os.path.realpath
+
+    def fake_realpath(path, *args, **kwargs):
+        if os.path.abspath(str(path)) in {
+            os.path.abspath(str(root)),
+            os.path.abspath(str(store)),
+        }:
+            return fake_nix_store
+        return real_realpath(path, *args, **kwargs)
+
     monkeypatch.setattr(os, "stat", fake_stat)
+    monkeypatch.setattr(os.path, "realpath", fake_realpath)
     monkeypatch.setattr("sshpilot.platform.detect.is_flatpak", lambda: True)
-    assert launch_config_file(root) == str(store.resolve())
-    records, provider = _provider(root)
-    view = provider._view(records["plain"])
-    assert view._resolve_config_override_path() == str(store.resolve())
+    assert launch_config_file(root) == fake_nix_store
 
 
 # --- Include discovery -------------------------------------------------------

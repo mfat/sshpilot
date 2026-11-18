@@ -215,9 +215,9 @@ def direct_f_workaround_for_unmapped_user_ssh_config(config_path: str) -> bool:
     """Whether to use direct ``-F`` on ``realpath`` for #1384 / Flatpak #6982.
 
     Only when ``stat()`` shows the sandbox overflow UID, the mode is not
-    group/world-writable, and the resolved path is inside Flatpak or under
-    ``/nix/store/``.  Any other unexpected owner keeps plain ``ssh host`` so
-    OpenSSH's own rejection still applies.
+    group/world-writable, the process runs inside Flatpak, and the resolved
+    path lies under ``/nix/store/``.  Any other unexpected owner keeps plain
+    ``ssh host`` so OpenSSH's own rejection still applies.
     """
     from ..platform.detect import is_flatpak
 
@@ -230,9 +230,7 @@ def direct_f_workaround_for_unmapped_user_ssh_config(config_path: str) -> bool:
     if stat.S_IMODE(st.st_mode) & (stat.S_IWGRP | stat.S_IWOTH):
         return False
     resolved = os.path.realpath(config_path)
-    if is_flatpak():
-        return True
-    return resolved.startswith("/nix/store/")
+    return is_flatpak() and resolved.startswith("/nix/store/")
 
 
 def launch_config_file(
@@ -244,7 +242,8 @@ def launch_config_file(
     shows a trusted owner (the user or root): plain ``ssh host`` reads that
     file and then ``/etc/ssh/ssh_config``.  When
     :func:`direct_f_workaround_for_unmapped_user_ssh_config` applies (overflow
-    UID on a Nix store configuration in Flatpak), the resolved path is returned
+    UID on a ``/nix/store/`` configuration inside Flatpak), the resolved path is
+    returned
     for ``-F`` instead.  OpenSSH does
     not apply the default ``~/.ssh/config`` ownership check to the ``-F`` file
     itself, but it **does** check every file reached through ``Include`` — so
