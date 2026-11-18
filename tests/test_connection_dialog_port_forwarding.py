@@ -106,6 +106,49 @@ def _exit_on_forward_failure_dialog(advanced, active=False):
     return dialog
 
 
+class _SilentOptionList:
+    """Model SshOptionList.set_options(): load rows without change signals."""
+
+    def __init__(self):
+        self.options = []
+
+    def set_options(self, options):
+        self.options = list(options)
+
+    def get_options(self):
+        return list(self.options)
+
+
+def test_loaded_advanced_options_sync_both_switches_without_change_signals():
+    """#1389: a silent load must still notify the dialog's convenience switches."""
+    advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
+    advanced.option_list = _SilentOptionList()
+    # Parent projection is irrelevant here; no GTK window or ancestor needed.
+    advanced._update_parent_connection = lambda: None
+    dialog = _session_type_dialog(advanced)
+    advanced.parent_dialog = dialog
+
+    assert dialog.port_forwarding_only_row.get_active() is False
+    assert dialog.exit_on_forward_failure_row.get_active() is False
+
+    # Unlike a user edit, set_options() deliberately emits no change signal.
+    # Before the #1389 fix, these options loaded but both switches stayed off.
+    advanced.set_extra_ssh_config(
+        "sessiontype none\nExitOnForwardFailure yes"
+    )
+    assert advanced.get_option("SESSIONTYPE") == "none"
+    assert advanced.get_option("exitonforwardfailure") == "yes"
+    assert dialog.port_forwarding_only_row.get_active() is True
+    assert dialog.exit_on_forward_failure_row.get_active() is True
+
+    # Replacing the saved options must also clear stale switch states.
+    advanced.set_extra_ssh_config(
+        "SessionType default\nexitonforwardfailure no"
+    )
+    assert dialog.port_forwarding_only_row.get_active() is False
+    assert dialog.exit_on_forward_failure_row.get_active() is False
+
+
 def test_session_type_helpers_are_case_insensitive_and_deduplicate():
     advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
     advanced.entries = [
