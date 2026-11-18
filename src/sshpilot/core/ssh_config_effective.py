@@ -11,7 +11,6 @@ from __future__ import annotations
 import functools
 import glob
 import getpass
-import hashlib
 import logging
 import os
 import re
@@ -208,50 +207,6 @@ def trusted_default_user_ssh_config_owner(config_path: str) -> bool:
     return owner in (0, os.geteuid())
 
 
-def materialize_untrusted_user_config_launch_file(user_config: str) -> str:
-    """Return a user-owned ``-F`` file that mirrors plain ``ssh host`` order.
-
-    Plain ``ssh host`` reads the user file and then the system-wide file.
-    An explicit ``-F`` skips the system file, so when the user configuration
-    must be passed with ``-F`` (sandbox ownership mismatch), this builds a
-    writable root under the app config directory that ``Include``s the
-    resolved user configuration and then the system-wide file (when present).
-
-    Included paths are still subject to OpenSSH's permission checks.  If the
-    system file is also unusable inside a sandbox, launches may still fail until
-    the platform mapping or Flatpak permissions are fixed.
-    """
-    from ..platform.paths import get_config_dir
-
-    resolved = os.path.realpath(os.path.abspath(os.path.expanduser(user_config)))
-    folder = get_config_dir() / "openssh-launch"
-    folder.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256(resolved.encode()).hexdigest()[:20]
-    wrapper = folder / f"untrusted-user-config-{digest}.conf"
-    system = openssh_system_config()
-    lines = [f'Include "{resolved}"']
-    if system:
-        lines.extend((
-            "",
-            "# sshPilot: system-wide file plain ssh host reads after the user's",
-            "Match all",
-            f'Include "{system}"',
-        ))
-    text = "\n".join(lines) + "\n"
-    if wrapper.is_file():
-        try:
-            if wrapper.read_text(encoding="utf-8") == text:
-                return str(wrapper)
-        except OSError:
-            pass
-    wrapper.write_text(text, encoding="utf-8")
-    try:
-        os.chmod(wrapper, 0o600)
-    except OSError:
-        logger.debug("Could not chmod launch wrapper %s", wrapper, exc_info=True)
-    return str(wrapper)
-
-
 def launch_config_file(
     root_path, source_path=None, *, cache: Optional["ConfigScanCache"] = None
 ) -> Optional[str]:
@@ -260,10 +215,14 @@ def launch_config_file(
     ``None`` when the root is the user's own ``~/.ssh/config`` and ``stat()``
     shows a trusted owner (the user or root): plain ``ssh host`` reads that
     file and then ``/etc/ssh/ssh_config``.  When ownership is untrusted inside
-    the current environment (common for Nix store paths in Flatpak), a
-    user-owned wrapper ``-F`` file is returned instead (see
-    :func:`materialize_untrusted_user_config_launch_file`).  Any other root is
-    passed whole, so its
+    the current environment (common for Nix store paths in Flatpak), the
+    resolved configuration path is returned for ``-F`` instead.  OpenSSH does
+    not apply the default ``~/.ssh/config`` ownership check to the ``-F`` file
+    itself, but it **does** check every file reached through ``Include`` — so
+    the launch must pass the store-backed file directly, never wrap it in
+    another config that ``Include``s it.  That workaround skips the
+    system-wide ``/etc/ssh/ssh_config`` file (same tradeoff as ``ssh -F`` in a
+    terminal).  Any other root is passed whole, so its
     ``Host *`` and ``Match`` blocks apply to hosts declared in included
     files too.
 
@@ -277,14 +236,14 @@ def launch_config_file(
     if root and is_openssh_user_config(root):
         if trusted_default_user_ssh_config_owner(root):
             return None
-        wrapper = materialize_untrusted_user_config_launch_file(root)
+        forced = os.path.realpath(root)
         logger.info(
             "Default ~/.ssh/config is not owned by the user or root in this "
-            "environment (%s); launching with -F %s",
+            "environment (%s); launching with -F %s (no system ssh_config)",
             root,
-            wrapper,
+            forced,
         )
-        return wrapper
+        return forced
     if root and os.path.isfile(root):
         reachable = (
             cache.reachable_files(root) if cache is not None

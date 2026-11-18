@@ -237,18 +237,14 @@ def test_unmapped_owner_forces_dash_f_for_user_config(tmp_path, monkeypatch):
     store.write_text("Host plain\n    HostName 192.0.2.10\n")
     root.symlink_to(store)
     monkeypatch.setattr(paths, "openssh_user_dir", lambda: home_ssh)
-    monkeypatch.setattr(paths, "get_config_dir", lambda: tmp_path / "cfg")
     monkeypatch.setattr(
         "sshpilot.core.ssh_config_effective.trusted_default_user_ssh_config_owner",
         lambda _path: False,
     )
-    launch_file = launch_config_file(root)
-    assert launch_file is not None
-    text = Path(launch_file).read_text(encoding="utf-8")
-    assert f'Include "{store.resolve()}"' in text
+    assert launch_config_file(root) == str(store.resolve())
     records, provider = _provider(root)
     view = provider._view(records["plain"])
-    assert view._resolve_config_override_path() == launch_file
+    assert view._resolve_config_override_path() == str(store.resolve())
 
 
 # --- Include discovery -------------------------------------------------------

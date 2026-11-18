@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,7 +10,6 @@ import pytest
 
 from sshpilot.core.ssh_config_effective import (
     launch_config_file,
-    materialize_untrusted_user_config_launch_file,
     trusted_default_user_ssh_config_owner,
 )
 from sshpilot.platform import paths
@@ -25,71 +23,51 @@ def test_trusted_owner_checks_uid_only(tmp_path):
     assert trusted_default_user_ssh_config_owner(str(config)) is True
 
 
-def test_materialize_wrapper_includes_user_and_system(tmp_path, monkeypatch):
+def test_untrusted_owner_uses_resolved_path_not_include_wrapper(tmp_path, monkeypatch):
+    """OpenSSH checks Include targets; pass the store file directly to -F (#1384)."""
     store = tmp_path / "store" / "hm_.sshconfig"
     store.parent.mkdir(parents=True)
     store.write_text("Host plain\n    HostName 192.0.2.10\n")
-
-    home_ssh = tmp_path / ".ssh"
-    home_ssh.mkdir()
-    link = home_ssh / "config"
-    link.symlink_to(store)
-
-    launch_dir = tmp_path / "cfg"
-    monkeypatch.setattr(paths, "get_config_dir", lambda: launch_dir)
-
-    wrapper = materialize_untrusted_user_config_launch_file(str(link))
-    text = Path(wrapper).read_text(encoding="utf-8")
-    assert f'Include "{store.resolve()}"' in text
-    system = shutil.which("ssh")
-    assert system is not None
-    result = subprocess.run(
-        ["ssh", "-G", "-F", wrapper, "plain"],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert any(line.startswith("hostname ") for line in result.stdout.splitlines())
-
-
-def test_untrusted_owner_launch_matches_openssh(tmp_path, monkeypatch):
-    """Wrapper -F should resolve like plain ssh when ownership is mocked untrusted."""
     home_ssh = tmp_path / ".ssh"
     home_ssh.mkdir()
     root = home_ssh / "config"
-    included = tmp_path / "included.conf"
-    included.write_text("Host plain\n    HostName 192.0.2.10\n")
-    root.write_text(f'Include "{included}"\n')
+    root.symlink_to(store)
     monkeypatch.setattr(paths, "openssh_user_dir", lambda: home_ssh)
-    launch_dir = tmp_path / "cfg"
-    monkeypatch.setattr(paths, "get_config_dir", lambda: launch_dir)
     monkeypatch.setattr(
         "sshpilot.core.ssh_config_effective.trusted_default_user_ssh_config_owner",
         lambda _path: False,
     )
 
     launch_file = launch_config_file(root)
-    assert launch_file is not None
-    assert launch_file.endswith(".conf")
-    assert "Include" in Path(launch_file).read_text(encoding="utf-8")
+    assert launch_file == str(store.resolve())
 
-    direct = subprocess.run(
-        ["ssh", "-G", "-F", str(root), "plain"],
-        capture_output=True,
-        text=True,
-    )
-    wrapped = subprocess.run(
+    result = subprocess.run(
         ["ssh", "-G", "-F", launch_file, "plain"],
         capture_output=True,
         text=True,
     )
+    assert result.returncode == 0, result.stderr
+    assert any(line == "hostname 192.0.2.10" for line in result.stdout.splitlines())
+
+
+def test_include_of_same_file_still_subject_to_openssh_checks(tmp_path):
+    """Document why launch must not wrap the store file in an Include (#1384)."""
+    store = tmp_path / "hm_.sshconfig"
+    store.write_text("Host plain\n    HostName 192.0.2.10\n", encoding="utf-8")
+    wrapper = tmp_path / "wrapper.conf"
+    wrapper.write_text(f'Include "{store}"\n', encoding="utf-8")
+
+    direct = subprocess.run(
+        ["ssh", "-G", "-F", str(store), "plain"],
+        capture_output=True,
+        text=True,
+    )
+    wrapped = subprocess.run(
+        ["ssh", "-G", "-F", str(wrapper), "plain"],
+        capture_output=True,
+        text=True,
+    )
     assert direct.returncode == 0, direct.stderr
+    # Same file, same owner: both work here. Include path still checks included st_uid;
+    # wrappers do not bypass UID 65534 on the store blob (see OpenSSH readconf.c).
     assert wrapped.returncode == 0, wrapped.stderr
-
-    def hostname_map(stdout: str) -> str:
-        for line in stdout.splitlines():
-            if line.startswith("hostname "):
-                return line.split(maxsplit=1)[1]
-        return ""
-
-    assert hostname_map(wrapped.stdout) == hostname_map(direct.stdout)
