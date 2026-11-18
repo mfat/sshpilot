@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.4.2}
+Version:        %{?version}%{!?version:6.4.3}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -180,6 +180,14 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtkghostty-1.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Wed Nov 18 2026 mFat <newmfat@gmail.com> - 6.4.3-1
+- Added experimental terminal backend powered by libghostty
+- Non-UTF8 encoding support thanks to libghostty (experimental)
+- Added ProxyCommand support to Login Profiles
+- Fixed NixOS connection issues in Flatpak
+- Added official AUR PKGBUILD updates with every new release
+- Fixed "SessionType" toggle not working correctly
+
 * Sat Nov 14 2026 mFat <newmfat@gmail.com> - 6.4.2-1
 - Fixes error in loading connection dialog on older libadwaita versions
 
