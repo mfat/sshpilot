@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.4.3}
+Version:        %{?version}%{!?version:6.4.4}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -180,6 +180,9 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtkghostty-1.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Thu Nov 19 2026 mFat <newmfat@gmail.com> - 6.4.4-1
+- Fixes Windows config conflict scan crashing on missing os.geteuid
+
 * Wed Nov 18 2026 mFat <newmfat@gmail.com> - 6.4.3-1
 - Added experimental terminal backend powered by libghostty
 - Non-UTF8 encoding support thanks to libghostty (experimental)
