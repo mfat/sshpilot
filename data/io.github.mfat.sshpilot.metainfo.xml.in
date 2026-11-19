@@ -35,6 +35,11 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
+    <release version="6.4.4" date="2026-11-19">
+      <description>
+        <p>Fixes Windows config conflict scan crashing on missing os.geteuid</p>
+      </description>
+    </release>
     <release version="6.4.3" date="2026-11-18">
       <description>
         <p>Added experimental terminal backend powered by libghostty</p>

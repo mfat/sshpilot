@@ -1,3 +1,10 @@
+sshpilot (6.4.4-1) unstable; urgency=medium
+
+  * Release v6.4.4.
+  * Fixes Windows config conflict scan crashing on missing os.geteuid
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 19 Nov 2026 00:50:31 +0000
+
 sshpilot (6.4.3-1) unstable; urgency=medium
 
   * Release v6.4.3.
