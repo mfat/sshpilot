@@ -31,6 +31,44 @@ def test_trusted_owner_checks_uid_only(tmp_path):
     assert trusted_default_user_ssh_config_owner(str(config)) is True
 
 
+def test_windows_trusted_owner_without_geteuid(tmp_path, monkeypatch):
+    """Windows has no POSIX UIDs; ownership must not call ``os.geteuid``."""
+    config = tmp_path / "config"
+    config.write_text("Host t\n  HostName 127.0.0.1\n")
+    monkeypatch.setattr(os, "name", "nt")
+    if hasattr(os, "geteuid"):
+        monkeypatch.delattr(os, "geteuid")
+    assert not hasattr(os, "geteuid")
+    assert trusted_default_user_ssh_config_owner(str(config)) is True
+
+
+def test_windows_user_config_launches_without_dash_f(tmp_path, monkeypatch):
+    home_ssh = tmp_path / ".ssh"
+    home_ssh.mkdir()
+    root = home_ssh / "config"
+    root.write_text("Host plain\n    HostName 192.0.2.10\n")
+    monkeypatch.setattr(paths, "openssh_user_dir", lambda: home_ssh)
+    monkeypatch.setattr(os, "name", "nt")
+    if hasattr(os, "geteuid"):
+        monkeypatch.delattr(os, "geteuid")
+    assert launch_config_file(root) is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX UID ownership")
+def test_trusted_owner_rejects_unexpected_uid(tmp_path, monkeypatch):
+    config = tmp_path / "config"
+    config.write_text("Host t\n  HostName 127.0.0.1\n")
+    real_stat = os.stat
+
+    def fake_stat(path, *, follow_symlinks=True):
+        if os.path.abspath(str(path)) == os.path.abspath(str(config)):
+            return _stat_result(12345, stat.S_IFREG | 0o600)
+        return real_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(os, "stat", fake_stat)
+    assert trusted_default_user_ssh_config_owner(str(config)) is False
+
+
 def test_overflow_uid_flatpak_triggers_resolved_dash_f(tmp_path, monkeypatch):
     store_root = tmp_path / "nix" / "store"
     store = store_root / "hm_.sshconfig"

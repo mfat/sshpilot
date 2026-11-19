@@ -203,7 +203,13 @@ def trusted_default_user_ssh_config_owner(config_path: str) -> bool:
     OpenSSH itself.  Flatpak and similar sandboxes can report root-owned host
     files as UID 65534 (``nfsnobody``), which makes plain ``ssh host`` reject
     the default ``~/.ssh/config`` path even though the file is readable.
+
+    On Windows there is no POSIX UID model and ``os.geteuid`` is unavailable,
+    so the default user config is always treated as trusted for launch-file
+    selection (plain ``ssh host`` without ``-F``).
     """
+    if os.name == "nt":
+        return True
     try:
         owner = os.stat(config_path).st_uid
     except OSError:

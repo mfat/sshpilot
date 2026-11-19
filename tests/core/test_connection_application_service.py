@@ -9,6 +9,7 @@ a minimal in-memory ``ConnectionRepositoryProtocol`` fake. No filesystem, no
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import sys
 import threading
@@ -1273,4 +1274,29 @@ def test_config_conflicts_list_every_saved_host_value_an_earlier_block_beats(tmp
     assert conflict.earlier.value == "admin"
     assert conflict.earlier.block == "Host *"
     assert (conflict.earlier.file, conflict.earlier.line) == (str(root), 2)
+
+
+def test_list_config_conflicts_completes_without_geteuid(tmp_path, monkeypatch):
+    """Windows has no ``os.geteuid``; conflict scan must not skip hosts."""
+    root = tmp_path / "config"
+    root.write_text(
+        "Host *\n    User admin\n\n"
+        "Host web\n    User deploy\n",
+        encoding="utf-8",
+    )
+    records = [
+        _record(record_id="web", nickname="web", host="web", source=str(root)),
+    ]
+    repo = FakeRepository(records)
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+    service = ConnectionApplicationService(repo)
+    monkeypatch.setattr(os, "name", "nt")
+    if hasattr(os, "geteuid"):
+        monkeypatch.delattr(os, "geteuid")
+
+    conflicts = service.list_config_conflicts()
+
+    assert len(conflicts) == 1
+    assert (conflicts[0].connection_id, conflicts[0].key) == ("web", "user")
 
