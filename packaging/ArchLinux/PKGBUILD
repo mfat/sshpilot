@@ -2,7 +2,7 @@
 # Contributor: Patrick Northon <northon_patrick3@yahoo.ca>
 
 pkgname=sshpilot
-pkgver=6.4.3
+pkgver=6.4.4
 pkgrel=1
 pkgdesc='SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support.'
 url='https://github.com/mfat/sshpilot'
@@ -31,7 +31,7 @@ _ghostty_vt=1.0.0
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz"
         "https://release.files.ghostty.org/libghostty-vt/${_ghostty_vt}/libghostty-vt-${_ghostty_vt}.tar.gz"
         "https://release.files.ghostty.org/libghostty-vt/${_ghostty_vt}/libghostty-vt-${_ghostty_vt}-deps.tar.gz")
-sha256sums=('163fbc820b28d06bb52b03e1b01975ba9675e10f2169444a21bf5545bec1a037'
+sha256sums=('d130900bfbe237e782bba33fceadbe9cc17904b0efc9727dfdc45bf1f76b7061'
             '4a6ef758be721923e1969e7b81b443dcc92d8dd3fb5a39600c03a8817a753676'
             '4d5ea5e448e4c7ea8fb55ccbaa8668f2a97d44f438cee831e2b7ecd162d85c29')
 
