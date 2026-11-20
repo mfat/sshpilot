@@ -9,6 +9,7 @@ import gc
 import faulthandler
 import logging
 import threading
+from functools import partial
 
 from . import startup_timing
 
@@ -54,6 +55,7 @@ startup_timing.mark("gtk_imported")
 
 from .shortcut_utils import (
     DOUBLE_SHIFT_SHORTCUT,
+    NUMBERED_TAB_ACTIONS,
     TOGGLE_FULLSCREEN_ACTION,
     default_fullscreen_shortcuts,
 )
@@ -416,6 +418,12 @@ class SshPilotApplication(Adw.Application):
         # Tab navigation accelerators
         self.create_action('tab-next', self.on_tab_next, ['<primary>Page_Down'])
         self.create_action('tab-prev', self.on_tab_prev, ['<primary>Page_Up'])
+        for number, name in NUMBERED_TAB_ACTIONS.items():
+            self.create_action(
+                name,
+                partial(self.on_tab_select, number - 1),
+                [f'<Meta>{number}'] if mac else [],
+            )
         # Move the current tab within the tab bar
         self.create_action('tab-move-left', self.on_tab_move_left, ['<primary><shift>Page_Up'])
         self.create_action('tab-move-right', self.on_tab_move_right, ['<primary><shift>Page_Down'])
@@ -2195,6 +2203,12 @@ class SshPilotApplication(Adw.Application):
         win = self._action_window()
         if win and hasattr(win, '_select_tab_relative'):
             win._select_tab_relative(-1)
+
+    def on_tab_select(self, index: int, _action, _param) -> None:
+        """Switch to the tab at the requested position."""
+        win = self._action_window()
+        if win and hasattr(win, '_select_tab_at_index'):
+            win._select_tab_at_index(index)
 
     def on_tab_close(self, action, param):
         """Close the current tab — or, in a split-view tab, the focused pane."""

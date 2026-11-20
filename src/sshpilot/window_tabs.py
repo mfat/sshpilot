@@ -1973,6 +1973,11 @@ class WindowTabsMixin:
             pass
         return True
 
+    def _select_tab_at_index(self, index: int) -> None:
+        """Select a page by its zero-based position in the main tab bar."""
+        if 0 <= index < self.tab_view.get_n_pages():
+            self.tab_view.set_selected_page(self.tab_view.get_nth_page(index))
+
     def _select_tab_relative(self, delta: int):
         """Select tab relative to current index, wrapping around."""
         self._return_to_tab_view_if_welcome()

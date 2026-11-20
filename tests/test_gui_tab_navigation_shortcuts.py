@@ -1,4 +1,4 @@
-"""GUI regression tests for issue #1170.
+"""GUI regression tests for configurable tab navigation and issue #1170.
 
 Adw.TabView has its own built-in keyboard accelerators (Ctrl+PageUp/Down,
 Ctrl+Shift+PageUp/Down, Ctrl+Tab, ...) that are completely independent of SSH
@@ -20,6 +20,7 @@ import pytest
 
 from gi.repository import Adw
 
+from sshpilot.platform_utils import is_macos
 from tests._gui_harness import requires_gui  # the `gui` fixture comes from conftest
 
 requires_gui()
@@ -63,6 +64,57 @@ def test_configured_tab_next_and_prev_switch_tabs(gui):
 
     _activate_app_action(gui, 'tab-prev')
     assert gui.window.tab_view.get_selected_page() == pages[0]
+
+
+def test_numbered_tab_shortcut_defaults(gui):
+    defaults = gui.app.get_registered_shortcut_defaults()
+    for number in range(1, 10):
+        name = f'tab-select-{number}'
+        expected = [f'<Meta>{number}'] if is_macos() else []
+        assert defaults[name] == expected
+        assert gui.app.get_accels_for_action(f'app.{name}') == expected
+
+
+def test_numbered_tab_actions_follow_tab_order(gui):
+    tab_view = gui.window.tab_view
+    first, second, third = [tab_view.append(gui.Gtk.Box()) for _ in range(3)]
+    tab_view.set_selected_page(third)
+
+    _activate_app_action(gui, 'tab-select-1')
+    assert tab_view.get_selected_page() == first
+
+    _activate_app_action(gui, 'tab-select-3')
+    assert tab_view.get_selected_page() == third
+
+    _activate_app_action(gui, 'tab-select-9')
+    assert tab_view.get_selected_page() == third
+
+    assert tab_view.reorder_page(third, 0)
+    _activate_app_action(gui, 'tab-select-3')
+    assert tab_view.get_selected_page() == second
+
+
+def test_numbered_tab_shortcut_respects_overrides_and_pass_through(gui):
+    name = 'tab-select-1'
+    action = f'app.{name}'
+    setting = 'terminal.pass_through_mode'
+    config = gui.app.config
+    previous = config.get_setting(setting, False)
+    try:
+        _set_override(gui, name, ['<Alt>1'])
+        assert gui.app.get_accels_for_action(action) == ['<Alt>1']
+
+        config.set_setting(setting, True)
+        assert gui.app.get_accels_for_action(action) == []
+
+        config.set_setting(setting, False)
+        assert gui.app.get_accels_for_action(action) == ['<Alt>1']
+
+        _set_override(gui, name, [])
+        assert gui.app.get_accels_for_action(action) == []
+    finally:
+        _clear_override(gui, name)
+        config.set_setting(setting, previous)
 
 
 def test_configured_move_left_and_right_reorder_tabs(gui):
