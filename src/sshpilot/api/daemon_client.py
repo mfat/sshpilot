@@ -72,6 +72,8 @@ from .models.connections import (
     SetSessionConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
     SshConfigText,
+    SshConfigManagerRequest,
+    SshConfigManagerDocument,
     UpdateConnectionRequest,
 )
 from .models.connection_store import (
@@ -120,6 +122,7 @@ from .models.known_hosts import (
     RemoveKnownHostEntriesRequest,
 )
 from .models.operations import (
+    OperationSummary,
     AttachSftpRequest,
     ClaimForwardRequest,
     CloseForwardRequest,
@@ -431,6 +434,8 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "check_unsaved_host": Capability.CONNECTIONS_READ,
     "set_operation_mode": Capability.OPERATION_MODE,
     "get_operation_mode": Capability.OPERATION_MODE,
+    "start_ssh_config_preview": Capability.CONNECTIONS_CONFIG_MANAGER,
+    "edit_ssh_config": Capability.CONNECTIONS_CONFIG_MANAGER,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "test_pre_command": Capability.CONNECTIONS_CONFIG_READ,
@@ -919,6 +924,24 @@ class DaemonClient:
             return unsaved_host_check_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid destination check")
+
+    def edit_ssh_config(self, request: SshConfigManagerRequest) -> SshConfigManagerDocument:
+        from .transport.config_manager import manager_request_to_wire, manager_document_from_wire
+        self._require_capability(Capability.CONNECTIONS_CONFIG_MANAGER)
+        result = self._request("connections.edit_ssh_config", manager_request_to_wire(request))
+        try:
+            return manager_document_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid configuration document")
+
+    def start_ssh_config_preview(self, request: SshConfigManagerRequest) -> OperationSummary:
+        from .transport.config_manager import manager_request_to_wire
+        self._require_capability(Capability.CONNECTIONS_CONFIG_MANAGER)
+        result = self._request("connections.start_ssh_config_preview", manager_request_to_wire(request))
+        try:
+            return operation_summary_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid configuration preview operation")
 
     def get_ssh_config_text(self) -> SshConfigText:
         """Load the daemon-selected active SSH config text for the raw editor."""

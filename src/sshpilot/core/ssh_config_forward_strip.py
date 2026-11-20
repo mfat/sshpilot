@@ -142,6 +142,8 @@ def _materialize_file(
     seen: Set[str],
     *,
     base_for=None,
+    drop_directives=_FORWARD_DIRECTIVES,
+    strict=False,
 ) -> None:
     key = str(source)
     if key in seen:
@@ -151,6 +153,8 @@ def _materialize_file(
     try:
         text = source.read_bytes().decode("utf-8")
     except OSError as exc:
+        if strict:
+            raise
         logger.warning("Could not read SSH config %s: %s", source, exc)
         destination.write_text(
             f"# sshpilot: unreadable source {source}\n",
@@ -178,12 +182,14 @@ def _materialize_file(
         if include_match is not None:
             prefix, keyword, sep, pattern = include_match.groups()
             rewritten = _rewrite_include(
-                pattern.strip().strip('"'),
+                pattern.strip(),
                 base_for(source) if base_for is not None else source.parent,
                 tree_root,
                 mapping,
                 seen,
                 base_for=base_for,
+                drop_directives=drop_directives,
+                strict=strict,
             )
             out_lines.append(f"{prefix}{keyword}{sep}{rewritten}{newline}")
             continue
@@ -191,7 +197,7 @@ def _materialize_file(
         directive_match = _DIRECTIVE_RE.match(line)
         if directive_match is not None:
             token = directive_match.group(2).split("=", 1)[0].lower()
-            if token in _FORWARD_DIRECTIVES:
+            if token in drop_directives:
                 continue
         out_lines.append(line + newline)
 
@@ -211,13 +217,26 @@ def _rewrite_include(
     seen: Set[str],
     *,
     base_for=None,
+    drop_directives=_FORWARD_DIRECTIVES,
+    strict=False,
 ) -> str:
-    expanded = os.path.expanduser(pattern)
-    if not os.path.isabs(expanded):
-        expanded = str((base_dir / expanded).resolve())
-    matches = sorted(glob.glob(expanded)) or (
-        [expanded] if os.path.isfile(expanded) else []
-    )
+    from ..ssh_config_document import split_include_args
+    try:
+        patterns = split_include_args(pattern)
+    except ValueError:
+        # Keep syntax errors for OpenSSH to diagnose.
+        return pattern
+    matches = []
+    missing = []
+    for item in patterns:
+        expanded = os.path.expanduser(item)
+        if not os.path.isabs(expanded):
+            expanded = str(base_dir / expanded)
+        found = sorted(glob.glob(expanded))
+        if found:
+            matches.extend(found)
+        else:
+            missing.append(expanded)
     rewritten_paths: list[str] = []
     for match in matches:
         src = Path(match).resolve()
@@ -237,12 +256,29 @@ def _rewrite_include(
             except ValueError:
                 digest = abs(hash(str(src))) % (10**12)
                 dest = tree_root / "abs" / f"{digest}-{src.name}"
-        _materialize_file(src, dest, tree_root, mapping, seen, base_for=base_for)
+        _materialize_file(src, dest, tree_root, mapping, seen, base_for=base_for,
+                          drop_directives=drop_directives, strict=strict)
         rewritten_paths.append(str(dest))
-    if not rewritten_paths:
-        # Preserve a path OpenSSH can miss quietly rather than invent hosts.
-        return expanded
-    return " ".join(rewritten_paths)
+    def quote(path):
+        return '"' + path.replace('"', '\\"') + '"' if any(c.isspace() for c in path) else path
+    return " ".join(quote(path) for path in rewritten_paths + missing)
+
+
+def materialize_system_config_for_query(source: str, destination_dir: str) -> str:
+    """Copy the system Include tree without dropping any options.
+
+    A system file included from a user -F draft would otherwise resolve its
+    relative Includes under ~/.ssh. Reuse the launch materializer to keep those
+    paths anchored to the system directory. OpenSSH still evaluates every
+    condition and directive; unreadable files fail instead of disappearing.
+    """
+    source_path = Path(source).resolve()
+    root = Path(destination_dir)
+    destination = root / "system" / "ssh_config"
+    _materialize_file(source_path, destination, root, {}, set(),
+                      base_for=lambda _path: source_path.parent,
+                      drop_directives=frozenset(), strict=True)
+    return str(destination)
 
 
 def argv_config_file(argv: list[str] | tuple[str, ...]) -> Optional[str]:

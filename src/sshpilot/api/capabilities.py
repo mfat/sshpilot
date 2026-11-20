@@ -13,6 +13,7 @@ class Capability(str, Enum):
     CONNECTIONS_READ = "connections.read"
     CONNECTIONS_EVENTS = "connections.events"
     CONNECTIONS_WRITE = "connections.write"
+    CONNECTIONS_CONFIG_MANAGER = "connections.config.manager"
     CONNECTIONS_CONFIG_READ = "connections.config.read"
     CONNECTIONS_CONFIG_WRITE = "connections.config.write"
     OPERATION_MODE = "operation.mode"

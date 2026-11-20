@@ -680,3 +680,12 @@ feature.
 
 The daemon prepares a non-secret SSH launch specification for a frontend-owned
 external terminal. Secret autofill is not supported.
+
+<!-- api-capability: connections.config.manager -->
+<!-- api-runtime-capability: connections.config.manager -->
+<!-- api-daemon-runtime-capability: connections.config.manager -->
+
+`connections.config.manager` enables structural draft editing. Daemons advertise
+it only with the shared operation runtime for cancellable native previews. The
+manager also uses `connections.config.write` for the existing save endpoint and
+`operations.read` / `operations.control` for preview lifecycle access.

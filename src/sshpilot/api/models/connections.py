@@ -1307,3 +1307,80 @@ class UpdateConnectionMetadataRequest:
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
         object.__setattr__(self, "meta", validate_safe_metadata(self.meta))
+
+
+@dataclass(frozen=True)
+class SshConfigManagerRequest:
+    """A root-document draft and one structural edit; never a filesystem path.
+
+    Preview uses action=inspect and runs through the daemon operation lifecycle.
+    An empty revision is permitted only for the initial load (text=None).
+    """
+
+    text: Optional[str] = field(default=None, repr=False)
+    expected_revision: str = ""
+    action: str = "inspect"
+    block: int = 0
+    position: int = 0
+    directive: int = -1
+    keyword: str = ""
+    value: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        if self.text is not None and (type(self.text) is not str or "\x00" in self.text):
+            raise ValueError("invalid SSH config draft")
+        if self.action not in {"inspect", "header", "move", "add", "remove", "directive", "remove_directive"}:
+            raise ValueError("invalid SSH config edit action")
+        for name in ("block", "position", "directive"):
+            if type(getattr(self, name)) is not int or getattr(self, name) < (-1 if name == "directive" else 0):
+                raise ValueError("invalid SSH config edit index")
+        for name in ("expected_revision", "keyword", "value"):
+            value = getattr(self, name)
+            if type(value) is not str or any(c in value for c in "\x00\r\n"):
+                raise ValueError("invalid SSH config edit field")
+        if self.text is not None:
+            require_identifier(self.expected_revision, "SSH config revision")
+
+
+@dataclass(frozen=True)
+class SshConfigDirective:
+    keyword: str
+    value: str = field(repr=False)
+    line: int
+
+
+@dataclass(frozen=True)
+class SshConfigBlock:
+    kind: str
+    argument: str
+    text: str = field(repr=False)
+    line: int
+    directives: Tuple[SshConfigDirective, ...] = ()
+    included_files: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SshConfigManagerDocument:
+    document: SshConfigText
+    blocks: Tuple[SshConfigBlock, ...]
+    selected: int = 0
+
+
+@dataclass(frozen=True)
+class SshConfigHostPreview:
+    host: str
+    hostname: str
+    matched: bool
+    before: Tuple[str, ...] = field(repr=False)
+    after: Tuple[str, ...] = field(repr=False)
+    contributions: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SshConfigPreview:
+    """Typed result carried by a CONFIG_PREVIEW operation; no persistence."""
+
+    revision: str
+    hosts: Tuple[SshConfigHostPreview, ...]
+    valid: bool
+    diagnostics: Tuple[str, ...] = ()

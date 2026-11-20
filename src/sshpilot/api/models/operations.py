@@ -1006,6 +1006,7 @@ OperationId = NewType("OperationId", str)
 
 
 class OperationKind(str, Enum):
+    CONFIG_PREVIEW = "config_preview"
     BROADCAST_COMMAND = "broadcast_command"
     KEY_DEPLOYMENT = "key_deployment"
     AUTHORIZED_KEY_REMOVAL = "authorized_key_removal"

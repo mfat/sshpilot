@@ -4035,7 +4035,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-safe snapshot of one daemon operation.
 
-**Related methods:** `cancel_operation`, `deploy_key`, `get_operation`, `remove_authorized_key`, `sftp_copy`, `sftp_directory_size`, `sftp_remove`
+**Related methods:** `cancel_operation`, `deploy_key`, `get_operation`, `remove_authorized_key`, `sftp_copy`, `sftp_directory_size`, `sftp_remove`, `start_ssh_config_preview`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -6017,6 +6017,194 @@ Synthetic representation:
   "port": null,
   "source_config_path": "example",
   "username": null
+}
+```
+
+<!-- api-model: SshConfigBlock -->
+## `SshConfigBlock`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `SshConfigBlock` record.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `kind` | `str` | Yes | — | No |
+| `argument` | `str` | Yes | — | No |
+| `text` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+| `directives` | `tuple[SshConfigDirective, ...]` | No | `[]` | No |
+| `included_files` | `tuple[str, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "argument": "example",
+  "directives": [],
+  "included_files": [],
+  "kind": "example",
+  "line": 0,
+  "text": "example"
+}
+```
+
+<!-- api-model: SshConfigDirective -->
+## `SshConfigDirective`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `SshConfigDirective` record.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `keyword` | `str` | Yes | — | No |
+| `value` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "keyword": "example",
+  "line": 0,
+  "value": "example"
+}
+```
+
+<!-- api-model: SshConfigHostPreview -->
+## `SshConfigHostPreview`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `SshConfigHostPreview` record.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `host` | `str` | Yes | — | No |
+| `hostname` | `str` | Yes | — | No |
+| `matched` | `bool` | Yes | — | No |
+| `before` | `tuple[str, ...]` | Yes | — | No |
+| `after` | `tuple[str, ...]` | Yes | — | No |
+| `contributions` | `tuple[str, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "after": [],
+  "before": [],
+  "contributions": [],
+  "host": "example",
+  "hostname": "example.invalid",
+  "matched": false
+}
+```
+
+<!-- api-model: SshConfigManagerDocument -->
+## `SshConfigManagerDocument`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Frontend-neutral `SshConfigManagerDocument` record.
+
+**Related methods:** `edit_ssh_config`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `document` | `SshConfigText` | Yes | — | No |
+| `blocks` | `tuple[SshConfigBlock, ...]` | Yes | — | No |
+| `selected` | `int` | No | `0` | No |
+
+Synthetic representation:
+
+```json
+{
+  "blocks": [],
+  "document": {
+    "display_name": "example",
+    "revision": "example",
+    "text": "<sensitive value omitted>",
+    "writable": false
+  },
+  "selected": 0
+}
+```
+
+<!-- api-model: SshConfigManagerRequest -->
+## `SshConfigManagerRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** A root-document draft and one structural edit; never a filesystem path.
+
+Preview uses action=inspect and runs through the daemon operation lifecycle.
+An empty revision is permitted only for the initial load (text=None).
+
+**Related methods:** `edit_ssh_config`, `start_ssh_config_preview`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `text` | `str | None` | No | `null` | No |
+| `expected_revision` | `str` | No | `` | No |
+| `action` | `str` | No | `inspect` | No |
+| `block` | `int` | No | `0` | No |
+| `position` | `int` | No | `0` | No |
+| `directive` | `int` | No | `-1` | No |
+| `keyword` | `str` | No | `` | No |
+| `value` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "action": "inspect",
+  "block": 0,
+  "directive": -1,
+  "expected_revision": "",
+  "keyword": "",
+  "position": 0,
+  "text": null,
+  "value": ""
+}
+```
+
+<!-- api-model: SshConfigPreview -->
+## `SshConfigPreview`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Typed result carried by a CONFIG_PREVIEW operation; no persistence.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `revision` | `str` | Yes | — | No |
+| `hosts` | `tuple[SshConfigHostPreview, ...]` | Yes | — | No |
+| `valid` | `bool` | Yes | — | No |
+| `diagnostics` | `tuple[str, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "diagnostics": [],
+  "hosts": [],
+  "revision": "example",
+  "valid": false
 }
 ```
 

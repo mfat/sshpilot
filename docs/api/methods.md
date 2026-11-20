@@ -3101,3 +3101,35 @@ result = client.forget_master_password()
 client.close()
 client.close()  # idempotent
 ```
+
+## Advanced configuration manager
+
+<!-- api-method: edit_ssh_config -->
+<!-- api-method-contract: edit_ssh_config status=implemented capability=connections.config.manager -->
+<!-- api-daemon-method: connections.edit_ssh_config capability=connections.config.manager -->
+<!-- api-method: start_ssh_config_preview -->
+<!-- api-method-contract: start_ssh_config_preview status=daemon-only capability=connections.config.manager -->
+<!-- api-daemon-method: connections.start_ssh_config_preview capability=connections.config.manager -->
+
+`edit_ssh_config(SshConfigManagerRequest) -> SshConfigManagerDocument` loads the
+active root or transforms the supplied draft. It never persists. The daemon
+checks the revision, parses blocks losslessly and returns explicit directive and
+Include-file projections. Read-only roots reject edits. Header/directive edits,
+add/remove and movement preserve unrelated text. Included files are displayed;
+this method edits only the active root, never a client-selected path.
+
+`start_ssh_config_preview(SshConfigManagerRequest) -> OperationSummary` accepts an
+`inspect` request and starts a `config_preview` operation. Use `get_operation` and
+`cancel_operation` with the returned ID. Only its originating client can read or
+cancel it. Decode the result with `config_preview_from_wire` as `SshConfigPreview`.
+The daemon runs native `ssh -F <private draft> -G <alias>` for saved SSH aliases,
+retains repeated options, checks matching through a unique IdentityFile marker,
+and confirms contributions by removing individual directives. Ordinary user
+configuration previews include the system defaults; isolated configurations do
+not. OpenSSH's normal Match exec and canonicalization behavior applies. Each
+query has a timeout, is supervised for cancellation, and never connects.
+
+Validation failures are explicit diagnostics, including a missing executable or
+timeout. A changed root/Include revision rejects the result as stale. The GTK
+manager validates before invoking the existing revision-checked
+`save_ssh_config_text`; successful saves publish the existing connection events.

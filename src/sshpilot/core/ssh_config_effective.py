@@ -424,6 +424,58 @@ def collect_host_block_lines(
     return combined
 
 
+def query_ssh_config(host, config_file, *, handle=None):
+    """Native -F/-G query with explicit failures and supervised cancellation.
+
+    Unlike the historical convenience resolver this never confuses an absent
+    executable, timeout, or invalid configuration with an empty valid result.
+    """
+    host = _safe_host_identifier(host)
+    if not host:
+        return {}, ("Invalid SSH host identifier",)
+    command = ["ssh", "-F", str(config_file), "-G", host]
+    process = None
+    timed_out = False
+    try:
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL, text=True,
+            start_new_session=os.name != "nt", **hidden_console_kwargs(),
+        )
+        process._sshpilot_process_group = os.name != "nt"
+        if handle is not None:
+            handle.set_process(process)
+        stdout, stderr = process.communicate(timeout=10)
+        if handle is not None:
+            handle.raise_if_cancelled()
+        if process.returncode:
+            return {}, tuple(stderr.strip().splitlines()) or ("OpenSSH configuration query failed",)
+        values = {}
+        for line in stdout.splitlines():
+            key, separator, value = line.partition(" ")
+            if separator:
+                values.setdefault(key.lower(), []).append(value)
+        return values, ()
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        return {}, ("OpenSSH configuration query timed out",)
+    except OSError:
+        return {}, ("OpenSSH could not be started",)
+    finally:
+        if process is not None and (process.poll() is None or timed_out):
+            if os.name != "nt":
+                import signal
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
+            process.communicate()
+        if handle is not None:
+            handle.clear_process()
+
+
 def get_effective_ssh_config(
     host: str,
     config_file: Optional[str] = None,

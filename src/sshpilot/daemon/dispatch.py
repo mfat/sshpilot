@@ -229,6 +229,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.check_unsaved_host": Capability.CONNECTIONS_READ,
     "daemon.set_operation_mode": Capability.OPERATION_MODE,
     "daemon.get_operation_mode": Capability.OPERATION_MODE,
+    "connections.edit_ssh_config": Capability.CONNECTIONS_CONFIG_MANAGER,
+    "connections.start_ssh_config_preview": Capability.CONNECTIONS_CONFIG_MANAGER,
     "connections.get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "connections.prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "connections.get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
@@ -513,6 +515,8 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.get_launch_command",
         "connections.test_pre_command",
         "connections.run_pre_connect",
+        "connections.edit_ssh_config",
+        "connections.start_ssh_config_preview",
         "connections.get_ssh_config_text",
         "connections.save_ssh_config_text",
         "daemon.set_operation_mode",
@@ -798,6 +802,8 @@ class RequestDispatcher:
             "connections.check_unsaved_host": self._handle_check_unsaved_host,
             "daemon.set_operation_mode": self._handle_set_operation_mode,
             "daemon.get_operation_mode": self._handle_get_operation_mode,
+            "connections.edit_ssh_config": self._handle_edit_ssh_config,
+            "connections.start_ssh_config_preview": self._handle_start_ssh_config_preview,
             "connections.get_ssh_config_text": self._handle_get_ssh_config_text,
             "connections.prepare_external_terminal_launch": self._handle_prepare_external_terminal_launch,
             "connections.get_launch_command": self._handle_get_launch_command,
@@ -1532,6 +1538,33 @@ class RequestDispatcher:
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )
+
+    def _handle_edit_ssh_config(self, request, _state):
+        from sshpilot.api.transport.config_manager import manager_request_from_wire, manager_document_to_wire
+        typed = manager_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: manager_document_to_wire(self._connections.edit_ssh_config(typed)),
+            command_key=CONFIGURATION_COMMAND_KEY, on_rejected=lambda: None,
+        )
+
+    def _handle_start_ssh_config_preview(self, request, state):
+        from sshpilot.api.models.operations import OperationKind
+        from sshpilot.api.transport.config_manager import manager_request_from_wire, config_preview_to_wire
+        typed = manager_request_from_wire(request.params)
+        runtime = self._required_operation_runtime()
+        owner = self._required_client_id(state)
+
+        def start():
+            run = self._connections.prepare_ssh_config_preview(typed)
+            def body(handle):
+                result = run(handle)
+                handle.set_result(config_preview_to_wire(result))
+                return "SSH configuration preview complete"
+            return operation_summary_to_wire(runtime.start_operation(
+                OperationKind.CONFIG_PREVIEW, body, owner_client_id=owner,
+                message="Resolving SSH configuration",
+            ))
+        return DeferredResult(operation=start, command_key=CONFIGURATION_COMMAND_KEY, on_rejected=lambda: None)
 
     def _handle_get_ssh_config_text(
         self,
@@ -3827,6 +3860,8 @@ class RequestDispatcher:
                     Capability.OPERATIONS_CONTROL,
                 }
             )
+        if operations and Capability.CONNECTIONS_CONFIG_MANAGER in supported:
+            daemon_capabilities |= frozenset({Capability.CONNECTIONS_CONFIG_MANAGER})
         if operation_mode:
             daemon_capabilities |= frozenset({Capability.OPERATION_MODE})
         if broadcast:

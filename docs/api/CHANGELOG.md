@@ -1,5 +1,14 @@
 # SSH Pilot API Changelog
 
+## 0.103
+
+- Added `connections.config.manager`, `edit_ssh_config` and
+  `start_ssh_config_preview`, with explicit draft/block/directive/preview DTOs.
+- Draft edits never persist. Native OpenSSH `-F`/`-G` preview runs as a cancellable,
+  owner-scoped `config_preview` operation; its result decodes as `SshConfigPreview`.
+- Existing revision-checked `save_ssh_config_text` commits validated drafts.
+  Protocol v1 is unchanged. Older daemons do not advertise the manager capability.
+
 All public frontend-neutral API changes are recorded here. Application release
 notes remain separate.
 

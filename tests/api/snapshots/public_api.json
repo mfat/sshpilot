@@ -13,11 +13,12 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.102",
+  "api_implementation_version": "0.103",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
     "broadcast.write",
+    "connections.config.manager",
     "connections.config.read",
     "connections.config.write",
     "connections.events",
@@ -255,6 +256,10 @@
     },
     "duplicate_connection": {
       "capability": "connections.write",
+      "status": "implemented"
+    },
+    "edit_ssh_config": {
+      "capability": "connections.config.manager",
       "status": "implemented"
     },
     "export_secret_backup": {
@@ -705,6 +710,10 @@
       "capability": "transfers.scp",
       "status": "daemon-only"
     },
+    "start_ssh_config_preview": {
+      "capability": "connections.config.manager",
+      "status": "daemon-only"
+    },
     "start_transfer": {
       "capability": "transfers.write",
       "status": "daemon-only"
@@ -820,6 +829,7 @@
     "detach_session",
     "detach_sftp",
     "duplicate_connection",
+    "edit_ssh_config",
     "export_secret_backup",
     "fetch_public_keys",
     "forget_master_password",
@@ -946,6 +956,7 @@
     "start_broadcast_command",
     "start_host_info",
     "start_scp_transfer",
+    "start_ssh_config_preview",
     "start_transfer",
     "start_transfer_batch",
     "stop_daemon",
@@ -1406,6 +1417,16 @@
         }
       ],
       "return": "ConnectionMutationResult"
+    },
+    "edit_ssh_config": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SshConfigManagerRequest"
+        }
+      ],
+      "return": "SshConfigManagerDocument"
     },
     "export_secret_backup": {
       "parameters": [
@@ -2589,6 +2610,16 @@
       ],
       "return": "TransferSummary"
     },
+    "start_ssh_config_preview": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "SshConfigManagerRequest"
+        }
+      ],
+      "return": "OperationSummary"
+    },
     "start_transfer": {
       "parameters": [
         {
@@ -2899,6 +2930,9 @@
     "connections.duplicate": {
       "capability": "connections.write"
     },
+    "connections.edit_ssh_config": {
+      "capability": "connections.config.manager"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
@@ -2985,6 +3019,9 @@
     },
     "connections.split": {
       "capability": "connections.split"
+    },
+    "connections.start_ssh_config_preview": {
+      "capability": "connections.config.manager"
     },
     "connections.store_passphrase": {
       "capability": "connections.secrets.write"
@@ -3863,6 +3900,12 @@
     "SocketConnection",
     "SocketDirection",
     "SplitConnectionRequest",
+    "SshConfigBlock",
+    "SshConfigDirective",
+    "SshConfigHostPreview",
+    "SshConfigManagerDocument",
+    "SshConfigManagerRequest",
+    "SshConfigPreview",
     "SshConfigText",
     "SshConfigUnavailableReason",
     "StartScpTransferRequest",
@@ -5245,6 +5288,48 @@
       "config_patch",
       "expected_generation"
     ],
+    "SshConfigBlock": [
+      "kind",
+      "argument",
+      "text",
+      "line",
+      "directives",
+      "included_files"
+    ],
+    "SshConfigDirective": [
+      "keyword",
+      "value",
+      "line"
+    ],
+    "SshConfigHostPreview": [
+      "host",
+      "hostname",
+      "matched",
+      "before",
+      "after",
+      "contributions"
+    ],
+    "SshConfigManagerDocument": [
+      "document",
+      "blocks",
+      "selected"
+    ],
+    "SshConfigManagerRequest": [
+      "text",
+      "expected_revision",
+      "action",
+      "block",
+      "position",
+      "directive",
+      "keyword",
+      "value"
+    ],
+    "SshConfigPreview": [
+      "revision",
+      "hosts",
+      "valid",
+      "diagnostics"
+    ],
     "SshConfigText": [
       "text",
       "revision",
@@ -5444,6 +5529,7 @@
       "connections.read",
       "connections.events",
       "connections.write",
+      "connections.config.manager",
       "connections.config.read",
       "connections.config.write",
       "operation.mode",
@@ -5849,6 +5935,7 @@
       "unknown"
     ],
     "OperationKind": [
+      "config_preview",
       "broadcast_command",
       "key_deployment",
       "authorized_key_removal",

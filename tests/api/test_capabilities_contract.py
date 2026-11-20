@@ -11,7 +11,7 @@ def test_connection_service_only_declares_connection_operations():
         "close", "get_capabilities", "get_connection", "get_connection_editor",
         "get_ssh_config_text", "get_effective_config", "get_earlier_directives", "list_config_conflicts", "list_config_syntax_errors", "check_unsaved_host", "prepare_external_terminal_launch", "get_launch_command",
         "test_pre_command",
-        "save_ssh_config_text",
+        "save_ssh_config_text", "edit_ssh_config",
         "list_connections", "create_connection", "preview_asbru_import", "import_asbru",
         "duplicate_connection",
         "delete_connection", "delete_connections", "store_connection_password",
