@@ -505,12 +505,18 @@ class SshPilotApplication(Adw.Application):
         # the window: deferring it to an idle callback let the first frame
         # render in the system scheme and then visibly flip.
         saved_theme = getattr(self, "_saved_app_theme", "default")
-        if saved_theme in ("light", "dark"):
+        if saved_theme in ("light", "dark", "black"):
             try:
                 Adw.StyleManager.get_default().set_color_scheme(
                     Adw.ColorScheme.FORCE_LIGHT if saved_theme == "light"
                     else Adw.ColorScheme.FORCE_DARK
                 )
+                if saved_theme == "black":
+                    try:
+                        from .oled_theme_css import apply_oled_theme_override
+                        apply_oled_theme_override(True)
+                    except Exception:
+                        pass
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("Could not apply the saved app theme: %s", exc)
 

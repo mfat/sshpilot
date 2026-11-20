@@ -171,6 +171,9 @@ _TARGET_KEYWORDS = {
     ("win.set-app-theme", "default"): N_(
         "system theme;follow system;automatic theme;auto theme"
     ),
+    ("win.set-app-theme", "black"): N_(
+        "black mode;black theme;oled theme;oled mode;pure black;pitch black"
+    ),
 }
 
 # Searchable actions that are not in the main menu:
@@ -186,6 +189,8 @@ _EXTRA_COMMANDS = (
      "weather-clear-symbolic"),
     ("win.set-app-theme", N_("Follow System"), "default",
      "emblem-system-symbolic"),
+    ("win.set-app-theme", N_("OLED Black Style"), "black",
+     "weather-clear-night-symbolic"),
 )
 
 # Settings pages: (page id, title as registered by Preferences, keywords).
