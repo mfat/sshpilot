@@ -7653,6 +7653,11 @@ msgstr "下一个标签页"
 msgid "Previous Tab"
 msgstr "上一个标签页"
 
+#: src/sshpilot/shortcut_utils.py:16
+#, python-brace-format
+msgid "Switch to Tab {number}"
+msgstr "切换到第 {number} 个标签页"
+
 #. Window group
 #: src/sshpilot/macos_menubar.py:113 src/sshpilot/preferences.py:1753
 #: src/sshpilot/settings_index.py:80

@@ -7950,6 +7950,11 @@ msgstr "Próxima aba"
 msgid "Previous Tab"
 msgstr "Aba anterior"
 
+#: src/sshpilot/shortcut_utils.py:16
+#, python-brace-format
+msgid "Switch to Tab {number}"
+msgstr "Alternar para a aba {number}"
+
 #. Window group
 #: src/sshpilot/macos_menubar.py:113 src/sshpilot/preferences.py:1753
 #: src/sshpilot/settings_index.py:80

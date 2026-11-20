@@ -7919,6 +7919,11 @@ msgstr "برگه بعدی"
 msgid "Previous Tab"
 msgstr "برگه قبلی"
 
+#: src/sshpilot/shortcut_utils.py:16
+#, python-brace-format
+msgid "Switch to Tab {number}"
+msgstr "رفتن به برگهٔ {number}"
+
 #. Window group
 #: src/sshpilot/macos_menubar.py:113 src/sshpilot/preferences.py:1753
 #: src/sshpilot/settings_index.py:80
