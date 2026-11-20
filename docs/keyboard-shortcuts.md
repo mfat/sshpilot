@@ -72,11 +72,11 @@ itself is opened with the customizable **Search in Terminal** shortcut.
 
 ## Tab Management
 
-| Action | Linux | macOS |
+| Action | Linux / Windows | macOS |
 |--------|-------|-------|
 | Next Tab | Ctrl+Page Down | Ctrl+Page Down |
 | Previous Tab | Ctrl+Page Up | Ctrl+Page Up |
-| Switch to Tab 1–9 | *Disabled by default* | Cmd+1 through Cmd+9 |
+| Switch to Tab 1–9 | Alt+1 through Alt+9 | Cmd+1 through Cmd+9 |
 | Move Tab Left | Ctrl+Shift+Page Up | Ctrl+Shift+Page Up |
 | Move Tab Right | Ctrl+Shift+Page Down | Ctrl+Shift+Page Down |
 | Close Tab | Ctrl+Shift+W | Cmd+Shift+W |

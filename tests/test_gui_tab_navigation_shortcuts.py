@@ -68,9 +68,10 @@ def test_configured_tab_next_and_prev_switch_tabs(gui):
 
 def test_numbered_tab_shortcut_defaults(gui):
     defaults = gui.app.get_registered_shortcut_defaults()
+    modifier = '<Meta>' if is_macos() else '<Alt>'
     for number in range(1, 10):
         name = f'tab-select-{number}'
-        expected = [f'<Meta>{number}'] if is_macos() else []
+        expected = [f'{modifier}{number}']
         assert defaults[name] == expected
         assert gui.app.get_accels_for_action(f'app.{name}') == expected
 
@@ -97,18 +98,19 @@ def test_numbered_tab_actions_follow_tab_order(gui):
 def test_numbered_tab_shortcut_respects_overrides_and_pass_through(gui):
     name = 'tab-select-1'
     action = f'app.{name}'
+    replacement = ['<Alt>0']
     setting = 'terminal.pass_through_mode'
     config = gui.app.config
     previous = config.get_setting(setting, False)
     try:
-        _set_override(gui, name, ['<Alt>1'])
-        assert gui.app.get_accels_for_action(action) == ['<Alt>1']
+        _set_override(gui, name, replacement)
+        assert gui.app.get_accels_for_action(action) == replacement
 
         config.set_setting(setting, True)
         assert gui.app.get_accels_for_action(action) == []
 
         config.set_setting(setting, False)
-        assert gui.app.get_accels_for_action(action) == ['<Alt>1']
+        assert gui.app.get_accels_for_action(action) == replacement
 
         _set_override(gui, name, [])
         assert gui.app.get_accels_for_action(action) == []

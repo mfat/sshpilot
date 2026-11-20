@@ -418,11 +418,12 @@ class SshPilotApplication(Adw.Application):
         # Tab navigation accelerators
         self.create_action('tab-next', self.on_tab_next, ['<primary>Page_Down'])
         self.create_action('tab-prev', self.on_tab_prev, ['<primary>Page_Up'])
+        tab_number_modifier = '<Meta>' if mac else '<Alt>'
         for number, name in NUMBERED_TAB_ACTIONS.items():
             self.create_action(
                 name,
                 partial(self.on_tab_select, number - 1),
-                [f'<Meta>{number}'] if mac else [],
+                [f'{tab_number_modifier}{number}'],
             )
         # Move the current tab within the tab bar
         self.create_action('tab-move-left', self.on_tab_move_left, ['<primary><shift>Page_Up'])
