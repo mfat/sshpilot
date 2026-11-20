@@ -9,7 +9,12 @@ gi.require_version('Adw', '1')
 gi.require_version('Gtk', '4.0')
 from gi.repository import Adw, Gdk, Gtk
 
-from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT, install_esc_to_close
+from .shortcut_utils import (
+    DOUBLE_SHIFT_SHORTCUT,
+    NUMBERED_TAB_ACTIONS,
+    install_esc_to_close,
+    numbered_tab_shortcut_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +70,7 @@ ACTION_LABELS: Dict[str, str] = {
     'shortcuts': _('Keyboard Shortcuts'),
     'tab-next': _('Next Tab'),
     'tab-prev': _('Previous Tab'),
+    **{name: numbered_tab_shortcut_label(number) for number, name in NUMBERED_TAB_ACTIONS.items()},
     'tab-move-left': _('Move Tab Left'),
     'tab-move-right': _('Move Tab Right'),
     'tab-overview': _('Tab Overview'),
@@ -273,8 +279,10 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             'edit-ssh-config',
         ]
         terminal_actions = ['local-terminal', 'terminal-search', 'broadcast-command', 'toggle-command-blocks']
-        tab_actions = ['tab-next', 'tab-prev', 'tab-move-left', 'tab-move-right',
-                       'tab-close', 'tab-overview', 'new-split-view-tab']
+        tab_actions = [
+            'tab-next', 'tab-prev', *NUMBERED_TAB_ACTIONS.values(), 'tab-move-left',
+            'tab-move-right', 'tab-close', 'tab-overview', 'new-split-view-tab',
+        ]
         split_actions = [
             'split-focus-left', 'split-focus-down', 'split-focus-up', 'split-focus-right',
             'split-resize-left', 'split-resize-down', 'split-resize-up', 'split-resize-right',

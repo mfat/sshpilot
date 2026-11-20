@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import sys
+from gettext import gettext as _
 
 
 DOUBLE_SHIFT_SHORTCUT = "<double-shift>"
 
+NUMBERED_TAB_ACTIONS = {number: f"tab-select-{number}" for number in range(1, 10)}
+
 #: Canonical name of the window action every fullscreen accelerator reaches.
 TOGGLE_FULLSCREEN_ACTION = "toggle-fullscreen"
+
+
+def numbered_tab_shortcut_label(number: int) -> str:
+    return _("Switch to Tab {number}").format(number=number)
 
 
 def default_fullscreen_shortcuts(mac: bool) -> list[str]:

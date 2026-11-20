@@ -12,7 +12,12 @@ from gi.repository import Adw, Gio, Gtk
 from gettext import gettext as _
 
 from .platform_utils import is_macos
-from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT, TOGGLE_FULLSCREEN_ACTION
+from .shortcut_utils import (
+    DOUBLE_SHIFT_SHORTCUT,
+    NUMBERED_TAB_ACTIONS,
+    TOGGLE_FULLSCREEN_ACTION,
+    numbered_tab_shortcut_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +234,10 @@ class WindowHelpMixin:
         tab_actions = [
             ('tab-next', _('Next Tab')),
             ('tab-prev', _('Previous Tab')),
+            *(
+                (name, numbered_tab_shortcut_label(number))
+                for number, name in NUMBERED_TAB_ACTIONS.items()
+            ),
             ('tab-move-left', _('Move Tab Left')),
             ('tab-move-right', _('Move Tab Right')),
             ('tab-close', _('Close Tab')),

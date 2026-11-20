@@ -8053,6 +8053,11 @@ msgstr "Следующая вкладка"
 msgid "Previous Tab"
 msgstr "Предыдущая вкладка"
 
+#: src/sshpilot/shortcut_utils.py:16
+#, python-brace-format
+msgid "Switch to Tab {number}"
+msgstr "Перейти на вкладку {number}"
+
 #. Window group
 #: src/sshpilot/macos_menubar.py:113 src/sshpilot/preferences.py:1753
 #: src/sshpilot/settings_index.py:80
