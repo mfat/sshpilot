@@ -681,3 +681,22 @@ def test_an_unrelated_edit_keeps_the_login_settings(gui, root, body):
     assert _canon(_block(root, name)) == _canon(expected), (
         "saving a User change rewrote the host's login settings"
     )
+
+
+def test_an_unrelated_edit_reports_only_what_changed(gui, root, monkeypatch):
+    """A save marks exactly the edited field as changed (pre_command was
+    reported on every save before)."""
+    seen = []
+    window = gui.window
+    original = window._save_connection_via_client
+
+    def spy(dialog, data, *args, **kwargs):
+        seen.append(tuple(sorted(data.get("__changed_fields") or ())))
+        return original(dialog, data, *args, **kwargs)
+
+    monkeypatch.setattr(window, "_save_connection_via_client", spy)
+    name = _host(root, gui)
+    dialog = _open(gui, name)
+    dialog.username_row.set_text("someone")
+    _save_and_wait(dialog, root, name, [*BASE_LINES, "User someone"])
+    assert seen == [("username",)]

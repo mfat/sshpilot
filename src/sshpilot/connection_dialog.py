@@ -2802,6 +2802,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "local_command": text("local_command_row"),
             "remote_command": text("remote_command_row"),
             "extra_ssh_config": self._combined_extra_ssh_config(),
+            # Saves always send '' (the pre-connect command is metadata now);
+            # that is a change only when the block still carries the old
+            # ``# sshpilot:PreCommand`` comment, which the save then removes.
+            "pre_command": str(getattr(self.connection, "pre_command", "") or ""),
             "forwarding_rules": tuple(
                 tuple(sorted(dict(rule).items()))
                 for rule in (getattr(self, "forwarding_rules", None) or [])
