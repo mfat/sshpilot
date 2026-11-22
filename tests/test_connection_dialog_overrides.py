@@ -157,7 +157,7 @@ def _dialog(**attrs):
         "_set_forced_options", "_set_earlier_directives",
         "_apply_override_notes", "_mark_row_override",
         "_overridden_field_count", "_overridden_field_counts",
-        "_advanced_option_note", "_password_auth_selected",
+        "_advanced_option_note",
         "_override_row_value", "_watch_rows_for_overrides",
     ):
         setattr(dialog, name, getattr(Overrides, name).__get__(dialog))
@@ -487,15 +487,6 @@ def test_switch_that_is_off_is_pointed_out_when_an_earlier_block_turns_it_on():
     assert earlier_row_state(
         "x11_row", "ForwardX11", None, _earlier("forwardx11", "no")
     ) == (None, None)
-    # "Disable public-key" off means PubkeyAuthentication yes.
-    assert earlier_row_state(
-        "pubkey_auth_row", "PubkeyAuthentication", None,
-        _earlier("pubkeyauthentication", "yes"),
-    ) == (None, None)
-    assert earlier_row_state(
-        "pubkey_auth_row", "PubkeyAuthentication", None,
-        _earlier("pubkeyauthentication", "no"),
-    )[0] == GLOBAL
 
 
 def test_selector_on_default_is_pointed_out_when_an_earlier_block_decides():
@@ -505,30 +496,28 @@ def test_selector_on_default_is_pointed_out_when_an_earlier_block_decides():
     assert state == GLOBAL and "ForwardAgent" in note
 
 
-def test_password_login_loses_to_an_earlier_list_without_password_methods():
-    earlier = _earlier("preferredauthentications", "publickey")
+@pytest.mark.parametrize("row_name, keyword, own, earlier_value", [
+    ("auth_order_row", "PreferredAuthentications", "password,publickey", "publickey"),
+    ("auth_publickey_row", "PubkeyAuthentication", "no", "yes"),
+    ("auth_gssapi_row", "GSSAPIAuthentication", "yes", "no"),
+])
+def test_an_authentication_line_this_host_sets_loses_to_an_earlier_block(
+    row_name, keyword, own, earlier_value
+):
     state, note = earlier_row_state(
-        "auth_method_row", "PreferredAuthentications",
-        "keyboard-interactive,password", earlier, password_auth=True,
+        row_name, keyword, own, _earlier(keyword.lower(), earlier_value)
     )
-    assert state == OVERRIDDEN and "publickey" in note
-    # A list that still tries a password takes nothing away.
-    assert earlier_row_state(
-        "auth_method_row", "PreferredAuthentications",
-        "keyboard-interactive,password",
-        _earlier("preferredauthentications", "publickey,password"),
-        password_auth=True,
-    ) == (None, None)
+    assert state == OVERRIDDEN and earlier_value in note
 
 
-def test_key_login_is_pointed_out_when_an_earlier_list_leaves_keys_out():
-    earlier = _earlier("preferredauthentications", "password")
+@pytest.mark.parametrize("row_name, keyword", [
+    ("auth_order_row", "PreferredAuthentications"),
+    ("auth_password_row", "PasswordAuthentication"),
+])
+def test_an_unset_authentication_row_needs_no_mark(row_name, keyword):
+    # It already shows what OpenSSH resolves, earlier block included.
     assert earlier_row_state(
-        "auth_method_row", "PreferredAuthentications", None, earlier
-    )[0] == GLOBAL
-    assert earlier_row_state(
-        "auth_method_row", "PreferredAuthentications", None,
-        _earlier("preferredauthentications", "publickey,password"),
+        row_name, keyword, None, _earlier(keyword.lower(), "no")
     ) == (None, None)
 
 

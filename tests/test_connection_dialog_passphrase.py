@@ -163,7 +163,6 @@ def _build_dialog_with_passphrase():
     dialog.port_row = DummyEntry(str(connection.port))
     dialog.proxy_jump_row = DummyEntry("")
     dialog.forward_agent_row = DummyCombo(0)
-    dialog.auth_method_row = DummyCombo(0)
     dialog.keyfile_row = DummySubtitleRow()
     dialog.keyfile_row.set_subtitle(connection.keyfile)
     dialog.keyfile_btn = DummyButton()
@@ -173,7 +172,6 @@ def _build_dialog_with_passphrase():
     dialog.key_only_row = DummyToggle(True)
     dialog.key_passphrase_row = DummyEntry(connection.key_passphrase)
     dialog.password_row = DummyEntry("")
-    dialog.pubkey_auth_row = DummyToggle(False)
     dialog.certificate_row = DummySubtitleRow()
     dialog.cert_dropdown = DummyCombo(0)
     dialog._cert_paths = []

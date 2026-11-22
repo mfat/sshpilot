@@ -45,10 +45,25 @@ from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
 )
-from .ssh_config_formatter import (
-    MANAGED_HOST_OPTIONS,
-    PASSWORD_MODE_PREFERRED_AUTH,
+from .ssh_config_formatter import MANAGED_HOST_OPTIONS
+from .core.connections.auth_preferences import AUTH_POLICY_KEYWORDS
+from .connection_dialog_auth import (
+    METHODS as AUTH_METHODS,
+    AuthPolicy,
+    AuthPolicyGroup,
+    join_extra,
+    split_policy_lines,
 )
+
+# Dialog attribute of each authentication method row (override marking and
+# the contract tests reach the rows through these).
+AUTH_METHOD_ROWS = {
+    "gssapi-with-mic": "auth_gssapi_row",
+    "hostbased": "auth_hostbased_row",
+    "publickey": "auth_publickey_row",
+    "keyboard-interactive": "auth_kbdinteractive_row",
+    "password": "auth_password_row",
+}
 from .ssh_option_list import OPENSSH_KEYWORDS, SshOptionList, check_ssh_option
 from .ssh_connection_validator import (  # SSHConnectionValidator also re-exported for tests/back-compat
     SSHConnectionValidator,
@@ -568,6 +583,7 @@ def _set_action_row_child(row, widget):
 ADVANCED_TAB_SSH_OPTIONS = tuple(
     name for name in OPENSSH_KEYWORDS
     if name.lower() not in MANAGED_HOST_OPTIONS
+    and name.lower() not in AUTH_POLICY_KEYWORDS
 )
 
 
@@ -615,7 +631,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
             keywords=self.ssh_options,
             validate=lambda keyword, value: check_ssh_option(
                 keyword, value,
-                reserved=MANAGED_HOST_OPTIONS,
+                reserved=MANAGED_HOST_OPTIONS | AUTH_POLICY_KEYWORDS,
                 reserved_message=own_field,
             ),
             note=self._override_note,
@@ -2036,18 +2052,37 @@ class ConnectionDialog(
         
         self.add_controller(shortcut_controller)
     
-    def _auth_is_key_based(self) -> bool:
-        try:
-            return self.auth_toggle.get_active() == 0
-        except Exception:
-            return True
+    def _combined_extra_ssh_config(self) -> str:
+        """The Advanced tab's options plus the authentication section's lines.
 
-    def _selected_auth_method(self) -> int:
-        """0 = key-based, 1 = password."""
-        try:
-            return int(self.auth_toggle.get_active())
-        except Exception:
-            return 0
+        Both are plain lines of the Host block (``extra_ssh_config``); the
+        authentication section only presents its own keywords separately.
+        """
+        other = ''
+        if hasattr(self, 'advanced_tab'):
+            try:
+                other = self.advanced_tab.get_extra_ssh_config()
+            except Exception as e:
+                logger.error(f"Error getting extra SSH config from advanced tab: {e}")
+        section = getattr(self, 'auth_policy', None)
+        policy_lines = section.policy.to_lines() if section is not None else []
+        return join_extra(other, policy_lines)
+
+    def _on_auth_policy_changed(self) -> None:
+        apply_notes = getattr(self, '_apply_override_notes', None)
+        if callable(apply_notes):
+            apply_notes()
+
+    def _auth_policy_set_earlier(self, earlier) -> None:
+        """Earlier blocks decide some authentication lines; show what wins."""
+        section = getattr(self, 'auth_policy', None)
+        if section is None:
+            return
+        section.policy.earlier = {
+            str(keyword).lower(): str(getattr(entry, 'value', entry) or '')
+            for keyword, entry in (earlier or {}).items()
+        }
+        section.sync()
 
     def _selected_key_mode(self) -> int:
         """0 = automatic, 1 = specific + IdentitiesOnly, 2 = specific."""
@@ -2190,55 +2225,24 @@ class ConnectionDialog(
         except Exception:
             pass
 
-    def on_auth_method_changed(self, *args):
-        """Reveal key-based vs password controls based on the auth ToggleGroup."""
-        is_key_based = self._auth_is_key_based()
-        for name in ('key_selection_group', 'key_select_row',
-                     'idonly_group', 'add_keys_to_agent_row'):
-            row = getattr(self, name, None)
-            if row is not None:
-                row.set_visible(is_key_based)
-        if hasattr(self, 'password_row'):
-            try:
-                title = _("Password (optional)") if is_key_based else _("Password")
-                self.password_row.set_title(title)
-            except Exception:
-                pass
-            self.password_row.set_visible(True)  # optional for keys, primary for password
-        if hasattr(self, 'pubkey_auth_row'):
-            self.pubkey_auth_row.set_visible(not is_key_based)
-        # Agent/hardware key sources apply to BOTH Automatic and specific-key
-        # modes (that's what Automatic relies on); hide only for password auth.
-        if hasattr(self, 'hw_group'):
-            self.hw_group.set_visible(is_key_based)
-        # Update key/cert editor visibility for the current selection mode.
-        self.on_key_select_changed()
-
     def on_key_select_changed(self, *args):
-        """Show key rows for key auth, but only enable editing in specific-key mode."""
-        is_key_based = self._auth_is_key_based()
+        """Enable the specific-key rows only in specific-key mode.
+
+        Keys, certificates and agents are always shown: which methods are
+        tried is the authentication order's business, not a mode.
+        """
         try:
-            use_specific = bool(is_key_based and getattr(self, 'key_select_row', None)
+            use_specific = bool(getattr(self, 'key_select_row', None)
                                 and self.key_select_row.get_selected() == 1)
         except Exception:
             use_specific = False
 
         # In Automatic mode keep the specific-key rows visible but inactive, so
         # users can see what would apply without being able to edit it.
-        key_editor = getattr(self, 'key_editor', None)
-        if key_editor is not None:
-            key_editor.set_visible(is_key_based)
-            key_editor.set_sensitive(use_specific)
-
-        key_only_row = getattr(self, 'key_only_row', None)
-        if key_only_row is not None:
-            key_only_row.set_visible(is_key_based)
-            key_only_row.set_sensitive(use_specific)
-
-        cert_editor = getattr(self, 'cert_editor', None)
-        if cert_editor is not None:
-            cert_editor.set_visible(is_key_based)
-            cert_editor.set_sensitive(use_specific)
+        for name in ('key_editor', 'key_only_row', 'cert_editor'):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.set_sensitive(use_specific)
 
     def _generate_ssh_config_from_settings(self):
         """Generate SSH config block from current connection settings"""
@@ -2255,8 +2259,6 @@ class ConnectionDialog(
             username_val = username.get_text().strip() if username else "user"
             port_val = port.get_text().strip() if port else "22"
 
-            # Get authentication settings from the new auth widgets
-            auth_method_val = self._selected_auth_method()
             key_select_mode_val = self._selected_key_mode()
 
             # Full lists of identity files / certificates from the editors
@@ -2294,26 +2296,19 @@ class ConnectionDialog(
                 if fa_text:
                     config_lines.append(f"    ForwardAgent {fa_text}")
 
-            # Add authentication settings
-            if auth_method_val == 0:  # Key-based auth (password optional)
-                if key_select_mode_val in (1, 2) and identity_files:  # Specific key(s)
-                    for kf in identity_files:
-                        config_lines.append(f"    IdentityFile {kf}")
-                    if key_select_mode_val == 1:
-                        config_lines.append("    IdentitiesOnly yes")
-
-                    # Add certificate(s) if specified
-                    for cert in certificate_files:
-                        config_lines.append(f"    CertificateFile {cert}")
-                # A saved password needs no list: OpenSSH's default order
-                # already ends in keyboard-interactive,password.
-                # For automatic key selection, don't add IdentityFile
-            else:  # Password auth only
-                config_lines.append(
-                    f"    PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}"
-                )
-                if self.pubkey_auth_row.get_active():
-                    config_lines.append("    PubkeyAuthentication no")
+            # Keys and certificates (specific-key mode only)
+            if key_select_mode_val in (1, 2) and identity_files:
+                for kf in identity_files:
+                    config_lines.append(f"    IdentityFile {kf}")
+                if key_select_mode_val == 1:
+                    config_lines.append("    IdentitiesOnly yes")
+                for cert in certificate_files:
+                    config_lines.append(f"    CertificateFile {cert}")
+            # The authentication order and switches, as written
+            section = getattr(self, 'auth_policy', None)
+            if section is not None:
+                for line in section.policy.to_lines():
+                    config_lines.append(f"    {line}")
             
             # Add X11 forwarding if enabled
             if hasattr(self, 'x11_row') and self.x11_row.get_active():
@@ -2554,7 +2549,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pending.append((row_name, ssh_key, row.get_text()))
             except Exception:
                 continue
-        if not pending:
+        # The authentication section shows inherited values for whatever the
+        # block does not set, so it always wants the resolution.
+        if not pending and getattr(self, 'auth_policy', None) is None:
             return
 
         parent = getattr(self, 'parent_window', None)
@@ -2572,6 +2569,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         }
 
         def _apply(resolved):
+            section = getattr(self, 'auth_policy', None)
+            if section is not None:
+                # None: OpenSSH could not be asked; the section says so.
+                section.policy.set_inherited(resolved)
+                section.sync()
             if not resolved:
                 return False
             for row_name, ssh_key, text_at_schedule in pending:
@@ -2610,13 +2612,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         def _start_worker():
             def worker():
-                resolved = {}
+                resolved = None
                 try:
                     from .api.connection_identity import connection_id_for
                     result = client.get_effective_config(
                         connection_id_for(self.connection)
                     )
                     if getattr(result, 'available', False):
+                        resolved = {}
                         for line in getattr(result, 'full', ()) or ():
                             key, _sep, value = str(line).partition(' ')
                             # ssh -G repeats accumulating keys; first wins, which
@@ -2771,7 +2774,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "username": text("username_row"),
             "port": (int(t) if (t := text("port_row")) else ""),
             "protocol": getattr(self.connection, "protocol", "ssh") or "ssh",
-            "auth_method": int(self.auth_toggle.get_active()) if hasattr(self, "auth_toggle") else 0,
             "key_select_mode": self._selected_key_mode(),
             "add_keys_to_agent": self._selected_add_keys_to_agent(),
             "aliases": tuple(getattr(self.connection, "aliases", ()) or ()),
@@ -2784,13 +2786,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "proxy_command": text("proxy_command_row"),
             **self._selected_forward_agent_fields(),
             "x11_forwarding": active("x11_row"),
-            "pubkey_auth_no": active("pubkey_auth_row"),
             "identity_agent": self._selected_identity_agent(),
             "pkcs11_provider": text("pkcs11_provider_row"),
             "security_key_provider": text("security_key_provider_row"),
             "local_command": text("local_command_row"),
             "remote_command": text("remote_command_row"),
-            "extra_ssh_config": getattr(self.advanced_tab, "get_extra_ssh_config", lambda: "")() if hasattr(self, "advanced_tab") else "",
+            "extra_ssh_config": self._combined_extra_ssh_config(),
             "forwarding_rules": tuple(
                 tuple(sorted(dict(rule).items()))
                 for rule in (getattr(self, "forwarding_rules", None) or [])
@@ -2849,8 +2850,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         required_attrs = [
             'display_name_row', 'nickname_row', 'hostname_row', 'username_row', 'port_row',
             'proxy_jump_row', 'forward_agent_row',
-            'auth_toggle', 'key_editor', 'cert_editor', 'password_row',
-            'key_select_row', 'key_only_row', 'pubkey_auth_row'
+            'auth_policy', 'key_editor', 'cert_editor', 'password_row',
+            'key_select_row', 'key_only_row'
         ]
         for attr in required_attrs:
             if not hasattr(self, attr):
@@ -2983,17 +2984,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Load Wake-on-LAN and tags metadata from connections_meta
             self._load_shared_meta_rows()
 
-            # Set authentication method (ToggleGroup: 0 key-based, 1 password)
-            auth_method = getattr(self.connection, 'auth_method', 0)
-            try:
-                self.auth_toggle.set_active(int(auth_method or 0))
-            except Exception:
-                pass
-            try:
-                self.pubkey_auth_row.set_active(bool(getattr(self.connection, 'pubkey_auth_no', False)))
-            except Exception:
-                self.pubkey_auth_row.set_active(False)
-
             # Populate the identity-file editor with the FULL list the parser
             # resolved (fall back to the single keyfile for older/partial data).
             def _clean(value, placeholder):
@@ -3091,9 +3081,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 pass
 
-            # Reveal the correct sections for the loaded method/mode.
+            # Enable the specific-key rows for the loaded key selection.
             try:
-                self.on_auth_method_changed()
+                self.on_key_select_changed()
             except Exception:
                 pass
 
@@ -3109,6 +3099,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             try:
                 extra_config = getattr(self.connection, 'extra_ssh_config', '') or ''
                 logger.debug(f"Loading extra SSH config from connection: {extra_config}")
+                # The authentication lines have their own section; the rest
+                # goes to the Advanced tab.
+                policy_lines, extra_config = split_policy_lines(extra_config)
+                section = getattr(self, 'auth_policy', None)
+                if section is not None:
+                    section.load(AuthPolicy.from_lines(policy_lines))
                 if hasattr(self, 'advanced_tab'):
                     self.advanced_tab.set_extra_ssh_config(extra_config)
                     logger.debug(f"Set extra SSH config in advanced tab: {extra_config}")
@@ -3275,16 +3271,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Build PreferencesGroups for authentication settings."""
         cm = getattr(self, 'connection_manager', None)
 
-        # --- Method: key-based vs password (AdwToggleGroup) ---
-        auth_group = Adw.PreferencesGroup(title=_("Authentication method"))
-        method_row = Adw.ActionRow()
-        method_row.set_activatable(False)
-        self.auth_toggle = _build_expanding_toggle_group([_("Key-based"), _("Password")])
-        self.auth_toggle.connect("notify::active", self.on_auth_method_changed)
-        _set_action_row_child(method_row, self.auth_toggle)
-        auth_group.add(method_row)
-        # Marked when the SSH configuration decides which methods are tried.
-        self.auth_method_row = method_row
+        # --- Authentication order and per-method switches ---
+        # Plain Host-block lines (PreferredAuthentications, PubkeyAuthentication,
+        # ...); see connection_dialog_auth.py.
+        self.auth_policy = AuthPolicyGroup.create(self._on_auth_policy_changed)
+        auth_group = self.auth_policy.group
+        # Marked when an earlier block decides the order.
+        self.auth_order_row = self.auth_policy.order_row
+        self.auth_order_row._sshpilot_own_value = lambda: (
+            ",".join(self.auth_policy.policy.order)
+            if self.auth_policy.policy.order is not None else None
+        )
+        for method in AUTH_METHODS:
+            row = self.auth_policy.rows[method]
+            row._sshpilot_own_value = (
+                lambda m=method: (
+                    ("yes" if self.auth_policy.policy.switches[m] else "no")
+                    if m in self.auth_policy.policy.switches else None
+                )
+            )
+            setattr(self, AUTH_METHOD_ROWS[method], row)
 
         # --- Key selection mode: Automatic vs Use specific keys ---
         self.key_selection_group = Adw.PreferencesGroup()
@@ -3366,12 +3372,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception:
             pass
         password_group.add(self.password_row)
-
-        self.pubkey_auth_row = Adw.SwitchRow()
-        self.pubkey_auth_row.set_title(_("Disable public key authentication"))
-        self.pubkey_auth_row.set_subtitle(_("Force password authentication only (PubkeyAuthentication no)."))
-        self.pubkey_auth_row.set_active(False)
-        password_group.add(self.pubkey_auth_row)
 
         # --- Agent & hardware key sources -------------------------------------
         # A key (and any cert that pairs with it) may come from an ssh-agent, a
@@ -3456,11 +3456,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.security_key_provider_row.add_suffix(sk_btn)
         hw_group.add(self.security_key_provider_row)
 
-        # Initialize visibility for new connections.
+        # Initialize the specific-key rows for new connections.
         try:
-            self.on_auth_method_changed(self.auth_toggle, None)
+            self.on_key_select_changed()
         except Exception:
             pass
+        self.auth_policy.sync()
 
         auth_groups = [
             auth_group,
@@ -5364,15 +5365,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             password_changed = False
 
 
-        # Get extra SSH config from advanced tab
-        extra_ssh_config = ''
-        if hasattr(self, 'advanced_tab'):
-            try:
-                extra_ssh_config = self.advanced_tab.get_extra_ssh_config()
-                logger.debug(f"Retrieved extra SSH config from advanced tab: {extra_ssh_config}")
-            except Exception as e:
-                logger.error(f"Error getting extra SSH config from advanced tab: {e}")
-                extra_ssh_config = ''
+        # Advanced-tab options plus the authentication section's lines
+        extra_ssh_config = self._combined_extra_ssh_config()
 
         key_select_mode_val = self._selected_key_mode()
 
@@ -5401,7 +5395,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 if self.port_row.get_text().strip()
                 else ''
             ),
-            'auth_method': self._selected_auth_method(),
             'keyfile': keyfile_value,
             'identity_files': identity_files,
             'certificate': certificate_value,
@@ -5414,7 +5407,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'security_key_provider': (self.security_key_provider_row.get_text().strip()
                                       if hasattr(self, 'security_key_provider_row') else ''),
             'x11_forwarding': self.x11_row.get_active(),
-            'pubkey_auth_no': self.pubkey_auth_row.get_active(),
             'proxy_jump': [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()],
             'proxy_command': (self.proxy_command_row.get_text().strip()
                               if hasattr(self, 'proxy_command_row') else ''),

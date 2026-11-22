@@ -430,15 +430,15 @@ def test_connection_loader_clears_advanced_and_forwarding_on_empty_snapshot():
     # load_connection_data, both draft loaders, and switch synchronization real.
     for name in (
         "display_name_row", "nickname_row", "hostname_row", "username_row",
-        "port_row", "proxy_jump_row", "forward_agent_row", "auth_toggle",
+        "port_row", "proxy_jump_row", "forward_agent_row", "auth_policy",
         "key_editor", "cert_editor", "password_row", "key_select_row",
-        "key_only_row", "pubkey_auth_row", "x11_row", "identity_agent_row",
+        "key_only_row", "x11_row", "identity_agent_row",
     ):
         setattr(dialog, name, Mock())
     for name in (
         "_load_shared_meta_rows", "_load_password_async",
         "_on_forward_agent_mode_changed", "_on_identity_agent_mode_changed",
-        "on_auth_method_changed", "_capture_editor_delta_baseline",
+        "on_key_select_changed", "_capture_editor_delta_baseline",
     ):
         setattr(dialog, name, Mock())
     dialog.show_error = Mock()

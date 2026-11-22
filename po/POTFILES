@@ -9,6 +9,7 @@ src/sshpilot/command_converter.py
 src/sshpilot/command_palette.py
 src/sshpilot/command_progress_dialog.py
 src/sshpilot/connection_dialog.py
+src/sshpilot/connection_dialog_auth.py
 src/sshpilot/connection_dialog_field_helpers.py
 src/sshpilot/connection_dialog_login_profile.py
 src/sshpilot/connection_dialog_overrides.py

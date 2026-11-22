@@ -387,19 +387,21 @@ def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gu
     assert "ForwardX11" in dialog.x11_row.get_tooltip_text()
     # A selector on Default while the earlier block decides.
     assert dialog.forward_agent_row._sshpilot_override_state == GLOBAL
-    # Key login is still tried by "publickey": nothing to say.
-    assert getattr(dialog.auth_method_row, "_sshpilot_override_state", None) is None
+    # The host sets no order; the row shows the one in force: nothing to say.
+    assert getattr(dialog.auth_order_row, "_sshpilot_override_state", None) is None
     assert getattr(dialog, "_override_banner", None) is None or (
         not dialog._override_banner.get_revealed()
     )
 
-    # Password login is not in the earlier list: the choice here is not used.
-    dialog.auth_toggle.set_active(1)
-    assert dialog.auth_method_row._sshpilot_override_state == OVERRIDDEN
-    assert dialog.auth_method_row._sshpilot_override_icon.get_visible()
-    assert "publickey" in dialog.auth_method_row.get_tooltip_text()
+    # An order set here loses to the earlier list: it is not used.
+    dialog.auth_policy.password_first_button.emit("clicked")
+    assert dialog.auth_order_row._sshpilot_override_state == OVERRIDDEN
+    assert dialog.auth_order_row._sshpilot_override_icon.get_visible()
+    assert "publickey" in dialog.auth_order_row.get_tooltip_text()
     assert dialog._override_banner.get_revealed()
-    dialog.auth_toggle.set_active(0)
+    # The help line states what is really tried.
+    assert dialog.auth_order_row.get_subtitle() == "publickey"
+    dialog.auth_policy.reset_button.emit("clicked")
     assert not dialog._override_banner.get_revealed()
 
     # A local command cannot run while an earlier block forbids them.

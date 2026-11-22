@@ -110,16 +110,52 @@ def _same_paths(attr, paths):
     return check
 
 
-# Password mode is written as this preference list; the switch below it only
-# adds or removes PubkeyAuthentication.
+# "Try password first" on OpenSSH's default order.
 PASSWORD_PREF = (
     "PreferredAuthentications "
     "keyboard-interactive,password,gssapi-with-mic,hostbased,publickey"
 )
 
 
-def _password_auth(dialog):
-    dialog.auth_toggle.set_active(1)
+# -- the authentication section ------------------------------------------------
+
+def _auth_tick(attr, value):
+    """Tick or untick a method's checkbox, as a user does (twice if needed)."""
+    def act(dialog):
+        check = getattr(dialog, attr)._check
+        if check.get_active() is value and not check.get_inconsistent():
+            check.set_active(not value)
+        check.set_active(value)
+    return act
+
+
+def _auth_shows(attr, value):
+    """The checkbox holds *value* as this host's own (not dimmed)."""
+    def check(dialog):
+        box = getattr(dialog, attr)._check
+        return (box.get_active() is value and not box.get_inconsistent()
+                and not box.has_css_class("dim-label"))
+    return check
+
+
+def _auth_reset(attr):
+    return lambda d: getattr(d, attr)._actions.activate_action("reset", None)
+
+
+def _auth_inherits(attr):
+    return lambda d: getattr(d, attr)._check.has_css_class("dim-label")
+
+
+def _auth_order_is(order):
+    return lambda d: d.auth_policy.policy.order == list(order)
+
+
+def _auth_order_inherited(dialog):
+    return dialog.auth_policy.policy.order is None
+
+
+def _auth_click(button):
+    return lambda d: getattr(d.auth_policy, button).emit("clicked")
 
 
 def _specific_keys(dialog):
@@ -197,20 +233,42 @@ CONTRACTS = [
            _shows_text("forward_agent_value_row", "$MY_AGENT")),
       ("ForwardAgent $MY_AGENT",),
       clear=_combo("forward_agent_row", 0), cleared=_shows_combo("forward_agent_row", 0)),
-    # Authentication
-    C("password authentication", ("auth_toggle",), _password_auth,
-      lambda d: d.auth_toggle.get_active() == 1,
-      (PASSWORD_PREF,),
-      clear=lambda d: d.auth_toggle.set_active(0),
-      cleared=lambda d: d.auth_toggle.get_active() == 0,
+    # Authentication: the order
+    C("try password first", ("auth_order_row",), _auth_click("password_first_button"),
+      _auth_order_is(PASSWORD_PREF.split(" ", 1)[1].split(",")), (PASSWORD_PREF,),
+      clear=_auth_click("reset_button"), cleared=_auth_order_inherited,
       ssh_g={"preferredauthentications": PASSWORD_PREF.split(" ", 1)[1]}),
-    C("disable public key", ("pubkey_auth_row",),
-      _switch("pubkey_auth_row", True), _shows_switch("pubkey_auth_row", True),
-      (PASSWORD_PREF, "PubkeyAuthentication no"), prepare=_password_auth,
-      remains=(PASSWORD_PREF,),
-      clear=_switch("pubkey_auth_row", False),
-      cleared=_shows_switch("pubkey_auth_row", False),
-      ssh_g={"pubkeyauthentication": "false"}),
+    C("keys to the top", ("auth_order_row",),
+      lambda d: d.auth_publickey_row._actions.activate_action("top", None),
+      _auth_order_is(["publickey", "gssapi-with-mic", "hostbased",
+                      "keyboard-interactive", "password"]),
+      ("PreferredAuthentications "
+       "publickey,gssapi-with-mic,hostbased,keyboard-interactive,password",),
+      clear=_auth_click("reset_button"), cleared=_auth_order_inherited,
+      ssh_g={"preferredauthentications":
+             "publickey,gssapi-with-mic,hostbased,keyboard-interactive,password"}),
+    # Authentication: each method's switch, off and on
+    *[
+        C(f"{label} {'on' if value else 'off'}", (attr,),
+          _auth_tick(attr, value), _auth_shows(attr, value),
+          (f"{keyword} {'yes' if value else 'no'}",),
+          clear=_auth_reset(attr), cleared=_auth_inherits(attr),
+          ssh_g={keyword.lower(): ssh_value})
+        for label, attr, keyword, value, ssh_value in (
+            ("keys", "auth_publickey_row", "PubkeyAuthentication", False, "false"),
+            ("keys", "auth_publickey_row", "PubkeyAuthentication", True, "true"),
+            ("password", "auth_password_row", "PasswordAuthentication", False, "no"),
+            ("password", "auth_password_row", "PasswordAuthentication", True, "yes"),
+            ("keyboard-interactive", "auth_kbdinteractive_row",
+             "KbdInteractiveAuthentication", False, "no"),
+            ("keyboard-interactive", "auth_kbdinteractive_row",
+             "KbdInteractiveAuthentication", True, "yes"),
+            ("kerberos", "auth_gssapi_row", "GSSAPIAuthentication", True, "yes"),
+            ("kerberos", "auth_gssapi_row", "GSSAPIAuthentication", False, "no"),
+            ("host-based", "auth_hostbased_row", "HostbasedAuthentication", True, "yes"),
+            ("host-based", "auth_hostbased_row", "HostbasedAuthentication", False, "no"),
+        )
+    ],
     C("specific key", ("key_select_row", "key_editor"),
       _both(_specific_keys, lambda d: d.key_editor.add_path("~/.ssh/id_contract")),
       _all(lambda d: d.key_select_row.get_selected() == 1,
@@ -546,15 +604,25 @@ def _label(widget):
 
 
 # Sub-editors the dialog owns: their value controls are exercised through the
-# owner attribute's contract (e.g. the auth ToggleGroup's two buttons).
-OWNERS_COVER_CHILDREN = {"auth_toggle", "key_editor", "cert_editor",
+# owner attribute's contract.
+OWNERS_COVER_CHILDREN = {"key_editor", "cert_editor",
                          "advanced_tab", "forwarding_editor"}
+
+# The authentication section's rows hold their checkbox (and the order its
+# position): each row is a control of its own, though the scan above sees
+# only the checkbox inside it.
+AUTH_SECTION_ROWS = ("auth_order_row", "auth_gssapi_row", "auth_hostbased_row",
+                     "auth_publickey_row", "auth_kbdinteractive_row",
+                     "auth_password_row")
 
 
 def test_every_editor_control_has_a_contract(gui, root):
     name = _host(root, gui)
     dialog = _open(gui, name)
     found, unnamed = _value_controls(dialog)
+    for attr in AUTH_SECTION_ROWS:
+        assert getattr(dialog, attr, None) is not None, f"the editor has no {attr}"
+        found[attr] = getattr(dialog, attr)
 
     contracted = {attr for c in CONTRACTS for attr in c.attrs}
     for attr, filename in COVERED_ELSEWHERE.items():
