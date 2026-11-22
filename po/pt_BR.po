@@ -2706,8 +2706,8 @@ msgstr "Remover a ordem deste host para que a herdada seja aplicada"
 #. Below the list, in a list of its own: a group places its own rows
 #. ahead of any other child.
 #: src/sshpilot/connection_dialog_auth.py:536
-msgid "OpenSSH will try"
-msgstr "O OpenSSH vai tentar"
+msgid "OpenSSH will try:"
+msgstr "O OpenSSH vai tentar:"
 
 #: src/sshpilot/connection_dialog_auth.py:585
 msgid "Move up"

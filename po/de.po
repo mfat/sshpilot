@@ -2736,8 +2736,8 @@ msgstr "Die Reihenfolge dieses Hosts entfernen, sodass die übernommene gilt"
 #. Below the list, in a list of its own: a group places its own rows
 #. ahead of any other child.
 #: src/sshpilot/connection_dialog_auth.py:536
-msgid "OpenSSH will try"
-msgstr "OpenSSH versucht"
+msgid "OpenSSH will try:"
+msgstr "OpenSSH versucht:"
 
 #: src/sshpilot/connection_dialog_auth.py:585
 msgid "Move up"

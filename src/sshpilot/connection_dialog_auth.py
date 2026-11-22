@@ -533,7 +533,7 @@ class AuthPolicyGroup:
 
         # Below the list, in a list of its own: a group places its own rows
         # ahead of any other child.
-        self.order_row = Adw.ActionRow(title=_("OpenSSH will try"))
+        self.order_row = Adw.ActionRow(title=_("OpenSSH will try:"))
         self.order_row.set_activatable(False)
         self.order_row.set_subtitle_selectable(True)
         help_list = Gtk.ListBox()

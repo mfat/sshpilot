@@ -2717,8 +2717,8 @@ msgstr "Supprimer l’ordre de cet hôte pour que l’ordre hérité s’appliqu
 #. Below the list, in a list of its own: a group places its own rows
 #. ahead of any other child.
 #: src/sshpilot/connection_dialog_auth.py:536
-msgid "OpenSSH will try"
-msgstr "OpenSSH essaiera"
+msgid "OpenSSH will try:"
+msgstr "OpenSSH essaiera :"
 
 #: src/sshpilot/connection_dialog_auth.py:585
 msgid "Move up"

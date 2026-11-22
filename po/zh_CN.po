@@ -2610,8 +2610,8 @@ msgstr "移除此主机的顺序，以应用继承的顺序"
 #. Below the list, in a list of its own: a group places its own rows
 #. ahead of any other child.
 #: src/sshpilot/connection_dialog_auth.py:536
-msgid "OpenSSH will try"
-msgstr "OpenSSH 将尝试"
+msgid "OpenSSH will try:"
+msgstr "OpenSSH 将尝试："
 
 #: src/sshpilot/connection_dialog_auth.py:585
 msgid "Move up"
