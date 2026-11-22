@@ -351,7 +351,8 @@ class ConnectionDialogLoginProfileMixin:
                     widget.set_tooltip_text(note if locked else None)
                 except Exception:
                     pass
-        # "Only use the selected keys" also depends on the key selection mode.
+        # The key, certificate and "Only use the selected keys" rows also stay
+        # inactive in Automatic key selection; re-apply that after unlocking.
         on_key_select_changed = getattr(self, "on_key_select_changed", None)
         if callable(on_key_select_changed):
             try:

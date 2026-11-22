@@ -2243,12 +2243,21 @@ class ConnectionDialog(
         except Exception:
             pass
 
-    def on_key_select_changed(self, *args):
-        """Enable "Only use the selected keys" only in specific-key mode.
+    #: Rows that only apply to specific-key mode, and the login profile field
+    #: that locks each of them.
+    _SPECIFIC_KEY_ROWS = (
+        ('key_editor', 'identity_files'),
+        ('cert_editor', 'certificate_files'),
+        ('key_only_row', 'key_select_mode'),
+    )
 
-        Keys, certificates and agents are always shown and editable: picking
-        one switches to specific-key mode (``_on_key_files_changed``). A
-        linked login profile that sets a field still locks its rows.
+    def on_key_select_changed(self, *args):
+        """Enable the specific-key rows only in specific-key mode.
+
+        In Automatic mode the keys, certificates and "Only use the selected
+        keys" stay visible but inactive, so users can see what would apply
+        without being able to edit it. A linked login profile that sets one
+        of these fields keeps its row locked in either mode.
         """
         try:
             use_specific = bool(getattr(self, 'key_select_row', None)
@@ -2257,23 +2266,10 @@ class ConnectionDialog(
             use_specific = False
 
         locked = getattr(self, '_profile_locked_fields', None) or set()
-        key_only_row = getattr(self, 'key_only_row', None)
-        if key_only_row is not None:
-            key_only_row.set_sensitive(
-                use_specific and 'key_select_mode' not in locked
-            )
-
-    def _on_key_files_changed(self, editor):
-        """Adding a key or certificate means "use these keys": leave Automatic."""
-        try:
-            row = getattr(self, 'key_select_row', None)
-            if row is None or row.get_selected() != 0:
-                return
-            if not editor.get_paths():
-                return
-            row.set_selected(1)
-        except Exception:
-            logger.debug("Could not switch to specific-key mode", exc_info=True)
+        for name, field in self._SPECIFIC_KEY_ROWS:
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.set_sensitive(use_specific and field not in locked)
 
     def _generate_ssh_config_from_settings(self):
         """Generate SSH config block from current connection settings"""
@@ -3352,7 +3348,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             }],
             add_at_bottom=True,
             reorderable=True,
-            on_changed=self._on_key_files_changed,
             verify=lambda path, secret: self.parent_window.key_manager.verify_key_passphrase(
                 os.path.expanduser(path), secret
             ),
@@ -3369,7 +3364,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             with_passphrase=False,
             connection_manager=cm,
             parent_window=self.parent_window,
-            on_changed=self._on_key_files_changed,
         )
 
         # --- Key handling ---

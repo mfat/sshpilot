@@ -1,8 +1,9 @@
-"""Picking a key in Automatic mode switches the dialog to specific keys."""
-
-import types
+"""The specific-key rows are inactive in Automatic key selection."""
 
 from sshpilot.connection_dialog import ConnectionDialog
+from sshpilot.connection_dialog_login_profile import PROFILE_FIELD_ROWS
+
+ROWS = ("key_editor", "cert_editor", "key_only_row")
 
 
 class _Combo:
@@ -23,41 +24,50 @@ class _Widget:
     def set_sensitive(self, value):
         self.sensitive = value
 
+    def set_tooltip_text(self, _text):
+        pass
 
-def _editor(paths):
-    return types.SimpleNamespace(get_paths=lambda: list(paths))
 
-
-def _dialog(mode=0, locked=()):
+def _dialog(mode=0):
     dialog = ConnectionDialog.__new__(ConnectionDialog)
     dialog.key_select_row = _Combo(mode)
-    dialog.key_only_row = _Widget()
-    dialog._profile_locked_fields = set(locked)
+    for name in ROWS:
+        setattr(dialog, name, _Widget())
     return dialog
 
 
-def test_adding_a_key_in_automatic_switches_to_specific():
-    dialog = _dialog(mode=0)
-    dialog._on_key_files_changed(_editor(["~/.ssh/termux"]))
-    assert dialog.key_select_row.get_selected() == 1
+def _sensitivity(dialog):
+    return {name: getattr(dialog, name).sensitive for name in ROWS}
 
 
-def test_removing_the_last_key_keeps_the_mode():
-    dialog = _dialog(mode=0)
-    dialog._on_key_files_changed(_editor([]))
-    assert dialog.key_select_row.get_selected() == 0
-
-
-def test_only_selected_keys_follows_the_mode():
+def test_automatic_disables_keys_and_certificates():
     dialog = _dialog(mode=0)
     dialog.on_key_select_changed()
-    assert dialog.key_only_row.sensitive is False
-    dialog.key_select_row.set_selected(1)
-    dialog.on_key_select_changed()
-    assert dialog.key_only_row.sensitive is True
+    assert _sensitivity(dialog) == dict.fromkeys(ROWS, False)
 
 
-def test_profile_lock_keeps_only_selected_keys_locked():
-    dialog = _dialog(mode=1, locked={"key_select_mode"})
+def test_specific_keys_enables_them():
+    dialog = _dialog(mode=1)
     dialog.on_key_select_changed()
-    assert dialog.key_only_row.sensitive is False
+    assert _sensitivity(dialog) == dict.fromkeys(ROWS, True)
+
+
+def test_profile_lock_keeps_its_rows_locked_in_specific_mode():
+    dialog = _dialog(mode=1)
+    dialog._profile_locked_fields = {"identity_files"}
+    dialog.on_key_select_changed()
+    assert _sensitivity(dialog) == {
+        "key_editor": False, "cert_editor": True, "key_only_row": True,
+    }
+
+
+def test_unlinking_a_profile_does_not_enable_keys_in_automatic():
+    """The profile pass used to re-enable every row it did not lock."""
+    dialog = _dialog(mode=0)
+    for field, names in PROFILE_FIELD_ROWS.items():
+        for name in names:
+            if not hasattr(dialog, name):
+                setattr(dialog, name, _Widget())
+    dialog.auth_policy = None
+    dialog._apply_login_profile_locks(None)
+    assert _sensitivity(dialog) == dict.fromkeys(ROWS, False)
