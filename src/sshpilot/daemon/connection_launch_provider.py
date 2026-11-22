@@ -1118,7 +1118,8 @@ class DaemonConnectionLaunchProvider:
         Mirrors the retired frontend runner exactly: the shared base-command
         builder composes app overrides, port and ``ClearAllForwardings`` (and
         deliberately skips flags ``ssh-copy-id`` cannot take), then the public
-        key, known-hosts path and the connection's auth preferences are added.
+        key and known-hosts path are added; the login methods are the Host
+        block's own.
         OpenSSH — not SSH Pilot — performs the remote installation.
         """
         if (
@@ -1185,20 +1186,9 @@ class DaemonConnectionLaunchProvider:
         # file to OpenSSH and the user's configuration, as a session does.
         argv += _isolated_known_hosts_override(connection, effective_config)
 
-        # Password login tries the password first, then every other method in
-        # OpenSSH's order (keys only if not disabled for this connection).
-        # Key login adds nothing: OpenSSH's defaults and the user's config
-        # decide, exactly as for `ssh-copy-id <alias>`.
+        # The login order and per-method switches come from the Host block,
+        # exactly as for `ssh-copy-id <alias>`; nothing is added here.
         manager = self._manager_shim(connection)
-        if connection.auth_method == 1:
-            from ..core.connections.auth_preferences import (
-                PASSWORD_MODE_PREFERRED_AUTH,
-            )
-
-            argv += ["-o", f"PreferredAuthentications={PASSWORD_MODE_PREFERRED_AUTH}"]
-            if bool(connection.data.get("pubkey_auth_no")):
-                argv += ["-o", "PubkeyAuthentication=no"]
-
         argv.append(host_value)
 
         # Sanitized daemon base environment (same allowlist the session path

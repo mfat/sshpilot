@@ -1181,34 +1181,21 @@ def test_inherited_session_type_none_disables_preference_multiplex(
             assert tokens.index("ControlMaster=no") < tokens.index("ControlMaster=auto")
 
 
-@pytest.mark.parametrize("pubkey_auth_no", [False, True])
-def test_password_mode_copy_id_keeps_gssapi_and_hostbased(
-    provider, tmp_path, pubkey_auth_no
-):
-    """ssh-copy-id is the one launch that states the auth methods itself."""
-    from sshpilot.ssh_config_formatter import PASSWORD_MODE_PREFERRED_AUTH
-
-    prov, records = provider
-    records["web"] = _record(
-        data={"auth_method": 1, "pubkey_auth_no": pubkey_auth_no}
-    )
-    public_key = tmp_path / "id_new.pub"
-    public_key.write_text("ssh-ed25519 AAAA test\n")
-    command, _environment = prov.prepare_copy_id_launch("web", str(public_key))
-    assert f"PreferredAuthentications={PASSWORD_MODE_PREFERRED_AUTH}" in command
-    assert ("PubkeyAuthentication=no" in command) is pubkey_auth_no
-
-
-def test_key_mode_copy_id_adds_no_auth_options(provider, tmp_path):
-    """Key login: ssh-copy-id behaves as `ssh-copy-id <alias>` would, even
-    with a saved password (OpenSSH's default order already ends in it)."""
+@pytest.mark.parametrize("data", [
+    {"auth_method": 0},
+    {"auth_method": 1},
+    {"auth_method": 1, "pubkey_auth_no": True},
+])
+def test_copy_id_adds_no_auth_options(provider, tmp_path, data):
+    """ssh-copy-id behaves as `ssh-copy-id <alias>` would: the login order
+    and switches are the Host block's, with or without a saved password."""
 
     class _Secrets:
         def lookup_connection_password(self, _connection_id):
             return "saved-secret"
 
     prov, records = provider
-    records["web"] = _record(data={"auth_method": 0})
+    records["web"] = _record(data=dict(data))
     prov._secret_provider = _Secrets()
     public_key = tmp_path / "id_new.pub"
     public_key.write_text("ssh-ed25519 AAAA test\n")

@@ -184,7 +184,6 @@ PENDING: dict[tuple[str, str, str], tuple[str, str]] = {
     ("backup_manager.py", "import_export", "migrate_payload"): ("M6", "payload migrate -> daemon"),
     # === M7 — ssh-process / askpass broker ==============================
     ("ssh_connection_builder.py", "ssh", "ProcessSpec"): ("M7", "process spec -> daemon"),
-    ("ssh_connection_builder.py", "ssh", "AuthMethod"): ("M7", "auth spec -> daemon"),
     ("ssh_connection_builder.py", "ssh", "HostKeyMode"): ("M7", "host-key mode -> daemon"),
     ("ssh_connection_builder.py", "ssh", "LaunchMode"): ("M7", "launch mode -> daemon"),
     ("ssh_connection_builder.py", "ssh", "SSHLaunchRequest"): ("M7", "launch request -> daemon"),
@@ -462,7 +461,7 @@ _PENDING_EXPECTED = {
     "M4": 4,
     "M5": 4,
     "M6": 4,
-    "M7": 6,
+    "M7": 5,
 }
 
 
