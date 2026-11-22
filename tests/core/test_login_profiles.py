@@ -576,7 +576,10 @@ def test_legacy_proxy_fingerprint_upgrade(env, representation, drift):
         assert _link(repo, 'web1') is None
     else:
         assert detached == ()
-        assert _link(repo, 'web1').applied.startswith('v2:')
+        # Matched as recorded, then re-recorded for what the profile owns
+        # now; the block is untouched.
+        assert _link(repo, 'web1').applied.startswith('v4:')
+        assert root.read_text() == before
         assert service.reconcile() == ()
         service.update_profile(profile.id, {'proxy_command': 'ssh updated'})
         assert 'ProxyCommand ssh updated' in root.read_text()
@@ -629,8 +632,16 @@ def test_a_password_profile_link_recorded_before_auth_lines_keeps_matching(env, 
         assert len(detached) == 1 and detached[0].reason == DETACH_DRIFT
         return
     assert detached == ()
-    assert _link(repo, 'web1').applied == old_hash
-    # The next edit applies the profile's lines and records a v3 fingerprint.
+    assert root.read_text() == before
+    link = _link(repo, 'web1')
+    assert link.applied.startswith('v4:')
+    assert 'username' not in link.fields  # the profile sets no username
+    # A field the dialog leaves editable is no longer drift.
+    root.write_text(root.read_text().replace('Host web1\n', 'Host web1\n    User someone\n', 1))
+    repo.reload()
+    assert service.reconcile() == ()
+    assert _link(repo, 'web1') is not None
+    # The next edit applies the profile's lines and records a v4 fingerprint.
     service.update_profile(profile.id, {'username': 'ops'})
     assert _link(repo, 'web1').applied.startswith('v4:')
     assert f'PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}' in _block(root, 'web1')

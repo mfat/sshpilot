@@ -49,6 +49,7 @@ from .models import (
     ProfileLink,
     apply_profile_to_data,
     auth_fingerprint,
+    is_legacy_auth_link,
     link_fingerprint,
     matches_legacy_auth_fingerprint,
     profile_owned_fields,
@@ -827,6 +828,27 @@ class LoginProfileService:
                 if link.mode == LINK_EXPLICIT:
                     self._detach_locked(cid)
                     detached.append(DetachedConnection(cid, previous_name, DETACH_MISSING))
+                continue
+            if (
+                link.applied
+                and is_legacy_auth_link(link.applied)
+                and link.rev == revision_token(eff.profile)
+            ):
+                # Recorded by a version where a profile owned every field.
+                # It matched above, so the block is as that version wrote it:
+                # record what the profile owns now, without rewriting the
+                # block. Otherwise a field the dialog now leaves editable
+                # (one the profile does not set) would read as drift.
+                keys = profile_owned_keywords(eff.profile)
+                fields = profile_owned_fields(eff.profile)
+                upgraded = ProfileLink(
+                    link.mode, link.profile_id,
+                    auth_fingerprint(record.data, keys, owned_fields=fields),
+                    link.rev, keys, fields,
+                )
+                self._repository.update_connection_metadata(
+                    cid, {LINK_METADATA_KEY: upgraded.to_metadata()}
+                )
                 continue
             if link.rev != revision_token(eff.profile) or not link.applied:
                 try:
