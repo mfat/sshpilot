@@ -2244,20 +2244,21 @@ class ConnectionDialog(
             pass
 
     #: Rows that only apply to specific-key mode, and the login profile field
-    #: that locks each of them.
+    #: that locks each of them. Certificates are not among them: CertificateFile
+    #: is written in both modes and pairs with OpenSSH's default or agent keys.
     _SPECIFIC_KEY_ROWS = (
         ('key_editor', 'identity_files'),
-        ('cert_editor', 'certificate_files'),
         ('key_only_row', 'key_select_mode'),
     )
 
     def on_key_select_changed(self, *args):
         """Enable the specific-key rows only in specific-key mode.
 
-        In Automatic mode the keys, certificates and "Only use the selected
-        keys" stay visible but inactive, so users can see what would apply
-        without being able to edit it. A linked login profile that sets one
-        of these fields keeps its row locked in either mode.
+        In Automatic mode the private keys and "Only use the selected keys"
+        stay visible but inactive, so users can see what would apply without
+        being able to edit it. Certificates stay editable in both modes. A
+        linked login profile that sets one of these fields keeps its row
+        locked in either mode (``_apply_login_profile_locks``).
         """
         try:
             use_specific = bool(getattr(self, 'key_select_row', None)
@@ -3101,7 +3102,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                         mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
                     except Exception:
                         mode = 0
-                if (has_specific_key or bool(certificate_files)) and mode not in (1, 2):
+                # A certificate alone does not pick keys: it pairs with the
+                # default or agent keys, so it leaves Automatic alone.
+                if has_specific_key and mode not in (1, 2):
                     mode = 2
                 specific = mode in (1, 2)
                 self.key_select_row.set_selected(1 if specific else 0)
