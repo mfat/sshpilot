@@ -11,6 +11,7 @@ rendering here:
   blank lines, and unknown directives keep their authored form and position.
 """
 
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -412,6 +413,48 @@ def _order_proxy_lines_like_block(managed_body: List[str], old_lines) -> None:
         )
 
 
+_PATH_SPELLING_KEYS = ('identityfile', 'certificatefile')
+
+
+def _keep_authored_path_spellings(managed_body: List[str], old_lines) -> None:
+    """Write key and certificate paths the way the block already spells them.
+
+    The loader expands ``~``, ``$VAR`` and ``%d`` so the app can open the
+    files, and that expanded path is what comes back on save. Re-emitting it
+    would turn ``IdentityFile ~/.ssh/id`` into ``/home/alice/.ssh/id`` on any
+    edit that touches the key directives, which breaks a config shared across
+    machines or users. A re-emitted path that names the same file as an
+    authored one keeps the authored text.
+    """
+    from .core.ssh_config_effective import expand_ssh_tokens
+
+    def expand(value):
+        # The loader's expansion: unquote, %-tokens, $VAR, then ~.
+        text = str(value)
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in '"\'':
+            text = text[1:-1]
+        return os.path.expanduser(os.path.expandvars(expand_ssh_tokens(text)))
+
+    authored: Dict[Tuple[str, str], str] = {}
+    for raw in (old_lines or [])[1:]:
+        stripped = raw.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        key, value = _split_config_option(stripped)
+        if key is None or key.lower() not in _PATH_SPELLING_KEYS or not value:
+            continue
+        authored.setdefault((key.lower(), expand(value)), value)
+
+    for index, raw in enumerate(managed_body):
+        key, value = _split_config_option(raw.strip())
+        if key is None or key.lower() not in _PATH_SPELLING_KEYS or not value:
+            continue
+        original = authored.get((key.lower(), expand(value)))
+        if original is not None and original != value:
+            indent = raw[:len(raw) - len(raw.lstrip())]
+            managed_body[index] = f"{indent}{key} {original}\n"
+
+
 def merged_block_lines(old_block: Optional[HostBlock],
                        new_data: Dict[str, Any]) -> List[str]:
     """Render the edited Host block surgically instead of wholesale.
@@ -442,6 +485,7 @@ def merged_block_lines(old_block: Optional[HostBlock],
     # reorder a Command-first block into Jump-first — that would silently
     # flip which route OpenSSH takes. Match the old block's proxy order.
     _order_proxy_lines_like_block(managed_body, old_block.lines)
+    _keep_authored_path_spellings(managed_body, old_block.lines)
 
     has_extra_key = 'extra_ssh_config' in new_data
     remaining_extras: List[Tuple[Tuple[str, str], str]] = []

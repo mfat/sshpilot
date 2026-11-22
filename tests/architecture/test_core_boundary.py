@@ -76,6 +76,8 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("ssh_config_utils.py", "ssh_config_effective", "expand_ssh_tokens"),
         ("ssh_config_utils.py", "ssh_config_effective", "get_effective_ssh_config"),
         ("ssh_config_utils.py", "ssh_config_effective", "resolve_ssh_config_files"),
+        # -- authored path spellings kept on Host-block rewrite ----------
+        ("ssh_config_formatter.py", "ssh_config_effective", "expand_ssh_tokens"),
         # -- connection field validation --------------------------------
         ("ssh_connection_validator.py", "validation.connection", "SSHConnectionValidator"),
         ("ssh_connection_validator.py", "validation.connection", "ValidationResult"),
