@@ -2753,3 +2753,126 @@ my_paned.set_end_child(workbench)
 automatically inherits your host app's Adw.StyleManager color scheme, and your
 host app can wire its own HeaderBar Undo/Redo buttons directly to
 workbench.undo(), workbench.redo(), and the "history-changed" signal.)
+
+
+review on above:
+
+I successfully accessed and reviewed both uploaded files: the HTML prototype (`ai_studio_code.html`) and the proposed Python/GTK4 implementation (`advanced-ssh-config-editor.txt`).
+
+## **Overall assessment**
+
+**The concept is strong, and I think it could become one of SSH Pilot's most valuable configuration features. However, I would not integrate the proposed implementation as-is.**
+
+The two-pane design addresses the central problem with advanced OpenSSH configurations: users need to understand not just *what rules exist*, but *which rules actually apply to a connection and why*.
+
+The most valuable aspects are:
+
+- **Ordered configuration blocks:** `Host`, `Match`, and global settings are visible in their actual order.
+- **Live effective configuration:** Users can select a host and see which options win.
+- **Precedence explanations:** Applied and shadowed directives are identified.
+- **Configuration trace:** Users can understand how rules interact.
+- **Raw configuration view:** Advanced users aren't forced to abandon standard OpenSSH syntax.
+- **GTK4/libadwaita implementation:** The proposed widget fits SSH Pilot's existing technology choices.
+
+The architecture has the right broad idea:
+
+**Editable OpenSSH configuration**
+
+Ordered Host / Match blocks, directives and Include files
+
+**Rule analysis**
+
+Matches, precedence, provenance
+
+**Effective SSH settings**
+
+OpenSSH-verified values
+
+The main problem is that the supplied Python engine attempts to reproduce OpenSSH's evaluation behavior. Its results are not reliably equivalent to OpenSSH, and some editor operations can change the meaning of the configuration.
+
+## **Problems I found in the implementation**
+
+| Severity | Finding                                                                        | Consequence                                                                             |
+| -------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Critical | Global blocks can be moved below `Host` blocks                                 | The simulator and saved configuration disagree about which hosts receive those settings |
+| Critical | Saving replaces symbolic links                                                 | Can break NixOS/Home Manager-managed SSH configurations                                 |
+| Critical | Custom resolution engine is not OpenSSH-equivalent                             | Incorrect effective settings, particularly for `Match`, canonicalization and defaults   |
+| High     | Generated SSH command uses the resolved hostname instead of the original alias | Can bypass the intended `Host` rules                                                    |
+| High     | Verification runs `ssh -G` using a temporary `-F` file                         | Does not establish parity with the actual launch environment                            |
+| High     | Repeated resolution and filesystem access run synchronously                    | Potential GTK main-thread stalls                                                        |
+| High     | Virtual Include editor rebuilds itself during text changes                     | Can disrupt editing and focus                                                           |
+| High     | Saving rewrites the entire configuration                                       | Formatting changes and possible conflicts with external edits                           |
+
+### **Two bugs I reproduced**
+
+**1. Global block semantics**
+
+The editor allows this block sequence:
+
+```
+Host zoo
+    User admin
+
+# Global block inserted here by the editor
+Port 2200
+
+Host bar
+    HostName example.com
+```
+
+Its Python resolver considers `Port 2200` global and applies it to `bar`.
+
+But in the serialized OpenSSH configuration, `Port 2200` belongs to `Host zoo`. OpenSSH does not have a special global-block delimiter.
+
+This makes the editor unsafe for arbitrary block reordering.
+
+**2. Symbolic-link destruction**
+
+I tested `save_config_safely()` with a symbolic link pointing to an SSH configuration file.
+
+After saving, the symbolic link had been replaced with a regular file, while the original target remained unchanged.
+
+For SSH Pilot, given its support for configurations managed externally, this is a release-blocking issue.
+
+I also tested:
+
+```
+Match exec "false"
+    User root
+```
+
+The proposed simulator reported `User root` as active because its default simulated `Match exec` result is true. That illustrates why its output cannot be presented as authoritative.
+
+## **How I would improve the design**
+
+I would preserve the two-pane concept, but make the interface less dense.
+
+The left pane should primarily show the ordered configuration structure, with compact, expandable rules. The right pane should show the selected rule's options and the actual resulting configuration for a chosen host.
+
+Most importantly, I would separate **configuration editing**, **OpenSSH resolution**, and **explanation** into independent components.
+
+OpenSSH should be authoritative for effective settings. A separate analyzer can explain which blocks probably contributed, trace precedence, and identify conflicts. Whenever that explanation is uncertain, the interface should say so rather than claiming a rule was definitively applied or shadowed.
+
+For SSH Pilot specifically, I would also reuse its existing configuration handling instead of introducing a second independent implementation that must remain compatible with every OpenSSH behavior and future SSH Pilot change.
+
+The Python package provides a reasonable starting UI structure, but I would replace the parser, resolver and save infrastructure before integration.
+
+## **Verdict**
+
+Product concept
+
+# **8/10**
+
+Worth developing
+
+Implementation readiness
+
+# **4/10**
+
+Needs substantial engineering
+
+My recommendation is to **keep the interaction model and redesign the underlying engine around strict OpenSSH parity**.
+
+I also think this could justify a standalone application, rather than being exclusively an SSH Pilot feature. A visual OpenSSH configuration editor with reliable precedence explanations, safe editing and live resolution could be useful independently.
+
+The Python engine imported successfully, and the GTK widget and app code passed Python syntax compilation. I did not execute the GTK interface or verify it against a live OpenSSH installation, so this is a source-level review with targeted engine tests, not a complete runtime audit.
