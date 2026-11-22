@@ -51,3 +51,17 @@ def is_app_written_list(methods: Iterable[str]) -> bool:
     return is_password_mode_default(methods) or (
         _joined(methods) in _EARLIER_KEY_MODE_LISTS
     )
+
+
+def password_comes_first(methods: Iterable[str]) -> bool:
+    """How a list reads back: True when ``password`` precedes ``publickey``.
+
+    The loader shows such a block as password login; a list without
+    ``password``, or with ``publickey`` ahead of it, reads as key login.
+    """
+    lowered = [str(m).strip().lower() for m in methods]
+    if "password" not in lowered:
+        return False
+    if "publickey" not in lowered:
+        return True
+    return lowered.index("password") < lowered.index("publickey")

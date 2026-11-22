@@ -576,3 +576,35 @@ def test_every_editor_control_has_a_contract(gui, root):
         "value controls not stored on the dialog cannot be contracted: "
         + ", ".join(_label(w) for w in unnamed)
     )
+
+
+# -- unrelated edits keep the host's login settings ---------------------------
+
+AUTH_BODIES = {
+    "one-time codes after the key": (
+        "PreferredAuthentications publickey,keyboard-interactive",
+    ),
+    "password first with its own key and certificate": (
+        "PreferredAuthentications password,publickey",
+        "IdentityFile ~/.ssh/id_work",
+        "CertificateFile ~/.ssh/id_work-cert.pub",
+        "IdentityAgent none",
+    ),
+    "app password preset with a dedicated key": (
+        PASSWORD_PREF,
+        "IdentityFile ~/.ssh/id_work",
+        "IdentitiesOnly yes",
+    ),
+}
+
+
+@pytest.mark.parametrize("body", AUTH_BODIES.values(), ids=AUTH_BODIES.keys())
+def test_an_unrelated_edit_keeps_the_login_settings(gui, root, body):
+    name = _host(root, gui, body)
+    dialog = _open(gui, name)
+    dialog.username_row.set_text("someone")
+    expected = [*BASE_LINES, "User someone", *body]
+    _save_and_wait(dialog, root, name, expected)
+    assert _canon(_block(root, name)) == _canon(expected), (
+        "saving a User change rewrote the host's login settings"
+    )

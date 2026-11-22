@@ -19,6 +19,7 @@ from .core.connections.auth_preferences import (  # noqa: F401 - re-exported
     PASSWORD_MODE_PREFERRED_AUTH,
     is_app_written_list,
     is_password_mode_default,
+    password_comes_first,
 )
 
 from .ssh_config_document import (
@@ -172,7 +173,7 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     elif data.get('forward_agent_explicit_no'):
         lines.append("    ForwardAgent no")
 
-    # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
+    # IdentityFile/IdentitiesOnly per the key selection
     keyfile = data.get('keyfile') or data.get('private_key')
     auth_method = int(data.get('auth_method', 0) or 0)
     key_select_mode = int(data.get('key_select_mode', 0) or 0)
@@ -195,83 +196,69 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
                 cleaned.append(stripped)
         return cleaned
 
+    # Which keys, certificates and agents to use is independent of the login
+    # order: a password-first host can still need its own key or
+    # certificate, so these lines are written in both modes.
+    # ssh_config(5) allows multiple IdentityFile/CertificateFile entries;
+    # write the full list when present, falling back to the primary key.
+    identity_files = _clean_list(
+        data.get('identity_files') or ([keyfile] if keyfile else []),
+        'select key file',
+    )
+    # Only write IdentityFile when using a dedicated key mode
+    if dedicated_key and identity_files:
+        for kf in identity_files:
+            lines.append(f"    IdentityFile {_quote_if_spaced(kf)}")
+
+        if key_select_mode == 1:
+            lines.append("    IdentitiesOnly yes")
+    elif data.get('identity_file_none'):
+        lines.append("    IdentityFile none")
+
+    if key_select_mode != 1 and data.get('identities_only_explicit_no'):
+        lines.append("    IdentitiesOnly no")
+
+    # Add certificate(s) if specified (exclude placeholder text)
+    certificate_files = _clean_list(
+        data.get('certificate_files') or ([data.get('certificate')] if data.get('certificate') else []),
+        'select certificate',
+    )
+    for cert in certificate_files:
+        lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
+
+    # Agent / hardware key sources (the key may come from an agent socket, a
+    # PKCS#11 smartcard, or a FIDO security key rather than a file).
+    ident_agent = (data.get('identity_agent') or '').strip()
+    if ident_agent:
+        lines.append(f"    IdentityAgent {_quote_if_spaced(ident_agent)}")
+    add_keys = (data.get('add_keys_to_agent') or '').strip()
+    if add_keys:
+        lines.append(f"    AddKeysToAgent {add_keys}")
+    pkcs11 = (data.get('pkcs11_provider') or '').strip()
+    if pkcs11:
+        lines.append(f"    PKCS11Provider {_quote_if_spaced(pkcs11)}")
+    sk_provider = (data.get('security_key_provider') or '').strip()
+    if sk_provider:
+        lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
+
+    # The login order. A saved password never changes it: it only answers a
+    # prompt, and a host may need a fresh one-time code on every login.
+    pref_list = _preferred_auth_list(data)
     if auth_method == 0:
-        # ssh_config(5) allows multiple IdentityFile/CertificateFile entries;
-        # write the full list when present, falling back to the primary key.
-        identity_files = _clean_list(
-            data.get('identity_files') or ([keyfile] if keyfile else []),
-            'select key file',
-        )
-        # Only write IdentityFile when using a dedicated key mode
-        if dedicated_key and identity_files:
-            for kf in identity_files:
-                lines.append(f"    IdentityFile {_quote_if_spaced(kf)}")
-
-            if key_select_mode == 1:
-                lines.append("    IdentitiesOnly yes")
-        elif data.get('identity_file_none'):
-            lines.append("    IdentityFile none")
-
-        if key_select_mode != 1 and data.get('identities_only_explicit_no'):
-            lines.append("    IdentitiesOnly no")
-
-        # Add certificate(s) if specified (exclude placeholder text)
-        certificate_files = _clean_list(
-            data.get('certificate_files') or ([data.get('certificate')] if data.get('certificate') else []),
-            'select certificate',
-        )
-        for cert in certificate_files:
-            lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
-
-        # Agent / hardware key sources — valid in both automatic and
-        # specific-key modes (the key may come from an agent socket, a
-        # PKCS#11 smartcard, or a FIDO security key rather than a file).
-        ident_agent = (data.get('identity_agent') or '').strip()
-        if ident_agent:
-            lines.append(f"    IdentityAgent {_quote_if_spaced(ident_agent)}")
-        add_keys = (data.get('add_keys_to_agent') or '').strip()
-        if add_keys:
-            lines.append(f"    AddKeysToAgent {add_keys}")
-        pkcs11 = (data.get('pkcs11_provider') or '').strip()
-        if pkcs11:
-            lines.append(f"    PKCS11Provider {_quote_if_spaced(pkcs11)}")
-        sk_provider = (data.get('security_key_provider') or '').strip()
-        if sk_provider:
-            lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
-        # Key login writes no PreferredAuthentications: OpenSSH's default
-        # order already ends in keyboard-interactive,password, so a saved
-        # password is still used, and a list from an earlier block applies
-        # as it would for `ssh <alias>`. A list the app wrote before (either
-        # mode) is dropped. A user's own list is kept, minus the password
-        # methods when no password is saved, so a stale one left by password
-        # mode never keeps ssh asking for a password.
-        pref_list = _preferred_auth_list(data)
-        if is_app_written_list(pref_list):
+        # Key login writes no list of its own; OpenSSH's default order and the
+        # user's config decide. A user's list is kept as written. Dropped: a
+        # list the app wrote, and one that reads back as password login --
+        # that can only be left over from switching this host to key login.
+        if is_app_written_list(pref_list) or password_comes_first(pref_list):
             pref_list = []
         if pref_list:
-            if not data.get('password'):
-                pref_list = [
-                    method for method in pref_list
-                    if method.lower() not in ('password', 'keyboard-interactive')
-                ]
-            custom_pref = ",".join(pref_list)
-            if custom_pref:
-                lines.append(f"    PreferredAuthentications {custom_pref}")
+            lines.append(f"    PreferredAuthentications {','.join(pref_list)}")
     else:
-        # Password-based authentication: OpenSSH's order with the password
-        # methods first (see core/connections/auth_preferences.py).
-        # A preserved list is kept only if the loader would read it back as
-        # password auth: ``password`` present, ``publickey`` absent or after
-        # it. Anything else is stale — the ``gssapi-with-mic,hostbased,
-        # publickey`` left by a key-auth save never tries the password (and
-        # with ``PubkeyAuthentication no`` fails without prompting), and the
-        # key+password combined list reloads as key auth, reverting the switch.
-        pref_list = _preferred_auth_list(data)
-        lowered = [m.lower() for m in pref_list]
-        if 'password' not in lowered or (
-            'publickey' in lowered
-            and lowered.index('publickey') < lowered.index('password')
-        ) or _is_password_mode_default(pref_list):
+        # Password login: OpenSSH's order with the password methods first
+        # (see core/connections/auth_preferences.py). A user's list that
+        # reads back as password login is kept; one that would read back as
+        # key login is left over from switching modes and is replaced.
+        if not password_comes_first(pref_list) or _is_password_mode_default(pref_list):
             pref_list = []
         custom_pref = ",".join(pref_list)
         if custom_pref:

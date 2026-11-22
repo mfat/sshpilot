@@ -82,6 +82,7 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("ssh_config_formatter.py", "connections.auth_preferences", "PASSWORD_MODE_PREFERRED_AUTH"),
         ("ssh_config_formatter.py", "connections.auth_preferences", "is_password_mode_default"),
         ("ssh_config_formatter.py", "connections.auth_preferences", "is_app_written_list"),
+        ("ssh_config_formatter.py", "connections.auth_preferences", "password_comes_first"),
         # -- connection field validation --------------------------------
         ("ssh_connection_validator.py", "validation.connection", "SSHConnectionValidator"),
         ("ssh_connection_validator.py", "validation.connection", "ValidationResult"),

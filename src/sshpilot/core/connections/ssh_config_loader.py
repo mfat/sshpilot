@@ -39,6 +39,7 @@ from ...ssh_config_document import (
 from ...platform.paths import include_base_dir
 from ...ssh_config_formatter import MANAGED_HOST_OPTIONS
 from ..errors import CoreError, ErrorCode
+from .auth_preferences import password_comes_first
 from .models import ConnectionRecord
 
 _MAX_INCLUDE_DEPTH = 32
@@ -372,15 +373,7 @@ def _resolve_auth_method_from_config(config: Dict[str, Any]) -> Tuple[int, List[
         pubkey_auth_no = pubkey_auth == "no"
         if pubkey_auth == "no":
             return 1, prefer_auth_list, pubkey_auth_no
-        idx_pubkey = (
-            prefer_auth_list.index("publickey") if "publickey" in prefer_auth_list else None
-        )
-        idx_password = (
-            prefer_auth_list.index("password") if "password" in prefer_auth_list else None
-        )
-        if idx_pubkey is not None and (idx_password is None or idx_pubkey < idx_password):
-            return 0, prefer_auth_list, pubkey_auth_no
-        if idx_password is not None and (idx_pubkey is None or idx_password < idx_pubkey):
+        if password_comes_first(prefer_auth_list):
             return 1, prefer_auth_list, pubkey_auth_no
         return 0, prefer_auth_list, pubkey_auth_no
     except Exception:
