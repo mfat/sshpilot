@@ -157,6 +157,33 @@ def format_preview(previews: Iterable[LoginProfileAssignmentPreview]) -> str:
     return "\n".join(lines)
 
 
+def format_update_replacement(preview) -> str:
+    """The confirmation for a profile edit that takes over user-set values.
+
+    Empty when the edit replaces none (no confirmation needed).
+    """
+    replaced = tuple(getattr(preview, "replaced", ()) or ())
+    if not replaced:
+        return ""
+    fields = []
+    for item in replaced:
+        for change in item.changes:
+            if change.field not in fields:
+                fields.append(change.field)
+    total = int(getattr(preview, "linked_count", 0) or len(replaced))
+    return ngettext(
+        "This replaces the following user-set values on {count} of {total} "
+        "linked connection: {fields}.",
+        "This replaces the following user-set values on {count} of {total} "
+        "linked connections: {fields}.",
+        total,
+    ).format(
+        count=len(replaced),
+        total=total,
+        fields=", ".join(field_label(field) for field in fields),
+    )
+
+
 def format_changes_inline(changes: Iterable[LoginProfileFieldChange]) -> str:
     """The changes for one connection on a single line (row subtitles)."""
     return "; ".join(format_field_change(change) for change in changes)

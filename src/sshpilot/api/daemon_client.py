@@ -526,6 +526,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
     "get_login_profiles": Capability.LOGIN_PROFILES_READ,
     "preview_login_profile_assignment": Capability.LOGIN_PROFILES_READ,
+    "preview_login_profile_update": Capability.LOGIN_PROFILES_READ,
     "create_login_profile": Capability.LOGIN_PROFILES_WRITE,
     "update_login_profile": Capability.LOGIN_PROFILES_WRITE,
     "delete_login_profile": Capability.LOGIN_PROFILES_WRITE,
@@ -2149,6 +2150,22 @@ class DaemonClient:
             return login_profile_assignment_previews_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid assignment preview")
+
+    def preview_login_profile_update(self, request):
+        from sshpilot.api.transport.login_profile_codec import (
+            login_profile_update_preview_from_wire,
+            preview_login_profile_update_request_to_wire,
+        )
+
+        self._require_capability(Capability.LOGIN_PROFILES_READ)
+        result = self._request(
+            "login_profiles.preview_update",
+            preview_login_profile_update_request_to_wire(request),
+        )
+        try:
+            return login_profile_update_preview_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid profile update preview")
 
     def create_login_profile(self, request):
         from sshpilot.api.transport import login_profile_codec as codec

@@ -37,6 +37,8 @@ from sshpilot.api.models.login_profiles import (
     LoginProfileSource,
     LoginProfileSummary,
     PreviewLoginProfileAssignmentRequest,
+    PreviewLoginProfileUpdateRequest,
+    LoginProfileUpdatePreview,
     SetGroupLoginProfileRequest,
     SetLoginProfileSecretRequest,
     UpdateLoginProfileRequest,
@@ -272,6 +274,34 @@ class DaemonLoginProfileApi:
                     ),
                 )
                 for item in previews
+            )
+
+        return self._call(_preview)
+
+    def preview_update(
+        self, request: PreviewLoginProfileUpdateRequest
+    ) -> LoginProfileUpdatePreview:
+        def _preview():
+            linked, previews = self._service.preview_update(
+                request.profile_id, _settings_values(request.settings)
+            )
+            return LoginProfileUpdatePreview(
+                linked_count=linked,
+                replaced=tuple(
+                    LoginProfileAssignmentPreview(
+                        connection_id=ConnectionId(item.connection_id),
+                        profile_name=item.profile_name,
+                        changes=tuple(
+                            LoginProfileFieldChange(
+                                field=LoginProfileField(change.field),
+                                before=_raw_value(change.before),
+                                after=_raw_value(change.after),
+                            )
+                            for change in item.changes
+                        ),
+                    )
+                    for item in previews
+                ),
             )
 
         return self._call(_preview)

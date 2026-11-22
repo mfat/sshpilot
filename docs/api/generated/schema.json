@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.106",
+  "api_implementation_version": "0.107",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -996,6 +996,9 @@
       "capability": "login_profiles.read"
     },
     "login_profiles.preview_assignment": {
+      "capability": "login_profiles.read"
+    },
+    "login_profiles.preview_update": {
       "capability": "login_profiles.read"
     },
     "login_profiles.set_group": {
@@ -6752,6 +6755,25 @@
       ],
       "status": "Implemented"
     },
+    "LoginProfileUpdatePreview": {
+      "fields": [
+        {
+          "default": 0,
+          "name": "linked_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "replaced",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple['LoginProfileAssignmentPreview', ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
     "LoginProfilesChangedEvent": {
       "fields": [
         {
@@ -7738,6 +7760,25 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[LoginProfileId]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "PreviewLoginProfileUpdateRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileId"
+        },
+        {
+          "default": null,
+          "name": "settings",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileSettings"
         }
       ],
       "status": "Implemented"

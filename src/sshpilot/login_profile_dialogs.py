@@ -38,6 +38,7 @@ from sshpilot.gtk.login_profile_messages import (
     format_changes_inline,
     format_login_profile_error,
     format_preview,
+    format_update_replacement,
     profile_summary_line,
 )
 
@@ -535,7 +536,28 @@ def open_profile_editor(
                     on_saved(saved)
             done(error)
 
-        run_async(operation, _ok, _failed)
+        if current is None:
+            run_async(operation, _ok, _failed)
+            return
+
+        # An edit that starts setting a field replaces the value each linked
+        # connection held there: ask first, in one summary.
+        def _previewed(preview):
+            text = format_update_replacement(preview)
+            if not text:
+                run_async(operation, _ok, _failed)
+                return
+            confirm_update_replacement(
+                editor.dialog, text, format_preview(preview.replaced),
+                on_confirm=lambda: run_async(operation, _ok, _failed),
+                on_cancel=lambda: editor._save.set_sensitive(True),
+            )
+
+        run_async(
+            lambda: controller.preview_update(current.id, settings),
+            _previewed,
+            _failed,
+        )
 
     editor = LoginProfileEditor(
         profile=profile, initial=initial, on_submit=_submit, parent_window=parent_window
@@ -573,6 +595,38 @@ def confirm_preview(
     def _response(_dialog, response):
         if response == "apply":
             on_confirm()
+
+    alert.connect("response", _response)
+    alert.present(parent)
+
+
+def confirm_update_replacement(
+    parent: Gtk.Widget,
+    text: str,
+    details: str,
+    *,
+    on_confirm: Callable[[], None],
+    on_cancel: Callable[[], None],
+) -> None:
+    """Ask before a profile edit replaces linked connections' own values."""
+    alert = Adw.AlertDialog(heading=_("Replace user-set values?"), body=text)
+    if details:
+        expander = Gtk.Expander(label=_("Show connections"))
+        label = Gtk.Label(label=details, xalign=0, wrap=True, selectable=True)
+        label.add_css_class("dim-label")
+        expander.set_child(label)
+        alert.set_extra_child(expander)
+    alert.add_response("cancel", _("Cancel"))
+    alert.add_response("apply", _("Apply"))
+    alert.set_response_appearance("apply", Adw.ResponseAppearance.DESTRUCTIVE)
+    alert.set_default_response("cancel")
+    alert.set_close_response("cancel")
+
+    def _response(_dialog, response):
+        if response == "apply":
+            on_confirm()
+        else:
+            on_cancel()
 
     alert.connect("response", _response)
     alert.present(parent)

@@ -422,6 +422,19 @@ class PreviewLoginProfileAssignmentRequest:
 
 
 @dataclass(frozen=True)
+class PreviewLoginProfileUpdateRequest:
+    """An edit to preview: the profile and its complete new settings."""
+
+    profile_id: LoginProfileId
+    settings: LoginProfileSettings
+
+    def __post_init__(self) -> None:
+        require_identifier(self.profile_id, "login profile id")
+        if type(self.settings) is not LoginProfileSettings:
+            raise TypeError("settings must be LoginProfileSettings")
+
+
+@dataclass(frozen=True)
 class LoginProfileFieldChange:
     """One Host-block setting an assignment would change.
 
@@ -508,3 +521,24 @@ class LoginProfilesChangedEvent:
             type(item) is not DetachedConnectionInfo for item in self.detached
         ):
             raise TypeError("detached must be a tuple of DetachedConnectionInfo")
+
+
+@dataclass(frozen=True)
+class LoginProfileUpdatePreview:
+    """What saving a profile edit would do to its linked connections.
+
+    ``linked_count`` counts the connections using the profile (explicitly or
+    through their group). ``replaced`` lists, per affected connection, the
+    values of its own that the edit would replace: fields the edited profile
+    starts to set where the connection holds a different value.
+    """
+
+    linked_count: int = 0
+    replaced: Tuple["LoginProfileAssignmentPreview", ...] = ()
+
+    def __post_init__(self) -> None:
+        _check_count(self.linked_count, "linked_count")
+        if type(self.replaced) is not tuple or any(
+            type(item) is not LoginProfileAssignmentPreview for item in self.replaced
+        ):
+            raise TypeError("replaced must be a tuple of LoginProfileAssignmentPreview")

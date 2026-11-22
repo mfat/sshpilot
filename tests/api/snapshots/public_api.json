@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.106",
+  "api_implementation_version": "0.107",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -894,6 +894,7 @@
     "preview_backup",
     "preview_bitwarden_backup",
     "preview_login_profile_assignment",
+    "preview_login_profile_update",
     "preview_ssh_backup",
     "rbw_configure",
     "rbw_lock",
@@ -2008,6 +2009,16 @@
         }
       ],
       "return": "tuple[LoginProfileAssignmentPreview, ...]"
+    },
+    "preview_login_profile_update": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "PreviewLoginProfileUpdateRequest"
+        }
+      ],
+      "return": "LoginProfileUpdatePreview"
     },
     "preview_ssh_backup": {
       "parameters": [
@@ -3175,6 +3186,9 @@
     "login_profiles.preview_assignment": {
       "capability": "login_profiles.read"
     },
+    "login_profiles.preview_update": {
+      "capability": "login_profiles.read"
+    },
     "login_profiles.set_group": {
       "capability": "login_profiles.write"
     },
@@ -3763,6 +3777,7 @@
     "LoginProfileSnapshot",
     "LoginProfileSource",
     "LoginProfileSummary",
+    "LoginProfileUpdatePreview",
     "LoginProfilesChangedEvent",
     "LoginSession",
     "LookupKeyPassphraseRequest",
@@ -3799,6 +3814,7 @@
     "PresencePrompt",
     "PressureStall",
     "PreviewLoginProfileAssignmentRequest",
+    "PreviewLoginProfileUpdateRequest",
     "ProcessCounts",
     "ProcessUsage",
     "PublicKeyResult",
@@ -4759,6 +4775,10 @@
       "connection_count",
       "group_count"
     ],
+    "LoginProfileUpdatePreview": [
+      "linked_count",
+      "replaced"
+    ],
     "LoginProfilesChangedEvent": [
       "detached"
     ],
@@ -4929,6 +4949,10 @@
       "connection_ids",
       "mode",
       "profile_id"
+    ],
+    "PreviewLoginProfileUpdateRequest": [
+      "profile_id",
+      "settings"
     ],
     "ProcessCounts": [
       "total",

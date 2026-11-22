@@ -124,6 +124,15 @@ class AssignmentPreview:
     changes: Tuple[FieldChange, ...]
 
 
+def _user_set(field: str, value: Any) -> bool:
+    """A value the connection holds itself (not empty, not the default)."""
+    if field == "key_select_mode":
+        return value not in (None, 0)
+    if field == "forward_agent":
+        return bool(value)
+    return value not in (None, "", [], ())
+
+
 @dataclass(frozen=True)
 class DetachedConnection:
     connection_id: str
@@ -622,6 +631,67 @@ class LoginProfileService:
                     AssignmentPreview(cid, eff.profile.name, diff_projections(before, after))
                 )
             return tuple(previews)
+
+    def preview_update(
+        self, profile_id: str, changes: Mapping[str, Any]
+    ) -> Tuple[int, Tuple[AssignmentPreview, ...]]:
+        """Which linked connections' own values an edit would replace.
+
+        Returns ``(linked_count, previews)``. A preview lists, for one linked
+        connection, the fields the edited profile starts to set (it did not
+        before) where the connection holds a value of its own that differs.
+        Values the profile already set are its own and are not reported, nor
+        are fields the connection leaves empty. No side effects.
+        """
+        with self._lock:
+            current = self._state.get(profile_id)
+            if current is None:
+                raise _not_found()
+            settings = self._settings(changes)
+            try:
+                updated = current.with_changes(**settings)
+            except (TypeError, ValueError) as exc:
+                raise _invalid_value(exc) from exc
+            newly = tuple(
+                f for f in profile_owned_fields(updated)
+                if f not in profile_owned_fields(current)
+            )
+            new_keys = tuple(
+                k for k in profile_owned_keywords(updated)
+                if k not in profile_owned_keywords(current)
+            )
+            snapshot = self._snapshot()
+            metadata = self._metadata_map(snapshot)
+            group_links = self._group_links()
+            linked = 0
+            previews: List[AssignmentPreview] = []
+            for cid in self._ssh_ids(snapshot):
+                eff = effective_profile(
+                    cid, parse_link(metadata.get(cid)), snapshot.groups,
+                    group_links, self._state,
+                )
+                if eff is None or eff.profile.id != profile_id:
+                    continue
+                linked += 1
+                if not newly and not new_keys:
+                    continue
+                record = self._repository.get_record(cid)
+                if record is None:
+                    continue
+                before = auth_projection(
+                    record.data, new_keys, expand_paths=True, owned_fields=newly
+                )
+                after = auth_projection(
+                    apply_profile_to_data(record.data, updated), new_keys,
+                    expand_paths=True, owned_fields=newly,
+                )
+                replaced = tuple(
+                    change for change in diff_projections(before, after)
+                    if _user_set(change.field, change.before)
+                )
+                if replaced:
+                    previews.append(AssignmentPreview(cid, updated.name, replaced))
+            return linked, tuple(previews)
 
     def assign_connections(
         self,

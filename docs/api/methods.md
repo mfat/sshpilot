@@ -596,6 +596,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: ssh_overrides.reset capability=ssh_overrides.write -->
 <!-- api-daemon-method: login_profiles.get capability=login_profiles.read -->
 <!-- api-daemon-method: login_profiles.preview_assignment capability=login_profiles.read -->
+<!-- api-daemon-method: login_profiles.preview_update capability=login_profiles.read -->
 <!-- api-daemon-method: login_profiles.create capability=login_profiles.write -->
 <!-- api-daemon-method: login_profiles.update capability=login_profiles.write -->
 <!-- api-daemon-method: login_profiles.delete capability=login_profiles.write -->
@@ -2359,6 +2360,24 @@ link = snapshot.link_for("web1")
   mode, profile_id)`; returns a tuple of `LoginProfileAssignmentPreview`.
 - **Errors / events:** `CONNECTION_NOT_FOUND`; `VALIDATION_FAILED` for
   non-SSH connections or an unknown profile. No side effects.
+
+<!-- api-method: preview_login_profile_update -->
+## `preview_login_profile_update`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.107
+- **Capability / purpose:** `login_profiles.read`; before saving an edit, the
+  values of their own that linked connections would lose. A profile applies
+  only what it sets, so an edit that starts setting a field replaces the
+  value each linked connection held there; a frontend confirms first. Values
+  the profile already set, and fields a connection leaves empty, are not
+  reported.
+- **Parameters / return:** `PreviewLoginProfileUpdateRequest(profile_id,
+  settings)` with the complete new settings; returns
+  `LoginProfileUpdatePreview(linked_count, replaced)`, where `replaced` holds
+  one `LoginProfileAssignmentPreview` per affected connection.
+- **Errors / events:** `VALIDATION_FAILED` for an unknown profile or invalid
+  settings. No side effects.
 
 <!-- api-method: assign_login_profile -->
 ## `assign_login_profile`

@@ -282,8 +282,52 @@ class ConnectionDialogLoginProfileMixin:
     def _on_login_profile_selected(self, *_args) -> None:
         profile = self._selected_login_profile()
         self._apply_login_profile_locks(profile)
+        self._sync_unlink_note(profile)
         username_set = profile is not None and bool(profile.settings.username)
         self._sync_username_row(profile if username_set else None)
+
+    def _initial_login_profile(self):
+        """The profile the connection used when the dialog opened."""
+        from .gtk.login_profile_controller import CHOICE_INHERIT, CHOICE_PROFILE
+
+        choices = self._login_profile_choices
+        index = self._login_profile_initial_index
+        snapshot = self._login_profile_snapshot
+        if not choices or snapshot is None or not 0 <= index < len(choices):
+            return None
+        choice = choices[index]
+        if choice.kind == CHOICE_PROFILE:
+            return snapshot.profile(choice.profile_id)
+        if choice.kind == CHOICE_INHERIT:
+            return self._login_profile_inherited
+        return None
+
+    def _sync_unlink_note(self, selected) -> None:
+        """Say what unlinking does: values stay, the profile no longer applies."""
+        group = getattr(self, "login_profile_group", None)
+        if group is None:
+            return
+        previous = (
+            self._initial_login_profile() if getattr(self, "is_editing", False) else None
+        )
+        if selected is not None or previous is None:
+            group.set_description(None)
+            return
+        note = _(
+            "This connection keeps the profile's values and stops following "
+            "the profile."
+        )
+        has_own_password = bool(
+            getattr(self, "_password_saved", False)
+            or (getattr(self, "password_row", None) is not None
+                and self.password_row.get_text())
+        )
+        if getattr(previous, "has_password", False) and not has_own_password:
+            note += " " + _(
+                "The profile's password won't be used; save one for this "
+                "connection to keep logging in without a prompt."
+            )
+        group.set_description(note)
 
     def _apply_login_profile_locks(self, profile) -> None:
         """Lock the rows for what *profile* sets; unlock everything else."""
@@ -291,7 +335,8 @@ class ConnectionDialogLoginProfileMixin:
 
         owned = set(settings_owned_fields(profile.settings)) if profile else set()
         note = (
-            _("Set by login profile “{name}”").format(name=profile.settings.name)
+            _("Set by login profile “{name}”. Choose “Don't use a profile” "
+              "to edit it here.").format(name=profile.settings.name)
             if profile else ""
         )
         for field, names in PROFILE_FIELD_ROWS.items():

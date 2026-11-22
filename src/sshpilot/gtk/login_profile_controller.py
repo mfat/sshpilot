@@ -273,6 +273,14 @@ class LoginProfileController:
         self._apply_secrets_or_raise(summary, password, sudo_password)
         return summary
 
+    def preview_update(self, profile_id: str, settings: LoginProfileSettings):
+        """Linked connections' own values saving *settings* would replace."""
+        from ..api.models.login_profiles import PreviewLoginProfileUpdateRequest
+
+        return self._client().preview_login_profile_update(
+            PreviewLoginProfileUpdateRequest(profile_id, settings)
+        )
+
     def _apply_secrets_or_raise(
         self, summary: LoginProfileSummary, password: SecretEdit, sudo: SecretEdit
     ) -> None:

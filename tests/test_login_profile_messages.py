@@ -149,3 +149,31 @@ def test_secret_failures_after_saving():
     assert format_login_profile_error(passphrase).endswith(
         "\n\nThe key passphrase could not be stored."
     )
+
+
+def test_update_replacement_summarises_the_fields_and_counts():
+    from sshpilot.api.models.login_profiles import (
+        LoginProfileAssignmentPreview,
+        LoginProfileField,
+        LoginProfileFieldChange,
+        LoginProfileUpdatePreview,
+    )
+    from sshpilot.gtk.login_profile_messages import format_update_replacement
+
+    def item(cid, *fields):
+        return LoginProfileAssignmentPreview(cid, "P", tuple(
+            LoginProfileFieldChange(f, "old", "new") for f in fields
+        ))
+
+    preview = LoginProfileUpdatePreview(120, (
+        item("web1", LoginProfileField.USERNAME),
+        item("web2", LoginProfileField.USERNAME, LoginProfileField.IDENTITY_AGENT),
+    ))
+    assert format_update_replacement(preview) == (
+        "This replaces the following user-set values on 2 of 120 linked "
+        "connections: Username, IdentityAgent."
+    )
+    one = LoginProfileUpdatePreview(1, (item("web1", LoginProfileField.USERNAME),))
+    assert format_update_replacement(one).endswith("on 1 of 1 linked connection: Username.")
+    # Nothing replaced: no confirmation.
+    assert format_update_replacement(LoginProfileUpdatePreview(120, ())) == ""

@@ -353,6 +353,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "ssh_overrides.reset": Capability.SSH_OVERRIDES_WRITE,
     "login_profiles.get": Capability.LOGIN_PROFILES_READ,
     "login_profiles.preview_assignment": Capability.LOGIN_PROFILES_READ,
+    "login_profiles.preview_update": Capability.LOGIN_PROFILES_READ,
     "login_profiles.create": Capability.LOGIN_PROFILES_WRITE,
     "login_profiles.update": Capability.LOGIN_PROFILES_WRITE,
     "login_profiles.delete": Capability.LOGIN_PROFILES_WRITE,
@@ -582,6 +583,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "known_hosts.remove",
         "login_profiles.get",
         "login_profiles.preview_assignment",
+        "login_profiles.preview_update",
         "login_profiles.create",
         "login_profiles.update",
         "login_profiles.delete",
@@ -927,6 +929,7 @@ class RequestDispatcher:
             "ssh_overrides.reset": self._handle_reset_ssh_overrides,
             "login_profiles.get": self._handle_get_login_profiles,
             "login_profiles.preview_assignment": self._handle_preview_login_profile_assignment,
+            "login_profiles.preview_update": self._handle_preview_login_profile_update,
             "login_profiles.create": self._handle_create_login_profile,
             "login_profiles.update": self._handle_update_login_profile,
             "login_profiles.delete": self._handle_delete_login_profile,
@@ -4038,6 +4041,19 @@ class RequestDispatcher:
         return self._login_profile_deferred(
             lambda: codec.login_profile_assignment_previews_to_wire(
                 service.preview_assignment(typed)
+            )
+        )
+
+    def _handle_preview_login_profile_update(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        typed = codec.preview_login_profile_update_request_from_wire(request.params)
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(
+            lambda: codec.login_profile_update_preview_to_wire(
+                service.preview_update(typed)
             )
         )
 

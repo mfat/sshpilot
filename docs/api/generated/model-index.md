@@ -3668,6 +3668,35 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: LoginProfileUpdatePreview -->
+## `LoginProfileUpdatePreview`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** What saving a profile edit would do to its linked connections.
+
+``linked_count`` counts the connections using the profile (explicitly or
+through their group). ``replaced`` lists, per affected connection, the
+values of its own that the edit would replace: fields the edited profile
+starts to set where the connection holds a different value.
+
+**Related methods:** `preview_login_profile_update`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `linked_count` | `int` | No | `0` | No |
+| `replaced` | `Tuple['LoginProfileAssignmentPreview', ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "linked_count": 0,
+  "replaced": []
+}
+```
+
 <!-- api-model: LoginProfilesChangedEvent -->
 ## `LoginProfilesChangedEvent`
 
@@ -4387,6 +4416,30 @@ Synthetic representation:
   "connection_ids": {},
   "mode": null,
   "profile_id": null
+}
+```
+
+<!-- api-model: PreviewLoginProfileUpdateRequest -->
+## `PreviewLoginProfileUpdateRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** An edit to preview: the profile and its complete new settings.
+
+**Related methods:** `preview_login_profile_update`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `profile_id` | `LoginProfileId` | Yes | — | No |
+| `settings` | `LoginProfileSettings` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "profile_id": {},
+  "settings": {}
 }
 ```
 

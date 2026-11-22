@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-22 14:23+0330\n"
+"POT-Creation-Date: 2026-11-22 14:53+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -127,10 +127,11 @@ msgstr "打开连接？"
 #: src/sshpilot/file_manager_window.py:1859
 #: src/sshpilot/file_manager_window.py:1939
 #: src/sshpilot/file_manager_window.py:2791 src/sshpilot/key_sources.py:274
-#: src/sshpilot/login_profile_dialogs.py:97
-#: src/sshpilot/login_profile_dialogs.py:167
-#: src/sshpilot/login_profile_dialogs.py:567
-#: src/sshpilot/login_profile_dialogs.py:794
+#: src/sshpilot/login_profile_dialogs.py:98
+#: src/sshpilot/login_profile_dialogs.py:168
+#: src/sshpilot/login_profile_dialogs.py:589
+#: src/sshpilot/login_profile_dialogs.py:619
+#: src/sshpilot/login_profile_dialogs.py:848
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:316
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:504
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:1402
@@ -218,7 +219,7 @@ msgstr ""
 #: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2730
 #: src/sshpilot/file_manager/pane.py:3142
 #: src/sshpilot/known_hosts_editor.py:311
-#: src/sshpilot/login_profile_dialogs.py:583 src/sshpilot/preferences.py:4104
+#: src/sshpilot/login_profile_dialogs.py:637 src/sshpilot/preferences.py:4104
 #: src/sshpilot/preferences.py:4227 src/sshpilot/preferences.py:4639
 #: src/sshpilot/preferences.py:5252 src/sshpilot/preferences.py:7003
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
@@ -289,9 +290,9 @@ msgstr "您确定要删除所选的 {count} 个空分组吗？"
 #: src/sshpilot/command_blocks.py:2400 src/sshpilot/file_manager/pane.py:697
 #: src/sshpilot/file_manager/pane.py:2266
 #: src/sshpilot/file_manager_window.py:1940
-#: src/sshpilot/login_profile_dialogs.py:795
-#: src/sshpilot/login_profile_dialogs.py:805
-#: src/sshpilot/login_profile_dialogs.py:993 src/sshpilot/sidebar.py:5242
+#: src/sshpilot/login_profile_dialogs.py:849
+#: src/sshpilot/login_profile_dialogs.py:859
+#: src/sshpilot/login_profile_dialogs.py:1047 src/sshpilot/sidebar.py:5242
 #: src/sshpilot/terminal_theme_editor.py:279 src/sshpilot/window.py:2023
 msgid "Delete"
 msgstr "删除"
@@ -362,7 +363,7 @@ msgstr "会话名称"
 #. Save button
 #: src/sshpilot/actions.py:866
 #: src/sshpilot/connection_dialog_port_forwarding.py:251
-#: src/sshpilot/login_profile_dialogs.py:170 src/sshpilot/rbw_setup.py:167
+#: src/sshpilot/login_profile_dialogs.py:171 src/sshpilot/rbw_setup.py:167
 #: src/sshpilot/terminal_theme_editor.py:88 src/sshpilot/text_editor.py:379
 #: src/sshpilot/text_editor.py:1767 src/sshpilot/window_dialogs.py:3462
 #: src/sshpilot/window_dialogs.py:3543
@@ -531,7 +532,7 @@ msgstr "在安全密钥闪烁时触摸它。"
 
 #: src/sshpilot/askpass_utils.py:917 src/sshpilot/connection_dialog.py:3370
 #: src/sshpilot/gtk/login_profile_messages.py:60
-#: src/sshpilot/login_profile_dialogs.py:54 src/sshpilot/window.py:7970
+#: src/sshpilot/login_profile_dialogs.py:55 src/sshpilot/window.py:7970
 msgid "Confirm"
 msgstr "确认"
 
@@ -764,8 +765,8 @@ msgstr "选择一个本地密钥以安装其对应的公钥。"
 #: src/sshpilot/connection_dialog.py:1065
 #: src/sshpilot/connection_dialog.py:3337
 #: src/sshpilot/connection_dialog.py:3351
-#: src/sshpilot/login_profile_dialogs.py:262
-#: src/sshpilot/login_profile_dialogs.py:278
+#: src/sshpilot/login_profile_dialogs.py:263
+#: src/sshpilot/login_profile_dialogs.py:279
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:261
 #: src/sshpilot/resources/ui/key_chooser_dialog.ui:31
 msgid "Add"
@@ -1575,7 +1576,7 @@ msgstr "分组中无连接"
 
 #: src/sshpilot/command_blocks.py:2364 src/sshpilot/file_manager/pane.py:685
 #: src/sshpilot/file_manager/pane.py:2251
-#: src/sshpilot/login_profile_dialogs.py:988 src/sshpilot/macos_menubar.py:76
+#: src/sshpilot/login_profile_dialogs.py:1042 src/sshpilot/macos_menubar.py:76
 #: src/sshpilot/sidebar.py:5147
 msgid "Edit"
 msgstr "编辑"
@@ -1736,7 +1737,7 @@ msgstr "新建连接"
 #: src/sshpilot/connection_dialog.py:1821
 #: src/sshpilot/forwarding_only_ui.py:236
 #: src/sshpilot/forwarding_only_ui.py:241
-#: src/sshpilot/login_profile_dialogs.py:825 src/sshpilot/terminal.py:1205
+#: src/sshpilot/login_profile_dialogs.py:879 src/sshpilot/terminal.py:1205
 #: src/sshpilot/terminal.py:1210 src/sshpilot/terminal.py:1523
 #: src/sshpilot/terminal.py:1552 src/sshpilot/window.py:3255
 msgid "Connection"
@@ -1744,7 +1745,7 @@ msgstr "连接"
 
 #: src/sshpilot/connection_dialog.py:1822
 #: src/sshpilot/gtk/login_profile_messages.py:32
-#: src/sshpilot/login_profile_dialogs.py:243
+#: src/sshpilot/login_profile_dialogs.py:244
 msgid "Authentication"
 msgstr "认证"
 
@@ -1811,7 +1812,7 @@ msgstr "加载连接数据失败"
 
 #: src/sshpilot/connection_dialog.py:3320
 #: src/sshpilot/gtk/login_profile_messages.py:51
-#: src/sshpilot/login_profile_dialogs.py:49
+#: src/sshpilot/login_profile_dialogs.py:50
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:375
 #: src/sshpilot/preferences.py:3409
 msgid "Automatic"
@@ -1823,7 +1824,7 @@ msgstr "使用特定密钥"
 
 #: src/sshpilot/connection_dialog.py:3322
 #: src/sshpilot/gtk/login_profile_messages.py:33
-#: src/sshpilot/login_profile_dialogs.py:245
+#: src/sshpilot/login_profile_dialogs.py:246
 msgid "Key selection"
 msgstr "密钥选择"
 
@@ -1833,13 +1834,13 @@ msgstr "使用 SSH 默认值或在下方选择特定密钥。"
 
 #: src/sshpilot/connection_dialog.py:3331
 #: src/sshpilot/gtk/login_profile_messages.py:34
-#: src/sshpilot/login_profile_dialogs.py:257
+#: src/sshpilot/login_profile_dialogs.py:258
 msgid "Private Keys"
 msgstr "私钥"
 
 #: src/sshpilot/connection_dialog.py:3349
 #: src/sshpilot/gtk/login_profile_messages.py:35
-#: src/sshpilot/login_profile_dialogs.py:276
+#: src/sshpilot/login_profile_dialogs.py:277
 msgid "Certificates"
 msgstr "证书"
 
@@ -1860,7 +1861,7 @@ msgstr "为此连接写入 IdentitiesOnly yes。"
 #: src/sshpilot/connection_dialog.py:3370
 #: src/sshpilot/connection_dialog.py:3410
 #: src/sshpilot/connection_dialog.py:3680
-#: src/sshpilot/login_profile_dialogs.py:54
+#: src/sshpilot/login_profile_dialogs.py:55
 #: src/sshpilot/layout_preset_chooser.py:135 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "默认"
@@ -1871,8 +1872,8 @@ msgstr "默认"
 #: src/sshpilot/daemon_interaction_dialogs.py:527
 #: src/sshpilot/gtk/login_profile_messages.py:55
 #: src/sshpilot/gtk/login_profile_messages.py:57
-#: src/sshpilot/login_profile_dialogs.py:54
-#: src/sshpilot/login_profile_dialogs.py:310
+#: src/sshpilot/login_profile_dialogs.py:55
+#: src/sshpilot/login_profile_dialogs.py:311
 msgid "Yes"
 msgstr "是"
 
@@ -1881,21 +1882,21 @@ msgstr "是"
 #: src/sshpilot/daemon_interaction_dialogs.py:472
 #: src/sshpilot/gtk/login_profile_messages.py:55
 #: src/sshpilot/gtk/login_profile_messages.py:58
-#: src/sshpilot/login_profile_dialogs.py:54
-#: src/sshpilot/login_profile_dialogs.py:310
+#: src/sshpilot/login_profile_dialogs.py:55
+#: src/sshpilot/login_profile_dialogs.py:311
 msgid "No"
 msgstr "否"
 
 #: src/sshpilot/connection_dialog.py:3370
 #: src/sshpilot/gtk/login_profile_messages.py:59
-#: src/sshpilot/login_profile_dialogs.py:54
+#: src/sshpilot/login_profile_dialogs.py:55
 msgid "Ask"
 msgstr "询问"
 
 #: src/sshpilot/connection_dialog.py:3372
 #: src/sshpilot/effective_config_dialog.py:43
 #: src/sshpilot/gtk/login_profile_messages.py:36
-#: src/sshpilot/login_profile_dialogs.py:293
+#: src/sshpilot/login_profile_dialogs.py:294
 msgid "Add keys to agent"
 msgstr "添加密钥到 agent"
 
@@ -1920,7 +1921,7 @@ msgid "Password (optional)"
 msgstr "密码（可选）"
 
 #: src/sshpilot/connection_dialog.py:3402
-#: src/sshpilot/login_profile_dialogs.py:288
+#: src/sshpilot/login_profile_dialogs.py:289
 msgid "Agent and hardware keys"
 msgstr "Agent 和硬件密钥"
 
@@ -1932,7 +1933,7 @@ msgstr "IdentityAgent、PKCS#11 和 FIDO 安全密钥的可选来源。"
 #. Order matches TERMINAL_PANE_CHOICES.
 #: src/sshpilot/connection_dialog.py:3411
 #: src/sshpilot/file_manager/permissions.py:76
-#: src/sshpilot/login_profile_dialogs.py:684
+#: src/sshpilot/login_profile_dialogs.py:738
 #: src/sshpilot/machine_info_dialog.py:2503
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:209
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:216
@@ -1970,7 +1971,7 @@ msgstr "选择 agent 套接字"
 
 #: src/sshpilot/connection_dialog.py:3451
 #: src/sshpilot/gtk/login_profile_messages.py:37
-#: src/sshpilot/login_profile_dialogs.py:301
+#: src/sshpilot/login_profile_dialogs.py:302
 msgid "PKCS#11 provider"
 msgstr "PKCS#11 提供程序"
 
@@ -1990,7 +1991,7 @@ msgstr "选择 PKCS#11 提供程序库"
 
 #: src/sshpilot/connection_dialog.py:3466
 #: src/sshpilot/gtk/login_profile_messages.py:38
-#: src/sshpilot/login_profile_dialogs.py:304
+#: src/sshpilot/login_profile_dialogs.py:305
 msgid "FIDO security key provider"
 msgstr "FIDO 安全密钥提供程序"
 
@@ -2039,7 +2040,7 @@ msgstr "主机名 / IP 地址"
 #: src/sshpilot/connection_dialog_login_profile.py:144
 #: src/sshpilot/effective_config_dialog.py:32
 #: src/sshpilot/gtk/login_profile_messages.py:31
-#: src/sshpilot/login_profile_dialogs.py:229
+#: src/sshpilot/login_profile_dialogs.py:230
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:48
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:316
 #: src/sshpilot/rdp_tab.py:549
@@ -2113,12 +2114,12 @@ msgid "Detect MAC"
 msgstr "检测 MAC"
 
 #: src/sshpilot/connection_dialog.py:3640
-#: src/sshpilot/login_profile_dialogs.py:345
+#: src/sshpilot/login_profile_dialogs.py:346
 msgid "Routing"
 msgstr "路由"
 
 #: src/sshpilot/connection_dialog.py:3641
-#: src/sshpilot/login_profile_dialogs.py:346
+#: src/sshpilot/login_profile_dialogs.py:347
 msgid "Optional SSH path settings used before authentication."
 msgstr "认证前使用的可选 SSH 路径设置。"
 
@@ -2145,12 +2146,12 @@ msgstr "从资产列表中选择"
 #: src/sshpilot/connection_dialog.py:3669
 #: src/sshpilot/effective_config_dialog.py:36
 #: src/sshpilot/gtk/login_profile_messages.py:42
-#: src/sshpilot/login_profile_dialogs.py:348
+#: src/sshpilot/login_profile_dialogs.py:349
 msgid "Proxy command"
 msgstr "代理命令 (ProxyCommand)"
 
 #: src/sshpilot/connection_dialog.py:3671
-#: src/sshpilot/login_profile_dialogs.py:351
+#: src/sshpilot/login_profile_dialogs.py:352
 msgid ""
 "Runs locally to relay the connection, e.g. ssh -W %h:%p bastion. A "
 "ProxyCommand executes a local command — only keep values you trust."
@@ -2161,7 +2162,7 @@ msgstr ""
 #: src/sshpilot/connection_dialog.py:3687
 #: src/sshpilot/effective_config_dialog.py:37
 #: src/sshpilot/gtk/login_profile_messages.py:40
-#: src/sshpilot/login_profile_dialogs.py:309
+#: src/sshpilot/login_profile_dialogs.py:310
 msgid "Forward agent"
 msgstr "转发 agent"
 
@@ -2474,7 +2475,7 @@ msgstr "无法保存连接设置。"
 
 #: src/sshpilot/connection_dialog.py:5214
 #: src/sshpilot/file_manager/properties_dialog.py:757
-#: src/sshpilot/login_profile_dialogs.py:825
+#: src/sshpilot/login_profile_dialogs.py:879
 msgid "Group"
 msgstr "组"
 
@@ -2501,7 +2502,7 @@ msgid "Please enter a nickname for this connection"
 msgstr "请输入此连接的别名"
 
 #: src/sshpilot/connection_dialog.py:5460
-#: src/sshpilot/login_profile_dialogs.py:437
+#: src/sshpilot/login_profile_dialogs.py:438
 msgid "Please correct the invalid key passphrase."
 msgstr "请更正无效的密钥口令。"
 
@@ -2706,14 +2707,14 @@ msgid "Filter tags…"
 msgstr "筛选标签…"
 
 #: src/sshpilot/connection_dialog_field_helpers.py:377
-#: src/sshpilot/login_profile_dialogs.py:978
+#: src/sshpilot/login_profile_dialogs.py:1032
 #, python-brace-format
 msgid "{n} connection"
 msgid_plural "{n} connections"
 msgstr[0] "{n} 个连接"
 
 #: src/sshpilot/connection_dialog_login_profile.py:45
-#: src/sshpilot/login_profile_dialogs.py:225
+#: src/sshpilot/login_profile_dialogs.py:226
 msgid "Profile"
 msgstr "日志文件："
 
@@ -2730,7 +2731,7 @@ msgid "Username (using a login profile)"
 msgstr "用户名（使用登录配置文件）"
 
 #: src/sshpilot/connection_dialog_login_profile.py:232
-#: src/sshpilot/login_profile_dialogs.py:608
+#: src/sshpilot/login_profile_dialogs.py:662
 msgid "Don't use a profile"
 msgstr "不使用配置文件"
 
@@ -2739,10 +2740,23 @@ msgstr "不使用配置文件"
 msgid "Inherit from group ({name})"
 msgstr "连接分组：{name}"
 
-#: src/sshpilot/connection_dialog_login_profile.py:294
+#: src/sshpilot/connection_dialog_login_profile.py:317
+msgid ""
+"This connection keeps the profile's values and stops following the profile."
+msgstr "此连接保留配置文件的值，并不再跟随该配置文件。"
+
+#: src/sshpilot/connection_dialog_login_profile.py:327
+msgid ""
+"The profile's password won't be used; save one for this connection to keep "
+"logging in without a prompt."
+msgstr ""
+"将不会使用配置文件的密码；请为此连接保存一个密码，以便继续登录而无需输入。"
+
+#: src/sshpilot/connection_dialog_login_profile.py:338
 #, python-brace-format
-msgid "Set by login profile “{name}”"
-msgstr "由登录配置文件“{name}”设置"
+msgid ""
+"Set by login profile “{name}”. Choose “Don't use a profile” to edit it here."
+msgstr "由登录配置文件“{name}”设置。选择“不使用配置文件”即可在此编辑。"
 
 #: src/sshpilot/connection_dialog_overrides.py:115
 msgid "Inherited from your SSH configuration. Edit to set it for this host."
@@ -3610,7 +3624,7 @@ msgstr "下一个匹配项"
 
 #: src/sshpilot/file_manager/pane.py:1150
 #: src/sshpilot/file_manager/pane_controls.py:145
-#: src/sshpilot/login_profile_dialogs.py:226
+#: src/sshpilot/login_profile_dialogs.py:227
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:183
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:331
 #: src/sshpilot/plugins/builtin/docker_manager/tab_stats.py:22
@@ -4995,7 +5009,7 @@ msgstr "Agent 套接字"
 
 #: src/sshpilot/gtk/login_profile_messages.py:43
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:89
-#: src/sshpilot/login_profile_dialogs.py:357
+#: src/sshpilot/login_profile_dialogs.py:358
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:54
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:96
 msgid "Extra SSH options"
@@ -5006,12 +5020,12 @@ msgid "Key-based"
 msgstr "基于密钥"
 
 #: src/sshpilot/gtk/login_profile_messages.py:52
-#: src/sshpilot/login_profile_dialogs.py:50
+#: src/sshpilot/login_profile_dialogs.py:51
 msgid "Specific keys only"
 msgstr "使用特定密钥"
 
 #: src/sshpilot/gtk/login_profile_messages.py:53
-#: src/sshpilot/login_profile_dialogs.py:51
+#: src/sshpilot/login_profile_dialogs.py:52
 msgid "Specific keys and agent"
 msgstr "添加密钥到 agent"
 
@@ -5024,7 +5038,7 @@ msgid "A login profile with this name already exists."
 msgstr "同名密钥已存在。"
 
 #: src/sshpilot/gtk/login_profile_messages.py:76
-#: src/sshpilot/login_profile_dialogs.py:425
+#: src/sshpilot/login_profile_dialogs.py:426
 msgid "Enter a name for the login profile."
 msgstr "输入新分组的名称："
 
@@ -5063,7 +5077,7 @@ msgid "The login profile backup is invalid."
 msgstr "密钥名称无效。"
 
 #: src/sshpilot/gtk/login_profile_messages.py:96
-#: src/sshpilot/login_profile_dialogs.py:973
+#: src/sshpilot/login_profile_dialogs.py:1027
 msgid "Login profiles are unavailable: their file could not be read."
 msgstr "守护进程不可用，因此无法验证 SSH 恢复安全性。"
 
@@ -5093,15 +5107,26 @@ msgstr "移动分组前请先连接到 SSH Pilot 守护进程。"
 msgid "{label}: {before} → {after}"
 msgstr "{label}: {before} → {after}"
 
-#: src/sshpilot/gtk/login_profile_messages.py:176
+#: src/sshpilot/gtk/login_profile_messages.py:175
+#, python-brace-format
+msgid ""
+"This replaces the following user-set values on {count} of {total} linked "
+"connection: {fields}."
+msgid_plural ""
+"This replaces the following user-set values on {count} of {total} linked "
+"connections: {fields}."
+msgstr[0] ""
+"这将替换 {total} 个关联连接中 {count} 个连接上的以下用户设置值：{fields}。"
+
+#: src/sshpilot/gtk/login_profile_messages.py:203
 msgid "password"
 msgstr "密码"
 
-#: src/sshpilot/gtk/login_profile_messages.py:180
+#: src/sshpilot/gtk/login_profile_messages.py:207
 msgid "automatic keys"
 msgstr "自动"
 
-#: src/sshpilot/gtk/login_profile_messages.py:187
+#: src/sshpilot/gtk/login_profile_messages.py:214
 #, fuzzy, python-brace-format
 msgid ""
 "{count} connection was detached from its login profile because its SSH "
@@ -5111,16 +5136,16 @@ msgid_plural ""
 "config was edited."
 msgstr[0] "{count} 个连接已从其登录配置文件分离，因为其 SSH 配置已被编辑。"
 
-#: src/sshpilot/gtk/login_profile_messages.py:203
+#: src/sshpilot/gtk/login_profile_messages.py:230
 msgid ""
 "The profile was saved, but a password or passphrase could not be stored."
 msgstr "配置文件已保存，但无法存储密码或密钥密码短语。"
 
-#: src/sshpilot/gtk/login_profile_messages.py:208
+#: src/sshpilot/gtk/login_profile_messages.py:235
 msgid "The key passphrase could not be stored."
 msgstr "无法启动传输"
 
-#: src/sshpilot/gtk/login_profile_messages.py:216
+#: src/sshpilot/gtk/login_profile_messages.py:243
 msgid "The login profile operation failed."
 msgstr "特权远程操作失败。"
 
@@ -7097,159 +7122,168 @@ msgid ""
 "sharing."
 msgstr "日志行可能包含主机名、用户名和文件路径。分享前请核对。"
 
-#: src/sshpilot/login_profile_dialogs.py:48
-#: src/sshpilot/login_profile_dialogs.py:310 src/sshpilot/preferences.py:2877
+#: src/sshpilot/login_profile_dialogs.py:49
+#: src/sshpilot/login_profile_dialogs.py:311 src/sshpilot/preferences.py:2877
 #: src/sshpilot/preferences.py:2908
 msgid "Not set"
 msgstr "未设置"
 
-#: src/sshpilot/login_profile_dialogs.py:218
+#: src/sshpilot/login_profile_dialogs.py:219
 msgid "New profile"
 msgstr "新建文件夹"
 
-#: src/sshpilot/login_profile_dialogs.py:220
+#: src/sshpilot/login_profile_dialogs.py:221
 msgid "Edit Login Profile"
 msgstr "编辑登录配置文件"
 
-#: src/sshpilot/login_profile_dialogs.py:220
-#: src/sshpilot/login_profile_dialogs.py:915
-#: src/sshpilot/login_profile_dialogs.py:934
+#: src/sshpilot/login_profile_dialogs.py:221
+#: src/sshpilot/login_profile_dialogs.py:969
+#: src/sshpilot/login_profile_dialogs.py:988
 msgid "New Login Profile"
 msgstr "日志文件："
 
-#: src/sshpilot/login_profile_dialogs.py:317
+#: src/sshpilot/login_profile_dialogs.py:318
 msgid "Agent socket to forward (optional)"
 msgstr "要转发的 Agent 套接字（可选）"
 
-#: src/sshpilot/login_profile_dialogs.py:323
+#: src/sshpilot/login_profile_dialogs.py:324
 msgid "Secrets"
 msgstr "密码凭据"
 
-#: src/sshpilot/login_profile_dialogs.py:324
+#: src/sshpilot/login_profile_dialogs.py:325
 msgid ""
 "Stored in your secure storage and shared by every connection using this "
 "profile."
 msgstr "存储在您的安全存储中，并由使用此配置文件的所有连接共享。"
 
-#: src/sshpilot/login_profile_dialogs.py:327
+#: src/sshpilot/login_profile_dialogs.py:328
 msgid "Login password"
 msgstr "存储密码"
 
-#: src/sshpilot/login_profile_dialogs.py:329
+#: src/sshpilot/login_profile_dialogs.py:330
 msgid "Remove stored login password"
 msgstr "记住主密码"
 
-#: src/sshpilot/login_profile_dialogs.py:332
+#: src/sshpilot/login_profile_dialogs.py:333
 msgid "Sudo password"
 msgstr "存储密码"
 
-#: src/sshpilot/login_profile_dialogs.py:334
+#: src/sshpilot/login_profile_dialogs.py:335
 msgid "Remove stored sudo password"
 msgstr "记住主密码"
 
-#: src/sshpilot/login_profile_dialogs.py:339
+#: src/sshpilot/login_profile_dialogs.py:340
 msgid "Login password (stored — type to replace)"
 msgstr "登录密码（已存储——输入以替换）"
 
-#: src/sshpilot/login_profile_dialogs.py:341
+#: src/sshpilot/login_profile_dialogs.py:342
 msgid "Sudo password (stored — type to replace)"
 msgstr "Sudo 密码（已存储——输入以替换）"
 
-#: src/sshpilot/login_profile_dialogs.py:358
+#: src/sshpilot/login_profile_dialogs.py:359
 msgid ""
 "One directive per line, e.g. ServerAliveInterval 30. They replace the same "
 "directives of linked connections."
 msgstr ""
 "每行一条指令，例如 ServerAliveInterval 30。它们将替换已关联连接中的相同指令。"
 
-#: src/sshpilot/login_profile_dialogs.py:564
+#: src/sshpilot/login_profile_dialogs.py:586
 msgid "Replace connection settings?"
 msgstr "移除连接？"
 
-#: src/sshpilot/login_profile_dialogs.py:565
+#: src/sshpilot/login_profile_dialogs.py:587
 msgid "The login profile will replace these settings:"
 msgstr "登录配置文件将替换以下设置："
 
-#: src/sshpilot/login_profile_dialogs.py:568
+#: src/sshpilot/login_profile_dialogs.py:590
 msgid "Apply Profile"
 msgstr "所有文件"
 
-#: src/sshpilot/login_profile_dialogs.py:604
-#: src/sshpilot/login_profile_dialogs.py:680 src/sshpilot/window_dialogs.py:806
-#: src/sshpilot/window_dialogs.py:916
-msgid "Login profiles unavailable"
-msgstr "known_hosts 不可用"
+#: src/sshpilot/login_profile_dialogs.py:612
+msgid "Replace user-set values?"
+msgstr "替换用户设置的值？"
 
-#: src/sshpilot/login_profile_dialogs.py:613
-msgid "Inherit from group"
-msgstr "从分组中移除"
+#: src/sshpilot/login_profile_dialogs.py:614
+msgid "Show connections"
+msgstr "显示连接"
 
-#: src/sshpilot/login_profile_dialogs.py:617
-msgid "Assign Login Profile"
-msgstr "分配登录配置文件"
-
-#: src/sshpilot/login_profile_dialogs.py:617
-#: src/sshpilot/login_profile_dialogs.py:686
+#: src/sshpilot/login_profile_dialogs.py:620
+#: src/sshpilot/login_profile_dialogs.py:671
+#: src/sshpilot/login_profile_dialogs.py:740
 #: src/sshpilot/resources/ui/authorized_key_entry_dialog.ui:27
 msgid "Apply"
 msgstr "应用"
 
-#: src/sshpilot/login_profile_dialogs.py:623
+#: src/sshpilot/login_profile_dialogs.py:658
+#: src/sshpilot/login_profile_dialogs.py:734 src/sshpilot/window_dialogs.py:806
+#: src/sshpilot/window_dialogs.py:916
+msgid "Login profiles unavailable"
+msgstr "known_hosts 不可用"
+
+#: src/sshpilot/login_profile_dialogs.py:667
+msgid "Inherit from group"
+msgstr "从分组中移除"
+
+#: src/sshpilot/login_profile_dialogs.py:671
+msgid "Assign Login Profile"
+msgstr "分配登录配置文件"
+
+#: src/sshpilot/login_profile_dialogs.py:677
 #, python-brace-format
 msgid "Applies to {count} connection."
 msgid_plural "Applies to {count} connections."
 msgstr[0] "适用于 {count} 个连接。"
 
-#: src/sshpilot/login_profile_dialogs.py:628
-#: src/sshpilot/login_profile_dialogs.py:693
+#: src/sshpilot/login_profile_dialogs.py:682
+#: src/sshpilot/login_profile_dialogs.py:747
 msgid "Login profile"
 msgstr "登录配置文件"
 
-#: src/sshpilot/login_profile_dialogs.py:686
+#: src/sshpilot/login_profile_dialogs.py:740
 msgid "Group Login Profile"
 msgstr "分组登录配置文件"
 
-#: src/sshpilot/login_profile_dialogs.py:690
+#: src/sshpilot/login_profile_dialogs.py:744
 msgid ""
 "Connections in this group, and in nested groups without their own profile, "
 "can inherit it."
 msgstr ""
 "此分组中的连接，以及没有自己配置文件的嵌套分组中的连接，均可继承该配置。"
 
-#: src/sshpilot/login_profile_dialogs.py:702
+#: src/sshpilot/login_profile_dialogs.py:756
 msgid "Members that inherit the profile"
 msgstr "继承该配置文件的成员"
 
-#: src/sshpilot/login_profile_dialogs.py:703
+#: src/sshpilot/login_profile_dialogs.py:757
 msgid "Members with their own explicit profile are unchecked by default."
 msgstr "拥有自己显式配置文件的成员默认不勾选。"
 
-#: src/sshpilot/login_profile_dialogs.py:717
+#: src/sshpilot/login_profile_dialogs.py:771
 #, python-brace-format
 msgid "Uses profile “{name}”"
 msgstr "这将移除“{name}”。"
 
-#: src/sshpilot/login_profile_dialogs.py:785
+#: src/sshpilot/login_profile_dialogs.py:839
 msgid "Could not delete the profile"
 msgstr "无法生成 SSH 密钥。"
 
-#: src/sshpilot/login_profile_dialogs.py:790
+#: src/sshpilot/login_profile_dialogs.py:844
 #, python-brace-format
 msgid "Delete “{name}”?"
 msgstr "删除“{name}”？"
 
-#: src/sshpilot/login_profile_dialogs.py:791
+#: src/sshpilot/login_profile_dialogs.py:845
 msgid ""
 "No connection or group uses this profile. Its stored passwords are deleted "
 "too."
 msgstr "没有连接或分组使用此配置文件。其存储的密码也将被删除。"
 
-#: src/sshpilot/login_profile_dialogs.py:805
+#: src/sshpilot/login_profile_dialogs.py:859
 #, python-brace-format
 msgid "Delete “{name}”"
 msgstr "删除“{name}”"
 
-#: src/sshpilot/login_profile_dialogs.py:810
+#: src/sshpilot/login_profile_dialogs.py:864
 msgid ""
 "These connections and groups use the profile. Choose what each should use "
 "instead. Detached connections keep their current settings."
@@ -7258,45 +7292,45 @@ msgstr ""
 "前设置。"
 
 #. list of (label, profile_id or None)
-#: src/sshpilot/login_profile_dialogs.py:817
+#: src/sshpilot/login_profile_dialogs.py:871
 msgid "Apply to all"
 msgstr "应用到全部"
 
-#: src/sshpilot/login_profile_dialogs.py:819
-#: src/sshpilot/login_profile_dialogs.py:865
+#: src/sshpilot/login_profile_dialogs.py:873
+#: src/sshpilot/login_profile_dialogs.py:919
 msgid "New Profile…"
 msgstr "报告问题…"
 
-#: src/sshpilot/login_profile_dialogs.py:820
+#: src/sshpilot/login_profile_dialogs.py:874
 msgid "Affected"
 msgstr "已选择"
 
-#: src/sshpilot/login_profile_dialogs.py:831
+#: src/sshpilot/login_profile_dialogs.py:885
 msgid "Detach (keep current values)"
 msgstr "分离（保持会话运行）"
 
-#: src/sshpilot/login_profile_dialogs.py:901 src/sshpilot/macos_menubar.py:96
+#: src/sshpilot/login_profile_dialogs.py:955 src/sshpilot/macos_menubar.py:96
 #: src/sshpilot/window.py:4280
 msgid "Login Profiles"
 msgstr "登录配置文件"
 
-#: src/sshpilot/login_profile_dialogs.py:922
+#: src/sshpilot/login_profile_dialogs.py:976
 msgid "No Login Profiles"
 msgstr "日志文件："
 
-#: src/sshpilot/login_profile_dialogs.py:923
+#: src/sshpilot/login_profile_dialogs.py:977
 msgid ""
 "A login profile bundles a username, keys and passwords. Assign it to "
 "connections or groups to reuse it."
 msgstr "登录配置文件捆绑了用户名、密钥和密码。将其分配给连接或分组即可复用。"
 
-#: src/sshpilot/login_profile_dialogs.py:981
+#: src/sshpilot/login_profile_dialogs.py:1035
 #, python-brace-format
 msgid "{n} group"
 msgid_plural "{n} groups"
 msgstr[0] "{n} 个分组"
 
-#: src/sshpilot/login_profile_dialogs.py:1018
+#: src/sshpilot/login_profile_dialogs.py:1072
 #, python-brace-format
 msgid "{count} connection was detached and kept its settings."
 msgid_plural "{count} connections were detached and kept their settings."
@@ -17302,6 +17336,10 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#, python-brace-format
+#~ msgid "Set by login profile “{name}”"
+#~ msgstr "由登录配置文件“{name}”设置"
 
 #~ msgid "Method"
 #~ msgstr "方式"

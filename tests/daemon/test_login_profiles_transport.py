@@ -113,7 +113,10 @@ def env(tmp_path):
 
 def test_dispatch_registration():
     methods = {m for m in DAEMON_METHOD_CAPABILITIES if m.startswith("login_profiles.")}
-    assert methods == WRITE_METHODS | {"login_profiles.get", "login_profiles.preview_assignment"}
+    assert methods == WRITE_METHODS | {
+        "login_profiles.get", "login_profiles.preview_assignment",
+        "login_profiles.preview_update",
+    }
     assert methods <= DEFERRED_DAEMON_METHODS
     assert WRITE_METHODS <= DRAIN_REJECTED_METHODS
 
@@ -315,3 +318,25 @@ def test_profile_without_proxy_command_keeps_the_connection_command(env):
     repo.update_connection('web1', {'proxy_command': 'ssh -W %h:%p edited'})
     assert service.reconcile() == ()
     assert 'ProxyCommand ssh -W %h:%p edited' in root.read_text()
+
+
+def test_preview_update_over_the_wire_reports_replaced_user_values(env):
+    from sshpilot.api.models.login_profiles import PreviewLoginProfileUpdateRequest
+
+    client, *_ = env
+    created = client.create_login_profile(CreateLoginProfileRequest(
+        LoginProfileSettings(name='Agent', identity_agent='/run/a.sock')
+    ))
+    client.assign_login_profile(
+        AssignLoginProfileRequest(('web1',), LoginProfileLinkMode.EXPLICIT, created.id)
+    )
+    preview = client.preview_login_profile_update(PreviewLoginProfileUpdateRequest(
+        created.id,
+        LoginProfileSettings(name='Agent', identity_agent='/run/a.sock', username='deploy'),
+    ))
+    assert preview.linked_count == 1
+    (item,) = preview.replaced
+    assert item.connection_id == 'web1'
+    assert [(c.field, c.after) for c in item.changes] == [
+        (LoginProfileField.USERNAME, 'deploy'),
+    ]

@@ -5,6 +5,11 @@ notes remain separate.
 
 ## Unreleased
 
+- `preview_login_profile_update(PreviewLoginProfileUpdateRequest(profile_id,
+  settings))` returns `LoginProfileUpdatePreview(linked_count, replaced)`: the
+  linked connections whose own values an edit would replace, because the
+  edited profile starts setting that field. Requires `login_profiles.read`. The
+  API implementation version is 0.107; Protocol remains 1.0.
 - `connections.get_inherited_auth(host)` returns, as `EarlierDirective` lines,
   what a host would get for `PreferredAuthentications` and the per-method
   authentication switches if its own blocks set none of them: the first line

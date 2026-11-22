@@ -190,6 +190,8 @@ from .models.login_profiles import (
     LoginProfileSnapshot,
     LoginProfileSummary,
     PreviewLoginProfileAssignmentRequest,
+    PreviewLoginProfileUpdateRequest,
+    LoginProfileUpdatePreview,
     SetGroupLoginProfileRequest,
     SetLoginProfileSecretRequest,
     UpdateLoginProfileRequest,
@@ -769,6 +771,12 @@ class SshPilotClient(Protocol):
         self, request: PreviewLoginProfileAssignmentRequest
     ) -> Tuple[LoginProfileAssignmentPreview, ...]:
         """Host-block settings an assignment would change, per connection."""
+        ...
+
+    def preview_login_profile_update(
+        self, request: PreviewLoginProfileUpdateRequest
+    ) -> LoginProfileUpdatePreview:
+        """Linked connections' own values a profile edit would replace."""
         ...
 
     def assign_login_profile(self, request: AssignLoginProfileRequest) -> bool:

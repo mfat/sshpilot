@@ -32,6 +32,8 @@ from ..models.login_profiles import (
     LoginProfileSource,
     LoginProfileSummary,
     PreviewLoginProfileAssignmentRequest,
+    PreviewLoginProfileUpdateRequest,
+    LoginProfileUpdatePreview,
     SetGroupLoginProfileRequest,
     SetLoginProfileSecretRequest,
     UpdateLoginProfileRequest,
@@ -480,4 +482,46 @@ def login_profiles_changed_event_from_wire(value: Any) -> LoginProfilesChangedEv
         detached=tuple(
             detached_connection_info_from_wire(d) for d in _array(data["detached"], "detached")
         )
+    )
+
+
+def preview_login_profile_update_request_to_wire(
+    request: PreviewLoginProfileUpdateRequest,
+) -> Dict[str, Any]:
+    _require(request, PreviewLoginProfileUpdateRequest, "preview update request")
+    return {
+        "profile_id": request.profile_id,
+        "settings": login_profile_settings_to_wire(request.settings),
+    }
+
+
+def preview_login_profile_update_request_from_wire(
+    value: Any,
+) -> PreviewLoginProfileUpdateRequest:
+    data = _strict_fields(
+        value, required={"profile_id", "settings"}, context="preview update request"
+    )
+    return PreviewLoginProfileUpdateRequest(
+        profile_id=LoginProfileId(_identifier(data["profile_id"], "login profile id")),
+        settings=login_profile_settings_from_wire(data["settings"]),
+    )
+
+
+def login_profile_update_preview_to_wire(preview: LoginProfileUpdatePreview) -> Dict[str, Any]:
+    _require(preview, LoginProfileUpdatePreview, "update preview")
+    return {
+        "linked_count": preview.linked_count,
+        "replaced": login_profile_assignment_previews_to_wire(preview.replaced)["previews"],
+    }
+
+
+def login_profile_update_preview_from_wire(value: Any) -> LoginProfileUpdatePreview:
+    data = _strict_fields(
+        value, required={"linked_count", "replaced"}, context="update preview"
+    )
+    return LoginProfileUpdatePreview(
+        linked_count=_integer(data["linked_count"], "linked_count"),
+        replaced=tuple(
+            login_profile_assignment_previews_from_wire({"previews": data["replaced"]})
+        ),
     )

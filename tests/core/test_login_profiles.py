@@ -695,3 +695,23 @@ def test_stored_profiles_read_their_old_defaults_as_not_set():
     again = LoginProfile.from_dict(chosen.to_dict())
     assert again.key_select_mode == 0 and again.forward_agent is False
     assert profile_owned_fields(again) == ('key_select_mode', 'forward_agent')
+
+
+def test_preview_update_lists_only_user_set_values_a_profile_would_take_over(env):
+    repo, service, root, *_ = env
+    profile = service.create_profile({'name': 'P', 'identity_agent': '/run/a.sock'})
+    service.assign_connections(['web1', 'web2', 'db1'], LINK_EXPLICIT, profile.id)
+    # db1 sets no user of its own.
+    repo.update_connection('db1', {**repo.get_record('db1').data, 'username': ''})
+    linked, previews = service.preview_update(profile.id, {'username': 'deploy'})
+    assert linked == 3
+    replaced = {p.connection_id: [(c.field, c.before, c.after) for c in p.changes]
+                for p in previews}
+    assert replaced == {
+        'web1': [('username', 'alice', 'deploy')],
+        'web2': [('username', 'bob', 'deploy')],
+    }
+    # A value the profile already sets is its own: nothing to confirm.
+    assert service.preview_update(profile.id, {'identity_agent': '/run/b.sock'}) == (3, ())
+    # Nothing was written.
+    assert 'User alice' in _block(root, 'web1')
