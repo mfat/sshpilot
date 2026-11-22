@@ -188,3 +188,20 @@ def test_policy_lines_are_split_from_the_other_options_and_joined_back():
 def test_switch_values_openssh_prints(value, expected):
     policy = _policy(resolved={**SSH_G, "pubkeyauthentication": value})
     assert policy.shown_switch("publickey") is expected
+
+
+def test_reset_removes_every_copy_of_the_line():
+    # Review: a second, ignored copy must not take effect after Reset.
+    policy = _policy("PreferredAuthentications password",
+                     "PreferredAuthentications publickey",
+                     "PubkeyAuthentication no", "PubkeyAuthentication yes",
+                     "GSSAPIAuthentication no", "GSSAPIAuthentication yes")
+    assert policy.reset_order()
+    assert policy.reset_switch("publickey")
+    assert policy.to_lines() == ["GSSAPIAuthentication no", "GSSAPIAuthentication yes"]
+
+
+def test_the_older_keyword_copy_goes_with_a_reset_too():
+    policy = _policy("KbdInteractiveAuthentication no", "ChallengeResponseAuthentication yes")
+    policy.reset_switch("keyboard-interactive")
+    assert policy.to_lines() == []

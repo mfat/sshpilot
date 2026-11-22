@@ -12,6 +12,7 @@ from sshpilot.core.login_profiles.models import (
     LoginProfile,
     auth_fingerprint,
     is_legacy_auth_link,
+    profile_owned_fields,
     profile_owned_keywords,
 )
 
@@ -63,3 +64,21 @@ def test_a_link_recorded_before_keeps_its_fingerprint():
     legacy = auth_fingerprint(data, (), legacy_auth=True)
     assert is_legacy_auth_link(legacy)
     assert auth_fingerprint(data, (), legacy_auth=is_legacy_auth_link(legacy)) == legacy
+
+
+def test_a_profile_that_lists_keys_selects_them():
+    # Review: with key selection unset, the keys must still reach OpenSSH.
+    from sshpilot.core.login_profiles.models import apply_profile_to_data
+    from sshpilot.ssh_config_formatter import format_ssh_config_entry
+
+    profile = LoginProfile(id=PID, name="k", identity_files=("/keys/deploy",))
+    assert "key_select_mode" in profile_owned_fields(profile)
+    out = apply_profile_to_data({"nickname": "test", "key_select_mode": 0}, profile)
+    assert "IdentityFile /keys/deploy" in format_ssh_config_entry(out)
+
+
+def test_an_old_automatic_profile_with_stale_keys_stays_automatic():
+    profile = LoginProfile.from_dict({
+        "id": PID, "name": "k", "key_select_mode": 0, "identity_files": ["/k"],
+    })
+    assert profile.key_select_mode == 0

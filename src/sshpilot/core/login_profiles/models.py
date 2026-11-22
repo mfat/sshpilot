@@ -338,7 +338,9 @@ class LoginProfile:
             # Stored before fields could be left unset: Automatic key
             # selection and "don't forward the agent" were only the form's
             # defaults, so they read as not set (the connection keeps its own).
-            if values.get("key_select_mode") == 0:
+            # Automatic with a stale key list stayed Automatic (the keys
+            # were never written); keep that explicit.
+            if values.get("key_select_mode") == 0 and not values.get("identity_files"):
                 values["key_select_mode"] = None
             if values.get("forward_agent") is False:
                 values["forward_agent"] = None
@@ -405,7 +407,7 @@ def apply_profile_to_data(data: Mapping[str, Any], profile: LoginProfile) -> Dic
         authored.add("user")
         out["__authored_directives"] = tuple(sorted(authored))
     if "key_select_mode" in fields:
-        out["key_select_mode"] = profile.key_select_mode
+        out["key_select_mode"] = effective_key_select_mode(profile)
         out["identity_file_none"] = False
         out["identities_only_explicit_no"] = False
     if "identity_files" in fields:
@@ -476,11 +478,26 @@ PROFILE_FIELDS: Tuple[str, ...] = (
 )
 
 
+def effective_key_select_mode(profile: "LoginProfile") -> Optional[int]:
+    """The key selection *profile* applies.
+
+    A profile that lists keys uses them: with key selection left unset it
+    selects specific keys (and the agent), or the keys would never reach
+    OpenSSH -- only those modes write IdentityFile.
+    """
+    if profile.key_select_mode is None and profile.identity_files:
+        return 2
+    return profile.key_select_mode
+
+
 def profile_owned_fields(profile: "LoginProfile") -> Tuple[str, ...]:
     """The fields *profile* sets (empty text/lists and ``None`` are unset)."""
     owned = []
     for name in PROFILE_FIELDS:
-        value = getattr(profile, name)
+        value = (
+            effective_key_select_mode(profile) if name == "key_select_mode"
+            else getattr(profile, name)
+        )
         if value is None or value == "" or value == ():
             continue
         owned.append(name)

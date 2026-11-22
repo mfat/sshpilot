@@ -264,10 +264,18 @@ class AuthPolicy:
         self._write_order(current + [method])
         return True
 
+    def _drop_passthrough(self, keywords) -> None:
+        """Remove repeated lines of *keywords*: a reset means the block sets
+        none, and a later copy OpenSSH ignored today would take effect."""
+        self._passthrough = [
+            line for line in self._passthrough if _split(line)[0] not in keywords
+        ]
+
     def reset_order(self) -> bool:
         if self.order is None:
             return False
         self.order = None
+        self._drop_passthrough({PREFERRED_AUTH_KEYWORD})
         if "order" in self._loaded:
             self._unknown_after_reset.add("order")
         return True
@@ -283,6 +291,7 @@ class AuthPolicy:
         if method not in self.switches:
             return False
         del self.switches[method]
+        self._drop_passthrough({k for k, m in METHOD_OF_KEYWORD.items() if m == method})
         if method in self._loaded:
             self._unknown_after_reset.add(method)
         return True
