@@ -45,7 +45,10 @@ from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
 )
-from .ssh_config_formatter import MANAGED_HOST_OPTIONS
+from .ssh_config_formatter import (
+    MANAGED_HOST_OPTIONS,
+    PASSWORD_MODE_PREFERRED_AUTH,
+)
 from .ssh_option_list import OPENSSH_KEYWORDS, SshOptionList, check_ssh_option
 from .ssh_connection_validator import (  # SSHConnectionValidator also re-exported for tests/back-compat
     SSHConnectionValidator,
@@ -2312,7 +2315,7 @@ class ConnectionDialog(
                 # For automatic key selection, don't add IdentityFile
             else:  # Password auth only
                 config_lines.append(
-                    "    PreferredAuthentications keyboard-interactive,password"
+                    f"    PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}"
                 )
                 if self.pubkey_auth_row.get_active():
                     config_lines.append("    PubkeyAuthentication no")

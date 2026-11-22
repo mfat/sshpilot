@@ -1198,7 +1198,11 @@ class DaemonConnectionLaunchProvider:
             stored_password = None
         combined_auth = bool(stored_password) and not prefer_password
         if prefer_password:
-            argv += ["-o", "PreferredAuthentications=keyboard-interactive,password"]
+            from ..core.connections.auth_preferences import (
+                PASSWORD_MODE_PREFERRED_AUTH,
+            )
+
+            argv += ["-o", f"PreferredAuthentications={PASSWORD_MODE_PREFERRED_AUTH}"]
             if bool(connection.data.get("pubkey_auth_no")):
                 argv += ["-o", "PubkeyAuthentication=no"]
         elif combined_auth:

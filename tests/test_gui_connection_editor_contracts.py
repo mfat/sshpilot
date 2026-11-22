@@ -112,7 +112,10 @@ def _same_paths(attr, paths):
 
 # Password mode is written as this preference list; the switch below it only
 # adds or removes PubkeyAuthentication.
-PASSWORD_PREF = "PreferredAuthentications keyboard-interactive,password"
+PASSWORD_PREF = (
+    "PreferredAuthentications "
+    "keyboard-interactive,password,gssapi-with-mic,hostbased"
+)
 
 
 def _password_auth(dialog):
@@ -199,7 +202,8 @@ CONTRACTS = [
       lambda d: d.auth_toggle.get_active() == 1,
       (PASSWORD_PREF,),
       clear=lambda d: d.auth_toggle.set_active(0),
-      cleared=lambda d: d.auth_toggle.get_active() == 0),
+      cleared=lambda d: d.auth_toggle.get_active() == 0,
+      ssh_g={"preferredauthentications": PASSWORD_PREF.split(" ", 1)[1]}),
     C("disable public key", ("pubkey_auth_row",),
       _switch("pubkey_auth_row", True), _shows_switch("pubkey_auth_row", True),
       (PASSWORD_PREF, "PubkeyAuthentication no"), prepare=_password_auth,

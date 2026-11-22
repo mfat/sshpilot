@@ -42,6 +42,7 @@ except (ImportError, AttributeError, ValueError):  # pragma: no cover - no GTK
     Adw = GLib = Gtk = None  # type: ignore[assignment]
 
 from .core.settings import EXTRA_OPTIONS_ADDED_NOT_REPLACED, forced_options
+from .ssh_config_formatter import PASSWORD_MODE_PREFERRED_AUTH
 
 logger = logging.getLogger(__name__)
 
@@ -598,7 +599,7 @@ class ConnectionDialogOverridesMixin:
         if row_name == "auth_method_row":
             # Password login writes its list of methods; key login need not.
             return (
-                "keyboard-interactive,password"
+                PASSWORD_MODE_PREFERRED_AUTH
                 if self._password_auth_selected() else None
             )
         if row_name == "port_forwarding_only_row":

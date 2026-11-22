@@ -15,6 +15,11 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from .core.connections.auth_preferences import (  # noqa: F401 - re-exported
+    PASSWORD_MODE_PREFERRED_AUTH,
+    is_password_mode_default,
+)
+
 from .ssh_config_document import (
     HostBlock,
     _split_config_option,
@@ -53,6 +58,10 @@ def _authored_directives(data: Dict[str, Any]) -> frozenset:
     return frozenset(
         str(name).strip().lower() for name in raw if str(name).strip()
     )
+
+
+def _is_password_mode_default(pref_list: List[str]) -> bool:
+    return is_password_mode_default(pref_list)
 
 
 def _preferred_auth_list(data: Dict[str, Any]) -> List[str]:
@@ -235,6 +244,9 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         # password methods are stripped here in key mode unless the payload
         # still carries an explicit password fallback.
         pref_list = _preferred_auth_list(data)
+        if _is_password_mode_default(pref_list):
+            # Left by password mode; a key login authors no list of its own.
+            pref_list = []
         if pref_list:
             if not data.get('password'):
                 pref_list = [
@@ -263,14 +275,14 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         if 'password' not in lowered or (
             'publickey' in lowered
             and lowered.index('publickey') < lowered.index('password')
-        ):
+        ) or _is_password_mode_default(pref_list):
             pref_list = []
         custom_pref = ",".join(pref_list)
         if custom_pref:
             lines.append(f"    PreferredAuthentications {custom_pref}")
         else:
             lines.append(
-                "    PreferredAuthentications keyboard-interactive,password"
+                f"    PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}"
             )
         if data.get('pubkey_auth_no'):
             lines.append("    PubkeyAuthentication no")
