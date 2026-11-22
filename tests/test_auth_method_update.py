@@ -157,11 +157,12 @@ def test_a_saved_password_does_not_add_an_order(tmp_path):
 
 # -- login profiles -------------------------------------------------------------
 
-def test_a_password_profile_replaces_the_hosts_own_order():
+def test_a_profile_that_sets_an_order_replaces_the_hosts_own():
     from sshpilot.core.login_profiles.models import LoginProfile, apply_profile_to_data
 
     profile = LoginProfile(
-        id="lp-0000000000000001", name="ops", auth_method=1, pubkey_auth_no=True,
+        id="lp-0000000000000001", name="ops",
+        extra_ssh_config=f"{PASSWORD_LINE}\nPubkeyAuthentication no",
     )
     out = apply_profile_to_data(
         {"extra_ssh_config": "PreferredAuthentications publickey\nCompression yes"},
@@ -170,13 +171,12 @@ def test_a_password_profile_replaces_the_hosts_own_order():
     assert out["extra_ssh_config"].splitlines() == [
         "Compression yes", PASSWORD_LINE, "PubkeyAuthentication no",
     ]
+    assert out["auth_method"] == 1 and out["pubkey_auth_no"] is True
 
 
-def test_a_key_profile_removes_the_hosts_password_order():
+def test_a_profile_that_sets_no_order_leaves_the_hosts_own():
     from sshpilot.core.login_profiles.models import LoginProfile, apply_profile_to_data
 
-    profile = LoginProfile(id="lp-0000000000000001", name="ops", auth_method=0)
-    out = apply_profile_to_data(
-        {"extra_ssh_config": f"{PASSWORD_LINE}\nPubkeyAuthentication no"}, profile,
-    )
-    assert out["extra_ssh_config"] == ""
+    profile = LoginProfile(id="lp-0000000000000001", name="ops")
+    out = apply_profile_to_data({"extra_ssh_config": PASSWORD_LINE}, profile)
+    assert out["extra_ssh_config"] == PASSWORD_LINE

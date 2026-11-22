@@ -332,9 +332,9 @@ def join_extra(other: str, policy_lines: Iterable[str]) -> str:
 _DRAG_PREFIX = "sshpilot-auth-method:"
 
 
-def build_auth_policy_group(on_changed: Callable[[], None]):
+def build_auth_policy_group(on_changed: Callable[[], None], *, profile: bool = False):
     """Create the section; imported lazily so the model stays GTK-free."""
-    return AuthPolicyGroup.create(on_changed)
+    return AuthPolicyGroup.create(on_changed, profile=profile)
 
 
 class AuthPolicyGroup:
@@ -349,8 +349,14 @@ class AuthPolicyGroup:
     """
 
     @classmethod
-    def create(cls, on_changed: Callable[[], None]) -> "AuthPolicyGroup":
+    def create(
+        cls, on_changed: Callable[[], None], *, profile: bool = False
+    ) -> "AuthPolicyGroup":
+        """``profile``: a login profile's section. It has no host to resolve,
+        so what it leaves unset reads "not set" and no effective order is
+        shown; a linked connection keeps its own value there."""
         self = cls()
+        self.profile = profile
         self._build(on_changed)
         return self
 
@@ -369,11 +375,16 @@ class AuthPolicyGroup:
 
         self.group = Adw.PreferencesGroup(title=_("Authentication order"))
         self.group.set_description(
+            _("Lines this profile sets replace a linked connection's own; what "
+              "it leaves unset stays the connection's. Methods are tried from "
+              "the top; unchecked methods are switched off.")
+            if self.profile else
             _("Methods are tried from the top. Unchecked methods are switched off.")
         )
         self.reset_button = Gtk.Button(label=_("Reset"))
         self.reset_button.add_css_class("flat")
         self.reset_button.set_tooltip_text(
+            _("Leave the order to each linked connection") if self.profile else
             _("Remove this host's order so the inherited one applies")
         )
         self.reset_button.connect("clicked", lambda *_a: self._edit(self.policy.reset_order))
@@ -408,6 +419,8 @@ class AuthPolicyGroup:
         help_list.set_selection_mode(Gtk.SelectionMode.NONE)
         help_list.set_margin_top(12)
         help_list.append(self.order_row)
+        # A profile is not one host: there is no single order in force.
+        help_list.set_visible(not self.profile)
         self.group.add(help_list)
 
     def _make_row(self, method: str):
@@ -603,7 +616,10 @@ class AuthPolicyGroup:
             check.set_tooltip_text(None)
         else:
             check.add_css_class("dim-label")
-            check.set_tooltip_text(
-                inherited_note if value is not None
-                else _("Not set for this host. The value it inherits is shown once saved.")
-            )
+            if self.profile:
+                note = _("Not set by this profile: each connection keeps its own value.")
+            elif value is not None:
+                note = inherited_note
+            else:
+                note = _("Not set for this host. The value it inherits is shown once saved.")
+            check.set_tooltip_text(note)

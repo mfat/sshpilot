@@ -43,7 +43,6 @@ from sshpilot.gtk.login_profile_messages import (
 
 logger = logging.getLogger(__name__)
 
-_AUTH_OPTIONS = (_("Key-based"), _("Password"))
 _KEY_MODE_OPTIONS = (
     _("Automatic"),
     _("Specific keys only"),
@@ -230,23 +229,22 @@ class LoginProfileEditor:
         general.add(self.username_row)
         page.add(general)
 
+        # The authentication order and switches, as in the connection dialog;
+        # they are lines of the profile's options.
+        from .connection_dialog_auth import AuthPolicy, AuthPolicyGroup, split_policy_lines
+
+        policy_lines, other_extra = split_policy_lines(settings.extra_ssh_config)
+        self.auth_policy = AuthPolicyGroup.create(lambda: None, profile=True)
+        self.auth_policy.load(AuthPolicy.from_lines(policy_lines))
+        page.add(self.auth_policy.group)
+
         auth = Adw.PreferencesGroup(title=_("Authentication"))
-        self.auth_row = Adw.ComboRow(title=_("Method"), model=_string_list(_AUTH_OPTIONS))
-        self.auth_row.set_selected(settings.auth_method)
-        self.auth_row.connect("notify::selected", self._sync_visibility)
-        auth.add(self.auth_row)
         self.key_mode_row = Adw.ComboRow(
             title=_("Key selection"), model=_string_list(_KEY_MODE_OPTIONS)
         )
         self.key_mode_row.set_selected(settings.key_select_mode)
         self.key_mode_row.connect("notify::selected", self._sync_visibility)
         auth.add(self.key_mode_row)
-        self.pubkey_no_row = Adw.SwitchRow(
-            title=_("Disable public key authentication"),
-            subtitle="PubkeyAuthentication no",
-        )
-        self.pubkey_no_row.set_active(settings.pubkey_auth_no)
-        auth.add(self.pubkey_no_row)
         page.add(auth)
 
         window = self.dialog
@@ -354,7 +352,7 @@ class LoginProfileEditor:
         self.extra_view.set_monospace(True)
         self.extra_view.set_wrap_mode(Gtk.WrapMode.NONE)
         self.extra_view.set_size_request(-1, 90)
-        self.extra_view.get_buffer().set_text(settings.extra_ssh_config)
+        self.extra_view.get_buffer().set_text(other_extra)
         frame = Gtk.Frame()
         frame.set_child(self.extra_view)
         extra.add(frame)
@@ -368,17 +366,18 @@ class LoginProfileEditor:
         self.dialog.present()
 
     def _sync_visibility(self, *_args) -> None:
-        key_auth = self.auth_row.get_selected() == 0
         specific = self.key_mode_row.get_selected() in (1, 2)
-        self.key_mode_row.set_visible(key_auth)
-        self.key_editor.set_visible(key_auth and specific)
-        self.cert_editor.set_visible(key_auth)
-        self.pubkey_no_row.set_visible(not key_auth)
+        self.key_editor.set_visible(specific)
         self.forward_target_row.set_visible(self.forward_agent_row.get_active())
 
     def values(self) -> Dict[str, object]:
+        from .connection_dialog_auth import join_extra
+
         buffer = self.extra_view.get_buffer()
-        extra = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+        extra = join_extra(
+            buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False),
+            self.auth_policy.policy.to_lines(),
+        )
         selected = self.add_keys_row.get_selected()
         add_keys = _ADD_KEYS_VALUES[selected] if selected < len(_ADD_KEYS_VALUES) else ""
         if selected == 0 and self._add_keys_custom:
@@ -386,7 +385,6 @@ class LoginProfileEditor:
         return {
             "name": self.name_row.get_text(),
             "username": self.username_row.get_text(),
-            "auth_method": self.auth_row.get_selected(),
             "key_select_mode": self.key_mode_row.get_selected(),
             "identity_files": list(self.key_editor.get_paths()),
             "certificate_files": list(self.cert_editor.get_paths()),
@@ -394,7 +392,6 @@ class LoginProfileEditor:
             "add_keys_to_agent": add_keys,
             "pkcs11_provider": self.pkcs11_row.get_text(),
             "security_key_provider": self.sk_row.get_text(),
-            "pubkey_auth_no": self.pubkey_no_row.get_active(),
             "forward_agent": self.forward_agent_row.get_active(),
             "forward_agent_target": self.forward_target_row.get_text(),
             "proxy_command": self.proxy_command_row.get_text(),

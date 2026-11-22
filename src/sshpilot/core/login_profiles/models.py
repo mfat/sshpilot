@@ -26,7 +26,11 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from ...ssh_config_document import _split_config_option, split_config_lines
-from ..connections.auth_preferences import apply_legacy_auth_choice
+from ..connections.auth_preferences import (
+    apply_legacy_auth_choice,
+    password_comes_first,
+    preferred_order,
+)
 
 # Connection metadata key holding the profile link. Its value is one of:
 #   {"mode": "explicit", "id": <profile id>, "applied": <fingerprint>, "rev": <id:revision>}
@@ -181,10 +185,6 @@ def _extra_keyword(line: str) -> str:
     return re.split(r"[\s=]+", stripped, maxsplit=1)[0].lower()
 
 
-# The profile sets these through its own auth method and public-key fields.
-_PROFILE_AUTH_FIELDS = frozenset({"preferredauthentications", "pubkeyauthentication"})
-
-
 def _clean_extra(value: Any) -> str:
     text = _clean_text(value, "extra_ssh_config", single_line=False)
     lines = [line.strip() for line in text.splitlines()]
@@ -197,7 +197,7 @@ def _clean_extra(value: Any) -> str:
                 "extra_ssh_config must not contain Host, Match or Include lines",
                 REASON_EXTRA_FORBIDDEN_BLOCK,
             )
-        if keyword in MANAGED_HOST_OPTIONS or keyword in _PROFILE_AUTH_FIELDS:
+        if keyword in MANAGED_HOST_OPTIONS:
             raise LoginProfileValueError(
                 f"{keyword} has a dedicated field and cannot be set in extra_ssh_config",
                 REASON_EXTRA_MANAGED_OPTION,
@@ -275,7 +275,19 @@ class LoginProfile:
         ):
             raise ValueError("add_keys_to_agent is invalid")
         object.__setattr__(self, "add_keys_to_agent", add_keys)
-        object.__setattr__(self, "extra_ssh_config", _clean_extra(self.extra_ssh_config))
+        # The authentication order and switches are plain lines of the
+        # profile's options, as in a Host block. The older Key/Password choice
+        # and "Disable public key authentication" become those lines here.
+        extra = self.extra_ssh_config
+        if self.auth_method == AUTH_PASSWORD or self.pubkey_auth_no is True:
+            extra = apply_legacy_auth_choice(
+                str(extra or ""),
+                auth_method=AUTH_PASSWORD if self.auth_method == AUTH_PASSWORD else None,
+                pubkey_auth_no=True if self.pubkey_auth_no is True else None,
+            )
+            object.__setattr__(self, "auth_method", AUTH_KEY)
+            object.__setattr__(self, "pubkey_auth_no", False)
+        object.__setattr__(self, "extra_ssh_config", _clean_extra(extra))
         for flag in ("pubkey_auth_no", "forward_agent", "has_password", "has_sudo_password"):
             if type(getattr(self, flag)) is not bool:
                 raise TypeError(f"{flag} must be a boolean")
@@ -380,7 +392,6 @@ def apply_profile_to_data(data: Mapping[str, Any], profile: LoginProfile) -> Dic
         authored.discard("user")
     out["__authored_directives"] = tuple(sorted(authored))
 
-    out["auth_method"] = profile.auth_method
     out["key_select_mode"] = profile.key_select_mode
     out["identity_files"] = list(profile.identity_files)
     out["keyfile"] = profile.identity_files[0] if profile.identity_files else ""
@@ -392,25 +403,24 @@ def apply_profile_to_data(data: Mapping[str, Any], profile: LoginProfile) -> Dic
     out["add_keys_to_agent"] = profile.add_keys_to_agent
     out["pkcs11_provider"] = profile.pkcs11_provider
     out["security_key_provider"] = profile.security_key_provider
-    out["pubkey_auth_no"] = profile.pubkey_auth_no
     out["forward_agent"] = profile.forward_agent
     out["forward_agent_target"] = profile.forward_agent_target if profile.forward_agent else ""
     out["forward_agent_explicit_no"] = False
-    out["preferred_authentications"] = []
+    # Authentication lines are options like any other: those the profile
+    # sets replace the connection's own; what it leaves unset stays.
     out["extra_ssh_config"] = _merge_extra(
         str(out.get("extra_ssh_config") or ""), profile.extra_ssh_config
     )
-    # The profile owns the login order and the public-key switch: a stale
-    # per-host PreferredAuthentications must not outlive it. Its auth method
-    # and switch are then written as the Host-block lines they stand for.
-    out["extra_ssh_config"] = apply_legacy_auth_choice(
-        _drop_keyword(
-            _drop_keyword(out["extra_ssh_config"], "preferredauthentications"),
-            "pubkeyauthentication",
-        ),
-        auth_method=profile.auth_method,
-        pubkey_auth_no=profile.pubkey_auth_no,
+    # The editor's older Key/Password view of the result.
+    order = preferred_order(out["extra_ssh_config"])
+    pubkey_no = any(
+        _extra_keyword(line) == "pubkeyauthentication"
+        and line.split(None, 1)[-1].strip().lower() == "no"
+        for line in split_config_lines(out["extra_ssh_config"])
     )
+    out["auth_method"] = AUTH_PASSWORD if (pubkey_no or password_comes_first(order)) else AUTH_KEY
+    out["pubkey_auth_no"] = pubkey_no
+    out["preferred_authentications"] = order
     # An empty profile command leaves the connection's ProxyCommand alone.
     # A set command owns the field and drops any extra copy: OpenSSH uses the
     # first occurrence, and the formatter emits the field itself.
@@ -464,8 +474,14 @@ def auth_projection(
     owned_keywords: Iterable[str] = (),
     *,
     expand_paths: bool = False,
+    legacy_auth: bool = False,
 ) -> Dict[str, Any]:
     """The profile-owned slice of connection data.
+
+    The authentication order and switches are plain lines the profile owns
+    like any other option, so they enter through ``extra``. Links recorded
+    before that (``legacy_auth``) also hashed the editor's Key/Password view
+    of the block; it stays in their projection so they keep matching.
 
     Drift detection computes it from what the loader parsed back out of the
     Host block, so loader normalization applies equally to the recorded and the
@@ -487,7 +503,6 @@ def auth_projection(
 
     projection = {
         "username": _norm_str(data.get("username")),
-        "auth_method": auth_method,
         "key_select_mode": key_mode,
         "identity_files": paths("identity_files") if key_mode in (1, 2) else [],
         "certificate_files": paths("certificate_files"),
@@ -495,7 +510,6 @@ def auth_projection(
         "add_keys_to_agent": _norm_str(data.get("add_keys_to_agent")).lower(),
         "pkcs11_provider": _norm_str(data.get("pkcs11_provider")),
         "security_key_provider": _norm_str(data.get("security_key_provider")),
-        "pubkey_auth_no": bool(data.get("pubkey_auth_no")),
         "forward_agent": bool(data.get("forward_agent")),
         "forward_agent_target": _norm_str(data.get("forward_agent_target")),
         "extra": extra_lines,
@@ -504,6 +518,9 @@ def auth_projection(
     # leave the connection's own command alone keep their recorded fingerprint.
     if "proxycommand" in owned:
         projection["proxy_command"] = _norm_str(data.get("proxy_command"))
+    if legacy_auth:
+        projection["auth_method"] = auth_method
+        projection["pubkey_auth_no"] = bool(data.get("pubkey_auth_no"))
     return projection
 
 
@@ -512,21 +529,41 @@ def _projection_fingerprint(projection: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()[:32]
 
 
-def auth_fingerprint(data: Mapping[str, Any], owned_keywords: Iterable[str] = ()) -> str:
-    projection = auth_projection(data, owned_keywords)
+AUTH_LINES_FINGERPRINT = "v3:"
+
+
+def auth_fingerprint(
+    data: Mapping[str, Any],
+    owned_keywords: Iterable[str] = (),
+    *,
+    legacy_auth: bool = False,
+) -> str:
+    """The link's drift fingerprint.
+
+    New links hash only what the profile owns (``v3:``). ``legacy_auth``
+    recomputes the fingerprint of a link recorded before the authentication
+    lines were plain options, which also hashed the Key/Password view.
+    """
+    projection = auth_projection(data, owned_keywords, legacy_auth=legacy_auth)
+    if not legacy_auth:
+        return AUTH_LINES_FINGERPRINT + _projection_fingerprint(projection)
     # Version command-owning links so legacy whitespace folding is only used
     # during migration, never to mask subsequent edits inside shell quotes.
     prefix = "v2:" if "proxy_command" in projection else ""
     return prefix + _projection_fingerprint(projection)
 
 
+def is_legacy_auth_link(applied: str) -> bool:
+    return bool(applied) and not applied.startswith(AUTH_LINES_FINGERPRINT)
+
+
 def matches_legacy_auth_fingerprint(
     data: Mapping[str, Any], owned_keywords: Iterable[str], applied: str,
 ) -> bool:
     """Recognize both historical ProxyCommand projections before upgrading a link."""
-    if applied.startswith("v2:"):
+    if applied.startswith("v2:") or not is_legacy_auth_link(applied):
         return False
-    projection = auth_projection(data, owned_keywords)
+    projection = auth_projection(data, owned_keywords, legacy_auth=True)
     if "proxy_command" not in projection:
         return False
     command = " ".join(projection["proxy_command"].split())
@@ -543,7 +580,6 @@ def matches_legacy_auth_fingerprint(
 # order. Frontends own the labels.
 DIFF_FIELDS: Tuple[str, ...] = (
     "username",
-    "auth_method",
     "key_select_mode",
     "identity_files",
     "certificate_files",
@@ -551,7 +587,6 @@ DIFF_FIELDS: Tuple[str, ...] = (
     "add_keys_to_agent",
     "pkcs11_provider",
     "security_key_provider",
-    "pubkey_auth_no",
     "forward_agent",
     "forward_agent_target",
     "proxy_command",

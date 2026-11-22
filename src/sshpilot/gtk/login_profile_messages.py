@@ -168,7 +168,11 @@ def profile_summary_line(profile: LoginProfileSummary) -> str:
     parts = []
     if settings.username:
         parts.append(settings.username)
-    if settings.auth_method == 1:
+    from ..core.connections.auth_preferences import password_comes_first, preferred_order
+
+    if settings.auth_method == 1 or password_comes_first(
+        preferred_order(settings.extra_ssh_config)
+    ):
         parts.append(_("password"))
     elif settings.identity_files:
         parts.append(", ".join(path.rsplit("/", 1)[-1] for path in settings.identity_files))

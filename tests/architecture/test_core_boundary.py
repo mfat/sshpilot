@@ -84,6 +84,8 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("connection_dialog_auth.py", "connections.auth_preferences", "AUTH_POLICY_KEYWORDS"),
         ("connection_dialog_auth.py", "connections.auth_preferences", "OPENSSH_DEFAULT_PREFERRED_AUTH"),
         ("connection_dialog_auth.py", "connections.auth_preferences", "PREFERRED_AUTH_KEYWORD"),
+        ("gtk/login_profile_messages.py", "connections.auth_preferences", "password_comes_first"),
+        ("gtk/login_profile_messages.py", "connections.auth_preferences", "preferred_order"),
         # -- connection field validation --------------------------------
         ("ssh_connection_validator.py", "validation.connection", "SSHConnectionValidator"),
         ("ssh_connection_validator.py", "validation.connection", "ValidationResult"),

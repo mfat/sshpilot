@@ -578,3 +578,54 @@ def test_legacy_proxy_fingerprint_upgrade(env, representation, drift):
         assert service.reconcile() == ()
         service.update_profile(profile.id, {'proxy_command': 'ssh updated'})
         assert 'ProxyCommand ssh updated' in root.read_text()
+
+
+@pytest.mark.parametrize('drift', [False, True])
+def test_a_password_profile_link_recorded_before_auth_lines_keeps_matching(env, drift):
+    """Links recorded when profiles had a Key/Password choice do not detach.
+
+    Their fingerprint hashed the Key/Password view of the block; it is still
+    computed that way for them, until the profile is next applied.
+    """
+    import hashlib
+
+    from sshpilot.core.connections.auth_preferences import PASSWORD_MODE_PREFERRED_AUTH
+
+    repo, service, root, _secrets, _events = env
+    profile = service.create_profile({
+        'name': 'Ops',
+        'extra_ssh_config': f'PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}',
+    })
+    service.assign_connections(('web1',), LINK_EXPLICIT, profile.id)
+    # The projection format persisted before the change: no owned extra keys,
+    # the Key/Password view hashed.
+    historical = {
+        'username': '', 'auth_method': 1, 'key_select_mode': 0,
+        'identity_files': [], 'certificate_files': [], 'identity_agent': '',
+        'add_keys_to_agent': '', 'pkcs11_provider': '', 'security_key_provider': '',
+        'pubkey_auth_no': False, 'forward_agent': False, 'forward_agent_target': '',
+        'extra': [],
+    }
+    old_hash = hashlib.sha256(json.dumps(
+        historical, sort_keys=True, separators=(',', ':')
+    ).encode()).hexdigest()[:32]
+    link = _link(repo, 'web1').to_metadata()
+    link['applied'] = old_hash
+    link['extra_keys'] = []
+    with service._operation():
+        repo.update_connection_metadata('web1', {'login_profile': link})
+        if drift:
+            # Someone removes the password-first order from the block.
+            repo.update_connection('web1', {'extra_ssh_config': ''})
+    before = root.read_text()
+    detached = service.reconcile()
+    assert root.read_text() == before
+    if drift:
+        assert len(detached) == 1 and detached[0].reason == DETACH_DRIFT
+        return
+    assert detached == ()
+    assert _link(repo, 'web1').applied == old_hash
+    # The next edit applies the profile's lines and records a v3 fingerprint.
+    service.update_profile(profile.id, {'username': 'ops'})
+    assert _link(repo, 'web1').applied.startswith('v3:')
+    assert f'PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}' in _block(root, 'web1')

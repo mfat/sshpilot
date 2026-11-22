@@ -49,6 +49,7 @@ from .models import (
     ProfileLink,
     apply_profile_to_data,
     auth_fingerprint,
+    is_legacy_auth_link,
     matches_legacy_auth_fingerprint,
     auth_projection,
     diff_projections,
@@ -732,7 +733,10 @@ class LoginProfileService:
                 continue
             previous = self._state.get((link.rev or "").split(":", 1)[0])
             previous_name = previous.name if previous else ""
-            fingerprint = auth_fingerprint(record.data, link.extra_keys)
+            fingerprint = auth_fingerprint(
+                record.data, link.extra_keys,
+                legacy_auth=is_legacy_auth_link(link.applied),
+            )
             if link.applied and fingerprint != link.applied:
                 if matches_legacy_auth_fingerprint(record.data, link.extra_keys, link.applied):
                     # Upgrade only the metadata after validating the old hash;
