@@ -454,6 +454,37 @@ def join_extra(other: str, policy_lines: Iterable[str]) -> str:
 # ---------------------------------------------------------------------------
 
 _DRAG_PREFIX = "sshpilot-auth-method:"
+_preview_css_installed = False
+
+
+def _install_preview_css() -> None:
+    """Flat styling for the "OpenSSH will try" preview, once per display."""
+    global _preview_css_installed
+    if _preview_css_installed:
+        return
+    from gi.repository import Gdk, Gtk
+
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"""
+list.auth-order-preview-list,
+list.auth-order-preview-list > row.auth-order-preview,
+list.auth-order-preview-list > row.auth-order-preview:hover {
+  background: transparent;
+  box-shadow: none;
+}
+row.auth-order-preview,
+row.auth-order-preview > box.header {
+  padding-left: 0; padding-right: 0; margin-left: 0; margin-right: 0;
+}
+row.auth-order-preview .subtitle { font-family: monospace; }
+""")
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _preview_css_installed = True
 
 
 def build_auth_policy_group(on_changed: Callable[[], None], *, profile: bool = False):
@@ -533,13 +564,18 @@ class AuthPolicyGroup:
 
         # Below the list, in a list of its own: a group places its own rows
         # ahead of any other child.
+        # A read-only preview, not a setting: no card, the small dim
+        # "property" title above the result, the methods in monospace.
+        _install_preview_css()
         self.order_row = Adw.ActionRow(title=_("OpenSSH will try:"))
         self.order_row.set_activatable(False)
         self.order_row.set_subtitle_selectable(True)
+        self.order_row.add_css_class("property")
+        self.order_row.add_css_class("auth-order-preview")
         help_list = Gtk.ListBox()
-        help_list.add_css_class("boxed-list")
+        help_list.add_css_class("auth-order-preview-list")
         help_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        help_list.set_margin_top(12)
+        help_list.set_margin_top(6)
         help_list.append(self.order_row)
         # A profile is not one host: there is no single order in force.
         help_list.set_visible(not self.profile)
