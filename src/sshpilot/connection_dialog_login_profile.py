@@ -334,6 +334,7 @@ class ConnectionDialogLoginProfileMixin:
         from .gtk.login_profile_controller import settings_owned_fields
 
         owned = set(settings_owned_fields(profile.settings)) if profile else set()
+        self._profile_locked_fields = owned
         note = (
             _("Set by login profile “{name}”. Choose “Don't use a profile” "
               "to edit it here.").format(name=profile.settings.name)
@@ -350,6 +351,13 @@ class ConnectionDialogLoginProfileMixin:
                     widget.set_tooltip_text(note if locked else None)
                 except Exception:
                     pass
+        # "Only use the selected keys" also depends on the key selection mode.
+        on_key_select_changed = getattr(self, "on_key_select_changed", None)
+        if callable(on_key_select_changed):
+            try:
+                on_key_select_changed()
+            except Exception:
+                pass
         password_row = getattr(self, "password_row", None)
         if password_row is not None:
             # A profile's stored password is the one used.

@@ -49,6 +49,9 @@ def _fingerprint_for_path(path: str) -> tuple:
     try:
         with public_path.open(encoding="utf-8") as handle:
             result = _parse_keygen_line(handle.readline(64 * 1024))
+    except FileNotFoundError:
+        # A private key without its .pub file is normal; show it without a type.
+        logger.debug("No public key beside %s; fingerprint unavailable", expanded)
     except (OSError, UnicodeError):
         logger.debug("Public-key fingerprint unavailable", exc_info=True)
     _FINGERPRINT_CACHE[expanded] = result
