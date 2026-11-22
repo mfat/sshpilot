@@ -1,16 +1,32 @@
 """The connection dialog's authentication section.
 
-One set of settings, no modes. The Host block's own lines are the truth:
+One set of settings, no modes. Both forms a Host block may use are read:
 
-* ``PreferredAuthentications`` -- the order of the method rows;
+* ``PreferredAuthentications`` -- the order of the methods;
 * ``PubkeyAuthentication``, ``PasswordAuthentication``,
   ``KbdInteractiveAuthentication``, ``GSSAPIAuthentication``,
-  ``HostbasedAuthentication`` -- each row's checkbox.
+  ``HostbasedAuthentication`` -- per-method switches.
 
-An order or checkbox the block does not set shows what OpenSSH resolves,
-drawn like any other value (a checkbox's tooltip says it is inherited);
-changing it writes the line for this host, and Reset removes it. A
-line below the list always states what OpenSSH will try.
+A row is checked when the order lists the method and the block's own lines
+do not switch it off. Only the block's own lines and the order count:
+inherited or built-in switches never check or uncheck a row, so the dialog
+does not guess what OpenSSH will do.
+
+Saving without an edit writes the lines back exactly as authored. The first
+edit writes the checked methods as one ``PreferredAuthentications`` line
+and drops the block's per-method lines it makes redundant:
+
+* a method's own line, ``yes`` or ``no``, once the order leaves it out
+  (only when this block's order is the one OpenSSH uses, so the method is
+  not tried whatever the line says);
+* a method's own ``no`` line when the user checks it;
+* a method's own ``yes`` line when the user unchecks it.
+
+A ``yes`` line of a method still checked is kept: the order cannot switch a
+method on, and Kerberos and host-based are off unless a line turns them on.
+Lines a linked login profile sets are never dropped. While an earlier
+block or Settings decide the order, this block's order is not used, so the
+rows cannot be edited. A line below the list states what OpenSSH will try.
 
 :class:`AuthPolicy` is the pure model (no GTK), so its rules are tested
 headless; :class:`AuthPolicyGroup` draws it.
@@ -127,9 +143,17 @@ class AuthPolicy:
     # ``ssh -G`` cannot answer. ``fallback_known`` is False until it arrives.
     fallback: Dict[str, str] = field(default_factory=dict)
     fallback_known: bool = False
-    # Methods a checkbox added to the order in this edit -> (the order,
-    # whether the switch was set, its value) before, so unchecking undoes it.
-    _added_to_order: Dict[str, tuple] = field(default_factory=dict)
+    # A login profile's own lines: no host to resolve, nothing above them.
+    standalone: bool = False
+    # ``earlier`` has arrived (it is empty, not unknown, when nothing above
+    # this block sets a policy line).
+    earlier_known: bool = False
+    # Methods whose lines a linked login profile sets: never dropped.
+    locked_methods: set = field(default_factory=set)
+    # The block as loaded (order, switches, passthrough) and the methods
+    # checked then, recorded by the first edit so returning to the same
+    # checked methods restores the authored lines.
+    _before_edit: Optional[tuple] = None
 
     # -- loading -------------------------------------------------------------
 
@@ -208,7 +232,7 @@ class AuthPolicy:
         return self.order is not None
 
     def shown_order(self) -> List[str]:
-        """The rows' order: this block's, else the inherited or default one."""
+        """The order in force: this block's, else the inherited or default one."""
         if self.order is not None:
             return list(self.order)
         if self._uses_fallback("order") and self.fallback_known:
@@ -216,6 +240,24 @@ class AuthPolicy:
         if self.inherited_order is not None:
             return list(self.inherited_order)
         return list(DEFAULT_ORDER)
+
+    def order_known(self) -> bool:
+        """The order is known: the block's own, or what it inherits has arrived."""
+        if self.order is not None or self.standalone:
+            return True
+        if self._uses_fallback("order"):
+            return self.fallback_known
+        return True
+
+    def order_decided_elsewhere(self) -> bool:
+        """An earlier block or Settings decide the order, not this block."""
+        if self.standalone:
+            return False
+        return self._decided_elsewhere(PREFERRED_AUTH_KEYWORD) is not None
+
+    def can_edit(self) -> bool:
+        """Edits are allowed: the order is known and this block's is used."""
+        return self.order_known() and not self.order_decided_elsewhere()
 
     def in_order(self, method: str) -> bool:
         return method in self.shown_order()
@@ -225,26 +267,27 @@ class AuthPolicy:
         shown = self.shown_order()
         return [m for m in METHODS if m not in shown]
 
-    def full_order(self) -> List[str]:
-        """Every row's place: the shown order, then the methods it leaves out.
+    def _is_checked(self, method: str) -> bool:
+        return self.in_order(method) and self.switches.get(method) is not False
 
-        Every method always has a row; one the order leaves out is listed
-        last, unchecked.
-        """
-        return self.shown_order() + self.left_out()
+    def checked(self) -> List[str]:
+        """Known methods checked, in order."""
+        return [m for m in self.shown_order() if m in METHODS and self._is_checked(m)]
 
     def rows(self) -> List[str]:
-        """Known methods in row order."""
-        return [m for m in self.full_order() if m in METHODS]
+        """Known methods in row order: the checked ones in order, then the rest."""
+        checked = self.checked()
+        return checked + [m for m in METHODS if m not in checked]
 
     def shown_checked(self, method: str) -> Optional[bool]:
-        """The row's checkbox: tried by this host's settings, ``None`` unknown.
+        """The row's checkbox; ``None`` while the order is not known.
 
-        A method is tried when the order lists it and its switch is not off.
+        Checked when the order lists *method* and the block's own lines do
+        not switch it off. Inherited and built-in switches do not count.
         """
-        if not self.in_order(method):
-            return False
-        return self.shown_switch(method)
+        if not self.order_known():
+            return None
+        return self._is_checked(method)
 
     def unknown_tokens(self) -> List[str]:
         """Methods in the order this dialog does not know (kept as written)."""
@@ -301,83 +344,105 @@ class AuthPolicy:
 
     # -- edits -------------------------------------------------------------
 
-    def _write_order(self, order: List[str]) -> None:
-        self.order = order
+    def _snapshot(self) -> tuple:
+        return (
+            None if self.order is None else list(self.order),
+            dict(self.switches),
+            list(self._passthrough),
+            set(self._unknown_after_reset),
+        )
+
+    def _begin_edit(self) -> None:
+        """First edit: the order becomes the checked methods, written as one
+        line (methods this dialog does not know keep their places)."""
+        if self._before_edit is not None:
+            return
+        self._before_edit = (self._snapshot(), self.checked())
+        self.order = [
+            m for m in self.shown_order() if m not in METHODS or self._is_checked(m)
+        ]
         self._unknown_after_reset.discard("order")
 
-    def move(self, method: str, index: int) -> bool:
-        """Put *method* at *index* among all rows (see :meth:`full_order`).
+    def _end_edit(self) -> None:
+        """Back to the methods checked before the first edit: restore the
+        authored lines, so an undone change writes nothing."""
+        if self._before_edit is None:
+            return
+        snapshot, checked_before = self._before_edit
+        if self.checked() != checked_before:
+            return
+        order, switches, passthrough, unknown = snapshot
+        self.order, self.switches = order, switches
+        self._passthrough, self._unknown_after_reset = passthrough, unknown
+        self._before_edit = None
 
-        Moving a method the order leaves out puts it in the order at that
-        place and keeps it unchecked by switching it off, so the row says
-        what OpenSSH does.
+    @property
+    def edited(self) -> bool:
+        return self._before_edit is not None
+
+    def _drop_switch(self, method: str) -> None:
+        """Remove the block's lines for *method*'s switch, every copy."""
+        self.switches.pop(method, None)
+        self._drop_passthrough(
+            {k for k, m in METHOD_OF_KEYWORD.items() if m == method}
+        )
+
+    def set_tried(self, method: str, value: bool) -> bool:
+        """The row's checkbox: list *method* in the order or leave it out.
+
+        Checking adds it at the end and drops its own ``no`` line;
+        unchecking takes it out and drops its own ``yes`` line. The last
+        checked method cannot be unchecked: an empty order is not valid.
         """
-        full = self.full_order()
-        if method not in full:
+        if method not in METHODS or method in self.locked_methods:
             return False
-        current = self.shown_order()
-        was_left_out = method not in current
-        rest = [m for m in full if m != method]
+        if not self.can_edit() or self._is_checked(method) == bool(value):
+            return False
+        if not value and self.checked() == [method]:
+            return False
+        self._begin_edit()
+        if value:
+            if method not in self.order:
+                self.order.append(method)
+            if self.switches.get(method) is False:
+                self._drop_switch(method)
+        else:
+            self.order = [m for m in self.order if m != method]
+            if self.switches.get(method) is True:
+                self._drop_switch(method)
+        self._end_edit()
+        return True
+
+    def move(self, method: str, index: int) -> bool:
+        """Put checked *method* at *index* among the checked rows.
+
+        Unchecked rows are not in the order, so they do not move.
+        """
+        if not self.can_edit():
+            return False
+        checked = self.checked()
+        if method not in checked:
+            return False
+        rest = [m for m in checked if m != method]
         index = max(0, min(index, len(rest)))
         rest.insert(index, method)
-        order = [m for m in rest if m in current or m == method]
-        if not was_left_out and order == current:
+        if rest == checked:
             return False
-        if was_left_out and order == current + [method]:
-            # Still after every listed method: nothing visible changes.
-            return False
-        self._write_order(order)
-        self._added_to_order.pop(method, None)
-        if was_left_out and self.shown_switch(method) is not False:
-            self.set_switch(method, False)
+        self._begin_edit()
+        # Fill the known methods' places in turn; unknown tokens stay put.
+        queue = iter(rest)
+        self.order = [next(queue) if m in METHODS else m for m in self.order]
+        self._end_edit()
         return True
 
     def move_by(self, method: str, delta: int) -> bool:
-        full = self.full_order()
-        if method not in full:
+        checked = self.checked()
+        if method not in checked:
             return False
-        return self.move(method, full.index(method) + delta)
-
-    def set_tried(self, method: str, value: bool) -> bool:
-        """The row's checkbox: try *method* or not.
-
-        Checking a method the order leaves out adds it at the end of the
-        order (and switches it on); unchecking it again in the same edit
-        takes it back out. Unchecking a listed method switches it off.
-        """
-        if method not in METHODS:
+        index = checked.index(method) + delta
+        if index < 0 or index >= len(checked):
             return False
-        if value:
-            changed = False
-            if not self.in_order(method):
-                self._added_to_order[method] = (
-                    None if self.order is None else list(self.order),
-                    method in self.switches,
-                    self.switches.get(method),
-                )
-                self._write_order(self.shown_order() + [method])
-                changed = True
-                # Listing it is enough when its switch is already on.
-                if self.shown_switch(method) is not True:
-                    self.set_switch(method, True)
-                return changed
-            return self.set_switch(method, True)
-        added = self._added_to_order.pop(method, None)
-        if added is not None and self.in_order(method):
-            prior_order, had_switch, prior_switch = added
-            order = [m for m in self.shown_order() if m != method]
-            if prior_order is None or order == prior_order:
-                self.order = prior_order
-            else:
-                self._write_order(order)
-            if had_switch:
-                self.switches[method] = prior_switch
-            else:
-                self.switches.pop(method, None)
-            return True
-        if not self.in_order(method):
-            return False
-        return self.set_switch(method, False)
+        return self.move(method, index)
 
     def _drop_passthrough(self, keywords) -> None:
         """Remove repeated lines of *keywords*: a reset means the block sets
@@ -390,7 +455,7 @@ class AuthPolicy:
         if self.order is None:
             return False
         self.order = None
-        self._added_to_order.clear()
+        self._before_edit = None
         self._drop_passthrough({PREFERRED_AUTH_KEYWORD})
         if "order" in self._loaded:
             self._unknown_after_reset.add("order")
@@ -414,6 +479,19 @@ class AuthPolicy:
 
     # -- saving ------------------------------------------------------------
 
+    def _redundant(self, method: str) -> bool:
+        """*method*'s own switch line adds nothing once edited: the order
+        leaves the method out, and this block's order is the one OpenSSH
+        uses, so the method is not tried whatever the line says."""
+        return (
+            self.edited
+            and method in self.switches
+            and method not in self.locked_methods
+            and method not in (self.order or [])
+            and (self.standalone or self.earlier_known)
+            and not self.order_decided_elsewhere()
+        )
+
     def to_lines(self) -> List[str]:
         """The block's authentication lines, authored text kept if unchanged."""
         lines: List[str] = []
@@ -422,15 +500,21 @@ class AuthPolicy:
                 lines.append(self._raw["order"])
             else:
                 lines.append(f"PreferredAuthentications {','.join(self.order)}")
+        dropped = set()
         for method, keyword in METHOD_KEYWORDS:
             if method not in self.switches:
+                continue
+            if self._redundant(method):
+                dropped.update(k for k, m in METHOD_OF_KEYWORD.items() if m == method)
                 continue
             value = self.switches[method]
             if self._loaded.get(method) is value and method in self._raw:
                 lines.append(self._raw[method])
             else:
                 lines.append(f"{keyword} {'yes' if value else 'no'}")
-        lines.extend(self._passthrough)
+        lines.extend(
+            line for line in self._passthrough if _split(line)[0] not in dropped
+        )
         return lines
 
 
@@ -537,10 +621,13 @@ class AuthPolicyGroup:
         self.group.set_description(
             _("Lines this profile sets replace a linked connection's own; what "
               "it leaves unset stays the connection's. Methods are tried from "
-              "the top; unchecked methods are switched off.")
+              "the top; unchecked methods are left out.")
             if self.profile else
-            _("Methods are tried from the top. Unchecked methods are switched off.")
+            _("Methods are tried from the top. Unchecked methods are left out.")
         )
+        # Why the order cannot be edited when an earlier block or Settings
+        # decide it (set by the dialog, which knows where the value is from).
+        self.order_elsewhere_note = ""
         self.reset_button = Gtk.Button(label=_("Reset"))
         self.reset_button.add_css_class("flat")
         self.reset_button.set_tooltip_text(
@@ -636,7 +723,7 @@ class AuthPolicyGroup:
                 Gtk.ShortcutTrigger.parse_string(trigger),
                 Gtk.CallbackAction.new(
                     lambda *_a, m=method, d=delta: (
-                        self._order_locked
+                        not self._can_move(m)
                         or self._edit(lambda: self.policy.move_by(m, d)), True)[1]
                 ),
             ))
@@ -646,7 +733,7 @@ class AuthPolicyGroup:
         source.set_actions(Gdk.DragAction.MOVE)
         source.connect("prepare", lambda *_a, m=method: (
             Gdk.ContentProvider.new_for_value(_DRAG_PREFIX + m)
-            if row.get_sensitive() and not self._order_locked
+            if self._can_move(m)
             else None
         ))
         source.connect("drag-begin", lambda src, _drag, r=row: self._drag_icon(src, r))
@@ -702,24 +789,33 @@ class AuthPolicyGroup:
         self._order_locked = bool(order)
         self._locked_methods = set(methods)
         self._lock_note = note
+        self.policy.locked_methods = set(self._locked_methods)
         self.sync()
 
+    def _editable(self) -> bool:
+        """The order can be edited: known, used, and not a profile's."""
+        return self.policy.can_edit() and not self._order_locked
+
+    def _can_move(self, method: str) -> bool:
+        return self._editable() and method in self.policy.checked()
+
     def _on_drop(self, _target, value, _x, y, row) -> bool:
-        if self._order_locked:
-            return False
         value = str(value or "")
         if not value.startswith(_DRAG_PREFIX):
             return False  # only this list's own rows
         source = value[len(_DRAG_PREFIX):]
-        dest = row._method
-        order = self.policy.full_order()
-        if source == dest or source not in order or dest not in order:
+        if not self._can_move(source):
             return False
-        index = order.index(dest)
+        dest = row._method
+        rows = self.policy.rows()
+        if source == dest or dest not in rows:
+            return False
+        index = rows.index(dest)
         if y > row.get_height() / 2:
             index += 1
-        if order.index(source) < index:
+        if rows.index(source) < index:
             index -= 1
+        # Dropped among the unchecked rows: last of the checked ones.
         return self._edit(lambda: self.policy.move(source, index))
 
     # -- model <-> widgets ------------------------------------------------
@@ -729,10 +825,13 @@ class AuthPolicyGroup:
         # not this block's lines, and may arrive before the block is loaded.
         if not policy.earlier:
             policy.earlier = dict(self.policy.earlier)
+        policy.earlier_known = policy.earlier_known or self.policy.earlier_known
         if not policy.forced:
             policy.forced = dict(self.policy.forced)
         if not policy.fallback_known and self.policy.fallback_known:
             policy.set_fallback(self.policy.fallback)
+        policy.standalone = self.profile
+        policy.locked_methods = set(self._locked_methods)
         self.policy = policy
         self.sync()
 
@@ -750,12 +849,14 @@ class AuthPolicyGroup:
     def _on_toggled(self, check, method: str) -> None:
         if self._syncing:
             return
-        self._edit(lambda: self.policy.set_tried(method, check.get_active()))
+        if not self._editable() or not self._edit(
+            lambda: self.policy.set_tried(method, check.get_active())
+        ):
+            # Refused (locked, not known yet, last method): show the model.
+            self.sync()
 
     def sync(self) -> None:
         """Redraw every row from the model."""
-        from .connection_dialog_overrides import inherited_note_text
-
         self._syncing = True
         try:
             child = self.list.get_first_child()
@@ -765,12 +866,8 @@ class AuthPolicyGroup:
                 child = following
             policy = self.policy
             order_set = policy.order_is_set
-            rows = policy.rows()
-            for index, method in enumerate(rows):
-                self._show_row(
-                    self.rows[method],
-                    first=index == 0, last=index == len(rows) - 1,
-                )
+            for method in policy.rows():
+                self._show_row(self.rows[method], method)
             unknown = policy.unknown_tokens()
             if unknown:
                 self.extra_row.set_title(", ".join(unknown))
@@ -779,7 +876,7 @@ class AuthPolicyGroup:
                 )
                 self.list.append(self.extra_row)
             for method in METHODS:
-                self._show_switch(self.rows[method], method, inherited_note_text())
+                self._show_switch(self.rows[method], method)
             self.reset_button.set_sensitive(order_set and not self._order_locked)
             self.reset_button.set_tooltip_text(
                 self._lock_note if self._order_locked else (
@@ -799,46 +896,43 @@ class AuthPolicyGroup:
         finally:
             self._syncing = False
 
-    def _show_row(self, row, *, first: bool, last: bool) -> None:
-        # Never dimmed: dim reads as "off" in GNOME, and an inherited order
-        # is in force. The warnings below the list flag what does not apply.
+    def _show_row(self, row, method: str) -> None:
+        # Never dimmed: dim reads as "off" in GNOME. Only checked rows move:
+        # unchecked methods are not in the order.
         self.list.append(row)
         actions = row._actions
-        movable = not self._order_locked
-        actions.lookup_action("up").set_enabled(movable and not first)
-        actions.lookup_action("down").set_enabled(movable and not last)
-        actions.lookup_action("top").set_enabled(movable and not first)
+        checked = self.policy.checked()
+        movable = self._can_move(method)
+        index = checked.index(method) if method in checked else -1
+        actions.lookup_action("up").set_enabled(movable and index > 0)
+        actions.lookup_action("down").set_enabled(movable and index < len(checked) - 1)
+        actions.lookup_action("top").set_enabled(movable and index > 0)
 
-    def _show_switch(self, row, method: str, inherited_note: str) -> None:
+    def _show_switch(self, row, method: str) -> None:
         check = row._check
         policy = self.policy
         value = policy.shown_checked(method)
         check.set_inconsistent(value is None)
         check.set_active(bool(value))
-        is_set = policy.switch_is_set(method)
         locked = method in self._locked_methods
-        left_out = not policy.in_order(method)
-        # Checking a left-out method adds it to the order.
-        check.set_sensitive(not locked and not (left_out and self._order_locked))
-        row._actions.lookup_action("reset").set_enabled(is_set and not locked)
-        # Never dimmed (see _show_row); the tooltip says where it comes from.
-        if locked:
-            check.set_tooltip_text(self._lock_note)
-            return
-        if left_out:
-            check.set_tooltip_text(
-                self._lock_note if self._order_locked else
-                _("Not in the login order (PreferredAuthentications), so it is "
-                  "not tried. Check it to add it at the end.")
-            )
-            return
-        if is_set:
-            check.set_tooltip_text(None)
+        last = bool(value) and policy.checked() == [method]
+        check.set_sensitive(
+            value is not None and not locked and self._editable() and not last
+        )
+        row._actions.lookup_action("reset").set_enabled(
+            policy.switch_is_set(method) and not locked
+        )
+        # Never dimmed (see _show_row); the tooltip says why it cannot change.
+        if value is None:
+            note = _("Shown once OpenSSH has read the configuration.")
+        elif locked or self._order_locked:
+            note = self._lock_note
+        elif policy.order_decided_elsewhere():
+            note = self.order_elsewhere_note or None
+        elif last:
+            note = _("At least one method must stay checked.")
+        elif not value:
+            note = _("Not tried. Check it to add it at the end of the login order.")
         else:
-            if self.profile:
-                note = _("Not set by this profile: each connection keeps its own value.")
-            elif value is not None:
-                note = inherited_note
-            else:
-                note = _("Not set for this host. The value it inherits is shown once saved.")
-            check.set_tooltip_text(note)
+            note = None
+        check.set_tooltip_text(note)

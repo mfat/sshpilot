@@ -1,8 +1,8 @@
 """The login profile editor shows authentication like the connection dialog.
 
 Order and per-method switches are lines of the profile's options: the
-section edits them, the extra-options text keeps the rest, and what the
-profile does not set reads "not set" (each connection keeps its own).
+section edits them as one order line, and the extra-options text keeps
+the rest.
 """
 
 import pytest
@@ -48,22 +48,20 @@ def test_the_section_edits_the_profiles_lines_and_keeps_the_rest(gtk):
     ))
     section = editor.auth_policy
     assert section.policy.order == PASSWORD_ORDER.split(",")
-    # What the profile does not set reads "not set".
+    # The profile's order lists keys, so they are checked.
     check = section.rows["publickey"]._check
-    assert check.get_inconsistent()
-    assert "Not set by this profile" in check.get_tooltip_text()
-
-    # The user turns keys off for linked connections: a mixed checkbox
-    # ticks on the first click and unticks on the second.
-    check.activate()
     assert check.get_active() and not check.get_inconsistent()
+    assert check.get_sensitive()
+
+    # The user turns keys off for linked connections: the order line loses
+    # them; no per-method line is written.
     check.activate()
     assert not check.get_active()
     settings = settings_from_values(editor.values())
     assert settings.extra_ssh_config.splitlines() == [
         "Compression yes",
-        f"PreferredAuthentications {PASSWORD_ORDER}",
-        "PubkeyAuthentication no",
+        "PreferredAuthentications "
+        "keyboard-interactive,password,gssapi-with-mic,hostbased",
     ]
     section.reset_button.emit("clicked")  # leave the order to each connection
     assert "PreferredAuthentications" not in settings_from_values(

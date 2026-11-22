@@ -119,6 +119,10 @@ PASSWORD_PREF = (
 
 # -- the authentication section ------------------------------------------------
 
+_OPENSSH_ORDER = (
+    "gssapi-with-mic", "hostbased", "publickey", "keyboard-interactive", "password",
+)
+
 def _auth_tick(attr, value):
     """Tick or untick a method's checkbox, as a user does (twice if needed)."""
     def act(dialog):
@@ -136,14 +140,6 @@ def _auth_shows(attr, value):
         return (box.get_active() is value and not box.get_inconsistent()
                 and not box.has_css_class("dim-label"))
     return check
-
-
-def _auth_reset(attr):
-    return lambda d: getattr(d, attr)._actions.activate_action("reset", None)
-
-
-def _auth_inherits(attr):
-    return lambda d: getattr(d, attr)._check.has_css_class("dim-label")
 
 
 def _auth_order_is(order):
@@ -262,26 +258,22 @@ CONTRACTS = [
       clear=_auth_reset_order, cleared=_auth_order_inherited,
       ssh_g={"preferredauthentications":
              "publickey,gssapi-with-mic,hostbased,keyboard-interactive,password"}),
-    # Authentication: each method's switch, off and on
+    # Authentication: unchecking a method writes the order line without it
+    # (one line; no per-method switch), and Reset takes the line out again.
     *[
-        C(f"{label} {'on' if value else 'off'}", (attr,),
-          _auth_tick(attr, value), _auth_shows(attr, value),
-          (f"{keyword} {'yes' if value else 'no'}",),
-          clear=_auth_reset(attr), cleared=_auth_inherits(attr),
-          ssh_g={keyword.lower(): ssh_value})
-        for label, attr, keyword, value, ssh_value in (
-            ("keys", "auth_publickey_row", "PubkeyAuthentication", False, "false"),
-            ("keys", "auth_publickey_row", "PubkeyAuthentication", True, "true"),
-            ("password", "auth_password_row", "PasswordAuthentication", False, "no"),
-            ("password", "auth_password_row", "PasswordAuthentication", True, "yes"),
-            ("keyboard-interactive", "auth_kbdinteractive_row",
-             "KbdInteractiveAuthentication", False, "no"),
-            ("keyboard-interactive", "auth_kbdinteractive_row",
-             "KbdInteractiveAuthentication", True, "yes"),
-            ("kerberos", "auth_gssapi_row", "GSSAPIAuthentication", True, "yes"),
-            ("kerberos", "auth_gssapi_row", "GSSAPIAuthentication", False, "no"),
-            ("host-based", "auth_hostbased_row", "HostbasedAuthentication", True, "yes"),
-            ("host-based", "auth_hostbased_row", "HostbasedAuthentication", False, "no"),
+        C(f"{label} off", (attr,),
+          _auth_tick(attr, False), _auth_shows(attr, False),
+          ("PreferredAuthentications " + ",".join(
+              m for m in _OPENSSH_ORDER if m != method),),
+          clear=_auth_reset_order, cleared=_auth_order_inherited,
+          ssh_g={"preferredauthentications": ",".join(
+              m for m in _OPENSSH_ORDER if m != method)})
+        for label, attr, method in (
+            ("keys", "auth_publickey_row", "publickey"),
+            ("password", "auth_password_row", "password"),
+            ("keyboard-interactive", "auth_kbdinteractive_row", "keyboard-interactive"),
+            ("kerberos", "auth_gssapi_row", "gssapi-with-mic"),
+            ("host-based", "auth_hostbased_row", "hostbased"),
         )
     ],
     C("specific key", ("key_select_row", "key_editor"),
