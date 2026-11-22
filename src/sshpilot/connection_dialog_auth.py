@@ -12,16 +12,17 @@ do not switch it off. Only the block's own lines and the order count:
 inherited or built-in switches never check or uncheck a row, so the dialog
 does not guess what OpenSSH will do.
 
-Saving without an edit writes the lines back exactly as authored. The first
-edit writes the checked methods as one ``PreferredAuthentications`` line
-and drops the block's per-method lines it makes redundant:
+Saving without an edit writes the lines back exactly as authored. An edit
+writes the checked methods as one ``PreferredAuthentications`` line. A
+per-method line goes only with an explicit change to that method:
 
-* a method's own line, ``yes`` or ``no``, once the order leaves it out;
-* a method's own ``no`` line when the user checks it;
-* a method's own ``yes`` line when the user unchecks it.
+* checking a method drops its own ``no`` line;
+* unchecking a method drops its own ``yes`` line.
 
-A ``yes`` line of a method still checked is kept: the order cannot switch a
-method on, and Kerberos and host-based are off unless a line turns them on.
+Every other method's lines stay as written, whatever the edit: a reorder,
+or a change to another method, never touches them. When an earlier block
+or Settings decide the order, those lines are what allow or forbid each
+method, so dropping one would change a setting the user did not touch.
 Lines a linked login profile sets are never dropped.
 
 Like every other field, this edits the Host block only: which block's
@@ -287,9 +288,7 @@ class AuthPolicy:
         return [m for m in self.shown_order() if m not in METHODS]
 
     def switch_is_set(self, method: str) -> bool:
-        """The block keeps a line for *method*'s switch (one an edit drops
-        on saving does not count)."""
-        return method in self.switches and not self._redundant(method)
+        return method in self.switches
 
     def shown_switch(self, method: str) -> Optional[bool]:
         """This block's value, else the inherited one; ``None`` when unknown."""
@@ -297,7 +296,7 @@ class AuthPolicy:
             return self.switches[method]
         if method in self._loaded:
             # ssh -G answered with the block's own line: what remains once
-            # it is dropped comes from the fallback, when known.
+            # an edit dropped it comes from the fallback, when known.
             return self._fallback_switch(method)
         if self._uses_fallback(method):
             return self._fallback_switch(method)
@@ -478,16 +477,6 @@ class AuthPolicy:
 
     # -- saving ------------------------------------------------------------
 
-    def _redundant(self, method: str) -> bool:
-        """*method*'s own switch line, dropped once edited: the block's order
-        leaves the method out, so the block says it once, in the order."""
-        return (
-            self.edited
-            and method in self.switches
-            and method not in self.locked_methods
-            and method not in (self.order or [])
-        )
-
     def to_lines(self) -> List[str]:
         """The block's authentication lines, authored text kept if unchanged."""
         lines: List[str] = []
@@ -496,21 +485,15 @@ class AuthPolicy:
                 lines.append(self._raw["order"])
             else:
                 lines.append(f"PreferredAuthentications {','.join(self.order)}")
-        dropped = set()
         for method, keyword in METHOD_KEYWORDS:
             if method not in self.switches:
-                continue
-            if self._redundant(method):
-                dropped.update(k for k, m in METHOD_OF_KEYWORD.items() if m == method)
                 continue
             value = self.switches[method]
             if self._loaded.get(method) is value and method in self._raw:
                 lines.append(self._raw[method])
             else:
                 lines.append(f"{keyword} {'yes' if value else 'no'}")
-        lines.extend(
-            line for line in self._passthrough if _split(line)[0] not in dropped
-        )
+        lines.extend(self._passthrough)
         return lines
 
 

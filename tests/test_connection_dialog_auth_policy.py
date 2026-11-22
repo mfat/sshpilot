@@ -5,8 +5,8 @@ checked when the order lists the method and the block's own lines do not
 switch it off; inherited or built-in switches never decide a checkbox.
 
 Saving without an edit writes the block back exactly as authored. An edit
-writes one order line and drops the per-method lines it makes redundant.
-Like any other field, it edits this Host block only: an earlier block or
+writes one order line; a per-method line goes only when the user checks or
+unchecks that method. Like any other field, it edits this Host block only: an earlier block or
 Settings deciding the order never blocks or changes the edit.
 """
 
@@ -171,9 +171,9 @@ def test_undoing_an_edit_writes_the_authored_lines_again():
     assert policy.to_lines() == [line.strip() for line in lines]
 
 
-# -- edits drop the per-method lines they make redundant -----------------------
+# -- a per-method line goes only with an explicit change to that method --------
 
-def test_an_edit_drops_switch_lines_of_methods_the_order_leaves_out():
+def test_an_edit_keeps_the_lines_of_methods_it_does_not_change():
     policy = _policy(
         "PreferredAuthentications publickey,password",
         "PubkeyAuthentication no",
@@ -184,9 +184,30 @@ def test_an_edit_drops_switch_lines_of_methods_the_order_leaves_out():
     assert policy.set_tried("gssapi-with-mic", True)
     assert policy.to_lines() == [
         "PreferredAuthentications password,gssapi-with-mic",
-        # Kept: the order cannot switch a checked method on.
+        "HostbasedAuthentication yes",
+        "PubkeyAuthentication no",
+        "KbdInteractiveAuthentication no",
         "PasswordAuthentication yes",
     ]
+
+
+def test_reordering_keeps_an_unchecked_methods_off_line():
+    # Review P1: an earlier Host * decides the order, so this block's
+    # "PasswordAuthentication no" is what keeps password off. Moving two
+    # other methods must not drop it.
+    lines = (
+        "PreferredAuthentications publickey,keyboard-interactive",
+        "PasswordAuthentication no",
+    )
+    policy = _policy(*lines, earlier={
+        "preferredauthentications": "password,publickey,keyboard-interactive",
+    })
+    assert policy.move("keyboard-interactive", 0)
+    assert policy.to_lines() == [
+        "PreferredAuthentications keyboard-interactive,publickey",
+        "PasswordAuthentication no",
+    ]
+    assert "password" not in policy.will_try()
 
 
 def test_checking_a_method_drops_its_own_off_line():
@@ -207,17 +228,15 @@ def test_every_copy_of_a_dropped_line_goes():
     # A second copy OpenSSH ignores today would take effect otherwise.
     policy = _policy("PreferredAuthentications password,publickey",
                      "PubkeyAuthentication no", "PubkeyAuthentication yes")
-    assert policy.move("password", 0) is False  # already first
-    assert policy.set_tried("keyboard-interactive", True)
-    assert policy.to_lines() == ["PreferredAuthentications password,keyboard-interactive"]
+    assert policy.set_tried("publickey", True)
+    assert policy.to_lines() == ["PreferredAuthentications password,publickey"]
 
 
 def test_lines_a_linked_profile_sets_are_never_dropped():
     policy = _policy("PreferredAuthentications password", "PubkeyAuthentication no")
     policy.locked_methods = {"publickey"}
-    policy.set_tried("keyboard-interactive", True)
-    assert "PubkeyAuthentication no" in policy.to_lines()
     assert not policy.set_tried("publickey", True)
+    assert policy.to_lines() == ["PreferredAuthentications password", "PubkeyAuthentication no"]
 
 
 # -- the block is edited the same way whatever wins ---------------------------
@@ -229,8 +248,11 @@ def test_an_earlier_order_does_not_change_how_the_block_is_edited():
     policy = _policy(*lines, earlier={"preferredauthentications": "publickey"})
     assert policy.will_try() == []  # publickey, switched off here
     assert policy.set_tried("keyboard-interactive", True)
-    assert policy.to_lines() == ["PreferredAuthentications password,keyboard-interactive"]
-    assert policy.will_try() == ["publickey"]
+    assert policy.to_lines() == [
+        "PreferredAuthentications password,keyboard-interactive",
+        "PubkeyAuthentication no",
+    ]
+    assert policy.will_try() == []
 
 
 def test_settings_forced_options_do_not_block_edits_either():
@@ -241,14 +263,6 @@ def test_settings_forced_options_do_not_block_edits_either():
     assert policy.move("publickey", 0)
     assert policy.to_lines() == ["PreferredAuthentications publickey,password"]
     assert policy.will_try() == ["publickey"]
-
-
-def test_a_profile_ignores_what_is_above_a_host():
-    policy = AuthPolicy.from_lines(["PreferredAuthentications password",
-                                    "PubkeyAuthentication no"])
-    policy.standalone = True
-    assert policy.set_tried("keyboard-interactive", True)
-    assert policy.to_lines() == ["PreferredAuthentications password,keyboard-interactive"]
 
 
 # -- Reset ----------------------------------------------------------------------
