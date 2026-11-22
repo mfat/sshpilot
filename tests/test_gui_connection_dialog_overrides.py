@@ -394,7 +394,7 @@ def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gu
     )
 
     # An order set here loses to the earlier list: it is not used.
-    dialog.auth_policy.password_first_button.emit("clicked")
+    dialog.auth_password_row._actions.activate_action("top", None)
     assert dialog.auth_order_row._sshpilot_override_state == OVERRIDDEN
     assert dialog.auth_order_row._sshpilot_override_icon.get_visible()
     assert "publickey" in dialog.auth_order_row.get_tooltip_text()

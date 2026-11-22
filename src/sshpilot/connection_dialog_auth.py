@@ -43,7 +43,6 @@ METHOD_OF_KEYWORD: Dict[str, str] = {
 }
 METHOD_OF_KEYWORD["challengeresponseauthentication"] = "keyboard-interactive"
 DEFAULT_ORDER: Tuple[str, ...] = tuple(OPENSSH_DEFAULT_PREFERRED_AUTH.split(","))
-PASSWORD_METHODS: Tuple[str, ...] = ("keyboard-interactive", "password")
 
 _TRUE = {"yes", "true", "on", "1", "unbound", "host-bound"}
 _FALSE = {"no", "false", "off", "0"}
@@ -100,6 +99,9 @@ class AuthPolicy:
     # A block before this one already decides these (lower-case keyword ->
     # value), so this block's own value is not used.
     earlier: Dict[str, str] = field(default_factory=dict)
+    # Settings ▸ SSH Options force these on the command line, ahead of
+    # every configuration file (lower-case keyword -> value).
+    forced: Dict[str, str] = field(default_factory=dict)
     # Authored text kept as written while its value is unchanged.
     _raw: Dict[str, str] = field(default_factory=dict)
     _loaded: Dict[str, object] = field(default_factory=dict)
@@ -191,11 +193,22 @@ class AuthPolicy:
             return None
         return self.inherited_switches.get(method)
 
+    def _decided_elsewhere(self, keyword: str) -> Optional[str]:
+        """A forced (command line) or earlier-block value, forced first."""
+        for source in (self.forced, self.earlier):
+            if keyword in source:
+                return source[keyword]
+            if keyword == "kbdinteractiveauthentication" and (
+                "challengeresponseauthentication" in source
+            ):
+                return source["challengeresponseauthentication"]
+        return None
+
     def effective_order(self) -> Optional[List[str]]:
         """What OpenSSH uses, or ``None`` when it cannot be known yet."""
-        earlier = self.earlier.get(PREFERRED_AUTH_KEYWORD)
-        if earlier:
-            return parse_order(earlier)
+        decided = self._decided_elsewhere(PREFERRED_AUTH_KEYWORD)
+        if decided:
+            return parse_order(decided)
         if self.order is not None:
             return list(self.order)
         if "order" in self._unknown_after_reset or not self.inherited_known:
@@ -203,12 +216,9 @@ class AuthPolicy:
         return list(self.inherited_order or DEFAULT_ORDER)
 
     def effective_switch(self, method: str) -> Optional[bool]:
-        keyword = KEYWORD_OF[method].lower()
-        earlier = self.earlier.get(keyword)
-        if earlier is None and method == "keyboard-interactive":
-            earlier = self.earlier.get("challengeresponseauthentication")
-        if earlier is not None:
-            return parse_switch(earlier)
+        decided = self._decided_elsewhere(KEYWORD_OF[method].lower())
+        if decided is not None:
+            return parse_switch(decided)
         return self.shown_switch(method)
 
     def will_try(self) -> Optional[List[str]]:
@@ -252,15 +262,6 @@ class AuthPolicy:
         if method in current:
             return False
         self._write_order(current + [method])
-        return True
-
-    def try_password_first(self) -> bool:
-        current = self.shown_order()
-        first = [m for m in PASSWORD_METHODS if m in current] or list(PASSWORD_METHODS)
-        order = first + [m for m in current if m not in first]
-        if self.order is not None and order == self.order:
-            return False
-        self._write_order(order)
         return True
 
     def reset_order(self) -> bool:
@@ -370,23 +371,13 @@ class AuthPolicyGroup:
         self.group.set_description(
             _("Methods are tried from the top. Unchecked methods are switched off.")
         )
-        buttons = Gtk.Box(spacing=6)
-        self.password_first_button = Gtk.Button(label=_("Try password first"))
-        self.password_first_button.add_css_class("flat")
-        self.password_first_button.set_tooltip_text(
-            _("Move keyboard-interactive and password to the top of the order")
-        )
-        self.password_first_button.connect("clicked", lambda *_a: self._edit(
-            self.policy.try_password_first))
         self.reset_button = Gtk.Button(label=_("Reset"))
         self.reset_button.add_css_class("flat")
         self.reset_button.set_tooltip_text(
             _("Remove this host's order so the inherited one applies")
         )
         self.reset_button.connect("clicked", lambda *_a: self._edit(self.policy.reset_order))
-        buttons.append(self.password_first_button)
-        buttons.append(self.reset_button)
-        self.group.set_header_suffix(buttons)
+        self.group.set_header_suffix(self.reset_button)
 
         self.list = Gtk.ListBox()
         self.list.add_css_class("boxed-list")
@@ -521,10 +512,12 @@ class AuthPolicyGroup:
     # -- model <-> widgets ------------------------------------------------
 
     def load(self, policy: AuthPolicy) -> None:
-        # What earlier blocks decide is about the configuration, not this
-        # block's lines, and may arrive before the block is (re)loaded.
+        # What earlier blocks and Settings decide is about the configuration,
+        # not this block's lines, and may arrive before the block is loaded.
         if not policy.earlier:
             policy.earlier = dict(self.policy.earlier)
+        if not policy.forced:
+            policy.forced = dict(self.policy.forced)
         self.policy = policy
         self.sync()
 

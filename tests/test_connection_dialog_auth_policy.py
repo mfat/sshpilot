@@ -115,19 +115,14 @@ def test_move_by_and_its_bounds():
     assert not policy.move_by("publickey", 1)
 
 
-def test_try_password_first_moves_both_password_methods_to_the_top():
-    policy = _policy()
-    assert policy.try_password_first()
-    assert policy.order == [
-        "keyboard-interactive", "password", "gssapi-with-mic", "hostbased", "publickey",
-    ]
-    assert not policy.try_password_first()
-
-
-def test_try_password_first_keeps_a_methods_absence():
-    policy = _policy("PreferredAuthentications publickey,password")
-    policy.try_password_first()
-    assert policy.order == ["password", "publickey"]
+def test_settings_forced_options_decide_ahead_of_every_block():
+    # Settings ▸ SSH Options pass these on the command line: they beat the
+    # host's own lines and any earlier block.
+    policy = _policy("PreferredAuthentications password,publickey")
+    policy.earlier = {"preferredauthentications": "keyboard-interactive"}
+    policy.forced = {"preferredauthentications": "publickey,password",
+                     "passwordauthentication": "no"}
+    assert policy.will_try() == ["publickey"]
 
 
 def test_reset_order_removes_the_line_and_waits_for_the_inherited_one():

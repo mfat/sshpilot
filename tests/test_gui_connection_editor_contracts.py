@@ -110,7 +110,7 @@ def _same_paths(attr, paths):
     return check
 
 
-# "Try password first" on OpenSSH's default order.
+# OpenSSH's default order with keyboard-interactive and password first.
 PASSWORD_PREF = (
     "PreferredAuthentications "
     "keyboard-interactive,password,gssapi-with-mic,hostbased,publickey"
@@ -234,10 +234,15 @@ CONTRACTS = [
       ("ForwardAgent $MY_AGENT",),
       clear=_combo("forward_agent_row", 0), cleared=_shows_combo("forward_agent_row", 0)),
     # Authentication: the order
-    C("try password first", ("auth_order_row",), _auth_click("password_first_button"),
-      _auth_order_is(PASSWORD_PREF.split(" ", 1)[1].split(",")), (PASSWORD_PREF,),
+    C("password to the top", ("auth_order_row",),
+      lambda d: d.auth_password_row._actions.activate_action("top", None),
+      _auth_order_is(["password", "gssapi-with-mic", "hostbased", "publickey",
+                      "keyboard-interactive"]),
+      ("PreferredAuthentications "
+       "password,gssapi-with-mic,hostbased,publickey,keyboard-interactive",),
       clear=_auth_click("reset_button"), cleared=_auth_order_inherited,
-      ssh_g={"preferredauthentications": PASSWORD_PREF.split(" ", 1)[1]}),
+      ssh_g={"preferredauthentications":
+             "password,gssapi-with-mic,hostbased,publickey,keyboard-interactive"}),
     C("keys to the top", ("auth_order_row",),
       lambda d: d.auth_publickey_row._actions.activate_action("top", None),
       _auth_order_is(["publickey", "gssapi-with-mic", "hostbased",

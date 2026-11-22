@@ -504,6 +504,9 @@ class ConnectionDialogOverridesMixin:
 
     def _set_forced_options(self, forced: Dict[str, str]) -> None:
         self._forced_options = dict(forced or {})
+        hook = getattr(self, "_auth_policy_set_forced", None)
+        if callable(hook):
+            hook(self._forced_options)
         self._apply_override_notes()
 
     def _set_earlier_directives(self, earlier: Dict[str, object]) -> None:
