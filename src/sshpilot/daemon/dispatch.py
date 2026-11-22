@@ -224,6 +224,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
     "connections.list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "connections.list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "connections.check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -506,6 +507,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.get_editor",
         "connections.get_effective_config",
         "connections.get_earlier_directives",
+        "connections.get_inherited_auth",
         "connections.list_config_conflicts",
         "connections.list_config_syntax_errors",
         "connections.check_unsaved_host",
@@ -791,6 +793,7 @@ class RequestDispatcher:
             "connections.get_editor": self._handle_get_connection_editor,
             "connections.get_effective_config": self._handle_get_effective_config,
             "connections.get_earlier_directives": self._handle_get_earlier_directives,
+            "connections.get_inherited_auth": self._handle_get_inherited_auth,
             "connections.list_config_conflicts": self._handle_list_config_conflicts,
             "connections.list_config_syntax_errors": (
                 self._handle_list_config_syntax_errors
@@ -1445,6 +1448,24 @@ class RequestDispatcher:
         return DeferredResult(
             operation=lambda: earlier_directives_to_wire(
                 self._connections.get_earlier_directives(host)
+            ),
+            command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_get_inherited_auth(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"host"}:
+            raise ValueError("connections.get_inherited_auth requires host")
+        host = request.params["host"]
+        if type(host) is not str or not host.strip():
+            raise ValueError("host must be a non-empty string")
+        return DeferredResult(
+            operation=lambda: earlier_directives_to_wire(
+                self._connections.get_inherited_auth(host)
             ),
             command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
             on_rejected=lambda: None,

@@ -440,14 +440,34 @@ class ConnectionDialogOverridesMixin:
             self._set_earlier_directives({})
             return
 
-        def apply(earlier):
-            if earlier is None or serial != getattr(self, "_earlier_fetch_serial", 0):
+        auth_host = (
+            str(getattr(connection, "nickname", "") or "") if editing else alias
+        )
+
+        def apply(earlier, inherited_auth):
+            if serial != getattr(self, "_earlier_fetch_serial", 0):
                 return False
-            self._set_earlier_directives(earlier)
+            hook = getattr(self, "_auth_policy_set_fallback", None)
+            if callable(hook):
+                hook(inherited_auth)
+            if earlier is not None:
+                self._set_earlier_directives(earlier)
             return False
 
         def worker():
             earlier = None
+            inherited_auth = None
+            # What the authentication section shows for a value reset after
+            # loading, or for a host not saved yet: the lines it would
+            # inherit without its own.
+            if auth_host and callable(getattr(client, "get_inherited_auth", None)):
+                try:
+                    inherited_auth = {
+                        str(d.key).lower(): str(d.value)
+                        for d in client.get_inherited_auth(auth_host)
+                    }
+                except Exception:
+                    logger.debug("Inherited authentication unavailable", exc_info=True)
             try:
                 if editing:
                     from .api.connection_identity import connection_id_for
@@ -468,7 +488,7 @@ class ConnectionDialogOverridesMixin:
                     )
             except Exception:
                 logger.debug("Earlier SSH directives unavailable", exc_info=True)
-            GLib.idle_add(apply, earlier)
+            GLib.idle_add(apply, earlier, inherited_auth)
 
         threading.Thread(target=worker, daemon=True).start()
 

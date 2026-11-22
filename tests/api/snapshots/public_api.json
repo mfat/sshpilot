@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.105",
+  "api_implementation_version": "0.106",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -320,6 +320,10 @@
     "get_identity_state": {
       "capability": "identity.read",
       "status": "daemon-only"
+    },
+    "get_inherited_auth": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "get_interaction": {
       "capability": "interactions.read",
@@ -838,6 +842,7 @@
     "get_host_info",
     "get_identity_providers",
     "get_identity_state",
+    "get_inherited_auth",
     "get_interaction",
     "get_launch_command",
     "get_login_profiles",
@@ -1553,6 +1558,16 @@
     "get_identity_state": {
       "parameters": [],
       "return": "IdentityState"
+    },
+    "get_inherited_auth": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "host",
+          "type": "str"
+        }
+      ],
+      "return": "tuple[EarlierDirective, ...]"
     },
     "get_interaction": {
       "parameters": [
@@ -2909,6 +2924,9 @@
       "capability": "connections.config.read"
     },
     "connections.get_effective_config": {
+      "capability": "connections.config.read"
+    },
+    "connections.get_inherited_auth": {
       "capability": "connections.config.read"
     },
     "connections.get_launch_command": {

@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.105",
+  "api_implementation_version": "0.106",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -224,6 +224,10 @@
     "get_identity_state": {
       "capability": "identity.read",
       "status": "daemon-only"
+    },
+    "get_inherited_auth": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "get_interaction": {
       "capability": "interactions.read",
@@ -743,6 +747,9 @@
       "capability": "connections.config.read"
     },
     "connections.get_effective_config": {
+      "capability": "connections.config.read"
+    },
+    "connections.get_inherited_auth": {
       "capability": "connections.config.read"
     },
     "connections.get_launch_command": {

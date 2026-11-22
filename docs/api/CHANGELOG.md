@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- `connections.get_inherited_auth(host)` returns, as `EarlierDirective` lines,
+  what a host would get for `PreferredAuthentications` and the per-method
+  authentication switches if its own blocks set none of them: the first line
+  of the files a launch reads that sets each, outside the host's own `Host`
+  blocks. A keyword no line sets is absent (OpenSSH's default applies). Works
+  for a host that is not saved yet. The connection editor uses it for a value
+  reset after loading and for new connections. Requires
+  `connections.config.read`. The API implementation version is 0.106;
+  Protocol remains 1.0.
 - A login profile applies only what it sets. `LoginProfileSettings.key_select_mode`
   and `forward_agent` are optional (`null` = not set); empty text and lists are
   not set. A linked connection keeps its own value for every field the profile

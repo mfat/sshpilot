@@ -180,3 +180,28 @@ def test_a_profile_that_sets_no_order_leaves_the_hosts_own():
     profile = LoginProfile(id="lp-0000000000000001", name="ops")
     out = apply_profile_to_data({"extra_ssh_config": PASSWORD_LINE}, profile)
     assert out["extra_ssh_config"] == PASSWORD_LINE
+
+
+# -- what a host inherits without its own authentication lines ----------------
+
+def test_inherited_auth_ignores_the_hosts_own_lines(tmp_path):
+    service, _repository, root = _service(
+        tmp_path,
+        "    PreferredAuthentications password\n"
+        "    GSSAPIAuthentication yes\n"
+        "\nHost h* *.corp\n"
+        "    PreferredAuthentications publickey,keyboard-interactive\n"
+        "\nHost *\n"
+        "    GSSAPIAuthentication no\n",
+    )
+    found = {d.key: d.value for d in service.get_inherited_auth("h")}
+    assert found == {
+        "preferredauthentications": "publickey,keyboard-interactive",
+        "gssapiauthentication": "no",
+    }
+    # A host not saved yet inherits the same way.
+    assert {d.key: d.value for d in service.get_inherited_auth("new.corp")} == {
+        "preferredauthentications": "publickey,keyboard-interactive",
+        "gssapiauthentication": "no",
+    }
+    assert service.get_inherited_auth("bad host") == ()

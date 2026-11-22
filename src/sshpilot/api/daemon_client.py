@@ -426,6 +426,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_connection_store_snapshot": Capability.CONNECTIONS_READ,
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -888,6 +889,16 @@ class DaemonClient:
             return earlier_directives_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid earlier SSH directives")
+
+    def get_inherited_auth(self, host: str) -> Tuple[EarlierDirective, ...]:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        if type(host) is not str or not host.strip():
+            raise TypeError("host must be a non-empty string")
+        result = self._request("connections.get_inherited_auth", {"host": host})
+        try:
+            return earlier_directives_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid inherited authentication lines")
 
     def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)

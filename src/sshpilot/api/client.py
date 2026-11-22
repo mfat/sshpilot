@@ -250,6 +250,9 @@ class SshPilotClient(Protocol):
     def get_earlier_directives(self, host: str) -> Tuple[EarlierDirective, ...]:
         ...
 
+    def get_inherited_auth(self, host: str) -> Tuple[EarlierDirective, ...]:
+        ...
+
     def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
         ...
 

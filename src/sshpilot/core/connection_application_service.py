@@ -95,6 +95,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -1278,6 +1279,51 @@ class ConnectionApplicationService:
                 line=int(item["line"]),
             )
             for item in found
+        )
+
+    def get_inherited_auth(self, host: str) -> Tuple[EarlierDirective, ...]:
+        """The authentication lines *host* would get if it set none itself.
+
+        For each of PreferredAuthentications and the per-method switches
+        (PubkeyAuthentication, PasswordAuthentication,
+        KbdInteractiveAuthentication / ChallengeResponseAuthentication,
+        GSSAPIAuthentication, HostbasedAuthentication): the first line of the
+        files a launch reads that sets it for *host*, outside the host's own
+        ``Host`` blocks. A keyword with no such line is absent: OpenSSH's
+        default applies. Works for a saved host (what removing its own line
+        leaves) and for one not saved yet (what a new block inherits).
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from ..api.models.common import validate_ssh_host_alias
+        from .connections.auth_preferences import AUTH_POLICY_KEYWORDS
+        from .ssh_config_effective import inherited_directives, launch_config_file
+
+        try:
+            validate_ssh_host_alias(host)
+        except (TypeError, ValueError):
+            return ()
+        if not host or host != host.strip() or any(
+            char.isspace() or char in "*?!" for char in host
+        ):
+            return ()
+        root = str(self._repository.root_config_path)
+        try:
+            found = inherited_directives(
+                host, launch_config_file(root), AUTH_POLICY_KEYWORDS
+            )
+        except Exception:
+            logger.debug("Inherited authentication lookup failed", exc_info=True)
+            return ()
+        return tuple(
+            EarlierDirective(
+                key=str(item["key"]),
+                value=str(item["value"]),
+                block=str(item["block"]),
+                file=str(item["file"]),
+                line=int(item["line"]),
+            )
+            for _key, item in sorted(found.items())
         )
 
     def list_config_syntax_errors(self) -> Tuple[ConfigSyntaxError, ...]:

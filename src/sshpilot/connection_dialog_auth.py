@@ -44,6 +44,15 @@ METHOD_OF_KEYWORD: Dict[str, str] = {
 METHOD_OF_KEYWORD["challengeresponseauthentication"] = "keyboard-interactive"
 DEFAULT_ORDER: Tuple[str, ...] = tuple(OPENSSH_DEFAULT_PREFERRED_AUTH.split(","))
 
+# OpenSSH's built-in values, used when no line sets a switch.
+OPENSSH_SWITCH_DEFAULTS: Dict[str, bool] = {
+    "gssapi-with-mic": False,
+    "hostbased": False,
+    "publickey": True,
+    "keyboard-interactive": True,
+    "password": True,
+}
+
 _TRUE = {"yes", "true", "on", "1", "unbound", "host-bound"}
 _FALSE = {"no", "false", "off", "0"}
 
@@ -108,8 +117,15 @@ class AuthPolicy:
     # Policy lines that are not the first of their kind (OpenSSH ignores
     # them); carried through untouched.
     _passthrough: List[str] = field(default_factory=list)
-    # Values reset after load whose inherited value is not known yet.
+    # Values reset after load: ``ssh -G`` answered with the host's own line,
+    # so their inherited value comes from the fallback instead.
     _unknown_after_reset: set = field(default_factory=set)
+    # What the host inherits without its own authentication lines
+    # (``connections.get_inherited_auth``; lower-case keyword -> value).
+    # Used for values reset after load and for hosts not saved yet, where
+    # ``ssh -G`` cannot answer. ``fallback_known`` is False until it arrives.
+    fallback: Dict[str, str] = field(default_factory=dict)
+    fallback_known: bool = False
 
     # -- loading -------------------------------------------------------------
 
@@ -155,6 +171,32 @@ class AuthPolicy:
                 continue
             self.inherited_switches[method] = parse_switch(resolved.get(keyword.lower()))
 
+    def set_fallback(self, inherited: Optional[Mapping[str, str]]) -> None:
+        if inherited is None:
+            return
+        self.fallback = {str(k).lower(): str(v) for k, v in inherited.items()}
+        self.fallback_known = True
+
+    def _fallback_switch(self, method: str) -> Optional[bool]:
+        if not self.fallback_known:
+            return None
+        keyword = KEYWORD_OF[method].lower()
+        value = self.fallback.get(keyword)
+        if value is None and method == "keyboard-interactive":
+            value = self.fallback.get("challengeresponseauthentication")
+        parsed = parse_switch(value) if value is not None else None
+        return OPENSSH_SWITCH_DEFAULTS[method] if parsed is None else parsed
+
+    def _fallback_order(self) -> Optional[List[str]]:
+        if not self.fallback_known:
+            return None
+        raw = self.fallback.get(PREFERRED_AUTH_KEYWORD)
+        return parse_order(raw) if raw else list(DEFAULT_ORDER)
+
+    def _uses_fallback(self, key: str) -> bool:
+        """``ssh -G`` cannot tell what *key* inherits: reset, or no host yet."""
+        return key in self._unknown_after_reset or not self.inherited_known
+
     # -- what is shown -----------------------------------------------------
 
     @property
@@ -165,6 +207,8 @@ class AuthPolicy:
         """The rows' order: this block's, else the inherited or default one."""
         if self.order is not None:
             return list(self.order)
+        if self._uses_fallback("order") and self.fallback_known:
+            return self._fallback_order()
         if self.inherited_order is not None:
             return list(self.inherited_order)
         return list(DEFAULT_ORDER)
@@ -189,8 +233,8 @@ class AuthPolicy:
         """This block's value, else the inherited one; ``None`` when unknown."""
         if method in self.switches:
             return self.switches[method]
-        if method in self._unknown_after_reset or not self.inherited_known:
-            return None
+        if self._uses_fallback(method):
+            return self._fallback_switch(method)
         return self.inherited_switches.get(method)
 
     def _decided_elsewhere(self, keyword: str) -> Optional[str]:
@@ -211,8 +255,8 @@ class AuthPolicy:
             return parse_order(decided)
         if self.order is not None:
             return list(self.order)
-        if "order" in self._unknown_after_reset or not self.inherited_known:
-            return None
+        if self._uses_fallback("order"):
+            return self._fallback_order()
         return list(self.inherited_order or DEFAULT_ORDER)
 
     def effective_switch(self, method: str) -> Optional[bool]:
@@ -400,7 +444,8 @@ class AuthPolicyGroup:
             _("Leave the order to each linked connection") if self.profile else
             _("Remove this host's order so the inherited one applies")
         )
-        self.reset_button.connect("clicked", lambda *_a: self._edit(self.policy.reset_order))
+        self.reset_button.connect("clicked", self._on_reset_clicked)
+        self._reset_alert = None
         self.group.set_header_suffix(self.reset_button)
 
         self.list = Gtk.ListBox()
@@ -521,6 +566,36 @@ class AuthPolicyGroup:
         except Exception:
             pass
 
+    def _on_reset_clicked(self, *_args) -> None:
+        """Reset the order; ask first when that removes a saved line."""
+        if self.profile or "order" not in self.policy._loaded:
+            # A profile's own setting, or an order set in this edit only.
+            self._edit(self.policy.reset_order)
+            return
+        from gi.repository import Adw
+
+        alert = Adw.AlertDialog(
+            heading=_("Remove the custom authentication order?"),
+            body=_(
+                "This will remove your custom authentication order from the "
+                "SSH configuration when you save. The host then uses the "
+                "order it inherits."
+            ),
+        )
+        alert.add_response("cancel", _("Cancel"))
+        alert.add_response("remove", _("Remove"))
+        alert.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+        alert.set_default_response("cancel")
+        alert.set_close_response("cancel")
+        alert.connect("response", self._on_reset_response)
+        self._reset_alert = alert
+        alert.present(self.group.get_root())
+
+    def _on_reset_response(self, _alert, response: str) -> None:
+        self._reset_alert = None
+        if response == "remove":
+            self._edit(self.policy.reset_order)
+
     def set_profile_locks(
         self, *, order: bool, methods: Iterable[str], note: str = ""
     ) -> None:
@@ -557,6 +632,8 @@ class AuthPolicyGroup:
             policy.earlier = dict(self.policy.earlier)
         if not policy.forced:
             policy.forced = dict(self.policy.forced)
+        if not policy.fallback_known and self.policy.fallback_known:
+            policy.set_fallback(self.policy.fallback)
         self.policy = policy
         self.sync()
 

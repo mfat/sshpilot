@@ -158,6 +158,16 @@ def _auth_click(button):
     return lambda d: getattr(d.auth_policy, button).emit("clicked")
 
 
+def _auth_reset_order(dialog):
+    """Click Reset and, when it asks (a saved order), confirm the removal."""
+    section = dialog.auth_policy
+    section.reset_button.emit("clicked")
+    alert = section._reset_alert
+    if alert is not None:
+        alert.emit("response", "remove")
+        alert.force_close()
+
+
 def _specific_keys(dialog):
     dialog.key_select_row.set_selected(1)
 
@@ -240,7 +250,7 @@ CONTRACTS = [
                       "keyboard-interactive"]),
       ("PreferredAuthentications "
        "password,gssapi-with-mic,hostbased,publickey,keyboard-interactive",),
-      clear=_auth_click("reset_button"), cleared=_auth_order_inherited,
+      clear=_auth_reset_order, cleared=_auth_order_inherited,
       ssh_g={"preferredauthentications":
              "password,gssapi-with-mic,hostbased,publickey,keyboard-interactive"}),
     C("keys to the top", ("auth_order_row",),
@@ -249,7 +259,7 @@ CONTRACTS = [
                       "keyboard-interactive", "password"]),
       ("PreferredAuthentications "
        "publickey,gssapi-with-mic,hostbased,keyboard-interactive,password",),
-      clear=_auth_click("reset_button"), cleared=_auth_order_inherited,
+      clear=_auth_reset_order, cleared=_auth_order_inherited,
       ssh_g={"preferredauthentications":
              "publickey,gssapi-with-mic,hostbased,keyboard-interactive,password"}),
     # Authentication: each method's switch, off and on
@@ -700,3 +710,26 @@ def test_an_unrelated_edit_reports_only_what_changed(gui, root, monkeypatch):
     dialog.username_row.set_text("someone")
     _save_and_wait(dialog, root, name, [*BASE_LINES, "User someone"])
     assert seen == [("username",)]
+
+
+def test_reset_shows_what_the_host_inherits_without_its_own_line(gui, root):
+    name = f"contract{next(_names)}"
+    root.write_text(
+        f"Host {name}\n    HostName 192.0.2.30\n"
+        "    PreferredAuthentications password\n"
+        "\nHost *\n    PreferredAuthentications publickey,keyboard-interactive\n"
+    )
+    assert _pump(lambda: _find(gui.window, name) is not None)
+    dialog = _open(gui, name)
+    section = dialog.auth_policy
+    assert _pump(lambda: section.policy.fallback_known, seconds=8)
+    # A saved order: Reset asks first, and Cancel keeps it.
+    section.reset_button.emit("clicked")
+    alert = section._reset_alert
+    assert alert is not None
+    alert.emit("response", "cancel")
+    alert.force_close()
+    assert section.policy.order == ["password"]
+    _auth_reset_order(dialog)
+    assert section.policy.shown_order() == ["publickey", "keyboard-interactive"]
+    assert dialog.auth_order_row.get_subtitle() == "publickey, keyboard-interactive"

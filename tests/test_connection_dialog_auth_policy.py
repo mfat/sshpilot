@@ -205,3 +205,33 @@ def test_the_older_keyword_copy_goes_with_a_reset_too():
     policy = _policy("KbdInteractiveAuthentication no", "ChallengeResponseAuthentication yes")
     policy.reset_switch("keyboard-interactive")
     assert policy.to_lines() == []
+
+
+# -- what a reset value, or a host not saved yet, inherits --------------------
+
+def test_a_reset_order_shows_what_the_host_inherits_without_its_line():
+    policy = _policy("PreferredAuthentications password,publickey")
+    policy.reset_order()
+    assert policy.will_try() is None            # ssh -G answered with the own line
+    policy.set_fallback({"preferredauthentications": "publickey,keyboard-interactive"})
+    assert policy.shown_order() == ["publickey", "keyboard-interactive"]
+    assert policy.will_try() == ["publickey", "keyboard-interactive"]
+
+
+def test_a_reset_switch_falls_back_to_the_inherited_line_or_the_default():
+    policy = _policy("GSSAPIAuthentication yes", "PasswordAuthentication no")
+    policy.reset_switch("gssapi-with-mic")
+    policy.reset_switch("password")
+    policy.set_fallback({"gssapiauthentication": "no"})
+    assert policy.shown_switch("gssapi-with-mic") is False   # from another block
+    assert policy.shown_switch("password") is True           # OpenSSH's default
+
+
+def test_a_host_not_saved_yet_shows_what_a_new_block_inherits():
+    policy = AuthPolicy.from_lines([])                       # ssh -G never answers
+    policy.set_fallback({"pubkeyauthentication": "no"})
+    assert policy.shown_switch("publickey") is False
+    assert policy.shown_switch("hostbased") is False
+    assert policy.shown_order() == list(DEFAULT_ORDER)
+    # Kerberos and host-based are off by default, keys by the inherited line.
+    assert policy.will_try() == ["keyboard-interactive", "password"]

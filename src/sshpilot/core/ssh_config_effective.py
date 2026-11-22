@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Union
+from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Union
 
 from sshpilot.platform.process import hidden_console_kwargs
 
@@ -847,6 +847,7 @@ def earlier_directives(
     _whole: bool = False,
     _undecided: Optional[Set[str]] = None,
     cache: Optional[ConfigScanCache] = None,
+    _without_own: bool = False,
 ) -> List[Dict[str, object]]:
     """Options OpenSSH obtains for *host* before it reaches the host's own block.
 
@@ -927,7 +928,7 @@ def earlier_directives(
                     active = False
                     index = block_end
                     continue
-                own = not _whole and any(
+                own = (not _whole or _without_own) and any(
                     token.lower() == host_lower for token in tokens
                 )
                 if own:
@@ -958,6 +959,8 @@ def earlier_directives(
             value = _unquoted(remainder)
             if not value:
                 continue
+            if own and _without_own:
+                continue  # as if the host's own blocks set nothing
             if own:
                 if keyword in seen_keys:
                     # Something before this line set it first. When that was
@@ -984,7 +987,7 @@ def earlier_directives(
                 "file": absolute,
                 "line": number,
             }
-            if reached_own:
+            if reached_own and not _without_own:
                 pending[keyword] = entry
             else:
                 found[keyword] = entry
@@ -1176,6 +1179,38 @@ def _keys_openssh_leaves_unset(
         if str(value or "").strip() == _UNSET_PROBE_SENTINELS[key]:
             unset.append(key)
     return unset
+
+
+def inherited_directives(
+    host: str,
+    launch_file: Optional[str],
+    keys: Iterable[str],
+) -> Dict[str, Dict[str, object]]:
+    """What *host* would get for *keys* if its own blocks set none of them.
+
+    The first line of the files a launch reads (see
+    :func:`launch_configured_directives`) that sets each key for *host*,
+    outside the host's own ``Host`` blocks; a key no line sets is absent and
+    OpenSSH's default applies. For a host with no block yet this is what a
+    new block would inherit. A ``Match`` block this walk cannot judge is not
+    believed: without the host's own lines there is no ``ssh -G`` evidence.
+    """
+    from ..platform.paths import openssh_user_dir
+
+    wanted = {str(k).lower() for k in keys}
+    files = [launch_file] if launch_file else [
+        str(openssh_user_dir() / "config"), openssh_system_config(),
+    ]
+    files = [os.path.abspath(os.path.expanduser(str(f))) for f in files if f]
+    found: Dict[str, Dict[str, object]] = {}
+    for path in files:
+        for item in earlier_directives(
+            host, path, None, _whole=True, _without_own=True
+        ):
+            key = str(item["key"])
+            if key in wanted:
+                found.setdefault(key, item)
+    return found
 
 
 def openssh_system_config() -> Optional[str]:

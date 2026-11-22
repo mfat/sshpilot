@@ -2073,6 +2073,14 @@ class ConnectionDialog(
         if callable(apply_notes):
             apply_notes()
 
+    def _auth_policy_set_fallback(self, inherited) -> None:
+        """What the host inherits without its own authentication lines."""
+        section = getattr(self, 'auth_policy', None)
+        if section is None:
+            return
+        section.policy.set_fallback(inherited)
+        section.sync()
+
     def _auth_policy_set_forced(self, forced) -> None:
         """Settings ▸ SSH Options force some lines on the command line."""
         section = getattr(self, 'auth_policy', None)
