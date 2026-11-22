@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-22 14:53+0330\n"
+"POT-Creation-Date: 2026-11-22 15:22+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -116,7 +116,7 @@ msgstr "Ouvrir les connexions ?"
 #: src/sshpilot/bitwarden_setup.py:852 src/sshpilot/bitwarden_setup.py:956
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
-#: src/sshpilot/connection_dialog_auth.py:585
+#: src/sshpilot/connection_dialog_auth.py:647
 #: src/sshpilot/connection_dialog_port_forwarding.py:247
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
@@ -1769,7 +1769,7 @@ msgstr "Ajoutée"
 
 #: src/sshpilot/connection_dialog.py:1179
 #: src/sshpilot/connection_dialog.py:1329
-#: src/sshpilot/connection_dialog_auth.py:586
+#: src/sshpilot/connection_dialog_auth.py:648
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:360
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:489
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:207
@@ -2679,11 +2679,11 @@ msgstr "Clés (publickey)"
 msgid "Keyboard-interactive (PAM, one-time codes)"
 msgstr "Clavier interactif (PAM, codes à usage unique)"
 
-#: src/sshpilot/connection_dialog_auth.py:433
+#: src/sshpilot/connection_dialog_auth.py:504
 msgid "Authentication order"
 msgstr "Ordre d’authentification"
 
-#: src/sshpilot/connection_dialog_auth.py:435
+#: src/sshpilot/connection_dialog_auth.py:506
 msgid ""
 "Lines this profile sets replace a linked connection's own; what it leaves "
 "unset stays the connection's. Methods are tried from the top; unchecked "
@@ -2693,73 +2693,58 @@ msgstr ""
 "ce qu’il laisse non défini reste celui de la connexion. Les méthodes sont "
 "essayées de haut en bas ; les méthodes non cochées sont désactivées."
 
-#: src/sshpilot/connection_dialog_auth.py:439
+#: src/sshpilot/connection_dialog_auth.py:510
 msgid "Methods are tried from the top. Unchecked methods are switched off."
 msgstr ""
 "Les méthodes sont essayées de haut en bas. Les méthodes non cochées sont "
 "désactivées."
 
-#: src/sshpilot/connection_dialog_auth.py:441 src/sshpilot/preferences.py:1738
+#: src/sshpilot/connection_dialog_auth.py:512 src/sshpilot/preferences.py:1738
 #: src/sshpilot/preferences.py:3058 src/sshpilot/preferences.py:6341
 msgid "Reset"
 msgstr "Réinitialiser"
 
-#: src/sshpilot/connection_dialog_auth.py:444
-#: src/sshpilot/connection_dialog_auth.py:688
+#: src/sshpilot/connection_dialog_auth.py:515
+#: src/sshpilot/connection_dialog_auth.py:749
 msgid "Leave the order to each linked connection"
 msgstr "Laisser l’ordre à chaque connexion liée"
 
-#: src/sshpilot/connection_dialog_auth.py:445
-#: src/sshpilot/connection_dialog_auth.py:689
+#: src/sshpilot/connection_dialog_auth.py:516
+#: src/sshpilot/connection_dialog_auth.py:750
 msgid "Remove this host's order so the inherited one applies"
 msgstr "Supprimer l’ordre de cet hôte pour que l’ordre hérité s’applique"
 
-#: src/sshpilot/connection_dialog_auth.py:460
-msgid "Not tried"
-msgstr "Non essayées"
-
-#: src/sshpilot/connection_dialog_auth.py:462
-msgid ""
-"Methods below are not in this host's order. Use the row menu to add one back."
-msgstr ""
-"Les méthodes ci-dessous ne figurent pas dans l’ordre de cet hôte. Utilisez "
-"le menu de la ligne pour en rajouter une."
-
 #. Below the list, in a list of its own: a group places its own rows
 #. ahead of any other child.
-#: src/sshpilot/connection_dialog_auth.py:472
+#: src/sshpilot/connection_dialog_auth.py:536
 msgid "OpenSSH will try"
 msgstr "OpenSSH essaiera"
 
-#: src/sshpilot/connection_dialog_auth.py:522
+#: src/sshpilot/connection_dialog_auth.py:585
 msgid "Move up"
 msgstr "Monter"
 
-#: src/sshpilot/connection_dialog_auth.py:523
+#: src/sshpilot/connection_dialog_auth.py:586
 msgid "Move down"
 msgstr "Descendre"
 
-#: src/sshpilot/connection_dialog_auth.py:524
+#: src/sshpilot/connection_dialog_auth.py:587
 msgid "Move to top"
 msgstr "Placer en tête"
 
-#: src/sshpilot/connection_dialog_auth.py:525
-msgid "Add back to the order"
-msgstr "Rajouter à l’ordre"
-
-#: src/sshpilot/connection_dialog_auth.py:526
+#: src/sshpilot/connection_dialog_auth.py:588
 msgid "Reset switch"
 msgstr "Réinitialiser l’interrupteur"
 
-#: src/sshpilot/connection_dialog_auth.py:530
+#: src/sshpilot/connection_dialog_auth.py:592
 msgid "Move or reset this method"
 msgstr "Déplacer ou réinitialiser cette méthode"
 
-#: src/sshpilot/connection_dialog_auth.py:578
+#: src/sshpilot/connection_dialog_auth.py:640
 msgid "Remove the custom authentication order?"
 msgstr "Supprimer l’ordre d’authentification personnalisé ?"
 
-#: src/sshpilot/connection_dialog_auth.py:580
+#: src/sshpilot/connection_dialog_auth.py:642
 msgid ""
 "This will remove your custom authentication order from the SSH configuration "
 "when you save. The host then uses the order it inherits."
@@ -2767,23 +2752,29 @@ msgstr ""
 "Votre ordre d’authentification personnalisé sera supprimé de la "
 "configuration SSH à l’enregistrement. L’hôte utilisera alors l’ordre hérité."
 
-#: src/sshpilot/connection_dialog_auth.py:675
+#: src/sshpilot/connection_dialog_auth.py:741
 msgid "Not known to this dialog; kept as written."
 msgstr "Inconnu de cette boîte de dialogue ; conservé tel quel."
 
-#: src/sshpilot/connection_dialog_auth.py:695
+#: src/sshpilot/connection_dialog_auth.py:756
 msgid "Shown once OpenSSH has read the configuration."
 msgstr "Affiché une fois qu’OpenSSH a lu la configuration."
 
-#: src/sshpilot/connection_dialog_auth.py:698
+#: src/sshpilot/connection_dialog_auth.py:759
 msgid "No method: the login cannot succeed."
 msgstr "Aucune méthode : la connexion ne peut pas réussir."
 
-#: src/sshpilot/connection_dialog_auth.py:737
+#: src/sshpilot/connection_dialog_auth.py:797
+msgid ""
+"Not in the login order (PreferredAuthentications), so it is not tried. Check "
+"it to add it at the end."
+msgstr "Absent de l’ordre de connexion (PreferredAuthentications), cette méthode n’est donc pas essayée. Cochez-la pour l’ajouter à la fin."
+
+#: src/sshpilot/connection_dialog_auth.py:807
 msgid "Not set by this profile: each connection keeps its own value."
 msgstr "Non défini par ce profil : chaque connexion garde sa propre valeur."
 
-#: src/sshpilot/connection_dialog_auth.py:741
+#: src/sshpilot/connection_dialog_auth.py:811
 msgid "Not set for this host. The value it inherits is shown once saved."
 msgstr ""
 "Non défini pour cet hôte. La valeur héritée s’affiche après l’enregistrement."
@@ -5541,8 +5532,7 @@ msgstr "La commande « {program} » s’est terminée avec le code {status}."
 msgid "Could not list suggestions: {error}"
 msgstr "Impossible de lister les suggestions : {error}"
 
-#. : Shown while the command is still running, so a slow knock or VPN dial-up
-#. is
+#. : Shown while the command is still running, so a slow knock or VPN dial-up is
 #. : not a silent multi-second hang on connect.
 #: src/sshpilot/gtk/pre_command_messages.py:32
 msgid "Running pre-connect command…"
@@ -13582,14 +13572,12 @@ msgstr "La clé SSH sélectionnée est introuvable."
 msgid "The public-key deployment request is invalid."
 msgstr "La demande de déploiement de clé publique n’est pas valide."
 
-#. : Trailing dropdown entry that opens the file chooser instead of selecting a
-#. key.
+#. : Trailing dropdown entry that opens the file chooser instead of selecting a key.
 #: src/sshpilot/sshcopyid_window.py:78
 msgid "Browse for a key file…"
 msgstr "Parcourir pour choisir un fichier de clé…"
 
-#. Radio option 1: Use existing key (using CheckButton with group for radio
-#. behavior)
+#. Radio option 1: Use existing key (using CheckButton with group for radio behavior)
 #: src/sshpilot/sshcopyid_window.py:166
 msgid "Copy existing key"
 msgstr "Copier une clé existante"
@@ -18242,6 +18230,19 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#~ msgid "Not tried"
+#~ msgstr "Non essayées"
+
+#~ msgid ""
+#~ "Methods below are not in this host's order. Use the row menu to add one "
+#~ "back."
+#~ msgstr ""
+#~ "Les méthodes ci-dessous ne figurent pas dans l’ordre de cet hôte. "
+#~ "Utilisez le menu de la ligne pour en rajouter une."
+
+#~ msgid "Add back to the order"
+#~ msgstr "Rajouter à l’ordre"
 
 #, python-brace-format
 #~ msgid "Set by login profile “{name}”"

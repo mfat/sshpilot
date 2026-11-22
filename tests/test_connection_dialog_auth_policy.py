@@ -48,7 +48,7 @@ def test_an_unset_block_shows_openssh_order_and_inherited_switches():
 def test_an_inherited_order_is_shown_when_the_block_sets_none():
     policy = _policy(resolved={**SSH_G, "preferredauthentications": "publickey,password"})
     assert policy.shown_order() == ["publickey", "password"]
-    assert policy.not_tried() == ["gssapi-with-mic", "hostbased", "keyboard-interactive"]
+    assert policy.left_out() == ["gssapi-with-mic", "hostbased", "keyboard-interactive"]
 
 
 def test_the_blocks_own_values_are_shown_and_win():
@@ -155,10 +155,67 @@ def test_a_reset_authored_switch_is_unknown_until_saved():
     assert policy.shown_switch("gssapi-with-mic") is None
 
 
-def test_add_back_puts_a_left_out_method_at_the_end():
+# -- every method has a row; one the order leaves out is unchecked -------------
+
+def test_every_method_has_a_row_and_a_left_out_one_is_unchecked():
+    policy = _policy("PreferredAuthentications publickey,password")
+    assert policy.rows() == [
+        "publickey", "password", "gssapi-with-mic", "hostbased", "keyboard-interactive",
+    ]
+    assert policy.shown_checked("publickey") is True
+    # Switched on by ssh -G, but not tried: the order leaves it out.
+    assert policy.shown_checked("keyboard-interactive") is False
+
+
+def test_checking_a_left_out_method_adds_it_to_the_end_of_the_order():
     policy = _policy("PreferredAuthentications publickey")
-    assert policy.add_back("password")
+    assert policy.set_tried("password", True)
     assert policy.order == ["publickey", "password"]
+    assert policy.shown_checked("password") is True
+    # Its switch was already on: only the order line changes.
+    assert policy.to_lines() == ["PreferredAuthentications publickey,password"]
+
+
+def test_checking_a_left_out_switched_off_method_switches_it_on_too():
+    policy = _policy("PreferredAuthentications publickey")
+    assert policy.set_tried("hostbased", True)
+    assert policy.to_lines() == [
+        "PreferredAuthentications publickey,hostbased",
+        "HostbasedAuthentication yes",
+    ]
+
+
+def test_unchecking_a_method_just_added_restores_the_authored_lines():
+    lines = ("preferredauthentications  publickey",)
+    policy = _policy(*lines)
+    policy.set_tried("hostbased", True)
+    assert policy.set_tried("hostbased", False)
+    assert policy.to_lines() == [lines[0].strip()]
+    assert policy.shown_checked("hostbased") is False
+
+
+def test_unchecking_a_listed_method_switches_it_off():
+    policy = _policy("PreferredAuthentications publickey,password")
+    assert policy.set_tried("password", False)
+    assert policy.to_lines() == [
+        "PreferredAuthentications publickey,password",
+        "PasswordAuthentication no",
+    ]
+    assert not policy.set_tried("keyboard-interactive", False)  # already not tried
+
+
+def test_moving_a_left_out_method_lists_it_and_keeps_it_unchecked():
+    policy = _policy("PreferredAuthentications publickey,password")
+    assert policy.move("keyboard-interactive", 1)
+    assert policy.order == ["publickey", "keyboard-interactive", "password"]
+    assert policy.shown_checked("keyboard-interactive") is False
+    assert "KbdInteractiveAuthentication no" in policy.to_lines()
+
+
+def test_moving_a_left_out_method_among_the_left_out_ones_changes_nothing():
+    policy = _policy("PreferredAuthentications publickey,password")
+    assert not policy.move_by("hostbased", 1)
+    assert policy.to_lines() == ["PreferredAuthentications publickey,password"]
 
 
 def test_untouched_authored_text_is_kept_verbatim():

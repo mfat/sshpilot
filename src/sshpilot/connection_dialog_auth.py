@@ -126,6 +126,9 @@ class AuthPolicy:
     # ``ssh -G`` cannot answer. ``fallback_known`` is False until it arrives.
     fallback: Dict[str, str] = field(default_factory=dict)
     fallback_known: bool = False
+    # Methods a checkbox added to the order in this edit -> (the order,
+    # whether the switch was set, its value) before, so unchecking undoes it.
+    _added_to_order: Dict[str, tuple] = field(default_factory=dict)
 
     # -- loading -------------------------------------------------------------
 
@@ -213,14 +216,34 @@ class AuthPolicy:
             return list(self.inherited_order)
         return list(DEFAULT_ORDER)
 
-    def tried(self) -> List[str]:
-        """Known methods in the shown order (the rows above "Not tried")."""
-        return [m for m in self.shown_order() if m in METHODS]
+    def in_order(self, method: str) -> bool:
+        return method in self.shown_order()
 
-    def not_tried(self) -> List[str]:
-        """Known methods the shown order leaves out."""
+    def left_out(self) -> List[str]:
+        """Known methods the shown order leaves out (they are not tried)."""
         shown = self.shown_order()
         return [m for m in METHODS if m not in shown]
+
+    def full_order(self) -> List[str]:
+        """Every row's place: the shown order, then the methods it leaves out.
+
+        Every method always has a row; one the order leaves out is listed
+        last, unchecked.
+        """
+        return self.shown_order() + self.left_out()
+
+    def rows(self) -> List[str]:
+        """Known methods in row order."""
+        return [m for m in self.full_order() if m in METHODS]
+
+    def shown_checked(self, method: str) -> Optional[bool]:
+        """The row's checkbox: tried by this host's settings, ``None`` unknown.
+
+        A method is tried when the order lists it and its switch is not off.
+        """
+        if not self.in_order(method):
+            return False
+        return self.shown_switch(method)
 
     def unknown_tokens(self) -> List[str]:
         """Methods in the order this dialog does not know (kept as written)."""
@@ -282,31 +305,78 @@ class AuthPolicy:
         self._unknown_after_reset.discard("order")
 
     def move(self, method: str, index: int) -> bool:
-        """Put *method* at *index* among the tried methods."""
+        """Put *method* at *index* among all rows (see :meth:`full_order`).
+
+        Moving a method the order leaves out puts it in the order at that
+        place and keeps it unchecked by switching it off, so the row says
+        what OpenSSH does.
+        """
+        full = self.full_order()
+        if method not in full:
+            return False
         current = self.shown_order()
-        if method not in current:
+        was_left_out = method not in current
+        rest = [m for m in full if m != method]
+        index = max(0, min(index, len(rest)))
+        rest.insert(index, method)
+        order = [m for m in rest if m in current or m == method]
+        if not was_left_out and order == current:
             return False
-        tried = [m for m in current if m != method]
-        index = max(0, min(index, len(tried)))
-        tried.insert(index, method)
-        if tried == current:
+        if was_left_out and order == current + [method]:
+            # Still after every listed method: nothing visible changes.
             return False
-        self._write_order(tried)
+        self._write_order(order)
+        self._added_to_order.pop(method, None)
+        if was_left_out and self.shown_switch(method) is not False:
+            self.set_switch(method, False)
         return True
 
     def move_by(self, method: str, delta: int) -> bool:
-        current = self.shown_order()
-        if method not in current:
+        full = self.full_order()
+        if method not in full:
             return False
-        return self.move(method, current.index(method) + delta)
+        return self.move(method, full.index(method) + delta)
 
-    def add_back(self, method: str) -> bool:
-        """Put a method the order leaves out back at its end."""
-        current = self.shown_order()
-        if method in current:
+    def set_tried(self, method: str, value: bool) -> bool:
+        """The row's checkbox: try *method* or not.
+
+        Checking a method the order leaves out adds it at the end of the
+        order (and switches it on); unchecking it again in the same edit
+        takes it back out. Unchecking a listed method switches it off.
+        """
+        if method not in METHODS:
             return False
-        self._write_order(current + [method])
-        return True
+        if value:
+            changed = False
+            if not self.in_order(method):
+                self._added_to_order[method] = (
+                    None if self.order is None else list(self.order),
+                    method in self.switches,
+                    self.switches.get(method),
+                )
+                self._write_order(self.shown_order() + [method])
+                changed = True
+                # Listing it is enough when its switch is already on.
+                if self.shown_switch(method) is not True:
+                    self.set_switch(method, True)
+                return changed
+            return self.set_switch(method, True)
+        added = self._added_to_order.pop(method, None)
+        if added is not None and self.in_order(method):
+            prior_order, had_switch, prior_switch = added
+            order = [m for m in self.shown_order() if m != method]
+            if prior_order is None or order == prior_order:
+                self.order = prior_order
+            else:
+                self._write_order(order)
+            if had_switch:
+                self.switches[method] = prior_switch
+            else:
+                self.switches.pop(method, None)
+            return True
+        if not self.in_order(method):
+            return False
+        return self.set_switch(method, False)
 
     def _drop_passthrough(self, keywords) -> None:
         """Remove repeated lines of *keywords*: a reset means the block sets
@@ -319,6 +389,7 @@ class AuthPolicy:
         if self.order is None:
             return False
         self.order = None
+        self._added_to_order.clear()
         self._drop_passthrough({PREFERRED_AUTH_KEYWORD})
         if "order" in self._loaded:
             self._unknown_after_reset.add("order")
@@ -457,13 +528,6 @@ class AuthPolicyGroup:
         for method in METHODS:
             self.rows[method] = self._make_row(method)
 
-        self.not_tried_row = Adw.ActionRow(title=_("Not tried"))
-        self.not_tried_row.set_subtitle(
-            _("Methods below are not in this host's order. Use the row menu to add one back.")
-        )
-        self.not_tried_row.set_activatable(False)
-        self.not_tried_row.add_css_class("dim-label")
-
         self.extra_row = Adw.ActionRow()
         self.extra_row.set_activatable(False)
 
@@ -509,7 +573,6 @@ class AuthPolicyGroup:
             ("up", lambda *_a, m=method: self._edit(lambda: self.policy.move_by(m, -1))),
             ("down", lambda *_a, m=method: self._edit(lambda: self.policy.move_by(m, 1))),
             ("top", lambda *_a, m=method: self._edit(lambda: self.policy.move(m, 0))),
-            ("add", lambda *_a, m=method: self._edit(lambda: self.policy.add_back(m))),
             ("reset", lambda *_a, m=method: self._edit(lambda: self.policy.reset_switch(m))),
         ):
             action = Gio.SimpleAction.new(name, None)
@@ -522,7 +585,6 @@ class AuthPolicyGroup:
         menu.append(_("Move up"), "authrow.up")
         menu.append(_("Move down"), "authrow.down")
         menu.append(_("Move to top"), "authrow.top")
-        menu.append(_("Add back to the order"), "authrow.add")
         menu.append(_("Reset switch"), "authrow.reset")
         button = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu)
         button.add_css_class("flat")
@@ -548,7 +610,7 @@ class AuthPolicyGroup:
         source.connect("prepare", lambda *_a, m=method: (
             Gdk.ContentProvider.new_for_value(_DRAG_PREFIX + m)
             if row.get_sensitive() and not self._order_locked
-            and m in self.policy.shown_order() else None
+            else None
         ))
         source.connect("drag-begin", lambda src, _drag, r=row: self._drag_icon(src, r))
         row.add_controller(source)
@@ -613,7 +675,7 @@ class AuthPolicyGroup:
             return False  # only this list's own rows
         source = value[len(_DRAG_PREFIX):]
         dest = row._method
-        order = self.policy.shown_order()
+        order = self.policy.full_order()
         if source == dest or source not in order or dest not in order:
             return False
         index = order.index(dest)
@@ -651,7 +713,7 @@ class AuthPolicyGroup:
     def _on_toggled(self, check, method: str) -> None:
         if self._syncing:
             return
-        self._edit(lambda: self.policy.set_switch(method, check.get_active()))
+        self._edit(lambda: self.policy.set_tried(method, check.get_active()))
 
     def sync(self) -> None:
         """Redraw every row from the model."""
@@ -666,8 +728,12 @@ class AuthPolicyGroup:
                 child = following
             policy = self.policy
             order_set = policy.order_is_set
-            for method in policy.tried():
-                self._show_row(self.rows[method], order_set, in_order=True)
+            rows = policy.rows()
+            for index, method in enumerate(rows):
+                self._show_row(
+                    self.rows[method], order_set,
+                    first=index == 0, last=index == len(rows) - 1,
+                )
             unknown = policy.unknown_tokens()
             if unknown:
                 self.extra_row.set_title(", ".join(unknown))
@@ -675,11 +741,6 @@ class AuthPolicyGroup:
                     _("Not known to this dialog; kept as written.")
                 )
                 self.list.append(self.extra_row)
-            not_tried = policy.not_tried()
-            if not_tried:
-                self.list.append(self.not_tried_row)
-                for method in not_tried:
-                    self._show_row(self.rows[method], order_set, in_order=False)
             for method in METHODS:
                 self._show_switch(self.rows[method], method, inherited_note_text())
             self.reset_button.set_sensitive(order_set and not self._order_locked)
@@ -701,7 +762,7 @@ class AuthPolicyGroup:
         finally:
             self._syncing = False
 
-    def _show_row(self, row, order_set: bool, *, in_order: bool) -> None:
+    def _show_row(self, row, order_set: bool, *, first: bool, last: bool) -> None:
         self.list.append(row)
         if order_set:
             row.remove_css_class("dim-label")
@@ -709,24 +770,33 @@ class AuthPolicyGroup:
             row.add_css_class("dim-label")
         actions = row._actions
         movable = not self._order_locked
-        actions.lookup_action("up").set_enabled(in_order and movable)
-        actions.lookup_action("down").set_enabled(in_order and movable)
-        actions.lookup_action("top").set_enabled(in_order and movable)
-        actions.lookup_action("add").set_enabled(not in_order and movable)
+        actions.lookup_action("up").set_enabled(movable and not first)
+        actions.lookup_action("down").set_enabled(movable and not last)
+        actions.lookup_action("top").set_enabled(movable and not first)
 
     def _show_switch(self, row, method: str, inherited_note: str) -> None:
         check = row._check
         policy = self.policy
-        value = policy.shown_switch(method)
+        value = policy.shown_checked(method)
         check.set_inconsistent(value is None)
         check.set_active(bool(value))
         is_set = policy.switch_is_set(method)
         locked = method in self._locked_methods
-        check.set_sensitive(not locked)
+        left_out = not policy.in_order(method)
+        # Checking a left-out method adds it to the order.
+        check.set_sensitive(not locked and not (left_out and self._order_locked))
         row._actions.lookup_action("reset").set_enabled(is_set and not locked)
         if locked:
             check.remove_css_class("dim-label")
             check.set_tooltip_text(self._lock_note)
+            return
+        if left_out:
+            check.remove_css_class("dim-label")
+            check.set_tooltip_text(
+                self._lock_note if self._order_locked else
+                _("Not in the login order (PreferredAuthentications), so it is "
+                  "not tried. Check it to add it at the end.")
+            )
             return
         if is_set:
             check.remove_css_class("dim-label")
