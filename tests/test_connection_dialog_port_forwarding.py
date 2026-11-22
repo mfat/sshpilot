@@ -124,7 +124,6 @@ def test_loaded_advanced_options_sync_both_switches_without_change_signals():
     advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
     advanced.option_list = _SilentOptionList()
     # Parent projection is irrelevant here; no GTK window or ancestor needed.
-    advanced._update_parent_connection = lambda: None
     dialog = _session_type_dialog(advanced)
     advanced.parent_dialog = dialog
 
@@ -364,7 +363,6 @@ def test_empty_advanced_snapshot_clears_options_and_both_switches():
     """A loaded empty Host block must not retain options from the prior one."""
     advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
     advanced.option_list = _SilentOptionList()
-    advanced._update_parent_connection = lambda: None
     dialog = _session_type_dialog(advanced)
     advanced.parent_dialog = dialog
 
@@ -422,7 +420,6 @@ def test_connection_loader_clears_advanced_and_forwarding_on_empty_snapshot():
 
     advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
     advanced.option_list = _SilentOptionList()
-    advanced._update_parent_connection = lambda: None
     dialog = _session_type_dialog(advanced)
     advanced.parent_dialog = dialog
     dialog.is_editing = True

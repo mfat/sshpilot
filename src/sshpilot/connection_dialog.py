@@ -637,9 +637,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.option_list.add_empty_row()
 
     def on_entry_changed(self, widget, pspec=None):
-        """Mirror the rows into the connection being edited."""
+        """Refresh the preview and the switches that mirror Advanced rows."""
         self.update_config_preview()
-        self._update_parent_connection()
         self._notify_parent_session_type_changed()
         sync_banner = getattr(self.parent_dialog, '_sync_override_banner', None)
         if callable(sync_banner):
@@ -743,21 +742,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
         """Get extra SSH config as a string for saving"""
         return "\n".join(f"{key} {value}" for key, value in self.get_config_entries())
 
-    def _update_parent_connection(self):
-        """Update the parent connection object with current advanced tab data"""
-        try:
-            parent_dialog = self.get_ancestor(Adw.Window)
-            if parent_dialog and hasattr(parent_dialog, 'connection') and parent_dialog.connection:
-                extra_config = self.get_extra_ssh_config()
-                parent_dialog.connection.extra_ssh_config = extra_config
-                if hasattr(parent_dialog.connection, 'data'):
-                    parent_dialog.connection.data['extra_ssh_config'] = extra_config
-                logger.debug(
-                    f"Updated parent connection with extra SSH config: {extra_config}"
-                )
-        except Exception as e:
-            logger.error(f"Error updating parent connection: {e}")
-
     def set_extra_ssh_config(self, config_string):
         """Set extra SSH config from a string"""
         logger.debug(f"set_extra_ssh_config called with: '{config_string}'")
@@ -781,8 +765,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.set_config_entries(entries)
         # Update preview after loading data
         self.update_config_preview()
-        # Update the parent connection object if we're editing
-        self._update_parent_connection()
         # set_options trusts loaded rows and emits nothing, so the ssh -N and
         # ExitOnForwardFailure switches would otherwise stay at their empty-list
         # state (#1389).
