@@ -79,25 +79,30 @@ def test_a_saved_password_does_not_change_the_login_order(tmp_path):
 
 
 def test_switching_a_password_first_host_to_key_login_keeps_its_key(tmp_path):
-    body = (
+    from tests.test_auth_method_update import _update
+
+    lines, data = _update(
+        tmp_path,
         "    PreferredAuthentications password,publickey\n"
-        "    IdentityFile ~/.ssh/id_work\n"
+        "    IdentityFile ~/.ssh/id_work\n",
+        {"auth_method": 0},
     )
-    lines, reloaded = _edit(tmp_path, body, {"auth_method": 0})
     # The list only meant "password first"; key login drops it.
     assert not any(line.startswith("PreferredAuthentications") for line in lines)
     assert "IdentityFile ~/.ssh/id_work" in lines
-    assert reloaded.data["auth_method"] == 0
+    assert data["auth_method"] == 0
 
 
 def test_switching_a_key_host_to_password_login_keeps_its_key(tmp_path):
-    body = (
-        "    PreferredAuthentications publickey,keyboard-interactive\n"
-        "    IdentityFile ~/.ssh/id_work\n"
-    )
-    lines, reloaded = _edit(tmp_path, body, {"auth_method": 1})
     from sshpilot.ssh_config_formatter import PASSWORD_MODE_PREFERRED_AUTH
+    from tests.test_auth_method_update import _update
 
+    lines, data = _update(
+        tmp_path,
+        "    PreferredAuthentications publickey,keyboard-interactive\n"
+        "    IdentityFile ~/.ssh/id_work\n",
+        {"auth_method": 1},
+    )
     assert f"PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}" in lines
     assert "IdentityFile ~/.ssh/id_work" in lines
-    assert reloaded.data["auth_method"] == 1
+    assert data["auth_method"] == 1

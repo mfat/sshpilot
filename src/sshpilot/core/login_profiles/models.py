@@ -26,6 +26,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from ...ssh_config_document import _split_config_option, split_config_lines
+from ..connections.auth_preferences import apply_legacy_auth_choice
 
 # Connection metadata key holding the profile link. Its value is one of:
 #   {"mode": "explicit", "id": <profile id>, "applied": <fingerprint>, "rev": <id:revision>}
@@ -180,6 +181,10 @@ def _extra_keyword(line: str) -> str:
     return re.split(r"[\s=]+", stripped, maxsplit=1)[0].lower()
 
 
+# The profile sets these through its own auth method and public-key fields.
+_PROFILE_AUTH_FIELDS = frozenset({"preferredauthentications", "pubkeyauthentication"})
+
+
 def _clean_extra(value: Any) -> str:
     text = _clean_text(value, "extra_ssh_config", single_line=False)
     lines = [line.strip() for line in text.splitlines()]
@@ -192,7 +197,7 @@ def _clean_extra(value: Any) -> str:
                 "extra_ssh_config must not contain Host, Match or Include lines",
                 REASON_EXTRA_FORBIDDEN_BLOCK,
             )
-        if keyword in MANAGED_HOST_OPTIONS:
+        if keyword in MANAGED_HOST_OPTIONS or keyword in _PROFILE_AUTH_FIELDS:
             raise LoginProfileValueError(
                 f"{keyword} has a dedicated field and cannot be set in extra_ssh_config",
                 REASON_EXTRA_MANAGED_OPTION,
@@ -391,11 +396,20 @@ def apply_profile_to_data(data: Mapping[str, Any], profile: LoginProfile) -> Dic
     out["forward_agent"] = profile.forward_agent
     out["forward_agent_target"] = profile.forward_agent_target if profile.forward_agent else ""
     out["forward_agent_explicit_no"] = False
-    # Let the formatter pick the method order for the profile's auth method; a
-    # stale per-host PreferredAuthentications must not outlive the profile.
     out["preferred_authentications"] = []
     out["extra_ssh_config"] = _merge_extra(
         str(out.get("extra_ssh_config") or ""), profile.extra_ssh_config
+    )
+    # The profile owns the login order and the public-key switch: a stale
+    # per-host PreferredAuthentications must not outlive it. Its auth method
+    # and switch are then written as the Host-block lines they stand for.
+    out["extra_ssh_config"] = apply_legacy_auth_choice(
+        _drop_keyword(
+            _drop_keyword(out["extra_ssh_config"], "preferredauthentications"),
+            "pubkeyauthentication",
+        ),
+        auth_method=profile.auth_method,
+        pubkey_auth_no=profile.pubkey_auth_no,
     )
     # An empty profile command leaves the connection's ProxyCommand alone.
     # A set command owns the field and drops any extra copy: OpenSSH uses the

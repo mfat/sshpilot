@@ -27,7 +27,7 @@ import getpass
 import ipaddress
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from ..api.capabilities import Capabilities, Capability
 from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
@@ -1008,6 +1008,7 @@ class ConnectionApplicationService:
                 connection_id=request.connection_id,
             )
         data: Dict[str, Any] = dict(request.config_patch)
+        self._apply_legacy_auth_choice(data, request.config_patch or {})
         data["nickname"] = request.nickname
         data["protocol"] = "ssh"
         if request.hostname is not None:
@@ -2074,6 +2075,27 @@ class ConnectionApplicationService:
                     ) from error
             else:
                 data[key] = value
+        self._apply_legacy_auth_choice(data, patch)
+
+    @staticmethod
+    def _apply_legacy_auth_choice(data: Dict[str, Any], patch: Mapping[str, Any]) -> None:
+        """Write the editor's Key/Password choice as Host-block lines.
+
+        The login order and per-method switches are ordinary lines in
+        ``extra_ssh_config``; the older choice only edits them, and only when
+        the patch carries it (a client that changed it).
+        """
+        if "auth_method" not in patch and "pubkey_auth_no" not in patch:
+            return
+        from .connections.auth_preferences import apply_legacy_auth_choice
+
+        data["extra_ssh_config"] = apply_legacy_auth_choice(
+            str(data.get("extra_ssh_config") or ""),
+            auth_method=patch.get("auth_method") if "auth_method" in patch else None,
+            pubkey_auth_no=(
+                bool(patch["pubkey_auth_no"]) if "pubkey_auth_no" in patch else None
+            ),
+        )
 
     def duplicate_connection(
         self, connection_id: ConnectionId

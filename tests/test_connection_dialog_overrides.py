@@ -7,6 +7,8 @@ marks it and explains; it never disables the field or drops the value.
 
 import types
 
+from sshpilot.core.connections.auth_preferences import AUTH_POLICY_KEYWORDS
+
 import pytest
 
 from sshpilot.api.models.settings import GlobalSshOverrides
@@ -136,9 +138,10 @@ def test_an_option_openssh_collects_is_reported_as_added_not_lost():
 
 def test_every_marked_row_is_an_option_the_dialog_owns():
     for _row, keyword in OVERRIDABLE_ROWS:
-        # The two forwarding switches write their option through the
-        # Advanced tab; every other row is a directive the formatter owns.
-        assert keyword.lower() in MANAGED_HOST_OPTIONS | {
+        # The two forwarding switches and the login-policy rows write their
+        # option as a plain Host-block line; every other row is a directive
+        # the formatter owns.
+        assert keyword.lower() in MANAGED_HOST_OPTIONS | AUTH_POLICY_KEYWORDS | {
             "exitonforwardfailure", "sessiontype",
         }
 

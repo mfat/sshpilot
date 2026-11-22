@@ -17,9 +17,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .core.connections.auth_preferences import (  # noqa: F401 - re-exported
     PASSWORD_MODE_PREFERRED_AUTH,
-    is_app_written_list,
-    is_password_mode_default,
-    password_comes_first,
 )
 
 from .ssh_config_document import (
@@ -42,7 +39,6 @@ MANAGED_HOST_OPTIONS = frozenset({
     'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
     'proxycommand', 'proxyjump', 'forwardagent', 'localcommand', 'remotecommand', 'requesttty',
     'identitiesonly', 'permitlocalcommand',
-    'preferredauthentications', 'pubkeyauthentication',
     'identityagent', 'addkeystoagent', 'pkcs11provider', 'securitykeyprovider',
 })
 
@@ -60,20 +56,6 @@ def _authored_directives(data: Dict[str, Any]) -> frozenset:
     return frozenset(
         str(name).strip().lower() for name in raw if str(name).strip()
     )
-
-
-def _is_password_mode_default(pref_list: List[str]) -> bool:
-    return is_password_mode_default(pref_list)
-
-
-def _preferred_auth_list(data: Dict[str, Any]) -> List[str]:
-    """``preferred_authentications`` as a list, from a list or a comma string."""
-    pref_raw = data.get('preferred_authentications')
-    if isinstance(pref_raw, (list, tuple)):
-        return [str(p).strip() for p in pref_raw if str(p).strip()]
-    if isinstance(pref_raw, str):
-        return [p.strip() for p in pref_raw.split(',') if p.strip()]
-    return []
 
 
 # Keys this formatter writes, each onto a single ssh_config line. A line break
@@ -175,7 +157,6 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
 
     # IdentityFile/IdentitiesOnly per the key selection
     keyfile = data.get('keyfile') or data.get('private_key')
-    auth_method = int(data.get('auth_method', 0) or 0)
     key_select_mode = int(data.get('key_select_mode', 0) or 0)
     dedicated_key = key_select_mode in (1, 2)
 
@@ -241,34 +222,10 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     if sk_provider:
         lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
 
-    # The login order. A saved password never changes it: it only answers a
-    # prompt, and a host may need a fresh one-time code on every login.
-    pref_list = _preferred_auth_list(data)
-    if auth_method == 0:
-        # Key login writes no list of its own; OpenSSH's default order and the
-        # user's config decide. A user's list is kept as written. Dropped: a
-        # list the app wrote, and one that reads back as password login --
-        # that can only be left over from switching this host to key login.
-        if is_app_written_list(pref_list) or password_comes_first(pref_list):
-            pref_list = []
-        if pref_list:
-            lines.append(f"    PreferredAuthentications {','.join(pref_list)}")
-    else:
-        # Password login: OpenSSH's order with the password methods first
-        # (see core/connections/auth_preferences.py). A user's list that
-        # reads back as password login is kept; one that would read back as
-        # key login is left over from switching modes and is replaced.
-        if not password_comes_first(pref_list) or _is_password_mode_default(pref_list):
-            pref_list = []
-        custom_pref = ",".join(pref_list)
-        if custom_pref:
-            lines.append(f"    PreferredAuthentications {custom_pref}")
-        else:
-            lines.append(
-                f"    PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}"
-            )
-        if data.get('pubkey_auth_no'):
-            lines.append("    PubkeyAuthentication no")
+    # The login order and the per-method switches (PreferredAuthentications,
+    # PubkeyAuthentication, ...) are not generated here: they are ordinary
+    # lines of the block, carried in ``extra_ssh_config`` exactly as written
+    # (see core/connections/auth_preferences.py).
 
     # Add X11 forwarding if enabled
     if data.get('x11_forwarding', False):
@@ -354,26 +311,7 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
                     line = f"    {line}"
                 lines.append(line)
 
-    # Remove duplicate or unwanted auth lines
-    cleaned_lines: List[str] = []
-    seen_auth_lines = set()
-    auth_keys = {
-        "preferredauthentications password",
-        "pubkeyauthentication no",
-    }
-    for line in lines:
-        key = line.strip().lower()
-        if auth_method == 0 and key in auth_keys:
-            # Strip password-only directives when using key-based auth
-            continue
-        if auth_method != 0 and key in auth_keys:
-            if key in seen_auth_lines:
-                # Avoid duplicates for password auth
-                continue
-            seen_auth_lines.add(key)
-        cleaned_lines.append(line)
-
-    return '\n'.join(cleaned_lines)
+    return '\n'.join(lines)
 
 
 def _order_proxy_lines_like_block(managed_body: List[str], old_lines) -> None:
