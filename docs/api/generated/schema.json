@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.103",
+  "api_implementation_version": "0.102",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -159,10 +159,6 @@
     },
     "duplicate_connection": {
       "capability": "connections.write",
-      "status": "implemented"
-    },
-    "edit_ssh_config": {
-      "capability": "connections.config.manager",
       "status": "implemented"
     },
     "export_secret_backup": {
@@ -613,10 +609,6 @@
       "capability": "transfers.scp",
       "status": "daemon-only"
     },
-    "start_ssh_config_preview": {
-      "capability": "connections.config.manager",
-      "status": "daemon-only"
-    },
     "start_transfer": {
       "capability": "transfers.write",
       "status": "daemon-only"
@@ -741,9 +733,6 @@
     "connections.duplicate": {
       "capability": "connections.write"
     },
-    "connections.edit_ssh_config": {
-      "capability": "connections.config.manager"
-    },
     "connections.get": {
       "capability": "connections.read"
     },
@@ -830,9 +819,6 @@
     },
     "connections.split": {
       "capability": "connections.split"
-    },
-    "connections.start_ssh_config_preview": {
-      "capability": "connections.config.manager"
     },
     "connections.store_passphrase": {
       "capability": "connections.secrets.write"
@@ -1313,7 +1299,6 @@
       "connections.read",
       "connections.events",
       "connections.write",
-      "connections.config.manager",
       "connections.config.read",
       "connections.config.write",
       "operation.mode",
@@ -1719,7 +1704,6 @@
       "unknown"
     ],
     "OperationKind": [
-      "config_preview",
       "broadcast_command",
       "key_deployment",
       "authorized_key_removal",
@@ -9570,246 +9554,6 @@
         }
       ],
       "status": "Implemented"
-    },
-    "SshConfigBlock": {
-      "fields": [
-        {
-          "default": null,
-          "name": "kind",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "argument",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "text",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "line",
-          "required": true,
-          "sensitive": false,
-          "type": "int"
-        },
-        {
-          "default": [],
-          "name": "directives",
-          "required": false,
-          "sensitive": false,
-          "type": "tuple[SshConfigDirective, ...]"
-        },
-        {
-          "default": [],
-          "name": "included_files",
-          "required": false,
-          "sensitive": false,
-          "type": "tuple[str, ...]"
-        }
-      ],
-      "status": "Schema only"
-    },
-    "SshConfigDirective": {
-      "fields": [
-        {
-          "default": null,
-          "name": "keyword",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "value",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "line",
-          "required": true,
-          "sensitive": false,
-          "type": "int"
-        }
-      ],
-      "status": "Schema only"
-    },
-    "SshConfigHostPreview": {
-      "fields": [
-        {
-          "default": null,
-          "name": "host",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "hostname",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "matched",
-          "required": true,
-          "sensitive": false,
-          "type": "bool"
-        },
-        {
-          "default": null,
-          "name": "before",
-          "required": true,
-          "sensitive": false,
-          "type": "tuple[str, ...]"
-        },
-        {
-          "default": null,
-          "name": "after",
-          "required": true,
-          "sensitive": false,
-          "type": "tuple[str, ...]"
-        },
-        {
-          "default": [],
-          "name": "contributions",
-          "required": false,
-          "sensitive": false,
-          "type": "tuple[str, ...]"
-        }
-      ],
-      "status": "Schema only"
-    },
-    "SshConfigManagerDocument": {
-      "fields": [
-        {
-          "default": null,
-          "name": "document",
-          "required": true,
-          "sensitive": false,
-          "type": "SshConfigText"
-        },
-        {
-          "default": null,
-          "name": "blocks",
-          "required": true,
-          "sensitive": false,
-          "type": "tuple[SshConfigBlock, ...]"
-        },
-        {
-          "default": 0,
-          "name": "selected",
-          "required": false,
-          "sensitive": false,
-          "type": "int"
-        }
-      ],
-      "status": "Implemented"
-    },
-    "SshConfigManagerRequest": {
-      "fields": [
-        {
-          "default": null,
-          "name": "text",
-          "required": false,
-          "sensitive": false,
-          "type": "str | None"
-        },
-        {
-          "default": "",
-          "name": "expected_revision",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "inspect",
-          "name": "action",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": 0,
-          "name": "block",
-          "required": false,
-          "sensitive": false,
-          "type": "int"
-        },
-        {
-          "default": 0,
-          "name": "position",
-          "required": false,
-          "sensitive": false,
-          "type": "int"
-        },
-        {
-          "default": -1,
-          "name": "directive",
-          "required": false,
-          "sensitive": false,
-          "type": "int"
-        },
-        {
-          "default": "",
-          "name": "keyword",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "",
-          "name": "value",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        }
-      ],
-      "status": "Implemented"
-    },
-    "SshConfigPreview": {
-      "fields": [
-        {
-          "default": null,
-          "name": "revision",
-          "required": true,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": null,
-          "name": "hosts",
-          "required": true,
-          "sensitive": false,
-          "type": "tuple[SshConfigHostPreview, ...]"
-        },
-        {
-          "default": null,
-          "name": "valid",
-          "required": true,
-          "sensitive": false,
-          "type": "bool"
-        },
-        {
-          "default": [],
-          "name": "diagnostics",
-          "required": false,
-          "sensitive": false,
-          "type": "tuple[str, ...]"
-        }
-      ],
-      "status": "Schema only"
     },
     "SshConfigText": {
       "fields": [

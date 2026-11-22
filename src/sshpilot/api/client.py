@@ -37,8 +37,6 @@ from .models.connections import (
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
     SshConfigText,
-    SshConfigManagerRequest,
-    SshConfigManagerDocument,
     StoreKeyPassphraseRequest,
     UpdateConnectionRequest,
 )
@@ -261,14 +259,6 @@ class SshPilotClient(Protocol):
     def check_unsaved_host(
         self, request: UnsavedHostCheckRequest
     ) -> UnsavedHostCheckResult:
-        ...
-
-    def edit_ssh_config(self, request: SshConfigManagerRequest) -> SshConfigManagerDocument:
-        """Load or transform a draft; this method never writes the config."""
-        ...
-
-    def start_ssh_config_preview(self, request: SshConfigManagerRequest) -> OperationSummary:
-        """Start cancellable native OpenSSH validation and impact analysis."""
         ...
 
     def get_ssh_config_text(self) -> SshConfigText:

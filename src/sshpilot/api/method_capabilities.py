@@ -2,7 +2,6 @@
 from .capabilities import Capability
 
 UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
-    "start_ssh_config_preview": Capability.CONNECTIONS_CONFIG_MANAGER,
     # The daemon runs the pre-connection steps; there is nothing in process to
     # wake, knock or run them for.
     "run_pre_connect": Capability.SESSIONS_WRITE,

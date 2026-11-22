@@ -364,8 +364,6 @@ class SshPilotApplication(Adw.Application):
             self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
             logger.debug("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
 
-        self.create_action('advanced-config-manager', self.on_advanced_config_manager, [])
-
         # Double Shift is handled by MainWindow's key controller because GTK
         # accelerators represent key combinations, not multi-press gestures.
         # A normal accelerator assigned in the shortcut editor is applied to
@@ -2002,11 +2000,6 @@ class SshPilotApplication(Adw.Application):
     def on_quit_action(self, action=None, param=None):
         """Handle Ctrl (⌘ on macOS)+Q by routing through the application quit path."""
         self.quit()
-
-    def on_advanced_config_manager(self, action=None, param=None):
-        win = self._action_window()
-        if win:
-            win._open_advanced_config_manager()
 
     def on_edit_ssh_config(self, action=None, param=None):
         """Handle SSH config editor action."""

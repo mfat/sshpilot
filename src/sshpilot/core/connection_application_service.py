@@ -66,8 +66,6 @@ from ..api.models.connections import (
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
     SshConfigText,
-    SshConfigManagerRequest,
-    SshConfigManagerDocument,
     UpdateConnectionRequest,
     UNSET,
     forwarding_rule_from_dict,
@@ -100,7 +98,6 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
-    "edit_ssh_config": Capability.CONNECTIONS_CONFIG_MANAGER,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
@@ -184,7 +181,6 @@ class ConnectionApplicationService:
             Capability.CONNECTIONS_READ,
             Capability.CONNECTIONS_WRITE,
             Capability.CONNECTIONS_EVENTS,
-            Capability.CONNECTIONS_CONFIG_MANAGER,
             Capability.CONNECTIONS_CONFIG_READ,
             Capability.CONNECTIONS_CONFIG_WRITE,
             Capability.CONNECTIONS_SECRETS_WRITE,
@@ -1631,32 +1627,6 @@ class ConnectionApplicationService:
             return ipaddress.ip_address(value).compressed.casefold()
         except ValueError:
             return value.rstrip(".")
-
-    def edit_ssh_config(self, request: SshConfigManagerRequest) -> SshConfigManagerDocument:
-        self._assert_command_thread()
-        self._require_capability(Capability.CONNECTIONS_CONFIG_MANAGER)
-        if type(request) is not SshConfigManagerRequest:
-            raise SshPilotError(ErrorCode.INVALID_REQUEST, "A configuration manager request is required")
-        from .ssh_config_manager import edit_document
-        return edit_document(self.get_ssh_config_text(), request)
-
-    def prepare_ssh_config_preview(self, request):
-        """Capture authoritative inputs before handing work to the operation runtime."""
-        if request.action != "inspect":
-            raise SshPilotError(ErrorCode.INVALID_REQUEST, "Preview requires an inspect request")
-        baseline = self.get_ssh_config_text()
-        from .ssh_config_manager import edit_document, preview_config
-        draft = edit_document(baseline, request)
-        root = self._repository.root_config_path
-        isolated = self._repository.ssh_config_isolated
-        hosts = tuple(c.nickname for c in self._repository.snapshot().connections if c.protocol == "ssh")
-
-        def run(handle):
-            result = preview_config(root, baseline, draft.document, hosts, draft.selected, handle, isolated=isolated)
-            if self._repository.get_ssh_config_text().revision != baseline.revision:
-                raise SshPilotError(ErrorCode.STALE_EDITOR, "The SSH configuration changed during preview")
-            return result
-        return run
 
     def get_ssh_config_text(self) -> SshConfigText:
         """Return the daemon-selected active SSH config text for the raw editor."""

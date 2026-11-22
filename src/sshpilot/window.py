@@ -4275,7 +4275,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         menu.append_section(None, server_section)
 
         ssh_section = Gio.Menu()
-        ssh_section.append(_('Advanced Configuration Manager'), 'app.advanced-config-manager')
         ssh_section.append(_('SSH Config Editor'), 'app.edit-ssh-config')
         ssh_section.append(_('Known Hosts Editor'), 'win.edit-known-hosts')
         ssh_section.append(_('Login Profiles'), 'win.manage-login-profiles')
@@ -6251,16 +6250,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to present group edit options: {e}")
             self.show_connection_dialog(connection, skip_group_warning=True)
-
-    def _open_advanced_config_manager(self):
-        from .gtk.config_manager_window import ConfigManagerWindow
-
-        manager = getattr(self, '_advanced_config_manager', None)
-        if manager is None or manager._closed:
-            manager = ConfigManagerWindow(client=self.client, parent=self)
-            self._advanced_config_manager = manager
-        manager.present()
-        return manager
 
     def _open_ssh_config_editor(self, parent=None, on_saved=None):
         """Open the SSH config text editor backed by the daemon.
