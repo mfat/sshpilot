@@ -327,6 +327,26 @@ class LoginProfileController:
         return result
 
 
+#: Profile fields, as in the daemon's model: each is the profile's only when
+#: set (non-empty text or list, or a choice other than "Not set").
+PROFILE_FIELDS = (
+    "username", "key_select_mode", "identity_files", "certificate_files",
+    "identity_agent", "add_keys_to_agent", "pkcs11_provider",
+    "security_key_provider", "forward_agent", "proxy_command",
+)
+
+
+def settings_owned_fields(settings) -> tuple:
+    """The fields a profile's settings set; the rest stay each connection's."""
+    owned = []
+    for name in PROFILE_FIELDS:
+        value = getattr(settings, name, None)
+        if value is None or value == "" or value == ():
+            continue
+        owned.append(name)
+    return tuple(owned)
+
+
 def settings_from_values(values: Mapping[str, object]) -> LoginProfileSettings:
     """Build settings from an editor form mapping (strings/bools/ints/lists)."""
 
@@ -348,7 +368,10 @@ def settings_from_values(values: Mapping[str, object]) -> LoginProfileSettings:
         name=text("name"),
         username=text("username"),
         auth_method=int(values.get("auth_method") or 0),
-        key_select_mode=int(values.get("key_select_mode") or 0),
+        key_select_mode=(
+            None if values.get("key_select_mode") is None
+            else int(values["key_select_mode"])
+        ),
         identity_files=paths("identity_files"),
         certificate_files=paths("certificate_files"),
         identity_agent=text("identity_agent"),
@@ -356,7 +379,10 @@ def settings_from_values(values: Mapping[str, object]) -> LoginProfileSettings:
         pkcs11_provider=text("pkcs11_provider"),
         security_key_provider=text("security_key_provider"),
         pubkey_auth_no=bool(values.get("pubkey_auth_no")),
-        forward_agent=bool(values.get("forward_agent")),
+        forward_agent=(
+            None if values.get("forward_agent") is None
+            else bool(values["forward_agent"])
+        ),
         forward_agent_target=text("forward_agent_target"),
         proxy_command=text("proxy_command"),
         extra_ssh_config=str(values.get("extra_ssh_config") or "").strip(),

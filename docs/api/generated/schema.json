@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.104",
+  "api_implementation_version": "0.105",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -6572,11 +6572,11 @@
           "type": "int"
         },
         {
-          "default": 0,
+          "default": null,
           "name": "key_select_mode",
           "required": false,
           "sensitive": false,
-          "type": "int"
+          "type": "Optional[int]"
         },
         {
           "default": [],
@@ -6628,11 +6628,11 @@
           "type": "bool"
         },
         {
-          "default": false,
+          "default": null,
           "name": "forward_agent",
           "required": false,
           "sensitive": false,
-          "type": "bool"
+          "type": "Optional[bool]"
         },
         {
           "default": "",

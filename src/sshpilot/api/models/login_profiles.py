@@ -145,7 +145,8 @@ class LoginProfileSettings:
     name: str
     username: str = ""
     auth_method: int = 0  # 0 = key, 1 = password
-    key_select_mode: int = 0  # 0 = automatic, 1 = specific keys only, 2 = specific keys + agent
+    # None = not set: a linked connection keeps its own value.
+    key_select_mode: Optional[int] = None  # 0 = automatic, 1 = specific keys only, 2 = specific keys + agent
     identity_files: Tuple[str, ...] = ()
     certificate_files: Tuple[str, ...] = ()
     identity_agent: str = ""
@@ -153,7 +154,7 @@ class LoginProfileSettings:
     pkcs11_provider: str = ""
     security_key_provider: str = ""
     pubkey_auth_no: bool = False
-    forward_agent: bool = False
+    forward_agent: Optional[bool] = None  # None = not set
     forward_agent_target: str = ""
     proxy_command: str = ""
     extra_ssh_config: str = ""
@@ -167,12 +168,16 @@ class LoginProfileSettings:
         _check_text(self.extra_ssh_config, "extra_ssh_config", multiline=True)
         if type(self.auth_method) is not int or self.auth_method not in _AUTH_METHODS:
             raise ValueError("auth_method must be 0 or 1")
-        if type(self.key_select_mode) is not int or self.key_select_mode not in _KEY_SELECT_MODES:
-            raise ValueError("key_select_mode must be 0, 1 or 2")
+        if self.key_select_mode is not None and (
+            type(self.key_select_mode) is not int
+            or self.key_select_mode not in _KEY_SELECT_MODES
+        ):
+            raise ValueError("key_select_mode must be 0, 1, 2 or None")
         _check_str_tuple(self.identity_files, "identity_files")
         _check_str_tuple(self.certificate_files, "certificate_files")
         _check_bool(self.pubkey_auth_no, "pubkey_auth_no")
-        _check_bool(self.forward_agent, "forward_agent")
+        if self.forward_agent is not None:
+            _check_bool(self.forward_agent, "forward_agent")
 
 
 @dataclass(frozen=True)

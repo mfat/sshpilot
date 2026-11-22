@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+- A login profile applies only what it sets. `LoginProfileSettings.key_select_mode`
+  and `forward_agent` are optional (`null` = not set); empty text and lists are
+  not set. A linked connection keeps its own value for every field the profile
+  leaves unset, and the dialog locks only the rows the profile sets. Links
+  record a `v4:` fingerprint of the fields they own (link metadata `fields`),
+  so editing anything else never detaches. Profiles stored by earlier versions
+  read Automatic key selection and an off agent switch as not set. The API
+  implementation version is 0.105; Protocol remains 1.0.
 - Login profiles hold their authentication order and per-method switches as
   plain lines of `extra_ssh_config` (`PreferredAuthentications`,
   `PubkeyAuthentication`, `PasswordAuthentication`,

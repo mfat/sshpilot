@@ -176,7 +176,7 @@ def profile_summary_line(profile: LoginProfileSummary) -> str:
         parts.append(_("password"))
     elif settings.identity_files:
         parts.append(", ".join(path.rsplit("/", 1)[-1] for path in settings.identity_files))
-    else:
+    elif settings.key_select_mode == 0:
         parts.append(_("automatic keys"))
     return " · ".join(parts)
 

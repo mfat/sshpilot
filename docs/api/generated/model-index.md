@@ -3571,7 +3571,7 @@ Synthetic representation:
 | `name` | `str` | Yes | — | No |
 | `username` | `str` | No | `` | No |
 | `auth_method` | `int` | No | `0` | No |
-| `key_select_mode` | `int` | No | `0` | No |
+| `key_select_mode` | `Optional[int]` | No | `null` | No |
 | `identity_files` | `Tuple[str, ...]` | No | `[]` | No |
 | `certificate_files` | `Tuple[str, ...]` | No | `[]` | No |
 | `identity_agent` | `str` | No | `` | No |
@@ -3579,7 +3579,7 @@ Synthetic representation:
 | `pkcs11_provider` | `str` | No | `` | No |
 | `security_key_provider` | `str` | No | `` | No |
 | `pubkey_auth_no` | `bool` | No | `false` | No |
-| `forward_agent` | `bool` | No | `false` | No |
+| `forward_agent` | `Optional[bool]` | No | `null` | No |
 | `forward_agent_target` | `str` | No | `` | No |
 | `proxy_command` | `str` | No | `` | No |
 | `extra_ssh_config` | `str` | No | `` | No |
@@ -3592,11 +3592,11 @@ Synthetic representation:
   "auth_method": 0,
   "certificate_files": [],
   "extra_ssh_config": "",
-  "forward_agent": false,
+  "forward_agent": null,
   "forward_agent_target": "",
   "identity_agent": "",
   "identity_files": [],
-  "key_select_mode": 0,
+  "key_select_mode": null,
   "name": "example",
   "pkcs11_provider": "",
   "proxy_command": "",

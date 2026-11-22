@@ -1,8 +1,9 @@
 """Login profile picker for the connection dialog's Authentication page.
 
 While a profile is linked (explicitly or inherited from the connection's
-group) the profile decides the authentication settings: the auth rows are
-locked and the Username row is dimmed showing the profile's username. The
+group) it decides only the settings it sets: those rows are locked, with a
+note naming the profile; what it leaves unset stays the connection's own and
+editable. A username the profile sets dims the Username row, showing it. The
 Username row also carries a picker button so a profile can be chosen from
 the Connection page. The chosen link is stored as ``self._login_profile_change`` — ``(mode, profile_id)``
 or ``None`` when unchanged — and the window applies it around the config save
@@ -280,13 +281,49 @@ class ConnectionDialogLoginProfileMixin:
 
     def _on_login_profile_selected(self, *_args) -> None:
         profile = self._selected_login_profile()
-        locked = profile is not None
-        for widget in self._login_profile_locked_widgets:
-            try:
-                widget.set_sensitive(not locked)
-            except Exception:
-                pass
-        self._sync_username_row(profile)
+        self._apply_login_profile_locks(profile)
+        username_set = profile is not None and bool(profile.settings.username)
+        self._sync_username_row(profile if username_set else None)
+
+    def _apply_login_profile_locks(self, profile) -> None:
+        """Lock the rows for what *profile* sets; unlock everything else."""
+        from .gtk.login_profile_controller import settings_owned_fields
+
+        owned = set(settings_owned_fields(profile.settings)) if profile else set()
+        note = (
+            _("Set by login profile “{name}”").format(name=profile.settings.name)
+            if profile else ""
+        )
+        for field, names in PROFILE_FIELD_ROWS.items():
+            locked = field in owned
+            for name in names:
+                widget = getattr(self, name, None)
+                if widget is None:
+                    continue
+                try:
+                    widget.set_sensitive(not locked)
+                    widget.set_tooltip_text(note if locked else None)
+                except Exception:
+                    pass
+        password_row = getattr(self, "password_row", None)
+        if password_row is not None:
+            # A profile's stored password is the one used.
+            has_password = bool(profile and getattr(profile, "has_password", False))
+            password_row.set_sensitive(not has_password)
+            password_row.set_tooltip_text(note if has_password else None)
+        section = getattr(self, "auth_policy", None)
+        if section is not None:
+            from .connection_dialog_auth import METHOD_OF_KEYWORD, split_policy_lines
+
+            lines, _other = split_policy_lines(
+                profile.settings.extra_ssh_config if profile else ""
+            )
+            keywords = {line.split(None, 1)[0].lower() for line in lines if line.strip()}
+            section.set_profile_locks(
+                order="preferredauthentications" in keywords,
+                methods={METHOD_OF_KEYWORD[k] for k in keywords if k in METHOD_OF_KEYWORD},
+                note=note,
+            )
 
     def collect_login_profile_change(self):
         """``(mode, profile_id)`` when the link changed, else ``None``."""
@@ -326,10 +363,24 @@ def _profile_icon() -> Gtk.Image:
     return new_image_from_icon_name("system-users-symbolic")
 
 
-def login_profile_locked_widgets(dialog: Any, auth_groups: List[Any]) -> List[Any]:
-    """Widgets a linked profile locks: every auth group.
+#: The dialog rows each profile field decides. A linked profile locks only
+#: the rows of fields it sets. The Username row is handled by
+#: ``_sync_username_row`` so its profile picker button stays usable; the
+#: authentication order and switches by ``AuthPolicyGroup.set_profile_locks``.
+PROFILE_FIELD_ROWS = {
+    "key_select_mode": ("key_select_row", "key_only_row"),
+    "identity_files": ("key_editor",),
+    "certificate_files": ("cert_editor",),
+    "identity_agent": ("identity_agent_row", "identity_agent_value_row"),
+    "add_keys_to_agent": ("add_keys_to_agent_row",),
+    "pkcs11_provider": ("pkcs11_provider_row",),
+    "security_key_provider": ("security_key_provider_row",),
+    "forward_agent": ("forward_agent_row", "forward_agent_value_row"),
+    "proxy_command": ("proxy_command_row",),
+}
 
-    The Username row is handled by ``_sync_username_row`` instead, so its
-    profile picker button stays usable while a profile is linked.
-    """
-    return list(auth_groups)
+
+def login_profile_locked_widgets(dialog: Any, auth_groups: List[Any]) -> List[Any]:
+    """Kept for callers that register widgets; locking is per field now
+    (``PROFILE_FIELD_ROWS``), so nothing is locked wholesale."""
+    return []

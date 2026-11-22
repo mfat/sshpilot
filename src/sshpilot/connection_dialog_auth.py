@@ -372,6 +372,10 @@ class AuthPolicyGroup:
         self.policy = AuthPolicy()
         self._on_changed = on_changed
         self._syncing = False
+        # Set by a linked login profile: the order, and methods by name.
+        self._order_locked = False
+        self._locked_methods: set = set()
+        self._lock_note = ""
 
         self.group = Adw.PreferencesGroup(title=_("Authentication order"))
         self.group.set_description(
@@ -479,7 +483,8 @@ class AuthPolicyGroup:
                 Gtk.ShortcutTrigger.parse_string(trigger),
                 Gtk.CallbackAction.new(
                     lambda *_a, m=method, d=delta: (
-                        self._edit(lambda: self.policy.move_by(m, d)), True)[1]
+                        self._order_locked
+                        or self._edit(lambda: self.policy.move_by(m, d)), True)[1]
                 ),
             ))
         row.add_controller(keys)
@@ -488,7 +493,8 @@ class AuthPolicyGroup:
         source.set_actions(Gdk.DragAction.MOVE)
         source.connect("prepare", lambda *_a, m=method: (
             Gdk.ContentProvider.new_for_value(_DRAG_PREFIX + m)
-            if row.get_sensitive() and m in self.policy.shown_order() else None
+            if row.get_sensitive() and not self._order_locked
+            and m in self.policy.shown_order() else None
         ))
         source.connect("drag-begin", lambda src, _drag, r=row: self._drag_icon(src, r))
         row.add_controller(source)
@@ -506,7 +512,18 @@ class AuthPolicyGroup:
         except Exception:
             pass
 
+    def set_profile_locks(
+        self, *, order: bool, methods: Iterable[str], note: str = ""
+    ) -> None:
+        """Lock what a linked login profile sets: the order, and switches."""
+        self._order_locked = bool(order)
+        self._locked_methods = set(methods)
+        self._lock_note = note
+        self.sync()
+
     def _on_drop(self, _target, value, _x, y, row) -> bool:
+        if self._order_locked:
+            return False
         value = str(value or "")
         if not value.startswith(_DRAG_PREFIX):
             return False  # only this list's own rows
@@ -535,6 +552,7 @@ class AuthPolicyGroup:
         self.sync()
 
     def _edit(self, change: Callable[[], bool]) -> bool:
+        # Keyboard shortcuts reach here even when the action is disabled.
         changed = bool(change())
         if changed:
             self.sync()
@@ -578,7 +596,13 @@ class AuthPolicyGroup:
                     self._show_row(self.rows[method], order_set, in_order=False)
             for method in METHODS:
                 self._show_switch(self.rows[method], method, inherited_note_text())
-            self.reset_button.set_sensitive(order_set)
+            self.reset_button.set_sensitive(order_set and not self._order_locked)
+            self.reset_button.set_tooltip_text(
+                self._lock_note if self._order_locked else (
+                    _("Leave the order to each linked connection") if self.profile else
+                    _("Remove this host's order so the inherited one applies")
+                )
+            )
             will_try = policy.will_try()
             if will_try is None:
                 self.order_row.set_subtitle(
@@ -598,10 +622,11 @@ class AuthPolicyGroup:
         else:
             row.add_css_class("dim-label")
         actions = row._actions
-        actions.lookup_action("up").set_enabled(in_order)
-        actions.lookup_action("down").set_enabled(in_order)
-        actions.lookup_action("top").set_enabled(in_order)
-        actions.lookup_action("add").set_enabled(not in_order)
+        movable = not self._order_locked
+        actions.lookup_action("up").set_enabled(in_order and movable)
+        actions.lookup_action("down").set_enabled(in_order and movable)
+        actions.lookup_action("top").set_enabled(in_order and movable)
+        actions.lookup_action("add").set_enabled(not in_order and movable)
 
     def _show_switch(self, row, method: str, inherited_note: str) -> None:
         check = row._check
@@ -610,7 +635,13 @@ class AuthPolicyGroup:
         check.set_inconsistent(value is None)
         check.set_active(bool(value))
         is_set = policy.switch_is_set(method)
-        row._actions.lookup_action("reset").set_enabled(is_set)
+        locked = method in self._locked_methods
+        check.set_sensitive(not locked)
+        row._actions.lookup_action("reset").set_enabled(is_set and not locked)
+        if locked:
+            check.remove_css_class("dim-label")
+            check.set_tooltip_text(self._lock_note)
+            return
         if is_set:
             check.remove_css_class("dim-label")
             check.set_tooltip_text(None)

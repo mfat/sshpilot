@@ -563,6 +563,8 @@ def test_legacy_proxy_fingerprint_upgrade(env, representation, drift):
     link = _link(repo, 'web1').to_metadata()
     link['applied'] = old_hash
     with service._operation():  # simulate persisted metadata before reconciliation
+        # Older releases applied every field, blanking the username too.
+        repo.update_connection('web1', {'username': ''})
         repo.update_connection_metadata('web1', {'login_profile': link})
         if drift:
             repo.update_connection('web1', {'proxy_command': 'ssh changed'})
@@ -612,7 +614,10 @@ def test_a_password_profile_link_recorded_before_auth_lines_keeps_matching(env, 
     link = _link(repo, 'web1').to_metadata()
     link['applied'] = old_hash
     link['extra_keys'] = []
+    link.pop('fields', None)
     with service._operation():
+        # Older releases applied every field, blanking the username too.
+        repo.update_connection('web1', {'username': ''})
         repo.update_connection_metadata('web1', {'login_profile': link})
         if drift:
             # Someone removes the password-first order from the block.
@@ -627,5 +632,66 @@ def test_a_password_profile_link_recorded_before_auth_lines_keeps_matching(env, 
     assert _link(repo, 'web1').applied == old_hash
     # The next edit applies the profile's lines and records a v3 fingerprint.
     service.update_profile(profile.id, {'username': 'ops'})
-    assert _link(repo, 'web1').applied.startswith('v3:')
+    assert _link(repo, 'web1').applied.startswith('v4:')
     assert f'PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}' in _block(root, 'web1')
+
+
+# -- a profile applies only what it sets ------------------------------------
+
+def test_fields_a_profile_leaves_unset_stay_the_connections(env):
+    repo, service, root, *_ = env
+    repo.update_connection('web1', {
+        **repo.get_record('web1').data,
+        'key_select_mode': 2, 'identity_files': ['/keys/web1'],
+        'forward_agent': True,
+    })
+    profile = service.create_profile({
+        'name': 'Agent only', 'identity_agent': '/run/agent.sock',
+    })
+    service.assign_connections(['web1'], LINK_EXPLICIT, profile.id)
+    block = _block(root, 'web1')
+    assert 'User alice' in block                    # no username in the profile
+    assert 'IdentityFile /keys/web1' in block      # no key selection in it
+    assert 'ForwardAgent yes' in block             # forward agent not set
+    assert 'IdentityAgent /run/agent.sock' in block
+    link = _link(repo, 'web1')
+    assert link.applied.startswith('v4:') and link.fields == ('identity_agent',)
+
+
+def test_a_profile_can_set_forward_agent_off(env):
+    repo, service, root, *_ = env
+    repo.update_connection('web1', {**repo.get_record('web1').data, 'forward_agent': True})
+    profile = service.create_profile({'name': 'No agent', 'forward_agent': False})
+    service.assign_connections(['web1'], LINK_EXPLICIT, profile.id)
+    assert 'ForwardAgent no' in _block(root, 'web1')
+
+
+def test_editing_what_the_profile_does_not_set_never_detaches(env):
+    repo, service, root, *_ = env
+    profile = service.create_profile({'name': 'Agent', 'identity_agent': '/run/a.sock'})
+    service.assign_connections(['web1'], LINK_EXPLICIT, profile.id)
+    root.write_text(root.read_text().replace('User alice', 'User someone'))
+    repo.reload()
+    assert service.reconcile() == ()
+    assert _link(repo, 'web1') is not None
+    # Editing what it does set still detaches.
+    root.write_text(root.read_text().replace('/run/a.sock', '/run/other.sock'))
+    repo.reload()
+    service.reconcile()
+    assert _link(repo, 'web1') is None
+
+
+def test_stored_profiles_read_their_old_defaults_as_not_set():
+    from sshpilot.core.login_profiles.models import LoginProfile, profile_owned_fields
+
+    old = LoginProfile.from_dict({
+        'id': 'lp-0000000000000001', 'name': 'Old',
+        'key_select_mode': 0, 'forward_agent': False, 'username': '',
+    })
+    assert old.key_select_mode is None and old.forward_agent is None
+    assert profile_owned_fields(old) == ()
+    # Saved again, an explicit Automatic / No is kept on the next load.
+    chosen = old.with_changes(key_select_mode=0, forward_agent=False)
+    again = LoginProfile.from_dict(chosen.to_dict())
+    assert again.key_select_mode == 0 and again.forward_agent is False
+    assert profile_owned_fields(again) == ('key_select_mode', 'forward_agent')

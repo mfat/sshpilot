@@ -45,6 +45,7 @@ LINK_INHERIT = "inherit"
 
 AUTH_KEY = 0
 AUTH_PASSWORD = 1
+_UNSET_AWARE = "unset_aware"
 
 _ID_PREFIX = "lp-"
 _ID_RE = re.compile(r"^lp-[0-9a-f]{16}$")
@@ -214,7 +215,8 @@ class LoginProfile:
     name: str
     username: str = ""
     auth_method: int = AUTH_KEY
-    key_select_mode: int = 0
+    # None = not set: a linked connection keeps its own value.
+    key_select_mode: Optional[int] = None
     identity_files: Tuple[str, ...] = ()
     certificate_files: Tuple[str, ...] = ()
     identity_agent: str = ""
@@ -222,7 +224,7 @@ class LoginProfile:
     pkcs11_provider: str = ""
     security_key_provider: str = ""
     pubkey_auth_no: bool = False
-    forward_agent: bool = False
+    forward_agent: Optional[bool] = None  # None = not set
     forward_agent_target: str = ""
     proxy_command: str = ""
     extra_ssh_config: str = ""
@@ -251,8 +253,10 @@ class LoginProfile:
         object.__setattr__(self, "username", username)
         if self.auth_method not in (AUTH_KEY, AUTH_PASSWORD):
             raise ValueError("auth_method must be 0 (key) or 1 (password)")
-        if self.key_select_mode not in (0, 1, 2):
-            raise ValueError("key_select_mode must be 0, 1 or 2")
+        if self.key_select_mode is not None and self.key_select_mode not in (0, 1, 2):
+            raise ValueError("key_select_mode must be 0, 1, 2 or None")
+        if self.forward_agent is not None and type(self.forward_agent) is not bool:
+            raise TypeError("forward_agent must be a boolean or None")
         object.__setattr__(
             self, "identity_files", _clean_paths(self.identity_files, "identity_files")
         )
@@ -288,7 +292,7 @@ class LoginProfile:
             object.__setattr__(self, "auth_method", AUTH_KEY)
             object.__setattr__(self, "pubkey_auth_no", False)
         object.__setattr__(self, "extra_ssh_config", _clean_extra(extra))
-        for flag in ("pubkey_auth_no", "forward_agent", "has_password", "has_sudo_password"):
+        for flag in ("pubkey_auth_no", "has_password", "has_sudo_password"):
             if type(getattr(self, flag)) is not bool:
                 raise TypeError(f"{flag} must be a boolean")
         if type(self.revision) is not int or self.revision < 1:
@@ -317,6 +321,8 @@ class LoginProfile:
             "has_password": self.has_password,
             "has_sudo_password": self.has_sudo_password,
             "revision": self.revision,
+            # Written by versions where an empty field means "not set".
+            _UNSET_AWARE: True,
         }
 
     @classmethod
@@ -328,6 +334,14 @@ class LoginProfile:
         for key in ("identity_files", "certificate_files"):
             if key in values and isinstance(values[key], list):
                 values[key] = tuple(values[key])
+        if not data.get(_UNSET_AWARE):
+            # Stored before fields could be left unset: Automatic key
+            # selection and "don't forward the agent" were only the form's
+            # defaults, so they read as not set (the connection keeps its own).
+            if values.get("key_select_mode") == 0:
+                values["key_select_mode"] = None
+            if values.get("forward_agent") is False:
+                values["forward_agent"] = None
         # Profiles saved while ProxyCommand lived in extra text keep working:
         # the first command becomes the dedicated field.
         extra = values.get("extra_ssh_config")
@@ -348,7 +362,7 @@ class LoginProfile:
     def settings(self) -> Dict[str, Any]:
         """Editable, non-identity fields (what an update request may change)."""
         data = self.to_dict()
-        for key in ("id", "revision", "has_password", "has_sudo_password"):
+        for key in ("id", "revision", "has_password", "has_sudo_password", _UNSET_AWARE):
             data.pop(key, None)
         return data
 
@@ -380,32 +394,36 @@ def apply_profile_to_data(data: Mapping[str, Any], profile: LoginProfile) -> Dic
     The result is a full update payload for ``ConnectionRepository.update_connection``.
     """
     out = dict(data)
-    out["username"] = profile.username
-    authored = {
-        str(name).strip().lower()
-        for name in (out.get("__authored_directives") or ())
-        if str(name).strip()
-    }
-    if profile.username:
+    fields = profile_owned_fields(profile)
+    if "username" in fields:
+        out["username"] = profile.username
+        authored = {
+            str(name).strip().lower()
+            for name in (out.get("__authored_directives") or ())
+            if str(name).strip()
+        }
         authored.add("user")
-    else:
-        authored.discard("user")
-    out["__authored_directives"] = tuple(sorted(authored))
-
-    out["key_select_mode"] = profile.key_select_mode
-    out["identity_files"] = list(profile.identity_files)
-    out["keyfile"] = profile.identity_files[0] if profile.identity_files else ""
-    out["certificate_files"] = list(profile.certificate_files)
-    out["certificate"] = profile.certificate_files[0] if profile.certificate_files else ""
-    out["identity_file_none"] = False
-    out["identities_only_explicit_no"] = False
-    out["identity_agent"] = profile.identity_agent
-    out["add_keys_to_agent"] = profile.add_keys_to_agent
-    out["pkcs11_provider"] = profile.pkcs11_provider
-    out["security_key_provider"] = profile.security_key_provider
-    out["forward_agent"] = profile.forward_agent
-    out["forward_agent_target"] = profile.forward_agent_target if profile.forward_agent else ""
-    out["forward_agent_explicit_no"] = False
+        out["__authored_directives"] = tuple(sorted(authored))
+    if "key_select_mode" in fields:
+        out["key_select_mode"] = profile.key_select_mode
+        out["identity_file_none"] = False
+        out["identities_only_explicit_no"] = False
+    if "identity_files" in fields:
+        out["identity_files"] = list(profile.identity_files)
+        out["keyfile"] = profile.identity_files[0]
+    if "certificate_files" in fields:
+        out["certificate_files"] = list(profile.certificate_files)
+        out["certificate"] = profile.certificate_files[0]
+    for name in ("identity_agent", "add_keys_to_agent", "pkcs11_provider",
+                 "security_key_provider"):
+        if name in fields:
+            out[name] = getattr(profile, name)
+    if "forward_agent" in fields:
+        out["forward_agent"] = bool(profile.forward_agent)
+        out["forward_agent_explicit_no"] = profile.forward_agent is False
+        out["forward_agent_target"] = (
+            profile.forward_agent_target if profile.forward_agent else ""
+        )
     # Authentication lines are options like any other: those the profile
     # sets replace the connection's own; what it leaves unset stays.
     out["extra_ssh_config"] = _merge_extra(
@@ -442,6 +460,33 @@ def _norm_list(values: Any) -> List[str]:
     return [str(v).strip() for v in values if str(v).strip()]
 
 
+#: Profile fields a link can own, in display order. Each is owned only when
+#: the profile sets it; the connection keeps its own value otherwise.
+PROFILE_FIELDS: Tuple[str, ...] = (
+    "username",
+    "key_select_mode",
+    "identity_files",
+    "certificate_files",
+    "identity_agent",
+    "add_keys_to_agent",
+    "pkcs11_provider",
+    "security_key_provider",
+    "forward_agent",
+    "proxy_command",
+)
+
+
+def profile_owned_fields(profile: "LoginProfile") -> Tuple[str, ...]:
+    """The fields *profile* sets (empty text/lists and ``None`` are unset)."""
+    owned = []
+    for name in PROFILE_FIELDS:
+        value = getattr(profile, name)
+        if value is None or value == "" or value == ():
+            continue
+        owned.append(name)
+    return tuple(owned)
+
+
 def profile_owned_keywords(profile: "LoginProfile") -> Tuple[str, ...]:
     """Directive keywords this profile replaces on a linked connection.
 
@@ -475,6 +520,7 @@ def auth_projection(
     *,
     expand_paths: bool = False,
     legacy_auth: bool = False,
+    owned_fields: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     """The profile-owned slice of connection data.
 
@@ -521,6 +567,18 @@ def auth_projection(
     if legacy_auth:
         projection["auth_method"] = auth_method
         projection["pubkey_auth_no"] = bool(data.get("pubkey_auth_no"))
+    if owned_fields is not None:
+        # Only what the profile sets is its business (v4 links).
+        keep = set(owned_fields) | {"extra"}
+        if "forward_agent" in keep:
+            keep.add("forward_agent_target")
+            projection["forward_agent_explicit_no"] = bool(
+                data.get("forward_agent_explicit_no")
+            )
+            keep.add("forward_agent_explicit_no")
+        if "identity_files" in keep and key_mode not in (1, 2):
+            projection["identity_files"] = paths("identity_files")
+        projection = {k: v for k, v in projection.items() if k in keep}
     return projection
 
 
@@ -530,6 +588,7 @@ def _projection_fingerprint(projection: Mapping[str, Any]) -> str:
 
 
 AUTH_LINES_FINGERPRINT = "v3:"
+OWNED_FIELDS_FINGERPRINT = "v4:"
 
 
 def auth_fingerprint(
@@ -537,6 +596,7 @@ def auth_fingerprint(
     owned_keywords: Iterable[str] = (),
     *,
     legacy_auth: bool = False,
+    owned_fields: Optional[Iterable[str]] = None,
 ) -> str:
     """The link's drift fingerprint.
 
@@ -544,6 +604,9 @@ def auth_fingerprint(
     recomputes the fingerprint of a link recorded before the authentication
     lines were plain options, which also hashed the Key/Password view.
     """
+    if owned_fields is not None:
+        projection = auth_projection(data, owned_keywords, owned_fields=owned_fields)
+        return OWNED_FIELDS_FINGERPRINT + _projection_fingerprint(projection)
     projection = auth_projection(data, owned_keywords, legacy_auth=legacy_auth)
     if not legacy_auth:
         return AUTH_LINES_FINGERPRINT + _projection_fingerprint(projection)
@@ -554,7 +617,18 @@ def auth_fingerprint(
 
 
 def is_legacy_auth_link(applied: str) -> bool:
-    return bool(applied) and not applied.startswith(AUTH_LINES_FINGERPRINT)
+    return bool(applied) and not applied.startswith(
+        (AUTH_LINES_FINGERPRINT, OWNED_FIELDS_FINGERPRINT)
+    )
+
+
+def link_fingerprint(data: Mapping[str, Any], link: "ProfileLink") -> str:
+    """Recompute *link*'s fingerprint the way it was recorded."""
+    if link.applied.startswith(OWNED_FIELDS_FINGERPRINT):
+        return auth_fingerprint(data, link.extra_keys, owned_fields=link.fields)
+    return auth_fingerprint(
+        data, link.extra_keys, legacy_auth=is_legacy_auth_link(link.applied)
+    )
 
 
 def matches_legacy_auth_fingerprint(
@@ -622,6 +696,9 @@ class ProfileLink:
     applied: str = ""
     rev: str = ""
     extra_keys: Tuple[str, ...] = ()
+    # The profile fields this link applied (v4 links): drift and locking
+    # concern these only.
+    fields: Tuple[str, ...] = ()
 
     def to_metadata(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -630,6 +707,8 @@ class ProfileLink:
             "rev": self.rev,
             "extra_keys": list(self.extra_keys),
         }
+        if self.fields:
+            payload["fields"] = list(self.fields)
         if self.mode == LINK_EXPLICIT:
             payload["id"] = self.profile_id
         return payload
@@ -650,10 +729,15 @@ def parse_link(metadata: Optional[Mapping[str, Any]]) -> Optional[ProfileLink]:
         str(k).lower() for k in (keys_raw if isinstance(keys_raw, (list, tuple)) else ())
         if isinstance(k, str) and k.strip()
     )
+    fields_raw = raw.get("fields")
+    fields = tuple(
+        f for f in (fields_raw if isinstance(fields_raw, (list, tuple)) else ())
+        if isinstance(f, str) and f in PROFILE_FIELDS
+    )
     if mode == LINK_EXPLICIT and is_profile_id(raw.get("id")):
-        return ProfileLink(LINK_EXPLICIT, str(raw["id"]), applied, rev, extra_keys)
+        return ProfileLink(LINK_EXPLICIT, str(raw["id"]), applied, rev, extra_keys, fields)
     if mode == LINK_INHERIT:
-        return ProfileLink(LINK_INHERIT, None, applied, rev, extra_keys)
+        return ProfileLink(LINK_INHERIT, None, applied, rev, extra_keys, fields)
     return None
 
 

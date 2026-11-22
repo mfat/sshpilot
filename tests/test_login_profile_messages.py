@@ -80,7 +80,11 @@ def test_preview_text():
 
 
 def test_summary_line():
-    assert profile_summary_line(_summary(username="deploy")) == "deploy · automatic keys"
+    # Key selection not set: the profile says nothing about keys.
+    assert profile_summary_line(_summary(username="deploy")) == "deploy"
+    assert profile_summary_line(
+        _summary(username="deploy", key_select_mode=0)
+    ) == "deploy · automatic keys"
     assert profile_summary_line(_summary(username="root", auth_method=1)) == "root · password"
     assert profile_summary_line(
         _summary(key_select_mode=1, identity_files=("~/.ssh/id_a", "/k/id_b"))

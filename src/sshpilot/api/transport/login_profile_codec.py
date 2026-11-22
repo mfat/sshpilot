@@ -106,11 +106,17 @@ def login_profile_settings_from_wire(value: Any) -> LoginProfileSettings:
     return LoginProfileSettings(
         name=_text(data["name"], "name"),
         auth_method=_integer(data["auth_method"], "auth_method"),
-        key_select_mode=_integer(data["key_select_mode"], "key_select_mode"),
+        key_select_mode=(
+            None if data["key_select_mode"] is None
+            else _integer(data["key_select_mode"], "key_select_mode")
+        ),
         identity_files=_strings(data["identity_files"], "identity_files"),
         certificate_files=_strings(data["certificate_files"], "certificate_files"),
         pubkey_auth_no=_boolean(data["pubkey_auth_no"], "pubkey_auth_no"),
-        forward_agent=_boolean(data["forward_agent"], "forward_agent"),
+        forward_agent=(
+            None if data["forward_agent"] is None
+            else _boolean(data["forward_agent"], "forward_agent")
+        ),
         **text,
     )
 

@@ -43,7 +43,9 @@ from sshpilot.gtk.login_profile_messages import (
 
 logger = logging.getLogger(__name__)
 
+# Index 0 is "Not set": a linked connection keeps its own key selection.
 _KEY_MODE_OPTIONS = (
+    _("Not set"),
     _("Automatic"),
     _("Specific keys only"),
     _("Specific keys and agent"),
@@ -242,7 +244,9 @@ class LoginProfileEditor:
         self.key_mode_row = Adw.ComboRow(
             title=_("Key selection"), model=_string_list(_KEY_MODE_OPTIONS)
         )
-        self.key_mode_row.set_selected(settings.key_select_mode)
+        self.key_mode_row.set_selected(
+            0 if settings.key_select_mode is None else settings.key_select_mode + 1
+        )
         self.key_mode_row.connect("notify::selected", self._sync_visibility)
         auth.add(self.key_mode_row)
         page.add(auth)
@@ -300,9 +304,15 @@ class LoginProfileEditor:
         self.sk_row = Adw.EntryRow(title=_("FIDO security key provider"))
         self.sk_row.set_text(settings.security_key_provider)
         agent.add(self.sk_row)
-        self.forward_agent_row = Adw.SwitchRow(title=_("Forward agent"))
-        self.forward_agent_row.set_active(settings.forward_agent)
-        self.forward_agent_row.connect("notify::active", self._sync_visibility)
+        # Not set / Yes / No: unset leaves each connection's ForwardAgent.
+        self.forward_agent_row = Adw.ComboRow(
+            title=_("Forward agent"),
+            model=_string_list((_("Not set"), _("Yes"), _("No"))),
+        )
+        self.forward_agent_row.set_selected(
+            0 if settings.forward_agent is None else (1 if settings.forward_agent else 2)
+        )
+        self.forward_agent_row.connect("notify::selected", self._sync_visibility)
         agent.add(self.forward_agent_row)
         self.forward_target_row = Adw.EntryRow(title=_("Agent socket to forward (optional)"))
         self.forward_target_row.set_text(settings.forward_agent_target)
@@ -366,9 +376,9 @@ class LoginProfileEditor:
         self.dialog.present()
 
     def _sync_visibility(self, *_args) -> None:
-        specific = self.key_mode_row.get_selected() in (1, 2)
+        specific = self.key_mode_row.get_selected() in (2, 3)
         self.key_editor.set_visible(specific)
-        self.forward_target_row.set_visible(self.forward_agent_row.get_active())
+        self.forward_target_row.set_visible(self.forward_agent_row.get_selected() == 1)
 
     def values(self) -> Dict[str, object]:
         from .connection_dialog_auth import join_extra
@@ -385,14 +395,19 @@ class LoginProfileEditor:
         return {
             "name": self.name_row.get_text(),
             "username": self.username_row.get_text(),
-            "key_select_mode": self.key_mode_row.get_selected(),
+            "key_select_mode": (
+                None if self.key_mode_row.get_selected() == 0
+                else self.key_mode_row.get_selected() - 1
+            ),
             "identity_files": list(self.key_editor.get_paths()),
             "certificate_files": list(self.cert_editor.get_paths()),
             "identity_agent": self.identity_agent_row.get_text(),
             "add_keys_to_agent": add_keys,
             "pkcs11_provider": self.pkcs11_row.get_text(),
             "security_key_provider": self.sk_row.get_text(),
-            "forward_agent": self.forward_agent_row.get_active(),
+            "forward_agent": {0: None, 1: True, 2: False}.get(
+                self.forward_agent_row.get_selected()
+            ),
             "forward_agent_target": self.forward_target_row.get_text(),
             "proxy_command": self.proxy_command_row.get_text(),
             "extra_ssh_config": extra,

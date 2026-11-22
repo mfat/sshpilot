@@ -49,8 +49,9 @@ from .models import (
     ProfileLink,
     apply_profile_to_data,
     auth_fingerprint,
-    is_legacy_auth_link,
+    link_fingerprint,
     matches_legacy_auth_fingerprint,
+    profile_owned_fields,
     auth_projection,
     diff_projections,
     profile_owned_keywords,
@@ -609,9 +610,13 @@ class LoginProfileService:
                     previews.append(AssignmentPreview(cid, "", ()))
                     continue
                 keys = profile_owned_keywords(eff.profile)
-                before = auth_projection(record.data, keys, expand_paths=True)
+                fields = profile_owned_fields(eff.profile)
+                before = auth_projection(
+                    record.data, keys, expand_paths=True, owned_fields=fields
+                )
                 after = auth_projection(
-                    apply_profile_to_data(record.data, eff.profile), keys, expand_paths=True
+                    apply_profile_to_data(record.data, eff.profile), keys,
+                    expand_paths=True, owned_fields=fields,
                 )
                 previews.append(
                     AssignmentPreview(cid, eff.profile.name, diff_projections(before, after))
@@ -698,12 +703,14 @@ class LoginProfileService:
         new_id = getattr(updated, "id", None) or connection_id
         written = self._repository.get_record(new_id) or updated
         keys = profile_owned_keywords(profile)
+        fields = profile_owned_fields(profile)
         applied = ProfileLink(
             link.mode,
             link.profile_id,
-            auth_fingerprint(written.data, keys),
+            auth_fingerprint(written.data, keys, owned_fields=fields),
             revision_token(profile),
             keys,
+            fields,
         )
         self._repository.update_connection_metadata(
             new_id, {LINK_METADATA_KEY: applied.to_metadata()}
@@ -733,10 +740,7 @@ class LoginProfileService:
                 continue
             previous = self._state.get((link.rev or "").split(":", 1)[0])
             previous_name = previous.name if previous else ""
-            fingerprint = auth_fingerprint(
-                record.data, link.extra_keys,
-                legacy_auth=is_legacy_auth_link(link.applied),
-            )
+            fingerprint = link_fingerprint(record.data, link)
             if link.applied and fingerprint != link.applied:
                 if matches_legacy_auth_fingerprint(record.data, link.extra_keys, link.applied):
                     # Upgrade only the metadata after validating the old hash;
