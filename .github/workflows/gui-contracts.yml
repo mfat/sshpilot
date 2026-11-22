@@ -1,0 +1,69 @@
+name: GUI contracts
+
+# Every connection-editor control, driven in a real window against the real
+# daemon and a real SSH config: set -> save -> file -> ssh -G -> reopen, and
+# authored value -> control -> clear. #1389 (the ssh -N switch ignoring
+# "SessionType none") reached users because the only test for it skipped
+# itself in CI; this job runs on every push and fails if anything skips.
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: gui-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  connection-editor:
+    name: Connection editor contracts (real GTK)
+    # Ubuntu 24.04 ships libadwaita 1.5, the oldest version supported.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GTK stack and virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gi-cairo python3-venv \
+            gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-vte-3.91 \
+            gir1.2-gtksource-5 gir1.2-secret-1 \
+            openssh-client xvfb dbus gnome-keyring
+
+      - name: Install Python test dependencies
+        # --system-site-packages keeps the distro's PyGObject visible.
+        run: |
+          python3 -m venv --system-site-packages .venv-gui
+          .venv-gui/bin/pip install -r requirements-dev.txt
+
+      - name: Run the contracts
+        env:
+          SSHPILOT_GUI_TESTS: "1"
+        run: |
+          dbus-run-session -- bash -ceu '
+            printf "ci" | gnome-keyring-daemon --unlock --replace --components=secrets >/dev/null
+            xvfb-run -a -s "-screen 0 1400x900x24" \
+              .venv-gui/bin/python -m pytest -ra -o addopts="" -n0 -m gui \
+                --junitxml=contracts.xml \
+                tests/test_gui_connection_editor_contracts.py
+          '
+
+      - name: Fail on skipped or missing tests
+        # A skip here means the real toolkit, a display or OpenSSH was
+        # missing -- the suite did not run, so it must not pass.
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import sys
+          import xml.etree.ElementTree as ET
+          suite = ET.parse("contracts.xml").getroot()
+          suite = suite.find("testsuite") if suite.tag == "testsuites" else suite
+          tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))
+          print(f"collected={tests} skipped={skipped}")
+          if tests < 60 or skipped:
+              sys.exit("contract suite did not run in full")
+          EOF
