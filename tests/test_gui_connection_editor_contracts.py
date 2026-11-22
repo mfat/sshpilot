@@ -114,7 +114,7 @@ def _same_paths(attr, paths):
 # adds or removes PubkeyAuthentication.
 PASSWORD_PREF = (
     "PreferredAuthentications "
-    "keyboard-interactive,password,gssapi-with-mic,hostbased"
+    "keyboard-interactive,password,gssapi-with-mic,hostbased,publickey"
 )
 
 

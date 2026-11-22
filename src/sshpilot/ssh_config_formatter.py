@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .core.connections.auth_preferences import (  # noqa: F401 - re-exported
     PASSWORD_MODE_PREFERRED_AUTH,
+    is_app_written_list,
     is_password_mode_default,
 )
 
@@ -237,15 +238,15 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         sk_provider = (data.get('security_key_provider') or '').strip()
         if sk_provider:
             lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
-        # Include password-based fallback only when a password is provided.
-        # A stale PreferredAuthentications (e.g. ``keyboard-interactive,password``
-        # left over from a previous password-auth save) must never keep ssh
-        # asking for a password after the switch to key-based auth, so login
-        # password methods are stripped here in key mode unless the payload
-        # still carries an explicit password fallback.
+        # Key login writes no PreferredAuthentications: OpenSSH's default
+        # order already ends in keyboard-interactive,password, so a saved
+        # password is still used, and a list from an earlier block applies
+        # as it would for `ssh <alias>`. A list the app wrote before (either
+        # mode) is dropped. A user's own list is kept, minus the password
+        # methods when no password is saved, so a stale one left by password
+        # mode never keeps ssh asking for a password.
         pref_list = _preferred_auth_list(data)
-        if _is_password_mode_default(pref_list):
-            # Left by password mode; a key login authors no list of its own.
+        if is_app_written_list(pref_list):
             pref_list = []
         if pref_list:
             if not data.get('password'):
@@ -256,14 +257,9 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
             custom_pref = ",".join(pref_list)
             if custom_pref:
                 lines.append(f"    PreferredAuthentications {custom_pref}")
-        elif data.get('password'):
-            lines.append(
-                "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
-            )
     else:
-        # Password-based authentication. Include keyboard-interactive so
-        # PAM/2FA hosts (which often disable the raw "password" method)
-        # still negotiate; order prefers kbd-int first.
+        # Password-based authentication: OpenSSH's order with the password
+        # methods first (see core/connections/auth_preferences.py).
         # A preserved list is kept only if the loader would read it back as
         # password auth: ``password`` present, ``publickey`` absent or after
         # it. Anything else is stale — the ``gssapi-with-mic,hostbased,

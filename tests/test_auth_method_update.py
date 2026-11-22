@@ -78,8 +78,9 @@ def test_password_auth_drops_stale_preference_without_password_methods():
         'preferred_authentications': ['gssapi-with-mic', 'hostbased', 'publickey'],
     }
     entry = format_ssh_config_entry(data)
-    assert f'PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}\n' in entry + '\n'
-    assert 'gssapi-with-mic,hostbased,publickey' not in entry
+    pref_lines = [line.strip() for line in entry.splitlines()
+                  if line.strip().startswith('PreferredAuthentications')]
+    assert pref_lines == [f'PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}']
     assert 'PubkeyAuthentication no' in entry
 
 
@@ -117,11 +118,19 @@ def test_switch_to_password_auth_survives_reload(preferred, pubkey_auth_no):
     assert _reloaded_auth_method(entry) == 1
 
 
-# Password mode tries the password first but keeps Kerberos (GSSAPI) and
-# host-based login, which OpenSSH tries by default; public keys stay out.
-def test_password_mode_list_keeps_gssapi_and_hostbased():
+# Password mode is OpenSSH's default order with the password methods moved to
+# the front; "Disable public key authentication" adds PubkeyAuthentication no.
+def test_password_mode_list_is_openssh_order_with_password_first():
+    from sshpilot.core.connections.auth_preferences import (
+        OPENSSH_DEFAULT_PREFERRED_AUTH,
+    )
+
+    default = OPENSSH_DEFAULT_PREFERRED_AUTH.split(",")
+    password_methods = ["keyboard-interactive", "password"]
+    expected = password_methods + [m for m in default if m not in password_methods]
+    assert PASSWORD_MODE_PREFERRED_AUTH == ",".join(expected)
     assert PASSWORD_MODE_PREFERRED_AUTH == (
-        "keyboard-interactive,password,gssapi-with-mic,hostbased"
+        "keyboard-interactive,password,gssapi-with-mic,hostbased,publickey"
     )
     entry = format_ssh_config_entry({
         'nickname': 'host1', 'hostname': 'example.com', 'auth_method': 1,
@@ -131,10 +140,14 @@ def test_password_mode_list_keeps_gssapi_and_hostbased():
     assert _reloaded_auth_method(entry) == 1
 
 
-def test_old_password_mode_default_is_upgraded_on_save():
+@pytest.mark.parametrize('earlier', [
+    'keyboard-interactive,password',
+    'keyboard-interactive,password,gssapi-with-mic,hostbased',
+])
+def test_earlier_password_mode_lists_are_upgraded_on_save(earlier):
     entry = format_ssh_config_entry({
         'nickname': 'host1', 'hostname': 'example.com', 'auth_method': 1,
-        'preferred_authentications': ['keyboard-interactive', 'password'],
+        'preferred_authentications': earlier,
     })
     assert f'PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}' in entry
 
@@ -142,8 +155,11 @@ def test_old_password_mode_default_is_upgraded_on_save():
 @pytest.mark.parametrize('left_behind', [
     PASSWORD_MODE_PREFERRED_AUTH,
     'keyboard-interactive,password',
+    'keyboard-interactive,password,gssapi-with-mic,hostbased',
+    # What key login with a saved password used to write.
+    'gssapi-with-mic,hostbased,publickey,keyboard-interactive,password',
 ])
-def test_key_mode_drops_the_password_mode_list(left_behind):
+def test_key_mode_drops_lists_the_app_wrote(left_behind):
     # Switching back to keys must not keep a list that leaves keys out.
     entry = format_ssh_config_entry({
         'nickname': 'host1', 'hostname': 'example.com', 'auth_method': 0,
@@ -184,3 +200,22 @@ def test_existing_password_host_is_upgraded_by_an_unrelated_edit(tmp_path):
         if item.id == "old"
     )
     assert reloaded.data["auth_method"] == 1
+
+
+def test_key_mode_with_a_saved_password_writes_no_list():
+    # OpenSSH's default order already ends in keyboard-interactive,password.
+    entry = format_ssh_config_entry({
+        'nickname': 'host1', 'hostname': 'example.com', 'auth_method': 0,
+        'password': 'secret',
+    })
+    assert 'PreferredAuthentications' not in entry
+    assert _reloaded_auth_method(entry) == 0
+
+
+def test_key_mode_keeps_a_users_own_list():
+    entry = format_ssh_config_entry({
+        'nickname': 'host1', 'hostname': 'example.com', 'auth_method': 0,
+        'password': 'secret',
+        'preferred_authentications': 'publickey,password',
+    })
+    assert 'PreferredAuthentications publickey,password' in entry

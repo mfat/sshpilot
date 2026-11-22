@@ -2295,8 +2295,6 @@ class ConnectionDialog(
                     config_lines.append(f"    ForwardAgent {fa_text}")
 
             # Add authentication settings
-            password_val = self.password_row.get_text().strip() if hasattr(self, 'password_row') else ''
-
             if auth_method_val == 0:  # Key-based auth (password optional)
                 if key_select_mode_val in (1, 2) and identity_files:  # Specific key(s)
                     for kf in identity_files:
@@ -2307,11 +2305,8 @@ class ConnectionDialog(
                     # Add certificate(s) if specified
                     for cert in certificate_files:
                         config_lines.append(f"    CertificateFile {cert}")
-                # Add combined authentication if a password is provided
-                if password_val:
-                    config_lines.append(
-                        "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
-                    )
+                # A saved password needs no list: OpenSSH's default order
+                # already ends in keyboard-interactive,password.
                 # For automatic key selection, don't add IdentityFile
             else:  # Password auth only
                 config_lines.append(

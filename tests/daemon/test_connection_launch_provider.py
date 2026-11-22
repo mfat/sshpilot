@@ -1197,3 +1197,21 @@ def test_password_mode_copy_id_keeps_gssapi_and_hostbased(
     command, _environment = prov.prepare_copy_id_launch("web", str(public_key))
     assert f"PreferredAuthentications={PASSWORD_MODE_PREFERRED_AUTH}" in command
     assert ("PubkeyAuthentication=no" in command) is pubkey_auth_no
+
+
+def test_key_mode_copy_id_adds_no_auth_options(provider, tmp_path):
+    """Key login: ssh-copy-id behaves as `ssh-copy-id <alias>` would, even
+    with a saved password (OpenSSH's default order already ends in it)."""
+
+    class _Secrets:
+        def lookup_connection_password(self, _connection_id):
+            return "saved-secret"
+
+    prov, records = provider
+    records["web"] = _record(data={"auth_method": 0})
+    prov._secret_provider = _Secrets()
+    public_key = tmp_path / "id_new.pub"
+    public_key.write_text("ssh-ed25519 AAAA test\n")
+    command, _environment = prov.prepare_copy_id_launch("web", str(public_key))
+    assert not any("PreferredAuthentications" in part for part in command)
+    assert not any("PubkeyAuthentication" in part for part in command)

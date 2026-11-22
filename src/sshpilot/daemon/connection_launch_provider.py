@@ -1185,19 +1185,12 @@ class DaemonConnectionLaunchProvider:
         # file to OpenSSH and the user's configuration, as a session does.
         argv += _isolated_known_hosts_override(connection, effective_config)
 
-        # Authentication preferences mirror the frontend runner: password
-        # method narrows PreferredAuthentications; a stored password alongside
-        # key auth keeps the combined method list.
+        # Password login tries the password first, then every other method in
+        # OpenSSH's order (keys only if not disabled for this connection).
+        # Key login adds nothing: OpenSSH's defaults and the user's config
+        # decide, exactly as for `ssh-copy-id <alias>`.
         manager = self._manager_shim(connection)
-        auth_method = connection.auth_method
-        prefer_password = auth_method == 1
-        stored_password = None
-        try:
-            stored_password = manager.get_connection_password(connection)
-        except Exception:
-            stored_password = None
-        combined_auth = bool(stored_password) and not prefer_password
-        if prefer_password:
+        if connection.auth_method == 1:
             from ..core.connections.auth_preferences import (
                 PASSWORD_MODE_PREFERRED_AUTH,
             )
@@ -1205,12 +1198,6 @@ class DaemonConnectionLaunchProvider:
             argv += ["-o", f"PreferredAuthentications={PASSWORD_MODE_PREFERRED_AUTH}"]
             if bool(connection.data.get("pubkey_auth_no")):
                 argv += ["-o", "PubkeyAuthentication=no"]
-        elif combined_auth:
-            argv += [
-                "-o",
-                "PreferredAuthentications=gssapi-with-mic,hostbased,"
-                "publickey,keyboard-interactive,password",
-            ]
 
         argv.append(host_value)
 
