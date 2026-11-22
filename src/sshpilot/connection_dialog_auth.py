@@ -7,9 +7,9 @@ One set of settings, no modes. The Host block's own lines are the truth:
   ``KbdInteractiveAuthentication``, ``GSSAPIAuthentication``,
   ``HostbasedAuthentication`` -- each row's checkbox.
 
-An order or checkbox the block does not set shows what OpenSSH resolves
-(the rows dimmed, a checkbox with an "inherited" tooltip); changing it
-writes the line for this host, and Reset removes it. A
+An order or checkbox the block does not set shows what OpenSSH resolves,
+drawn like any other value (a checkbox's tooltip says it is inherited);
+changing it writes the line for this host, and Reset removes it. A
 line below the list always states what OpenSSH will try.
 
 :class:`AuthPolicy` is the pure model (no GTK), so its rules are tested
@@ -768,7 +768,7 @@ class AuthPolicyGroup:
             rows = policy.rows()
             for index, method in enumerate(rows):
                 self._show_row(
-                    self.rows[method], order_set,
+                    self.rows[method],
                     first=index == 0, last=index == len(rows) - 1,
                 )
             unknown = policy.unknown_tokens()
@@ -799,12 +799,10 @@ class AuthPolicyGroup:
         finally:
             self._syncing = False
 
-    def _show_row(self, row, order_set: bool, *, first: bool, last: bool) -> None:
+    def _show_row(self, row, *, first: bool, last: bool) -> None:
+        # Never dimmed: dim reads as "off" in GNOME, and an inherited order
+        # is in force. The warnings below the list flag what does not apply.
         self.list.append(row)
-        if order_set:
-            row.remove_css_class("dim-label")
-        else:
-            row.add_css_class("dim-label")
         actions = row._actions
         movable = not self._order_locked
         actions.lookup_action("up").set_enabled(movable and not first)
@@ -823,8 +821,7 @@ class AuthPolicyGroup:
         # Checking a left-out method adds it to the order.
         check.set_sensitive(not locked and not (left_out and self._order_locked))
         row._actions.lookup_action("reset").set_enabled(is_set and not locked)
-        # Not dimmed when inherited: dim reads as "off" in GNOME, and an
-        # inherited value is in force. The tooltip says where it comes from.
+        # Never dimmed (see _show_row); the tooltip says where it comes from.
         if locked:
             check.set_tooltip_text(self._lock_note)
             return
