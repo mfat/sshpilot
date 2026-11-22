@@ -7,8 +7,9 @@ One set of settings, no modes. The Host block's own lines are the truth:
   ``KbdInteractiveAuthentication``, ``GSSAPIAuthentication``,
   ``HostbasedAuthentication`` -- each row's checkbox.
 
-A row or checkbox the block does not set shows what OpenSSH resolves,
-dimmed; changing it writes the line for this host, and Reset removes it. A
+An order or checkbox the block does not set shows what OpenSSH resolves
+(the rows dimmed, a checkbox with an "inherited" tooltip); changing it
+writes the line for this host, and Reset removes it. A
 line below the list always states what OpenSSH will try.
 
 :class:`AuthPolicy` is the pure model (no GTK), so its rules are tested
@@ -822,12 +823,12 @@ class AuthPolicyGroup:
         # Checking a left-out method adds it to the order.
         check.set_sensitive(not locked and not (left_out and self._order_locked))
         row._actions.lookup_action("reset").set_enabled(is_set and not locked)
+        # Not dimmed when inherited: dim reads as "off" in GNOME, and an
+        # inherited value is in force. The tooltip says where it comes from.
         if locked:
-            check.remove_css_class("dim-label")
             check.set_tooltip_text(self._lock_note)
             return
         if left_out:
-            check.remove_css_class("dim-label")
             check.set_tooltip_text(
                 self._lock_note if self._order_locked else
                 _("Not in the login order (PreferredAuthentications), so it is "
@@ -835,10 +836,8 @@ class AuthPolicyGroup:
             )
             return
         if is_set:
-            check.remove_css_class("dim-label")
             check.set_tooltip_text(None)
         else:
-            check.add_css_class("dim-label")
             if self.profile:
                 note = _("Not set by this profile: each connection keeps its own value.")
             elif value is not None:
