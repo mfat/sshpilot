@@ -5,8 +5,9 @@ checked when the order lists the method and the block's own lines do not
 switch it off; inherited or built-in switches never decide a checkbox.
 
 Saving without an edit writes the block back exactly as authored. An edit
-writes one order line and drops the per-method lines it makes redundant,
-but only where that cannot change what OpenSSH tries.
+writes one order line and drops the per-method lines it makes redundant.
+Like any other field, it edits this Host block only: an earlier block or
+Settings deciding the order never blocks or changes the edit.
 """
 
 import pytest
@@ -32,7 +33,6 @@ def _policy(*lines, resolved=SSH_G, earlier=None):
     policy = AuthPolicy.from_lines(lines)
     policy.set_inherited(resolved)
     policy.earlier = dict(earlier or {})
-    policy.earlier_known = True
     return policy
 
 
@@ -212,16 +212,6 @@ def test_every_copy_of_a_dropped_line_goes():
     assert policy.to_lines() == ["PreferredAuthentications password,keyboard-interactive"]
 
 
-def test_lines_stay_until_it_is_known_nothing_above_decides_the_order():
-    policy = _policy("PreferredAuthentications password", "PubkeyAuthentication no")
-    policy.earlier_known = False
-    policy.set_tried("keyboard-interactive", True)
-    assert policy.to_lines() == [
-        "PreferredAuthentications password,keyboard-interactive",
-        "PubkeyAuthentication no",
-    ]
-
-
 def test_lines_a_linked_profile_sets_are_never_dropped():
     policy = _policy("PreferredAuthentications password", "PubkeyAuthentication no")
     policy.locked_methods = {"publickey"}
@@ -230,23 +220,26 @@ def test_lines_a_linked_profile_sets_are_never_dropped():
     assert not policy.set_tried("publickey", True)
 
 
-# -- when this block's order is not the one used --------------------------------
+# -- the block is edited the same way whatever wins ---------------------------
 
-def test_an_earlier_order_blocks_edits_and_keeps_every_line():
+def test_an_earlier_order_does_not_change_how_the_block_is_edited():
+    # OpenSSH decides which value a connection uses; the dialog edits the
+    # block, and the order row is marked as not used (overrides module).
     lines = ("PreferredAuthentications password", "PubkeyAuthentication no")
     policy = _policy(*lines, earlier={"preferredauthentications": "publickey"})
-    assert policy.order_decided_elsewhere()
-    assert not policy.set_tried("keyboard-interactive", True)
-    assert not policy.move("password", 0)
-    assert policy.to_lines() == list(lines)
     assert policy.will_try() == []  # publickey, switched off here
+    assert policy.set_tried("keyboard-interactive", True)
+    assert policy.to_lines() == ["PreferredAuthentications password,keyboard-interactive"]
+    assert policy.will_try() == ["publickey"]
 
 
-def test_settings_forced_options_block_edits_too():
+def test_settings_forced_options_do_not_block_edits_either():
     policy = _policy("PreferredAuthentications password,publickey")
     policy.forced = {"preferredauthentications": "publickey,password",
                      "passwordauthentication": "no"}
-    assert not policy.can_edit()
+    assert policy.can_edit()
+    assert policy.move("publickey", 0)
+    assert policy.to_lines() == ["PreferredAuthentications publickey,password"]
     assert policy.will_try() == ["publickey"]
 
 

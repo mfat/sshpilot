@@ -16,17 +16,19 @@ Saving without an edit writes the lines back exactly as authored. The first
 edit writes the checked methods as one ``PreferredAuthentications`` line
 and drops the block's per-method lines it makes redundant:
 
-* a method's own line, ``yes`` or ``no``, once the order leaves it out
-  (only when this block's order is the one OpenSSH uses, so the method is
-  not tried whatever the line says);
+* a method's own line, ``yes`` or ``no``, once the order leaves it out;
 * a method's own ``no`` line when the user checks it;
 * a method's own ``yes`` line when the user unchecks it.
 
 A ``yes`` line of a method still checked is kept: the order cannot switch a
 method on, and Kerberos and host-based are off unless a line turns them on.
-Lines a linked login profile sets are never dropped. While an earlier
-block or Settings decide the order, this block's order is not used, so the
-rows cannot be edited. A line below the list states what OpenSSH will try.
+Lines a linked login profile sets are never dropped.
+
+Like every other field, this edits the Host block only: which block's
+value a connection uses is OpenSSH's business. When an earlier block or
+Settings decide the order, the order row is marked as not used (see
+``connection_dialog_overrides``), and the line below the list states what
+OpenSSH will try.
 
 :class:`AuthPolicy` is the pure model (no GTK), so its rules are tested
 headless; :class:`AuthPolicyGroup` draws it.
@@ -145,9 +147,6 @@ class AuthPolicy:
     fallback_known: bool = False
     # A login profile's own lines: no host to resolve, nothing above them.
     standalone: bool = False
-    # ``earlier`` has arrived (it is empty, not unknown, when nothing above
-    # this block sets a policy line).
-    earlier_known: bool = False
     # Methods whose lines a linked login profile sets: never dropped.
     locked_methods: set = field(default_factory=set)
     # The block as loaded (order, switches, passthrough) and the methods
@@ -249,15 +248,9 @@ class AuthPolicy:
             return self.fallback_known
         return True
 
-    def order_decided_elsewhere(self) -> bool:
-        """An earlier block or Settings decide the order, not this block."""
-        if self.standalone:
-            return False
-        return self._decided_elsewhere(PREFERRED_AUTH_KEYWORD) is not None
-
     def can_edit(self) -> bool:
-        """Edits are allowed: the order is known and this block's is used."""
-        return self.order_known() and not self.order_decided_elsewhere()
+        """Edits are allowed once the order they start from is known."""
+        return self.order_known()
 
     def in_order(self, method: str) -> bool:
         return method in self.shown_order()
@@ -294,12 +287,18 @@ class AuthPolicy:
         return [m for m in self.shown_order() if m not in METHODS]
 
     def switch_is_set(self, method: str) -> bool:
-        return method in self.switches
+        """The block keeps a line for *method*'s switch (one an edit drops
+        on saving does not count)."""
+        return method in self.switches and not self._redundant(method)
 
     def shown_switch(self, method: str) -> Optional[bool]:
         """This block's value, else the inherited one; ``None`` when unknown."""
-        if method in self.switches:
+        if self.switch_is_set(method):
             return self.switches[method]
+        if method in self._loaded:
+            # ssh -G answered with the block's own line: what remains once
+            # it is dropped comes from the fallback, when known.
+            return self._fallback_switch(method)
         if self._uses_fallback(method):
             return self._fallback_switch(method)
         return self.inherited_switches.get(method)
@@ -480,16 +479,13 @@ class AuthPolicy:
     # -- saving ------------------------------------------------------------
 
     def _redundant(self, method: str) -> bool:
-        """*method*'s own switch line adds nothing once edited: the order
-        leaves the method out, and this block's order is the one OpenSSH
-        uses, so the method is not tried whatever the line says."""
+        """*method*'s own switch line, dropped once edited: the block's order
+        leaves the method out, so the block says it once, in the order."""
         return (
             self.edited
             and method in self.switches
             and method not in self.locked_methods
             and method not in (self.order or [])
-            and (self.standalone or self.earlier_known)
-            and not self.order_decided_elsewhere()
         )
 
     def to_lines(self) -> List[str]:
@@ -625,9 +621,6 @@ class AuthPolicyGroup:
             if self.profile else
             _("Methods are tried from the top. Unchecked methods are left out.")
         )
-        # Why the order cannot be edited when an earlier block or Settings
-        # decide it (set by the dialog, which knows where the value is from).
-        self.order_elsewhere_note = ""
         self.reset_button = Gtk.Button(label=_("Reset"))
         self.reset_button.add_css_class("flat")
         self.reset_button.set_tooltip_text(
@@ -793,7 +786,7 @@ class AuthPolicyGroup:
         self.sync()
 
     def _editable(self) -> bool:
-        """The order can be edited: known, used, and not a profile's."""
+        """The order can be edited: known, and not set by a linked profile."""
         return self.policy.can_edit() and not self._order_locked
 
     def _can_move(self, method: str) -> bool:
@@ -825,7 +818,6 @@ class AuthPolicyGroup:
         # not this block's lines, and may arrive before the block is loaded.
         if not policy.earlier:
             policy.earlier = dict(self.policy.earlier)
-        policy.earlier_known = policy.earlier_known or self.policy.earlier_known
         if not policy.forced:
             policy.forced = dict(self.policy.forced)
         if not policy.fallback_known and self.policy.fallback_known:
@@ -927,8 +919,6 @@ class AuthPolicyGroup:
             note = _("Shown once OpenSSH has read the configuration.")
         elif locked or self._order_locked:
             note = self._lock_note
-        elif policy.order_decided_elsewhere():
-            note = self.order_elsewhere_note or None
         elif last:
             note = _("At least one method must stay checked.")
         elif not value:

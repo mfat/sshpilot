@@ -393,18 +393,16 @@ def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gu
         not dialog._override_banner.get_revealed()
     )
 
-    # An order set here would lose to the earlier list, so the rows cannot
-    # change it; each says which block decides.
-    check = dialog.auth_password_row._check
-    assert not check.get_sensitive()
-    assert "Host *" in check.get_tooltip_text()
-    assert "publickey" in check.get_tooltip_text()
-    assert not dialog.auth_password_row._actions.lookup_action("top").get_enabled()
+    # An order set here loses to the earlier list: it is not used.
     dialog.auth_password_row._actions.activate_action("top", None)
-    assert dialog.auth_policy.policy.order is None
-    assert getattr(dialog.auth_order_row, "_sshpilot_override_state", None) is None
+    assert dialog.auth_order_row._sshpilot_override_state == OVERRIDDEN
+    assert dialog.auth_order_row._sshpilot_override_icon.get_visible()
+    assert "publickey" in dialog.auth_order_row.get_tooltip_text()
+    assert dialog._override_banner.get_revealed()
     # The help line states what is really tried.
     assert dialog.auth_order_row.get_subtitle() == "publickey"
+    dialog.auth_policy.reset_button.emit("clicked")
+    assert not dialog._override_banner.get_revealed()
 
     # A local command cannot run while an earlier block forbids them.
     dialog.local_command_row.set_text("notify-send connected")

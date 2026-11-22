@@ -2089,7 +2089,6 @@ class ConnectionDialog(
         section.policy.forced = {
             str(keyword).lower(): str(value) for keyword, value in (forced or {}).items()
         }
-        self._auth_policy_order_note()
         section.sync()
 
     def _auth_policy_set_earlier(self, earlier) -> None:
@@ -2097,37 +2096,11 @@ class ConnectionDialog(
         section = getattr(self, 'auth_policy', None)
         if section is None:
             return
-        self._auth_policy_earlier_entries = dict(earlier or {})
         section.policy.earlier = {
             str(keyword).lower(): str(getattr(entry, 'value', entry) or '')
             for keyword, entry in (earlier or {}).items()
         }
-        section.policy.earlier_known = True
-        self._auth_policy_order_note()
         section.sync()
-
-    def _auth_policy_order_note(self) -> None:
-        """Why the order rows cannot be edited: Settings or an earlier block
-        decide PreferredAuthentications, so this host's order is not used."""
-        from .connection_dialog_overrides import _global_note, earlier_decides_note
-
-        section = getattr(self, 'auth_policy', None)
-        if section is None:
-            return
-        keyword = "PreferredAuthentications"
-        forced = section.policy.forced.get(keyword.lower())
-        note = ""
-        if forced is not None:
-            note = _global_note(keyword, forced)
-        else:
-            entries = getattr(self, '_auth_policy_earlier_entries', None) or {}
-            entry = next(
-                (e for k, e in entries.items() if str(k).lower() == keyword.lower()),
-                None,
-            )
-            if entry is not None:
-                note = earlier_decides_note(keyword, entry)
-        section.order_elsewhere_note = note
 
     def _selected_key_mode(self) -> int:
         """0 = automatic, 1 = specific + IdentitiesOnly, 2 = specific."""
