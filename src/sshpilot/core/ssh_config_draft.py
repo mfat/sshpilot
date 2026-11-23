@@ -42,6 +42,7 @@ import secrets
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
@@ -58,10 +59,9 @@ from ..api.models.connections import (
 )
 from ..platform.paths import openssh_user_dir
 from ..platform.process import hidden_console_kwargs
-from ..ssh_config_blocks import GLOBAL, scan_blocks
+from ..ssh_config_blocks import GLOBAL, keyword_of, scan_blocks
 from ..ssh_config_document import (
     _openssh_argv_split,
-    _split_keyword,
     split_config_lines,
 )
 from .connections.auth_preferences import canonical_keyword
@@ -92,34 +92,81 @@ def _slot(setting: str) -> str:
     return _SHARED_SLOTS.get(setting, setting)
 
 _INCLUDE_RE = re.compile(r"^(\s*include)(\s*=\s*|\s+)(.+?)\s*$", re.IGNORECASE)
+# keyword (possibly quoted), then its argument
+_CONFIG_LINE_RE = re.compile(r'^("[^"]*"|[^\s=]+)(?:\s*=\s*|\s+|$)(.*)$', re.DOTALL)
 
 
 # -- Match exec ---------------------------------------------------------------
 
-def exec_commands(text: str) -> Tuple[str, ...]:
-    """The commands of every ``Match ... exec`` criterion in *text*."""
+#: Match criteria that take no argument; every other one takes exactly one.
+_MATCH_NO_ARGUMENT = frozenset({"all", "canonical", "final"})
+_INCLUDE_DEPTH = 16
+
+
+def _match_exec(remainder: str) -> List[str]:
+    """The commands of the ``exec`` criteria on one ``Match`` line.
+
+    The line is read criterion by criterion, as OpenSSH reads it, so that an
+    argument which happens to be the word ``exec`` (``Match host exec``) is
+    not mistaken for the criterion.
+    """
+    try:
+        words = _openssh_argv_split(remainder)
+    except ValueError:
+        words = remainder.split()
     commands: List[str] = []
-    for raw in split_config_lines(text or ""):
-        stripped = raw.strip()
-        if not stripped or stripped.startswith("#"):
+    index = 0
+    while index < len(words):
+        name, separator, attached = words[index].partition("=")
+        name = name.lower().lstrip("!")
+        index += 1
+        if name in _MATCH_NO_ARGUMENT:
             continue
-        keyword, remainder = _split_keyword(stripped)
-        if keyword != "match":
-            continue
-        try:
-            words = _openssh_argv_split(remainder)
-        except ValueError:
-            words = remainder.split()
-        index = 0
-        while index < len(words):
-            name, separator, attached = words[index].partition("=")
-            if name.lower().lstrip("!") == "exec":
-                if separator:
-                    commands.append(attached)
-                elif index + 1 < len(words):
-                    commands.append(words[index + 1])
-                    index += 1
+        if separator:
+            argument = attached
+        elif index < len(words):
+            argument = words[index]
             index += 1
+        else:
+            break
+        if name == "exec":
+            commands.append(argument)
+    return commands
+
+
+def exec_commands(text: str, *, follow_includes: bool = False) -> Tuple[str, ...]:
+    """The commands of every ``Match ... exec`` criterion in *text*.
+
+    With *follow_includes*, also those in the files its ``Include`` lines
+    read (and theirs): a draft that adds an Include brings that file's
+    commands with it.
+    """
+    commands: List[str] = []
+    seen: Set[str] = set()
+
+    def scan(body: str, depth: int) -> None:
+        for raw in split_config_lines(body or ""):
+            keyword = keyword_of(raw)
+            if not keyword:
+                continue
+            stripped = raw.strip()
+            match = _CONFIG_LINE_RE.match(stripped)
+            remainder = match.group(2) if match else ""
+            if keyword == "match":
+                commands.extend(_match_exec(remainder))
+            elif keyword == "include" and follow_includes and depth < _INCLUDE_DEPTH:
+                for path in _include_children(str(openssh_user_dir()), f"Include {remainder}"):
+                    path = os.path.abspath(path)
+                    if path in seen:
+                        continue
+                    seen.add(path)
+                    try:
+                        with open(path, encoding="utf-8", newline="") as handle:
+                            scan(handle.read(), depth + 1)
+                    except (OSError, UnicodeError):
+                        continue
+
+    scan(text, 0)
     return tuple(commands)
 
 
@@ -135,9 +182,9 @@ def new_exec_commands(
     to one command, word for word: a command edited afterwards, or another
     new one, is pending again.
     """
-    known = set(exec_commands(saved_text)) | set(allowed)
+    known = set(exec_commands(saved_text, follow_includes=True)) | set(allowed)
     found: List[str] = []
-    for command in exec_commands(draft_text):
+    for command in exec_commands(draft_text, follow_includes=True):
         if command not in known and command not in found:
             found.append(command)
     return tuple(found)
@@ -323,6 +370,25 @@ def _query(
     return values, pairs, ""
 
 
+# OpenSSH's built-in values for a host, by host name: they do not depend on
+# any configuration, so one question per host is enough for a session.
+_defaults_cache: "Dict[str, Dict[str, List[str]]]" = {}
+_DEFAULTS_CACHE_LIMIT = 256
+
+
+def _builtin_defaults(host: str, run: "_Run") -> Dict[str, List[str]]:
+    cached = _defaults_cache.get(host)
+    if cached is not None:
+        return cached
+    values, _pairs, error = _query(os.devnull, host, run)
+    if error:
+        return {}
+    if len(_defaults_cache) >= _DEFAULTS_CACHE_LIMIT:
+        _defaults_cache.clear()
+    _defaults_cache[host] = values
+    return values
+
+
 def _errors(stderr: str, draft_file: str, context_files: Dict[str, str]) -> Tuple[SshConfigDraftError, ...]:
     """OpenSSH's complaints, with temporary paths mapped back."""
     found: List[SshConfigDraftError] = []
@@ -407,26 +473,54 @@ def evaluate_draft(
         _write_private(draft_file, _launch_text(request.text, system_copy))
         query_args = dict(overrides=context.overrides, user=request.user, port=request.port)
 
-        values, pairs, stderr = _query(draft_file, host, run, **query_args)
+        # The two questions about the draft do not depend on each other:
+        # they are asked at the same time. (A Match exec command therefore
+        # runs twice at once, as it runs once per connection anyway.)
+        probed_text, markers = _with_probes(request.text, secrets.token_hex(6).upper())
+        probe_answer: List[tuple] = []
+        probe_thread = None
+        if markers:
+            probe_file = os.path.join(directory, "probe")
+            _write_private(probe_file, _launch_text(probed_text, system_copy))
+
+            def ask_probe() -> None:
+                try:
+                    probe_answer.append(_query(probe_file, host, run, **query_args))
+                except DraftEvaluationCancelled:
+                    pass
+
+            probe_thread = threading.Thread(
+                target=ask_probe, name="sshpilot-draft-probe", daemon=True
+            )
+            probe_thread.start()
+        try:
+            values, pairs, stderr = _query(draft_file, host, run, **query_args)
+        finally:
+            if probe_thread is not None:
+                probe_thread.join()
         if stderr:
             return SshConfigDraftEvaluation(
                 errors=_errors(stderr, draft_file, context_files),
                 forced=forced_values, **base,
             )
-
-        probed_text, markers = _with_probes(request.text, secrets.token_hex(6).upper())
+        run.check()
+        if markers and (not probe_answer or probe_answer[0][2]):
+            # Without the second answer nothing says which blocks apply.
+            # Reporting values with every block "skipped" would be a wrong
+            # answer; no answer is the honest one.
+            reason = probe_answer[0][2] if probe_answer else "ssh -G did not answer"
+            return SshConfigDraftEvaluation(
+                errors=(SshConfigDraftError("", 0, reason),),
+                forced=forced_values, **base,
+            )
         matched: Set[int] = set()
-        if markers:
-            probe_file = os.path.join(directory, "probe")
-            _write_private(probe_file, _launch_text(probed_text, system_copy))
-            probed, _pairs, probe_error = _query(probe_file, host, run, **query_args)
-            if not probe_error:
-                for entry in probed.get("sendenv", ()):
-                    for name in entry.split():
-                        if name in markers:
-                            matched.add(markers[name])
+        if probe_answer:
+            for entry in probe_answer[0][0].get("sendenv", ()):
+                for name in entry.split():
+                    if name in markers:
+                        matched.add(markers[name])
 
-        defaults_values, _pairs, _error = _query(os.devnull, host, run)
+        defaults_values = _builtin_defaults(host, run)
         lines, sources, includes = _walk(
             request.text, host, matched, forced, _effective_map(values), system,
         )

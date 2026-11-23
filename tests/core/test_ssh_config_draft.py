@@ -478,3 +478,52 @@ def scan_first_host(text):
     from sshpilot.ssh_config_blocks import scan_blocks
 
     return next(b.patterns.split()[0] for b in scan_blocks(text) if b.kind == "host")
+
+
+# -- review: ways past the Match exec consent ---------------------------------
+
+@pytest.mark.parametrize("line, command", [
+    ('"Match" exec "touch {m}"', "touch {m}"),            # a quoted keyword
+    ('Match host exec exec "touch {m}"', "touch {m}"),    # an argument named exec
+    ('Match originalhost=exec exec="touch {m}"', "touch {m}"),
+])
+def test_exec_is_found_however_the_line_is_written(tmp_path, line, command):
+    marker = tmp_path / "ran"
+    draft = line.format(m=marker) + "\n    User x\n"
+    assert exec_commands(draft) == (command.format(m=marker),)
+    pending = _isolated(tmp_path, draft, host="exec")
+    assert pending.pending_exec == (command.format(m=marker),) and not marker.exists()
+
+
+def test_a_criterion_argument_named_exec_is_not_a_command():
+    assert exec_commands("Match host exec user exec\n") == ()
+    assert exec_commands("Match all\nMatch canonical final host x\n") == ()
+
+
+def test_a_new_include_brings_its_file_s_commands(tmp_path):
+    marker = tmp_path / "ran"
+    included = tmp_path / "extra.conf"
+    included.write_text(f'Match exec "touch {marker}"\n    User z\n')
+    draft = f"Include {included}\nHost *\n    Port 2222\n"
+    pending = _isolated(tmp_path, draft)
+    assert pending.pending_exec == (f"touch {marker}",) and not marker.exists()
+    # Saved already: its commands run on every connection anyway.
+    assert new_exec_commands(draft, f"Include {included}\n") == ()
+
+
+def test_no_answer_about_the_blocks_is_no_answer_at_all(tmp_path, monkeypatch):
+    """Review: when the second question failed, the values came back with
+    every block reported as skipped."""
+    from sshpilot.core import ssh_config_draft
+
+    real = ssh_config_draft._query
+
+    def query(config_file, host, run=None, **kwargs):
+        if os.path.basename(config_file) == "probe":
+            return {}, [], "ssh -G timed out"
+        return real(config_file, host, run, **kwargs)
+
+    monkeypatch.setattr(ssh_config_draft, "_query", query)
+    evaluation = _isolated(tmp_path, "Host web1\n    User x\n")
+    assert not evaluation.evaluated and evaluation.values == ()
+    assert "timed out" in evaluation.errors[0].diagnostic

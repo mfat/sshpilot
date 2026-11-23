@@ -14,24 +14,6 @@ from sshpilot.ssh_config_blocks import GLOBAL, HOST, MATCH, Block
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _can_place(blocks):
-    pytest.importorskip("gi")
-    from sshpilot.advanced_config_window import can_place
-
-    return can_place(blocks)
-
-
-def test_global_options_must_precede_every_block_that_is_on():
-    host, match = Block(kind=HOST, patterns="a"), Block(kind=MATCH, patterns="all")
-    glob = Block(kind=GLOBAL)
-    off = Block(kind=HOST, patterns="old", disabled=True)
-    assert _can_place([glob, host, match])
-    assert _can_place([off, glob, host])       # comments above change nothing
-    assert not _can_place([host, glob])        # the options would become host a's
-    assert not _can_place([off, host, glob, match])
-    assert _can_place([host, match])
-
-
 def test_target_is_split_like_ssh_does():
     pytest.importorskip("gi")
     from sshpilot.advanced_config_window import split_target
@@ -72,6 +54,7 @@ def test_block_status_waits_for_openssh():
     "src/sshpilot/core/ssh_config_draft.py",
     "src/sshpilot/ssh_config_blocks.py",
     "src/sshpilot/api/transport/config_draft_codec.py",
+    "src/sshpilot/advanced_config_model.py",
 ])
 def test_backend_modules_do_not_translate(path):
     source = (ROOT / path).read_text()
@@ -80,5 +63,6 @@ def test_backend_modules_do_not_translate(path):
 
 def test_window_strings_are_extracted():
     potfiles = (ROOT / "po" / "POTFILES").read_text().splitlines()
-    assert "src/sshpilot/advanced_config_window.py" in potfiles
+    for name in ("window", "rules_view", "results_view"):
+        assert f"src/sshpilot/advanced_config_{name}.py" in potfiles
     assert "src/sshpilot/gtk/advanced_config_messages.py" in potfiles

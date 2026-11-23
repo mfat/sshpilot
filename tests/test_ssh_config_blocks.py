@@ -14,7 +14,14 @@ SAMPLES = [
     "# [disabled] Host old\n# [disabled]     User o\n# plain comment\nHost new\n    User n\n",
     "# [disabled global section]\n# [disabled] Compression yes\nHost a\n  User b\n",
     "Include conf.d/*\nHost *\n  SendEnv LANG\n",
-    "﻿Host a\n  User b\n"[1:],
+    # Review: these opened already marked as changed.
+    "\ufeffHost a\n  User b\n",                                  # 7: a byte-order mark
+    "Host a\r\n  User x\n\nHost b\n  Port 1\r\n",               # 8: mixed line endings
+    "Host a\n  User x\n# [disabled] Host b\n# [disabled]   Port 1\n"
+    "  Compression yes\nHost c\n  Port 2\n",                     # 9: an active line after
+    "# [disabled] Host a\n# [disabled]     Port 1\n"
+    "# [disabled global section]\n# [disabled] User g\n",        # 10: off block above off global
+    '"Match" exec "true"\n  "User" x\nhost lower\n\tuser=y\n',  # 11: quoted, lower-case keywords
 ]
 
 
@@ -34,19 +41,70 @@ def test_blocks_options_and_comments_are_read():
     assert [(o.key, o.value, o.comment) for o in web.options] == [
         ("User", "deploy", "# who"), ("Port", "2222", ""),
     ]
-    assert draft.trailing == ["# tail"]
+    assert draft.trailing == ["# tail\n"]
 
 
 def test_only_an_edited_line_is_rewritten():
     draft = parse(SAMPLES[2])
     web = draft.blocks[1]
     web.options[0].value = "root"
-    web.note = "production web"
+    web.set_note("production web")
     out, _lines = serialize(draft)
     assert "# production web\nHost web *.prod !bad   # note\n" in out
-    assert "    User root # who\n    Port=2222\n" in out
+    # The edited line keeps its tab; the untouched one its "=".
+    assert "\tUser root # who\n    Port=2222\n" in out
     web.patterns = "web2"
     assert "\nHost web2 # note\n" in serialize(draft)[0]
+
+
+def test_an_edited_line_keeps_how_it_was_written():
+    """Review: editing one value re-indented the line and re-spelled the
+    keyword. Indentation, spelling, separator and line ending stay."""
+    draft = parse("host a\r\n\tuser=x\r\nHost b\n  Port 1")
+    draft.blocks[0].patterns = "z"
+    draft.blocks[0].options[0].value = "y"
+    draft.blocks[1].options[0].value = "2"
+    draft.blocks[1].options.append(Option("User", "u"))
+    assert serialize(draft)[0] == "host z\r\n\tuser=y\r\nHost b\n  Port 2\r\n  User u\r\n"
+
+
+def test_an_active_line_after_switched_off_lines_stays_where_it_is():
+    """Review: it was moved up into the block above. The comments are then
+    not read as a block at all, so nothing moves."""
+    text = SAMPLES[9]
+    draft = parse(text)
+    assert [(b.patterns, b.disabled) for b in draft.blocks] == [("a", False), ("c", False)]
+    assert [o.key for o in draft.blocks[0].options] == ["User", "Compression"]
+    assert serialize(draft)[0] == text
+
+
+def test_switched_off_global_options_are_read_below_a_switched_off_block():
+    """Review: the marker was only recognised above every block, so the
+    global options became that block's on reload."""
+    draft = parse(SAMPLES[10])
+    assert [(b.kind, b.disabled, [o.key for o in b.options]) for b in draft.blocks] == [
+        ("host", True, ["Port"]), ("global", True, ["User"]),
+    ]
+
+
+def test_quoted_keywords_are_read_as_openssh_reads_them():
+    draft = parse(SAMPLES[11])
+    assert [(b.kind, b.patterns) for b in draft.blocks] == [
+        ("match", 'exec "true"'), ("host", "lower"),
+    ]
+    assert [b.kind for b in scan_blocks(SAMPLES[11])] == ["match", "host"]
+    assert scan_blocks(SAMPLES[11])[0].lines[0].keyword == "user"
+
+
+def test_global_options_have_no_note():
+    """Review: there is no header to put it above, so it attached itself
+    to whatever came next."""
+    text = "# about everything\nCompression yes\nHost a\n  User x\n"
+    draft = parse(text)
+    glob = draft.blocks[0]
+    assert glob.note == ""
+    glob.set_note("ignored")
+    assert serialize(draft)[0] == text
 
 
 def test_line_map_agrees_with_the_daemon_s_scan():

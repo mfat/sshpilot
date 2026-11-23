@@ -5,22 +5,30 @@ options above every ``Host``/``Match`` line (the *global* block), then each
 ``Host`` and ``Match`` block in file order. This module turns text into that
 list and back.
 
-The round trip is lossless: every line is kept as written, and a line is
-rewritten only when its keyword, value or header was edited. Comment and
-blank lines stay attached to the line that follows them, so they travel with
-it when a block or an option is moved.
+**The round trip is exact.** Text that was not edited is written back byte
+for byte: every line is kept with its own line ending, a byte-order mark is
+kept, and a line is rewritten only when its keyword, value or header was
+edited. An edited line keeps its indentation, the way its keyword was
+written and its separator. Comment and blank lines stay attached to the
+line that follows them, so they travel with it when a block or an option is
+moved.
 
 A block can be switched off without losing it: its lines are written as
 comments that start with :data:`DISABLED_PREFIX`, which OpenSSH ignores and
-this parser reads back as a disabled block.
+this parser reads back as a disabled block. Such comments are read as a
+block only when that changes nothing: if an active option follows them
+before the next header, OpenSSH reads that option into the block above, and
+turning the comments into a block would move it. They are then left as the
+comments they are.
 
-The daemon uses the same parser (:func:`scan_blocks`) to locate blocks in a
+The daemon uses the same reading (:func:`scan_blocks`) to locate blocks in a
 draft, so line numbers mean the same thing on both sides.
 """
 from __future__ import annotations
 
 import copy
 import itertools
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -36,11 +44,27 @@ DISABLED_PREFIX = "# [disabled] "
 DISABLED_GLOBAL = "# [disabled global section]"
 
 _INDENT = "    "
+_BOM = "﻿"
 _ids = itertools.count(1)
+# indentation, keyword (possibly quoted), separator, the rest
+_LINE_RE = re.compile(r'^(\s*)("[^"]*"|[^\s=]+)(\s*=\s*|\s+|$)(.*)$', re.DOTALL)
 
 
 def _next_id() -> int:
     return next(_ids)
+
+
+def _eol(line: str) -> str:
+    """The line terminator *line* ends with ('' for an unterminated one)."""
+    if line.endswith("\r\n"):
+        return "\r\n"
+    if line.endswith(("\n", "\r")):
+        return line[-1]
+    return ""
+
+
+def _body(line: str) -> str:
+    return line[: len(line) - len(_eol(line))]
 
 
 def split_inline_comment(remainder: str) -> Tuple[str, str]:
@@ -55,6 +79,48 @@ def split_inline_comment(remainder: str) -> Tuple[str, str]:
     return remainder.strip(), ""
 
 
+def keyword_of(line: str) -> str:
+    """The lower-case keyword of an active line, as OpenSSH reads it: quotes
+    around it do not count. Empty for a blank line or a comment."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return ""
+    match = _LINE_RE.match(stripped)
+    written = match.group(2) if match else _split_keyword(stripped)[0]
+    return written.strip('"').lower()
+
+
+@dataclass
+class _Written:
+    """How a line was written: kept when the line is edited."""
+
+    indent: str = ""
+    keyword: str = ""       # as spelled (and quoted)
+    separator: str = " "
+    eol: str = ""
+
+
+def _parts(line: str) -> Tuple[bool, _Written, str, str]:
+    """``(disabled, how it is written, value, comment)`` of a line. The
+    written keyword is empty for a blank line or an ordinary comment."""
+    eol = _eol(line)
+    text = _body(line)
+    stripped = text.strip()
+    disabled = stripped.startswith(DISABLED_PREFIX)
+    if disabled:
+        outer = text[: len(text) - len(text.lstrip())]
+        text = outer + stripped[len(DISABLED_PREFIX):]
+        stripped = text.strip()
+    if not stripped or stripped.startswith("#"):
+        return disabled, _Written(eol=eol), "", ""
+    match = _LINE_RE.match(text)
+    if match is None:
+        return disabled, _Written(eol=eol), "", ""
+    indent, keyword, separator, rest = match.groups()
+    value, comment = split_inline_comment(rest)
+    return disabled, _Written(indent, keyword, separator or " ", eol), value, comment
+
+
 @dataclass
 class Option:
     """One option line of a block."""
@@ -66,22 +132,32 @@ class Option:
     raw: Optional[str] = None              # the line as written, if unedited
     uid: int = field(default_factory=_next_id)
     _parsed: Tuple[str, str] = ("", "")
+    _written: Optional[_Written] = None
+    _was_disabled: bool = False
 
     @property
     def keyword(self) -> str:
-        return self.key.strip().lower()
+        return self.key.strip().strip('"').lower()
 
-    def line_text(self, indent: str, disabled: bool) -> str:
+    def line_text(self, indent: str, disabled: bool, eol: str) -> str:
         if (
             self.raw is not None
             and (self.key, self.value) == self._parsed
-            and self.raw.strip().startswith(DISABLED_PREFIX) == disabled
+            and self._was_disabled == disabled
         ):
             return self.raw
-        text = f"{indent}{self.key.strip()} {self.value.strip()}".rstrip()
+        written = self._written
+        key = self.key.strip()
+        if written is not None:
+            indent = written.indent
+            separator = written.separator
+            eol = written.eol         # '' for an unterminated last line
+        else:
+            separator = " "
+        text = f"{indent}{key}{separator}{self.value.strip()}".rstrip()
         if self.comment:
             text += f" {self.comment}"
-        return (DISABLED_PREFIX + text) if disabled else text
+        return ((DISABLED_PREFIX + text) if disabled else text) + eol
 
 
 @dataclass
@@ -97,19 +173,29 @@ class Block:
     raw: Optional[str] = None
     uid: int = field(default_factory=_next_id)
     _parsed: Tuple[str, bool] = ("", False)
+    _written: Optional[_Written] = None
 
-    def header_text(self) -> Optional[str]:
+    def header_text(self, eol: str) -> Optional[str]:
         if self.kind == GLOBAL:
-            return DISABLED_GLOBAL if self.disabled else None
+            if not self.disabled:
+                return None
+            return self.raw if self.raw is not None else DISABLED_GLOBAL + eol
         if self.raw is not None and (self.patterns, self.disabled) == self._parsed:
             return self.raw
         default = "*" if self.kind == HOST else "all"
-        text = f"{'Host' if self.kind == HOST else 'Match'} {self.patterns.strip() or default}"
+        written = self._written
+        keyword = written.keyword if written else ("Host" if self.kind == HOST else "Match")
+        indent = written.indent if written else ""
+        separator = written.separator if written else " "
+        text = f"{indent}{keyword}{separator}{self.patterns.strip() or default}"
         if self.comment:
             text += f" {self.comment}"
-        return (DISABLED_PREFIX + text) if self.disabled else text
+        return ((DISABLED_PREFIX + text) if self.disabled else text) + (
+            (written.eol if written else "") or eol
+        )
 
     # -- the note: the comment lines directly above the header --------------
+    # (The global block has no header to put a note above: it has none.)
 
     def _note_span(self) -> Tuple[int, int]:
         end = len(self.leading)
@@ -120,16 +206,22 @@ class Block:
 
     @property
     def note(self) -> str:
+        if self.kind == GLOBAL:
+            return ""
         start, end = self._note_span()
         return "\n".join(
             line.strip()[1:].strip() for line in self.leading[start:end]
         )
 
-    @note.setter
-    def note(self, text: str) -> None:
+    def set_note(self, text: str, eol: str = "\n") -> None:
+        if self.kind == GLOBAL:
+            return
         start, end = self._note_span()
-        lines = [f"# {part.strip()}" for part in (text or "").splitlines() if part.strip()]
-        self.leading[start:end] = lines
+        old = self.leading[start:end]
+        ending = (_eol(old[0]) if old else "") or eol
+        self.leading[start:end] = [
+            f"# {part.strip()}{ending}" for part in (text or "").splitlines() if part.strip()
+        ]
 
 
 @dataclass
@@ -139,7 +231,7 @@ class ConfigDraft:
     blocks: List[Block] = field(default_factory=list)
     trailing: List[str] = field(default_factory=list)
     newline: str = "\n"
-    final_newline: bool = True
+    bom: bool = False
 
     def clone(self) -> "ConfigDraft":
         """A deep copy that keeps every uid (for undo)."""
@@ -164,66 +256,78 @@ class LineMap:
     options: Dict[int, int]     # option uid -> line
 
 
-def _line_parts(line: str) -> Tuple[bool, str, str, str]:
-    """``(disabled, keyword, value, comment)`` of an option or header line;
-    the keyword is empty for a blank line or an ordinary comment."""
-    stripped = line.strip()
-    disabled = stripped.startswith(DISABLED_PREFIX)
-    if disabled:
-        stripped = stripped[len(DISABLED_PREFIX):].strip()
-    if not stripped or stripped.startswith("#"):
-        return disabled, "", "", ""
-    keyword, remainder = _split_keyword(stripped)
-    written = stripped[: len(keyword)]
-    value, comment = split_inline_comment(remainder)
-    return disabled, written, value, comment
+def _self_contained(lines: List[str], start: int) -> bool:
+    """Whether the switched-off block whose header is ``lines[start]`` can be
+    read as a block: no active option follows it before the next header."""
+    for line in lines[start + 1:]:
+        disabled, written, _value, _comment = _parts(line)
+        if not written.keyword:
+            continue
+        if written.keyword.strip('"').lower() in (HOST, MATCH):
+            return True
+        if not disabled:
+            return False
+    return True
 
 
 def parse(text: str) -> ConfigDraft:
     """Read configuration text into blocks."""
     text = text or ""
-    if text.startswith("﻿"):
+    draft = ConfigDraft(newline="\r\n" if "\r\n" in text else "\n")
+    if text.startswith(_BOM):
+        draft.bom = True
         text = text[1:]
-    draft = ConfigDraft(
-        newline="\r\n" if "\r\n" in text else "\n",
-        final_newline=text.endswith(("\n", "\r")) or not text,
-    )
+    lines = split_config_lines(text, keepends=True)
     current: Optional[Block] = None
+    seen_active = False
     pending: List[str] = []
-    for line in split_config_lines(text):
-        if line.strip() == DISABLED_GLOBAL and current is None:
+    for index, line in enumerate(lines):
+        if _body(line).strip() == DISABLED_GLOBAL and not seen_active and not any(
+            block.kind == GLOBAL for block in draft.blocks
+        ):
             current = Block(kind=GLOBAL, disabled=True, leading=pending, raw=line)
             current._parsed = ("", True)
             draft.blocks.append(current)
             pending = []
             continue
-        disabled, key, value, comment = _line_parts(line)
-        if not key or (disabled and key.lower() not in (HOST, MATCH)
-                       and not (current is not None and current.disabled)):
-            # Blank, an ordinary comment, or a "[disabled]" line that does
-            # not belong to a switched-off block: kept as written.
+        disabled, written, value, comment = _parts(line)
+        keyword = written.keyword.strip('"').lower()
+        if not keyword:
             pending.append(line)
             continue
-        if key.lower() in (HOST, MATCH):
+        if keyword in (HOST, MATCH):
+            if disabled and not _self_contained(lines, index):
+                pending.append(line)          # see the module docstring
+                continue
             current = Block(
-                kind=key.lower(), patterns=value, comment=comment,
+                kind=keyword, patterns=value, comment=comment,
                 leading=pending, disabled=disabled, raw=line,
             )
             current._parsed = (value, disabled)
+            current._written = written
             draft.blocks.append(current)
+            seen_active = seen_active or not disabled
             pending = []
             continue
-        if current is None or (current.disabled and not disabled):
-            # OpenSSH does not see a switched-off block, so an active line
-            # after one belongs to the last block that is on (or to the
-            # global options when there is none).
-            current = next((b for b in reversed(draft.blocks) if not b.disabled), None)
+        if disabled and not (current is not None and current.disabled):
+            pending.append(line)              # an ordinary comment
+            continue
+        if not disabled and (current is None or current.disabled):
+            # Reached only above every active block (a switched-off block
+            # followed by an active option is not read as a block).
+            current = next(
+                (b for b in draft.blocks if b.kind == GLOBAL and not b.disabled), None
+            )
             if current is None:
                 current = Block(kind=GLOBAL)
                 draft.blocks.append(current)
-        option = Option(key=key, value=value, comment=comment, leading=pending, raw=line)
-        option._parsed = (key, value)
+        option = Option(key=written.keyword, value=value, comment=comment,
+                        leading=pending, raw=line)
+        option._parsed = (written.keyword, value)
+        option._written = written
+        option._was_disabled = disabled
         current.options.append(option)
+        seen_active = seen_active or not disabled
         pending = []
     draft.trailing = pending
     return draft
@@ -231,34 +335,48 @@ def parse(text: str) -> ConfigDraft:
 
 def serialize(draft: ConfigDraft) -> Tuple[str, LineMap]:
     """Write *draft* as text, with the line of every block and option."""
+    eol = draft.newline
     lines: List[str] = []
     headers: Dict[int, int] = {}
     options: Dict[int, int] = {}
+
+    def emit(line: str) -> None:
+        # A line that ended the text without a terminator gets one as soon
+        # as something follows it.
+        if lines and not _eol(lines[-1]):
+            lines[-1] += eol
+        lines.append(line)
+
     for index, block in enumerate(draft.blocks):
         # A block made in the editor has no blank line above it yet.
-        if index and block.raw is None and block.kind != GLOBAL and not (
-            block.leading and not block.leading[0].strip()
-        ) and lines and lines[-1].strip():
-            lines.append("")
-        lines.extend(block.leading)
-        header = block.header_text()
+        if (
+            index and block.raw is None and block.kind != GLOBAL
+            and not (block.leading and not block.leading[0].strip())
+            and lines and lines[-1].strip()
+        ):
+            emit(eol)
+        for line in block.leading:
+            emit(line)
+        header = block.header_text(eol)
         if header is not None:
-            lines.append(header)
+            emit(header)
             headers[block.uid] = len(lines)
         else:
             headers[block.uid] = 0
-        indent = "" if block.kind == GLOBAL else _INDENT
+        # A new option is indented like the block's own lines.
+        indent = "" if block.kind == GLOBAL else next(
+            (o._written.indent for o in block.options if o._written is not None), _INDENT
+        )
         for option in block.options:
             if not option.key.strip():
                 continue  # a row still being typed
-            lines.extend(option.leading)
-            lines.append(option.line_text(indent, block.disabled))
+            for line in option.leading:
+                emit(line)
+            emit(option.line_text(indent, block.disabled, eol))
             options[option.uid] = len(lines)
-    lines.extend(draft.trailing)
-    text = draft.newline.join(lines)
-    if lines and draft.final_newline:
-        text += draft.newline
-    return text, LineMap(headers, options)
+    for line in draft.trailing:
+        emit(line)
+    return (_BOM if draft.bom else "") + "".join(lines), LineMap(headers, options)
 
 
 # -- the daemon's view ---------------------------------------------------------
@@ -266,7 +384,7 @@ def serialize(draft: ConfigDraft) -> Tuple[str, LineMap]:
 @dataclass(frozen=True)
 class ScannedLine:
     line: int
-    keyword: str        # lower case
+    keyword: str        # lower case, unquoted
     value: str
     text: str           # the stripped line
 
@@ -285,16 +403,18 @@ def scan_blocks(text: str) -> Tuple[ScannedBlock, ...]:
     Comments (switched-off blocks included) and blank lines are not part of
     any block. The global block is present only when it has lines.
     """
+    text = text or ""
+    if text.startswith(_BOM):
+        text = text[1:]
     blocks: List[List] = []
     current: Optional[List] = None
-    for number, raw in enumerate(split_config_lines(text or ""), start=1):
+    for number, raw in enumerate(split_config_lines(text), start=1):
         stripped = raw.strip()
-        if number == 1 and stripped.startswith("﻿"):
-            stripped = stripped[1:].strip()
-        if not stripped or stripped.startswith("#"):
+        keyword = keyword_of(stripped)
+        if not keyword:
             continue
-        keyword, remainder = _split_keyword(stripped)
-        value, _comment = split_inline_comment(remainder)
+        match = _LINE_RE.match(stripped)
+        value, _comment = split_inline_comment(match.group(4) if match else "")
         if keyword in (HOST, MATCH):
             current = [keyword, number, value, []]
             blocks.append(current)
