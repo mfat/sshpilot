@@ -122,21 +122,6 @@ def pending_exec_text(evaluation: SshConfigDraftEvaluation) -> str:
     ).format(count=count)
 
 
-def context_text(evaluation: SshConfigDraftEvaluation, display_name: str) -> str:
-    """How the draft is read: the same way a connection reads the file."""
-    parts = [display_name]
-    if evaluation.system_config:
-        parts.append(evaluation.system_config)
-    text = _("Read as a connection reads it: {files}").format(files=" → ".join(parts))
-    if evaluation.forced:
-        text += " · " + ngettext(
-            "{count} option forced by Settings",
-            "{count} options forced by Settings",
-            len(evaluation.forced),
-        ).format(count=len(evaluation.forced))
-    return text
-
-
 def default_source() -> str:
     return _("OpenSSH default")
 

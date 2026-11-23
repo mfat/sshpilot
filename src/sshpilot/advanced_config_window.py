@@ -298,12 +298,6 @@ class AdvancedConfigWindow(Adw.Window):
         target_box.append(self.target_button)
         row.append(target_box)
         box.append(row)
-        self.context_label = Gtk.Label(xalign=0)
-        self.context_label.add_css_class("dim-label")
-        self.context_label.add_css_class("caption")
-        self.context_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.context_label.set_visible(False)
-        box.append(self.context_label)
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         outer.append(box)
         outer.append(Gtk.Separator())
@@ -1431,10 +1425,6 @@ class AdvancedConfigWindow(Adw.Window):
             self.matched_count,
             messages.matched_count(count) if answered else "", "success",
         )
-        self.context_label.set_label(
-            messages.context_text(evaluation, self._display_name) if evaluation else ""
-        )
-        self.context_label.set_visible(evaluation is not None)
         self._render_effective()
         self._render_trace()
         self._render_includes()

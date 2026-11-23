@@ -5,10 +5,8 @@ import pytest
 
 from sshpilot.api.models.connections import (
     SshConfigDraftError,
-    SshConfigDraftEvaluation,
     SshConfigDraftLine,
     SshConfigDraftLineState as State,
-    SshConfigDraftValue,
 )
 from sshpilot.gtk import advanced_config_messages as messages
 from sshpilot.ssh_config_blocks import GLOBAL, HOST, MATCH, Block
@@ -59,17 +57,6 @@ def test_openssh_s_diagnostic_is_shown_as_it_is():
     assert "7" in text and text.endswith("Bad configuration option: x")
     text = messages.error_text(SshConfigDraftError("/etc/ssh/ssh_config", 2, "Bad port"))
     assert "/etc/ssh/ssh_config" in text
-
-
-def test_context_names_what_a_connection_reads():
-    evaluation = SshConfigDraftEvaluation(
-        system_config="/etc/ssh/ssh_config",
-        forced=(SshConfigDraftValue("connecttimeout", "7"),),
-    )
-    text = messages.context_text(evaluation, "~/.ssh/config")
-    assert "~/.ssh/config → /etc/ssh/ssh_config" in text and "1" in text
-    isolated = messages.context_text(SshConfigDraftEvaluation(isolated=True), "config")
-    assert "→" not in isolated
 
 
 def test_block_status_waits_for_openssh():
