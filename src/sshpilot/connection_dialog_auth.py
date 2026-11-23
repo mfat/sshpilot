@@ -376,6 +376,11 @@ class AuthPolicy:
         self.order = [
             m for m in self._first_listed() if m not in METHODS or self._is_checked(m)
         ]
+        # The block gets this one order line. Later copies OpenSSH ignores
+        # today must go: the writer keeps an unchanged line where it was
+        # and adds the new one at the end, which would put the ignored
+        # copy first and make it the one OpenSSH uses.
+        self._drop_passthrough({PREFERRED_AUTH_KEYWORD})
         self._unknown_after_reset.discard("order")
 
     def _end_edit(self) -> None:

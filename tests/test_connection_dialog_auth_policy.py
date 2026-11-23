@@ -328,3 +328,64 @@ def test_policy_lines_are_split_from_the_other_options_and_joined_back():
     assert policy == ["PreferredAuthentications password", "GSSAPIAuthentication no"]
     assert other == "Compression yes"
     assert join_extra(other, policy).splitlines() == extra.splitlines()[:1] + policy
+
+
+# -- saved through the config store: what OpenSSH actually reads ---------------
+
+_DUPLICATES = (
+    "Host demo\n"
+    "    HostName 127.0.0.1\n"
+    "    PreferredAuthentications password,publickey,keyboard-interactive\n"
+    "    PreferredAuthentications publickey\n"
+    "    PubkeyAuthentication no\n"
+    "    PubkeyAuthentication yes\n"
+)
+
+
+def _ssh_g(path):
+    import subprocess
+
+    out = subprocess.run(
+        ["ssh", "-G", "-F", str(path), "demo"], capture_output=True, text=True, check=True,
+    ).stdout
+    resolved = dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
+    return resolved.get("preferredauthentications")
+
+
+@pytest.mark.parametrize("edit, expected", [
+    # An edit writes one order line; the copy OpenSSH ignored must not end
+    # up above it (the writer keeps unchanged lines where they were).
+    (lambda p: p.move("keyboard-interactive", 0), "keyboard-interactive,password"),
+    (lambda p: p.set_tried("publickey", True), "password,keyboard-interactive,publickey"),
+    (lambda p: p.reset_order(), None),
+    (lambda p: True, "password,publickey,keyboard-interactive"),  # no auth edit
+])
+def test_a_saved_order_edit_is_the_order_openssh_uses(tmp_path, edit, expected):
+    import shutil
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs the OpenSSH client")
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    config = tmp_path / "config"
+    config.write_text(_DUPLICATES)
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(config),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    record = repo.get_record("demo")
+    lines, other = split_policy_lines(record.data.get("extra_ssh_config") or "")
+    policy = AuthPolicy.from_lines(lines)
+    policy.set_inherited({**SSH_G, "preferredauthentications": _ssh_g(config)})
+    assert edit(policy)
+    repo.update_connection(
+        "demo", {**record.data, "extra_ssh_config": join_extra(other, policy.to_lines())},
+    )
+    assert _ssh_g(config) == expected
+    if expected is not None:
+        # Edited: one order line. Untouched: the block as authored.
+        count = config.read_text().count("PreferredAuthentications")
+        assert count == (1 if policy.edited else 2)
