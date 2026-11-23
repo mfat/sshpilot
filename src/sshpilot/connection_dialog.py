@@ -3497,13 +3497,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             pass
         self.auth_policy.sync()
 
+        # The password sits right after the order that decides whether it is
+        # used (Password or keyboard-interactive), ahead of the key settings.
         auth_groups = [
             auth_group,
+            password_group,
             self.key_selection_group,
             self.key_editor,
             self.cert_editor,
             self.idonly_group,
-            password_group,
             hw_group,
         ]
         self._auth_groups_for_login_profile = auth_groups
