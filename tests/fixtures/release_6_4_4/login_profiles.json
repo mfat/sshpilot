@@ -1,0 +1,75 @@
+{
+  "group_links": {
+    "default": {
+      "prod": "lp-e4d2214cffa59855"
+    }
+  },
+  "profiles": {
+    "lp-1b13ad863421eb69": {
+      "add_keys_to_agent": "",
+      "auth_method": 0,
+      "certificate_files": [],
+      "extra_ssh_config": "ServerAliveInterval 15\nCompression yes",
+      "forward_agent": false,
+      "forward_agent_target": "",
+      "has_password": false,
+      "has_sudo_password": false,
+      "id": "lp-1b13ad863421eb69",
+      "identity_agent": "",
+      "identity_files": [],
+      "key_select_mode": 0,
+      "name": "Tuned",
+      "pkcs11_provider": "",
+      "proxy_command": "",
+      "pubkey_auth_no": false,
+      "revision": 1,
+      "security_key_provider": "",
+      "username": "tuned"
+    },
+    "lp-be8bef9d5d806940": {
+      "add_keys_to_agent": "",
+      "auth_method": 0,
+      "certificate_files": [],
+      "extra_ssh_config": "",
+      "forward_agent": false,
+      "forward_agent_target": "",
+      "has_password": false,
+      "has_sudo_password": false,
+      "id": "lp-be8bef9d5d806940",
+      "identity_agent": "",
+      "identity_files": [
+        "/keys/deploy_ed25519"
+      ],
+      "key_select_mode": 1,
+      "name": "Deploy",
+      "pkcs11_provider": "",
+      "proxy_command": "",
+      "pubkey_auth_no": false,
+      "revision": 1,
+      "security_key_provider": "",
+      "username": "deploy"
+    },
+    "lp-e4d2214cffa59855": {
+      "add_keys_to_agent": "",
+      "auth_method": 1,
+      "certificate_files": [],
+      "extra_ssh_config": "",
+      "forward_agent": false,
+      "forward_agent_target": "",
+      "has_password": false,
+      "has_sudo_password": false,
+      "id": "lp-e4d2214cffa59855",
+      "identity_agent": "",
+      "identity_files": [],
+      "key_select_mode": 0,
+      "name": "Ops password",
+      "pkcs11_provider": "",
+      "proxy_command": "",
+      "pubkey_auth_no": true,
+      "revision": 1,
+      "security_key_provider": "",
+      "username": "ops"
+    }
+  },
+  "version": 1
+}
