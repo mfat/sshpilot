@@ -177,14 +177,30 @@ def _auth_click(button):
     return lambda d: getattr(d.auth_policy, button).emit("clicked")
 
 
+def _answer_alert(dialog, alert, response):
+    """Answer an alert the way a person does: once it is on screen.
+
+    On libadwaita 1.5 (the oldest supported, and what CI runs) an alert
+    closed in the very instant it was presented stays attached to its
+    window, and the window then refuses to close: the save that follows
+    never "completes". Nobody can click that fast, so the test waits for
+    the alert to be up, and for it to be gone again.
+    """
+    _pump(lambda: False, seconds=0.25)
+    alert.emit("response", response)
+    alert.force_close()
+    assert _pump(lambda: dialog.get_visible_dialog() is None, seconds=3), (
+        "the alert did not close"
+    )
+
+
 def _auth_reset_order(dialog):
     """Click Reset and, when it asks (a saved order), confirm the removal."""
     section = dialog.auth_policy
     section.reset_button.emit("clicked")
     alert = section._reset_alert
     if alert is not None:
-        alert.emit("response", "remove")
-        alert.force_close()
+        _answer_alert(dialog, alert, "remove")
 
 
 @dataclass
@@ -774,8 +790,7 @@ def test_reset_shows_what_the_host_inherits_without_its_own_line(gui, root):
     section.reset_button.emit("clicked")
     alert = section._reset_alert
     assert alert is not None
-    alert.emit("response", "cancel")
-    alert.force_close()
+    _answer_alert(dialog, alert, "cancel")
     assert section.policy.order == ["password"]
     _auth_reset_order(dialog)
     assert section.policy.shown_order() == ["publickey", "keyboard-interactive"]

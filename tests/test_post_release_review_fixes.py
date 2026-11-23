@@ -639,3 +639,48 @@ def test_summary_does_not_call_a_disabled_password_a_password_profile():
     assert line(order) == "u · password"
     assert line(order + "\nPasswordAuthentication no") == "u"
     assert line("PubkeyAuthentication no") == "u"
+
+
+# -- clearing a list sent on its own clears its lines --------------------------
+
+@pytest.mark.parametrize("plural, single, line", [
+    ("certificate_files", "certificate", "CertificateFile ~/.ssh/id_contract-cert.pub"),
+    ("identity_files", "keyfile", "IdentityFile ~/.ssh/id_contract"),
+])
+def test_a_patch_with_only_the_list_updates_its_first_entry(tmp_path, plural, single, line):
+    """The editor sends only what changed. Emptying the certificates sent
+    ``certificate_files`` alone, the stored ``certificate`` stayed, and the
+    writer fell back to it: the line survived (GUI contract "certificate")."""
+    from sshpilot.core.connection_application_service import (
+        ConnectionApplicationService,
+    )
+
+    config, repo = _repo(tmp_path, [line])
+    data = dict(repo.get_record("demo").data)
+    assert data[single]
+    ConnectionApplicationService._apply_config_patch(
+        ConnectionApplicationService.__new__(ConnectionApplicationService),
+        data, {plural: []},
+    )
+    assert data[single] == ""
+    repo.update_connection("demo", data)
+    assert _block_lines(config) == ["HostName demo.example"]
+
+
+def test_a_patch_with_a_new_list_moves_the_first_entry_with_it():
+    from sshpilot.core.connection_application_service import (
+        ConnectionApplicationService,
+    )
+
+    data = {"certificate": "/old", "certificate_files": ["/old"]}
+    ConnectionApplicationService._apply_config_patch(
+        ConnectionApplicationService.__new__(ConnectionApplicationService),
+        data, {"certificate_files": ["/new", "/other"]},
+    )
+    assert data["certificate"] == "/new"
+    explicit = {"certificate": "/old", "certificate_files": ["/old"]}
+    ConnectionApplicationService._apply_config_patch(
+        ConnectionApplicationService.__new__(ConnectionApplicationService),
+        explicit, {"certificate_files": ["/new"], "certificate": "/chosen"},
+    )
+    assert explicit["certificate"] == "/chosen"      # a client's own value stands

@@ -2173,6 +2173,16 @@ class ConnectionApplicationService:
                     ) from error
             else:
                 data[key] = value
+        # ``keyfile`` and ``certificate`` are the first entry of their list,
+        # kept for older readers, and the writer falls back to them when a
+        # list is empty. A client that sends only the list (the editor sends
+        # only what changed) must not leave the old first entry behind:
+        # emptying the certificates would otherwise keep the line.
+        for plural, single in (
+            ("identity_files", "keyfile"), ("certificate_files", "certificate"),
+        ):
+            if plural in patch and single not in patch:
+                data[single] = data[plural][0] if data[plural] else ""
         self._apply_legacy_auth_choice(data, patch, legacy_auth_before)
 
     @staticmethod
