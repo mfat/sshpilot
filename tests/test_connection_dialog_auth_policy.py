@@ -295,19 +295,6 @@ def test_reset_order_removes_the_line_and_waits_for_the_inherited_one():
     assert policy.checked() == ["publickey", "keyboard-interactive"]
 
 
-def test_reset_switch_removes_every_copy_of_the_line():
-    policy = _policy("PubkeyAuthentication no", "PubkeyAuthentication yes",
-                     "GSSAPIAuthentication no")
-    assert policy.reset_switch("publickey")
-    assert policy.to_lines() == ["GSSAPIAuthentication no"]
-
-
-def test_the_older_keyword_copy_goes_with_a_reset_too():
-    policy = _policy("KbdInteractiveAuthentication no", "ChallengeResponseAuthentication yes")
-    policy.reset_switch("keyboard-interactive")
-    assert policy.to_lines() == []
-
-
 # -- what OpenSSH will try (the line below the list) ---------------------------
 
 def test_will_try_counts_inherited_switches():

@@ -476,24 +476,6 @@ class AuthPolicy:
             self._unknown_after_reset.add("order")
         return True
 
-    def set_switch(self, method: str, value: bool) -> bool:
-        if self.switches.get(method) is value:
-            return False
-        self.switches[method] = bool(value)
-        self._unknown_after_reset.discard(method)
-        return True
-
-    def reset_switch(self, method: str) -> bool:
-        if method not in self.switches:
-            return False
-        del self.switches[method]
-        self._drop_passthrough({k for k, m in METHOD_OF_KEYWORD.items() if m == method})
-        if method in self._loaded:
-            self._unknown_after_reset.add(method)
-        return True
-
-    # -- saving ------------------------------------------------------------
-
     def to_lines(self) -> List[str]:
         """The block's authentication lines, authored text kept if unchanged."""
         lines: List[str] = []
@@ -690,7 +672,6 @@ class AuthPolicyGroup:
             ("up", lambda *_a, m=method: self._edit(lambda: self.policy.move_by(m, -1))),
             ("down", lambda *_a, m=method: self._edit(lambda: self.policy.move_by(m, 1))),
             ("top", lambda *_a, m=method: self._edit(lambda: self.policy.move(m, 0))),
-            ("reset", lambda *_a, m=method: self._edit(lambda: self.policy.reset_switch(m))),
         ):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
@@ -702,11 +683,10 @@ class AuthPolicyGroup:
         menu.append(_("Move up"), "authrow.up")
         menu.append(_("Move down"), "authrow.down")
         menu.append(_("Move to top"), "authrow.top")
-        menu.append(_("Reset switch"), "authrow.reset")
         button = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu)
         button.add_css_class("flat")
         button.set_valign(Gtk.Align.CENTER)
-        button.set_tooltip_text(_("Move or reset this method"))
+        button.set_tooltip_text(_("Move this method"))
         row.add_suffix(button)
 
         keys = Gtk.ShortcutController()
@@ -910,9 +890,6 @@ class AuthPolicyGroup:
         last = bool(value) and policy.checked() == [method]
         check.set_sensitive(
             value is not None and not locked and self._editable() and not last
-        )
-        row._actions.lookup_action("reset").set_enabled(
-            policy.switch_is_set(method) and not locked
         )
         # Never dimmed (see _show_row); the tooltip says why it cannot change.
         if value is None:
