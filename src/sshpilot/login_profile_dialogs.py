@@ -35,6 +35,7 @@ from sshpilot.gtk.login_profile_controller import (
     settings_from_values,
 )
 from sshpilot.gtk.login_profile_messages import (
+    extra_option_has_own_setting,
     format_changes_inline,
     format_login_profile_error,
     format_preview,
@@ -427,6 +428,15 @@ class LoginProfileEditor:
     def _on_save_clicked(self, *_args) -> None:
         if not self.name_row.get_text().strip():
             self._banner.set_title(_("Enter a name for the login profile."))
+            self._banner.set_revealed(True)
+            return
+        buffer = self.extra_view.get_buffer()
+        refused = extra_option_has_own_setting(
+            buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+        )
+        if refused:
+            # As the connection editor's Advanced tab: one owner per option.
+            self._banner.set_title(refused)
             self._banner.set_revealed(True)
             return
         try:

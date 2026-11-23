@@ -198,15 +198,38 @@ def profile_summary_line(profile: LoginProfileSummary) -> str:
     parts = []
     if settings.username:
         parts.append(settings.username)
-    from ..core.connections.auth_preferences import password_comes_first, preferred_order
+    from ..connection_dialog_auth import AuthPolicy, split_policy_lines
+    from ..core.connections.auth_preferences import password_comes_first
 
-    if settings.auth_method == 1 or password_comes_first(
-        preferred_order(settings.extra_ssh_config)
-    ):
+    # As the profile's authentication section reads its lines: the order,
+    # without the methods the profile itself disables.
+    policy = AuthPolicy.from_lines(split_policy_lines(settings.extra_ssh_config)[0])
+    methods = [
+        method for method in (policy.order or ())
+        if policy.own_switch(method) is not False
+    ]
+    if settings.auth_method == 1 or password_comes_first(methods):
         parts.append(_("password"))
     elif settings.identity_files:
         parts.append(", ".join(path.rsplit("/", 1)[-1] for path in settings.identity_files))
     return " · ".join(parts)
+
+
+def extra_option_has_own_setting(extra_text: str) -> str:
+    """The message for an Extra SSH options text that sets an option the
+    editor's authentication section owns; empty when it sets none.
+
+    A line typed there would stand above the section's own and decide the
+    setting without the section showing it.
+    """
+    from ..connection_dialog_auth import is_policy_line, split_option
+
+    for line in (extra_text or "").splitlines():
+        if is_policy_line(line):
+            return _(
+                _REASON_TEMPLATES[LoginProfileErrorReason.EXTRA_MANAGED_OPTION]
+            ).format(keyword=split_option(line)[0])
+    return ""
 
 
 def format_detached_connections(count: int) -> str:

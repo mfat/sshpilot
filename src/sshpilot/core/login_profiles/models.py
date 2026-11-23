@@ -596,6 +596,11 @@ def extra_keywords(extra: str) -> Tuple[str, ...]:
     return tuple(keys)
 
 
+#: Projection entry for lines that decide a profile-owned setting under
+#: another spelling (present only when there is such a line).
+EXTRA_FIRST = "extra_first"
+
+
 def _expand(path: str) -> str:
     return os.path.expanduser(os.path.expandvars(path))
 
@@ -629,13 +634,16 @@ def auth_projection(
         for line in all_lines
         if _extra_keyword(line) in owned and _extra_keyword(line) != "proxycommand"
     ]
+    extra_lines.sort()
     # OpenSSH reads some keywords as one setting (ChallengeResponse... is
     # KbdInteractiveAuthentication) and keeps its first line. A line under
     # another spelling placed above the profile's therefore decides the
-    # setting: it is recorded, so the block no longer matches the link. With
-    # no such line the projection is what it always was.
+    # setting: it is recorded apart (``extra_first``), so the block no
+    # longer matches the link. With no such line there is no such entry and
+    # the projection is what it always was.
     owned_settings = {canonical_keyword(key) for key in owned}
     decided: set = set()
+    first_lines: List[str] = []
     for line in all_lines:
         keyword = _extra_keyword(line)
         setting = canonical_keyword(keyword)
@@ -643,8 +651,7 @@ def auth_projection(
             continue
         decided.add(setting)
         if keyword not in owned:
-            extra_lines.append("first: " + " ".join(line.split()))
-    extra_lines.sort()
+            first_lines.append(" ".join(line.split()))
 
     def paths(key: str) -> List[str]:
         values = _norm_list(data.get(key))
@@ -667,12 +674,14 @@ def auth_projection(
     # leave the connection's own command alone keep their recorded fingerprint.
     if "proxycommand" in owned:
         projection["proxy_command"] = _norm_str(data.get("proxy_command"))
+    if first_lines:
+        projection[EXTRA_FIRST] = sorted(first_lines)
     if legacy_auth:
         projection["auth_method"] = auth_method
         projection["pubkey_auth_no"] = bool(data.get("pubkey_auth_no"))
     if owned_fields is not None:
         # Only what the profile sets is its business (v4 links).
-        keep = set(owned_fields) | {"extra"}
+        keep = set(owned_fields) | {"extra", EXTRA_FIRST}
         if "forward_agent" in keep:
             keep.add("forward_agent_target")
             projection["forward_agent_explicit_no"] = bool(
@@ -792,10 +801,19 @@ class FieldChange:
 def diff_projections(
     before: Mapping[str, Any], after: Mapping[str, Any]
 ) -> Tuple[FieldChange, ...]:
+    def shown(projection: Mapping[str, Any], key: str) -> Any:
+        if key == "extra":
+            # A line under another spelling is one of the block's lines for
+            # the setting: listed with them, not as a field of its own.
+            return sorted(
+                [*(projection.get("extra") or ()), *(projection.get(EXTRA_FIRST) or ())]
+            )
+        return projection.get(key)
+
     return tuple(
-        FieldChange(key, before.get(key), after.get(key))
+        FieldChange(key, shown(before, key), shown(after, key))
         for key in DIFF_FIELDS
-        if before.get(key) != after.get(key)
+        if shown(before, key) != shown(after, key)
     )
 
 

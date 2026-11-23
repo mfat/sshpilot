@@ -586,3 +586,55 @@ def test_a_plain_yes_has_no_restriction():
     policy = AuthPolicy.from_lines(["PubkeyAuthentication yes", "PasswordAuthentication yes"])
     assert policy.restriction("publickey") == ""
     assert policy.restriction("password") == ""
+
+
+# -- the login profile editor keeps step with the connection editor -----------
+
+def test_preview_lists_a_replaced_alias_line_as_an_ordinary_option():
+    from sshpilot.core.login_profiles.models import (
+        auth_projection,
+        diff_projections,
+        profile_owned_keywords,
+    )
+
+    profile = LoginProfile(
+        id=PROFILE_ID, name="p", extra_ssh_config="KbdInteractiveAuthentication yes"
+    )
+    host = {"extra_ssh_config": "ChallengeResponseAuthentication no"}
+    keys = profile_owned_keywords(profile)
+    fields = profile_owned_fields(profile)
+    before = auth_projection(host, keys, owned_fields=fields)
+    after = auth_projection(apply_profile_to_data(host, profile), keys, owned_fields=fields)
+    changes = diff_projections(before, after)
+    assert [(c.field, c.before, c.after) for c in changes] == [
+        ("extra", ["ChallengeResponseAuthentication no"],
+         ["KbdInteractiveAuthentication yes"]),
+    ]
+
+
+def test_profile_extra_box_refuses_options_the_section_owns():
+    from sshpilot.gtk.login_profile_messages import extra_option_has_own_setting
+
+    assert extra_option_has_own_setting("Compression yes\nServerAliveInterval 30") == ""
+    for line in ("PasswordAuthentication no", "preferredauthentications=password",
+                 "ChallengeResponseAuthentication no"):
+        message = extra_option_has_own_setting("Compression yes\n" + line)
+        assert message and line.split("=")[0].split()[0].lower() in message
+
+
+def test_summary_does_not_call_a_disabled_password_a_password_profile():
+    from sshpilot.api.models.login_profiles import LoginProfileSettings, LoginProfileSummary
+    from sshpilot.gtk.login_profile_messages import profile_summary_line
+
+    def line(extra):
+        return profile_summary_line(LoginProfileSummary(
+            id=PROFILE_ID, settings=LoginProfileSettings(name="p", username="u",
+                                                         extra_ssh_config=extra),
+            revision=1, has_password=False, has_sudo_password=False,
+            connection_count=0, group_count=0,
+        ))
+
+    order = "PreferredAuthentications password,publickey"
+    assert line(order) == "u · password"
+    assert line(order + "\nPasswordAuthentication no") == "u"
+    assert line("PubkeyAuthentication no") == "u"
