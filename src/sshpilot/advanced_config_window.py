@@ -183,6 +183,7 @@ class AdvancedConfigWindow(Adw.Window):
         self._rendering = False
         self._closing = False
         self._request_serial = 0
+        self._save_after_evaluation = False
         self._evaluated_lines = self._lines
         self._banner_kind = ""
 
@@ -253,8 +254,29 @@ class AdvancedConfigWindow(Adw.Window):
         self.target_entry.set_placeholder_text(_("[user@]host"))
         self.target_entry.add_css_class("monospace")
         self.target_entry.set_width_chars(26)
-        self.target_entry.connect("changed", lambda *_a: self._schedule_evaluation())
-        row.append(self.target_entry)
+        self.target_entry.connect("changed", self._on_target_changed)
+        # An entry with a drop-down of the hosts the configuration names and
+        # the saved connections; any other target can be typed.
+        self._host_list = Gtk.ListBox()
+        self._host_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._host_list.add_css_class("navigation-sidebar")
+        self._host_list.connect("row-activated", self._on_host_chosen)
+        host_scroller = Gtk.ScrolledWindow()
+        host_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        host_scroller.set_propagate_natural_height(True)
+        host_scroller.set_max_content_height(360)
+        host_scroller.set_min_content_width(260)
+        host_scroller.set_child(self._host_list)
+        self._host_popover = Gtk.Popover()
+        self._host_popover.set_child(host_scroller)
+        self.target_button = Gtk.MenuButton(icon_name="pan-down-symbolic")
+        self.target_button.set_popover(self._host_popover)
+        self.target_button.set_tooltip_text(_("Choose a host"))
+        target_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        target_box.add_css_class("linked")
+        target_box.append(self.target_entry)
+        target_box.append(self.target_button)
+        row.append(target_box)
         port_label = Gtk.Label(label=_("Port (-p)"))
         port_label.add_css_class("dim-label")
         row.append(port_label)
@@ -265,14 +287,8 @@ class AdvancedConfigWindow(Adw.Window):
         self.port_entry.set_tooltip_text(
             _("A port given on the command line, as ssh -p. Empty: none.")
         )
-        self.port_entry.connect("changed", lambda *_a: self._schedule_evaluation())
+        self.port_entry.connect("changed", self._on_target_changed)
         row.append(self.port_entry)
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
-        scroller.set_hexpand(True)
-        self._quick_hosts = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        scroller.set_child(self._quick_hosts)
-        row.append(scroller)
         box.append(row)
         self.context_label = Gtk.Label(xalign=0)
         self.context_label.add_css_class("dim-label")
@@ -493,7 +509,7 @@ class AdvancedConfigWindow(Adw.Window):
         self._notes_open = set()
         self._push_history()
         if not keep_target and not self.target_entry.get_text().strip():
-            names = self._quick_host_names()
+            names = self.host_names()
             if names:
                 self.target_entry.set_text(names[0])
         self._render_all()
@@ -501,12 +517,29 @@ class AdvancedConfigWindow(Adw.Window):
             self._show_banner(_("This SSH configuration is read-only: changes cannot be saved."))
 
     @property
+    def raw_pending(self) -> bool:
+        """The Text page holds edits that were not applied to the rules."""
+        return self.apply_raw_button.get_sensitive()
+
+    @property
     def dirty(self) -> bool:
-        return self._text != self._loaded_text
+        return self._text != self._loaded_text or self.raw_pending
 
     def save(self) -> None:
         if not self.dirty or not self._writable:
             return
+        if self.raw_pending:
+            # What is on screen is what gets saved: the text being typed
+            # is read into the rules first.
+            self.apply_raw()
+            if not self.dirty:
+                self._update_chrome()
+                return
+            if self._evaluation is not None:
+                # OpenSSH has not seen this text yet: save once it has, so
+                # a line it rejects is still asked about.
+                self._save_after_evaluation = True
+                return
         evaluation = self._evaluation
         if evaluation is not None and evaluation.errors and self._evaluated_serial == self._serial:
             alert = Adw.AlertDialog(
@@ -562,10 +595,14 @@ class AdvancedConfigWindow(Adw.Window):
                 logger.debug("on_saved failed", exc_info=True)
 
     def _on_reload(self, *_args) -> None:
-        if not self.dirty:
+        def reload():
+            self.apply_raw_button.set_sensitive(False)   # typed text goes too
             self._load(keep_target=True)
+
+        if not self.dirty:
+            reload()
             return
-        self._confirm_discard(lambda: self._load(keep_target=True))
+        self._confirm_discard(reload)
 
     def _on_copy(self, *_args) -> None:
         self.get_clipboard().set(self._text)
@@ -670,6 +707,7 @@ class AdvancedConfigWindow(Adw.Window):
 
     def _changed(self, *, structure: bool) -> None:
         """The draft was edited: redraw when its shape changed, re-evaluate."""
+        self._save_after_evaluation = False
         if structure:
             self._push_history()
             self._render_all()
@@ -845,6 +883,7 @@ class AdvancedConfigWindow(Adw.Window):
             return
         text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
         self.apply_raw_button.set_sensitive(text != self._text)
+        self._update_chrome()      # typed text is an unsaved change
 
     def _render_blocks(self) -> None:
         self._rendering = True
@@ -1115,7 +1154,9 @@ class AdvancedConfigWindow(Adw.Window):
     # targets
     # ------------------------------------------------------------------
 
-    def _quick_host_names(self) -> List[str]:
+    def host_names(self) -> List[str]:
+        """Targets to offer: the hosts the configuration names literally,
+        then the saved connections."""
         names: List[str] = []
         for block in self.draft.blocks:
             if block.kind != HOST or block.disabled:
@@ -1129,21 +1170,27 @@ class AdvancedConfigWindow(Adw.Window):
                     names.append(name)
         except Exception:
             logger.debug("saved host list unavailable", exc_info=True)
-        return names[:14]
+        return names
 
     def _render_quick_hosts(self) -> None:
-        names = self._quick_host_names()
-        current = [child.get_label() for child in self._children(self._quick_hosts)]
-        if current == names:
+        names = self.host_names()
+        if names == getattr(self, "_host_names_shown", None):
             return
-        while (child := self._quick_hosts.get_first_child()) is not None:
-            self._quick_hosts.remove(child)
+        self._host_names_shown = names
+        while (child := self._host_list.get_first_child()) is not None:
+            self._host_list.remove(child)
         for name in names:
-            button = Gtk.Button(label=name)
-            button.add_css_class("pill")
-            button.add_css_class("flat")
-            button.connect("clicked", lambda _b, n=name: self.target_entry.set_text(n))
-            self._quick_hosts.append(button)
+            label = Gtk.Label(label=name, xalign=0)
+            label.add_css_class("monospace")
+            row = Gtk.ListBoxRow()
+            row.set_child(label)
+            row._host = name
+            self._host_list.append(row)
+        self.target_button.set_sensitive(bool(names))
+
+    def _on_host_chosen(self, _listbox, row) -> None:
+        self._host_popover.popdown()
+        self.target_entry.set_text(row._host)
 
     @staticmethod
     def _children(widget) -> list:
@@ -1167,7 +1214,7 @@ class AdvancedConfigWindow(Adw.Window):
         try:
             return EvaluateSshConfigDraftRequest(
                 text=self._text, host=host, user=user, port=port,
-                run_new_exec=bool(self._allowed_exec),
+                allowed_exec=tuple(sorted(self._allowed_exec)),
             )
         except (TypeError, ValueError):
             return None
@@ -1195,9 +1242,12 @@ class AdvancedConfigWindow(Adw.Window):
         def done(result, error):
             if serial != self._request_serial:
                 return          # a newer question was asked meanwhile
+            if isinstance(error, SshPilotError) and error.code is ErrorCode.OPERATION_CANCELLED:
+                return          # the daemon dropped it for a newer question
             if error is not None:
                 logger.debug("draft evaluation failed", exc_info=error)
                 self._evaluation = None
+                self._save_after_evaluation = False
                 self._apply_evaluation()
                 self._show_banner(
                     _("OpenSSH could not be asked about this configuration."),
@@ -1208,15 +1258,27 @@ class AdvancedConfigWindow(Adw.Window):
             self._evaluated_serial = draft_serial
             self._evaluated_lines = lines
             self._apply_evaluation()
+            if self._save_after_evaluation and draft_serial == self._serial:
+                self._save_after_evaluation = False
+                self.save()
 
         self._run(lambda: self._client.evaluate_ssh_config_draft(request), done)
         return False
 
     def _allow_exec(self) -> None:
+        """Agree to the commands the banner is about: those, word for word,
+        and for this target. Another new command, an edited one, or another
+        target asks again (the daemon checks every command it is sent)."""
         evaluation = self._evaluation
         if evaluation is not None:
             self._allowed_exec.update(evaluation.pending_exec)
         self._schedule_evaluation(now=True)
+
+    def _on_target_changed(self, *_args) -> None:
+        # A command can depend on the target (%h, %r): agreement to run it
+        # was for the target on screen at the time.
+        self._allowed_exec.clear()
+        self._schedule_evaluation()
 
     def _apply_evaluation(self) -> None:
         """Show OpenSSH's answer on the rules and in the pages."""

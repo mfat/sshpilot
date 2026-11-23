@@ -364,9 +364,84 @@ def test_a_new_exec_command_waits_for_consent(tmp_path):
     assert pending.pending_exec == (f"touch {marker}",)
     assert not pending.evaluated and not marker.exists()
 
-    allowed = _isolated(tmp_path, draft, run_new_exec=True)
+    allowed = _isolated(tmp_path, draft, allowed_exec=(f"touch {marker}",))
     assert allowed.evaluated and marker.exists()
     assert dict(_pairs(allowed))["user"] == "x"
+
+
+def test_agreeing_to_one_command_does_not_cover_another(tmp_path):
+    """Review P1: consent is to a command, word for word. A command edited
+    afterwards, or a second new one, keeps the draft pending."""
+    first, second = tmp_path / "first", tmp_path / "second"
+    agreed = (f"touch {first}",)
+    edited = _isolated(
+        tmp_path, f'Match exec "touch {second}"\n    User x\n', allowed_exec=agreed,
+    )
+    assert edited.pending_exec == (f"touch {second}",) and not second.exists()
+    both = _isolated(
+        tmp_path,
+        f'Match exec "touch {first}"\n    User x\n'
+        f'Match exec "touch {second}"\n    User y\n',
+        allowed_exec=agreed,
+    )
+    assert both.pending_exec == (f"touch {second}",)
+    assert not first.exists() and not second.exists()   # nothing ran at all
+
+
+def test_a_superseded_evaluation_stops_and_leaves_nothing_running(tmp_path):
+    """Review P1: an obsolete evaluation is abandoned, not waited for."""
+    import threading
+    import time
+
+    from sshpilot.core.ssh_config_draft import DraftEvaluationCancelled
+
+    command = "sleep 47.3"
+    flag = threading.Event()
+    threading.Timer(0.3, flag.set).start()
+    root = tmp_path / "config"
+    root.write_text("")
+    started = time.monotonic()
+    with pytest.raises(DraftEvaluationCancelled):
+        evaluate_draft(
+            _request(f'Match exec "{command}"\n    User x\n', allowed_exec=(command,)),
+            DraftContext(str(root), isolated=True), "", flag.is_set,
+        )
+    assert time.monotonic() - started < 5
+    time.sleep(0.3)
+    running = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
+    assert command not in [line.strip() for line in running.splitlines()]
+
+
+def test_one_evaluation_has_one_time_budget(tmp_path, monkeypatch):
+    from sshpilot.core import ssh_config_draft
+
+    monkeypatch.setattr(ssh_config_draft, "_EVALUATION_BUDGET", 0.4)
+    import time
+
+    started = time.monotonic()
+    evaluation = _isolated(
+        tmp_path, 'Match exec "sleep 20"\n    User x\n', allowed_exec=("sleep 20",),
+    )
+    assert time.monotonic() - started < 5
+    assert not evaluation.evaluated and "timed out" in evaluation.errors[0].diagnostic
+
+
+@pytest.mark.parametrize("body, used, unused", [
+    (("ProxyJump bastion", "ProxyCommand direct-proxy"), "proxyjump", 3),
+    (("ProxyCommand direct-proxy", "ProxyJump bastion"), "proxycommand", 3),
+])
+def test_proxyjump_and_proxycommand_share_one_slot(tmp_path, body, used, unused):
+    """Review P2: OpenSSH uses whichever comes first and ignores the other,
+    so only one of the two lines is the source."""
+    draft = "Host web1\n" + "".join(f"    {line}\n" for line in body)
+    evaluation = _isolated(tmp_path, draft)
+    values = dict(_pairs(evaluation))
+    assert values[used] not in ("", "none")
+    states = {line.line: line for line in evaluation.lines}
+    assert states[2].state is SshConfigDraftLineState.APPLIED
+    assert states[unused].state is SshConfigDraftLineState.SHADOWED
+    assert states[unused].decided_line == 2
+    assert [s.key for s in evaluation.sources if s.key.startswith("proxy")] == [used]
 
 
 def test_a_saved_exec_command_is_not_new(tmp_path):

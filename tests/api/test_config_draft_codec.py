@@ -36,7 +36,9 @@ EVALUATION = SshConfigDraftEvaluation(
 
 @pytest.mark.parametrize("request_", [
     EvaluateSshConfigDraftRequest(text="Host a\n", host="a"),
-    EvaluateSshConfigDraftRequest(text="", host="a", user="u", port=2200, run_new_exec=True),
+    EvaluateSshConfigDraftRequest(
+        text="", host="a", user="u", port=2200, allowed_exec=("test -f /x", "true"),
+    ),
 ])
 def test_request_round_trips(request_):
     wire = evaluate_ssh_config_draft_request_to_wire(request_)

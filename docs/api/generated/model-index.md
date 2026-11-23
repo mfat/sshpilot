@@ -2128,9 +2128,11 @@ Synthetic representation:
 
 ``text`` is the whole root SSH configuration as it would be written.
 ``user`` and ``port`` stand for ``ssh -l``/``-p`` on the command line.
-``run_new_exec`` allows ``Match exec`` commands the saved configuration
-does not contain: OpenSSH runs such a command to evaluate the block, so
-a draft that adds one is not evaluated until the user agrees.
+OpenSSH runs a ``Match exec`` command to evaluate its block, so a draft
+is not evaluated while it holds such a command that the saved
+configuration does not. ``allowed_exec`` lists, word for word, the new
+commands the user agreed to run; any other new command keeps the draft
+pending.
 
 **Related methods:** `evaluate_ssh_config_draft`
 **Related events:** None
@@ -2141,15 +2143,15 @@ a draft that adds one is not evaluated until the user agrees.
 | `host` | `str` | Yes | — | No |
 | `user` | `str | None` | No | `null` | No |
 | `port` | `int | None` | No | `null` | No |
-| `run_new_exec` | `bool` | No | `false` | No |
+| `allowed_exec` | `tuple[str, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "allowed_exec": [],
   "host": "example",
   "port": null,
-  "run_new_exec": false,
   "text": "example",
   "user": null
 }
@@ -6153,8 +6155,8 @@ read), with ``Include`` lines read where OpenSSH reads them, and with
 the options Settings force on the command line (``forced``).
 
 ``pending_exec`` is not empty when the draft adds ``Match exec``
-commands and the request did not allow running them: nothing was
-evaluated. ``errors`` is not empty when OpenSSH rejects the draft.
+commands the request did not allow, each listed word for word: nothing
+was evaluated. ``errors`` is not empty when OpenSSH rejects the draft.
 Otherwise ``values`` is ``ssh -G`` for the host, ``defaults`` the
 keywords whose value is OpenSSH's built-in one, ``matched_blocks`` the
 header lines of the ``Host``/``Match`` blocks of the draft that apply,

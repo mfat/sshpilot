@@ -26,17 +26,25 @@ query that plants a ``SendEnv`` marker in each block (OpenSSH collects
 names the line behind each value follows those answers.
 
 ``ssh -G`` runs ``Match exec`` commands. A draft that adds one is not
-evaluated until the caller allows it: see :func:`new_exec_commands`.
+evaluated until the caller allows that very command: see
+:func:`new_exec_commands`.
+
+The queries can be slow (DNS canonicalization, a ``Match exec`` command), and
+the window asks again on every edit. An evaluation therefore has one time
+budget for all its queries and can be abandoned: *cancelled* is polled while
+OpenSSH runs, and a superseded evaluation kills its ``ssh`` at once.
 """
 from __future__ import annotations
 
 import os
 import re
 import secrets
+import signal
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..api.models.connections import (
     EvaluateSshConfigDraftRequest,
@@ -67,7 +75,22 @@ from .ssh_config_effective import (
     parse_openssh_config_errors,
 )
 
-_QUERY_TIMEOUT = 10
+#: Seconds one evaluation may spend in OpenSSH, all its queries together.
+_EVALUATION_BUDGET = 10.0
+_POLL_SECONDS = 0.05
+
+#: Options that fill one slot: OpenSSH uses whichever it obtains first and
+#: ignores the other from then on.
+_SHARED_SLOTS = {"proxyjump": "proxy", "proxycommand": "proxy"}
+
+
+class DraftEvaluationCancelled(Exception):
+    """The evaluation was abandoned: a newer draft took its place."""
+
+
+def _slot(setting: str) -> str:
+    return _SHARED_SLOTS.get(setting, setting)
+
 _INCLUDE_RE = re.compile(r"^(\s*include)(\s*=\s*|\s+)(.+?)\s*$", re.IGNORECASE)
 
 
@@ -100,17 +123,22 @@ def exec_commands(text: str) -> Tuple[str, ...]:
     return tuple(commands)
 
 
-def new_exec_commands(draft_text: str, saved_text: str) -> Tuple[str, ...]:
-    """``Match exec`` commands the draft has and the saved file has not.
+def new_exec_commands(
+    draft_text: str, saved_text: str, allowed: Sequence[str] = ()
+) -> Tuple[str, ...]:
+    """``Match exec`` commands the draft has, the saved file has not, and
+    the user has not agreed to.
 
     The saved configuration's commands already run on every connection;
     evaluating them is nothing new. A command that only the draft holds may
-    be half typed, and must not run because a key was pressed.
+    be half typed, and must not run because a key was pressed. Agreement is
+    to one command, word for word: a command edited afterwards, or another
+    new one, is pending again.
     """
-    saved = set(exec_commands(saved_text))
+    known = set(exec_commands(saved_text)) | set(allowed)
     found: List[str] = []
     for command in exec_commands(draft_text):
-        if command not in saved and command not in found:
+        if command not in known and command not in found:
             found.append(command)
     return tuple(found)
 
@@ -210,15 +238,45 @@ def _launch_text(draft_text: str, system_copy: Optional[str]) -> str:
     )
 
 
+class _Run:
+    """One evaluation's time budget and its way out."""
+
+    def __init__(self, cancelled: Optional[Callable[[], bool]] = None) -> None:
+        self.deadline = time.monotonic() + _EVALUATION_BUDGET
+        self._cancelled = cancelled
+
+    def check(self) -> None:
+        if self._cancelled is not None and self._cancelled():
+            raise DraftEvaluationCancelled()
+
+
+def _stop(process: "subprocess.Popen") -> None:
+    """End ``ssh`` and whatever a ``Match exec`` started under it."""
+    try:
+        if os.name != "nt":
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        process.communicate(timeout=2)
+    except Exception:
+        pass
+
+
 def _query(
     config_file: str,
     host: str,
+    run: Optional[_Run] = None,
     *,
     overrides: Sequence[str] = (),
     user: Optional[str] = None,
     port: Optional[int] = None,
 ) -> Tuple[Dict[str, List[str]], List[Tuple[str, str]], str]:
     """``ssh -G``: ``(values by keyword, ordered pairs, stderr on failure)``."""
+    run = run or _Run()
+    run.check()
     command = ["ssh", "-F", config_file, *_override_args(overrides)]
     if user:
         command.extend(["-l", user])
@@ -226,23 +284,35 @@ def _query(
         command.extend(["-p", str(port)])
     command.extend(["-G", host])
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
-            timeout=_QUERY_TIMEOUT,
+            text=True,
+            start_new_session=os.name != "nt",
             **hidden_console_kwargs(),
         )
-    except subprocess.TimeoutExpired:
-        return {}, [], "ssh -G timed out"
     except OSError as error:
         return {}, [], str(error)
-    if result.returncode != 0:
-        return {}, [], result.stderr.strip() or f"ssh -G exited {result.returncode}"
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=_POLL_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            try:
+                run.check()
+            except DraftEvaluationCancelled:
+                _stop(process)
+                raise
+            if time.monotonic() >= run.deadline:
+                _stop(process)
+                return {}, [], "ssh -G timed out"
+    if process.returncode != 0:
+        return {}, [], stderr.strip() or f"ssh -G exited {process.returncode}"
     values: Dict[str, List[str]] = {}
     pairs: List[Tuple[str, str]] = []
-    for raw in result.stdout.splitlines():
+    for raw in stdout.splitlines():
         key, _separator, value = raw.strip().partition(" ")
         if not key:
             continue
@@ -306,8 +376,14 @@ def evaluate_draft(
     request: EvaluateSshConfigDraftRequest,
     context: DraftContext,
     saved_text: str = "",
+    cancelled: Optional[Callable[[], bool]] = None,
 ) -> SshConfigDraftEvaluation:
-    """Resolve ``request.host`` from the draft as a launch would."""
+    """Resolve ``request.host`` from the draft as a launch would.
+
+    Raises :class:`DraftEvaluationCancelled` when *cancelled* turns true
+    while OpenSSH is being asked.
+    """
+    run = _Run(cancelled)
     system = context.system_config
     base = dict(system_config=system or "", isolated=bool(context.isolated))
     forced = _forced(context.overrides)
@@ -318,12 +394,11 @@ def evaluate_draft(
             errors=(SshConfigDraftError("", 0, "invalid host name"),),
             forced=forced_values, **base,
         )
-    if not request.run_new_exec:
-        pending = new_exec_commands(request.text, saved_text)
-        if pending:
-            return SshConfigDraftEvaluation(
-                pending_exec=pending, forced=forced_values, **base
-            )
+    pending = new_exec_commands(request.text, saved_text, request.allowed_exec)
+    if pending:
+        return SshConfigDraftEvaluation(
+            pending_exec=pending, forced=forced_values, **base
+        )
 
     with tempfile.TemporaryDirectory(prefix="sshpilot-config-draft-") as directory:
         system_copy = _system_copy(system, directory) if system else None
@@ -332,7 +407,7 @@ def evaluate_draft(
         _write_private(draft_file, _launch_text(request.text, system_copy))
         query_args = dict(overrides=context.overrides, user=request.user, port=request.port)
 
-        values, pairs, stderr = _query(draft_file, host, **query_args)
+        values, pairs, stderr = _query(draft_file, host, run, **query_args)
         if stderr:
             return SshConfigDraftEvaluation(
                 errors=_errors(stderr, draft_file, context_files),
@@ -344,14 +419,14 @@ def evaluate_draft(
         if markers:
             probe_file = os.path.join(directory, "probe")
             _write_private(probe_file, _launch_text(probed_text, system_copy))
-            probed, _pairs, probe_error = _query(probe_file, host, **query_args)
+            probed, _pairs, probe_error = _query(probe_file, host, run, **query_args)
             if not probe_error:
                 for entry in probed.get("sendenv", ()):
                     for name in entry.split():
                         if name in markers:
                             matched.add(markers[name])
 
-        defaults_values, _pairs, _error = _query(os.devnull, host)
+        defaults_values, _pairs, _error = _query(os.devnull, host, run)
         lines, sources, includes = _walk(
             request.text, host, matched, forced, _effective_map(values), system,
         )
@@ -394,7 +469,10 @@ def _walk(
     the draft are found with the walk the rest of the app uses for "an
     earlier block decides this".
     """
+    # Keyed by slot: ProxyJump and ProxyCommand compete for one, so the
+    # first of the two decides and the other is not used.
     winners: Dict[str, SshConfigDraftSource] = {}
+    forced_slots = {_slot(canonical_keyword(key)) for key in forced}
     lines: List[SshConfigDraftLine] = []
     includes: List[SshConfigDraftInclude] = []
     include_base = str(openssh_user_dir())
@@ -406,9 +484,9 @@ def _walk(
             entries = []
         for entry in entries:
             setting = canonical_keyword(str(entry["key"]))
-            if setting in winners or setting in forced:
+            if _slot(setting) in winners or _slot(setting) in forced_slots:
                 continue
-            winners[setting] = SshConfigDraftSource(
+            winners[_slot(setting)] = SshConfigDraftSource(
                 key=setting,
                 file=str(entry["file"]),
                 line=int(entry["line"]),
@@ -437,12 +515,12 @@ def _walk(
                 lines.append(SshConfigDraftLine(item.line, SshConfigDraftLineState.ACCUMULATED))
                 continue
             setting = canonical_keyword(item.keyword)
-            if setting in forced:
+            if _slot(setting) in forced_slots:
                 lines.append(SshConfigDraftLine(item.line, SshConfigDraftLineState.FORCED))
                 continue
-            winner = winners.get(setting)
+            winner = winners.get(_slot(setting))
             if winner is None:
-                winners[setting] = SshConfigDraftSource(setting, "", item.line, header)
+                winners[_slot(setting)] = SshConfigDraftSource(setting, "", item.line, header)
                 lines.append(SshConfigDraftLine(item.line, SshConfigDraftLineState.APPLIED))
             else:
                 lines.append(SshConfigDraftLine(

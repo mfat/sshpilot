@@ -6,7 +6,7 @@ notes remain separate.
 ## Unreleased
 
 - `connections.evaluate_ssh_config_draft(EvaluateSshConfigDraftRequest(text,
-  host, user, port, run_new_exec))` returns `SshConfigDraftEvaluation`: what
+  host, user, port, allowed_exec))` returns `SshConfigDraftEvaluation`: what
   OpenSSH (`ssh -G`) would use for `host` if `text` were saved as the root
   SSH configuration. The draft is read as a launch reads the saved file: with
   the system-wide configuration when the root is the user's `~/.ssh/config`
@@ -16,11 +16,16 @@ notes remain separate.
   the draft that apply, asked of OpenSSH itself; `lines` gives each option
   line a `SshConfigDraftLineState`, `sources` the line behind each value, and
   `includes` the files each `Include` read. OpenSSH runs `Match exec`
-  commands to evaluate them, so a draft that adds one is not evaluated unless
-  `run_new_exec` is set: `pending_exec` lists the commands. A rejected draft
+  commands to evaluate them, so a draft is not evaluated while it holds a
+  command that neither the saved configuration nor `allowed_exec` contains,
+  word for word: `pending_exec` lists those. Evaluations run on a lane of
+  their own, and a client's newer request supersedes its earlier ones, which
+  fail with `OPERATION_CANCELLED`. A rejected draft
   returns `errors` with OpenSSH's own diagnostics. Nothing is written.
-  Capability `connections.config.read`. The API implementation version is
-  0.110; Protocol remains 1.0.
+  Capability `connections.config.read`. Added in 0.110 with a boolean
+  `run_new_exec`; 0.111 replaced it with `allowed_exec`, so agreeing to one
+  command cannot cover another. The API implementation version is 0.111;
+  Protocol remains 1.0.
 - Behaviour only, no schema change. A login-profile settings payload that
   omits `identities_only` comes from a client where no field could be left
   unset, so its form defaults are not settings: `forward_agent: false` and

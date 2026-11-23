@@ -557,16 +557,18 @@ class EvaluateSshConfigDraftRequest:
 
     ``text`` is the whole root SSH configuration as it would be written.
     ``user`` and ``port`` stand for ``ssh -l``/``-p`` on the command line.
-    ``run_new_exec`` allows ``Match exec`` commands the saved configuration
-    does not contain: OpenSSH runs such a command to evaluate the block, so
-    a draft that adds one is not evaluated until the user agrees.
+    OpenSSH runs a ``Match exec`` command to evaluate its block, so a draft
+    is not evaluated while it holds such a command that the saved
+    configuration does not. ``allowed_exec`` lists, word for word, the new
+    commands the user agreed to run; any other new command keeps the draft
+    pending.
     """
 
     text: str = field(repr=False)
     host: str
     user: Optional[str] = None
     port: Optional[int] = None
-    run_new_exec: bool = False
+    allowed_exec: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _draft_text(self.text, "text")
@@ -577,8 +579,10 @@ class EvaluateSshConfigDraftRequest:
             type(self.port) is not int or not 1 <= self.port <= 65535
         ):
             raise ValueError("SSH config draft port is invalid")
-        if type(self.run_new_exec) is not bool:
-            raise TypeError("SSH config draft run_new_exec must be a boolean")
+        if type(self.allowed_exec) is not tuple:
+            raise TypeError("SSH config draft allowed_exec must be a tuple")
+        for command in self.allowed_exec:
+            _draft_text(command, "allowed exec command", empty=False)
 
 
 @dataclass(frozen=True)
@@ -681,8 +685,8 @@ class SshConfigDraftEvaluation:
     the options Settings force on the command line (``forced``).
 
     ``pending_exec`` is not empty when the draft adds ``Match exec``
-    commands and the request did not allow running them: nothing was
-    evaluated. ``errors`` is not empty when OpenSSH rejects the draft.
+    commands the request did not allow, each listed word for word: nothing
+    was evaluated. ``errors`` is not empty when OpenSSH rejects the draft.
     Otherwise ``values`` is ``ssh -G`` for the host, ``defaults`` the
     keywords whose value is OpenSSH's built-in one, ``matched_blocks`` the
     header lines of the ``Host``/``Match`` blocks of the draft that apply,

@@ -190,6 +190,13 @@ SECRET_INTERACTIVE_COMMAND_KEY = "secret-backend-interactive"
 # read-only, and ``ConnectionApplicationService.get_effective_config`` discards
 # any result whose repository generation changed while it ran.
 EFFECTIVE_CONFIG_COMMAND_KEY = "effective-ssh-config"
+
+# Advanced Configuration asks about its draft after every edit, and each
+# answer is several ``ssh -G`` runs. On the effective-config lane a slow one
+# would hold up the connection editor's own lookups, so drafts get a lane of
+# their own. Within it only the newest question of a client matters: an
+# older one is abandoned (its ``ssh`` killed) as soon as a newer arrives.
+SSH_CONFIG_DRAFT_COMMAND_KEY = "ssh-config-draft"
 from sshpilot.daemon.forward_runtime import ForwardRuntime
 from sshpilot.daemon.interaction_broker import InteractionBroker
 from sshpilot.daemon.key_service import DaemonKeyService
@@ -1490,11 +1497,28 @@ class RequestDispatcher:
         )
 
         draft = evaluate_ssh_config_draft_request_from_wire(request.params)
+        # Each client's newest draft supersedes its earlier ones, whether
+        # they are still queued or already in OpenSSH.
+        generations = self.__dict__.setdefault("_draft_generations", {})
+        owner = _state.client_id
+        generation = generations[owner] = generations.get(owner, 0) + 1
+
+        def superseded() -> bool:
+            return generations.get(owner) != generation
+
+        def operation():
+            if superseded():
+                raise SshPilotError(
+                    ErrorCode.OPERATION_CANCELLED,
+                    "The SSH config draft evaluation was superseded",
+                )
+            return ssh_config_draft_evaluation_to_wire(
+                self._connections.evaluate_ssh_config_draft(draft, superseded)
+            )
+
         return DeferredResult(
-            operation=lambda: ssh_config_draft_evaluation_to_wire(
-                self._connections.evaluate_ssh_config_draft(draft)
-            ),
-            command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
+            operation=operation,
+            command_key=(SSH_CONFIG_DRAFT_COMMAND_KEY, owner),
             on_rejected=lambda: None,
         )
 

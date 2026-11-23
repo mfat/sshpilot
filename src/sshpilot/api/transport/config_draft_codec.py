@@ -19,7 +19,7 @@ from ..models.connections import (
 )
 from .codec import _strict_fields
 
-_REQUEST_FIELDS = {"text", "host", "user", "port", "run_new_exec"}
+_REQUEST_FIELDS = {"text", "host", "user", "port", "allowed_exec"}
 _EVALUATION_FIELDS = {
     "values", "defaults", "matched_blocks", "lines", "sources", "includes",
     "forced", "errors", "pending_exec", "system_config", "isolated",
@@ -36,7 +36,7 @@ def evaluate_ssh_config_draft_request_to_wire(
         "host": request.host,
         "user": request.user,
         "port": request.port,
-        "run_new_exec": request.run_new_exec,
+        "allowed_exec": list(request.allowed_exec),
     }
 
 
@@ -51,7 +51,7 @@ def evaluate_ssh_config_draft_request_from_wire(
         host=data["host"],
         user=data["user"],
         port=data["port"],
-        run_new_exec=data["run_new_exec"],
+        allowed_exec=tuple(_list(data["allowed_exec"], "allowed exec")),
     )
 
 

@@ -123,7 +123,7 @@ def _status(win, option):
 
 def test_it_opens_on_the_first_host_with_openssh_s_answer(window):
     assert window.target_entry.get_text() == "web1"
-    assert [c.get_label() for c in window._children(window._quick_hosts)] == [
+    assert [row._host for row in window._children(window._host_list)] == [
         "web1", "web2", "db1",
     ]
     assert not window.dirty and not window.save_button.get_sensitive()
@@ -247,3 +247,67 @@ def test_a_file_changed_on_disk_is_not_overwritten(window):
     window.save()
     assert _pump(lambda: window.banner.get_revealed() and bool(window.banner.get_button_label()))
     assert client.saves == 0 and "edited elsewhere" in client.path.read_text()
+
+
+def test_the_target_dropdown_lists_hosts_and_sets_the_target(window):
+    rows = window._children(window._host_list)
+    window._host_list.emit("row-activated", rows[2])
+    assert window.target_entry.get_text() == "db1"
+    assert _pump(lambda: _effective(window, "user") == "fallback")
+    # A host named by a new block is offered too.
+    window.add_block("host")
+    block = window.draft.blocks[-1]
+    window._block_widgets[block.uid]["patterns"].set_text("cache1 *.internal")
+    assert [row._host for row in window._children(window._host_list)] == [
+        "web1", "web2", "cache1", "db1",
+    ]
+
+
+def test_agreeing_to_a_command_does_not_cover_an_edited_one(window, tmp_path):
+    """Review P1: consent is for the command shown, and for this target."""
+    first, second = tmp_path / "first", tmp_path / "second"
+    window.add_block("match")
+    block = window.draft.blocks[-1]
+    entry = window._block_widgets[block.uid]["patterns"]
+    entry.set_text(f'exec "touch {first}"')
+    assert _pump(lambda: window.banner.get_revealed())
+    window.banner.emit("button-clicked")
+    assert _pump(first.exists)
+    assert _pump(lambda: window._evaluation is not None and window._evaluation.evaluated)
+
+    entry.set_text(f'exec "touch {second}"')          # another command
+    assert _pump(lambda: window._evaluation is not None and bool(window._evaluation.pending_exec))
+    assert not second.exists() and window.banner.get_revealed()
+
+    entry.set_text(f'exec "touch {first}"')           # back to the agreed one
+    assert _pump(lambda: window._evaluation is not None and window._evaluation.evaluated)
+    first.unlink()
+    window.target_entry.set_text("web2")              # another target asks again
+    assert _pump(lambda: window._evaluation is not None and bool(window._evaluation.pending_exec))
+    assert not first.exists()
+
+
+def test_text_typed_on_the_text_page_is_an_unsaved_change(window):
+    """Review P1: closing must not drop it, and Save writes what is shown."""
+    client = window._test_client
+    assert not window.dirty
+    window.raw_view.get_buffer().set_text("Host web1\n    User typed\n")
+    assert window.raw_pending and window.dirty
+    assert window.save_button.get_sensitive()
+    assert window._on_close_request() is True          # asks before discarding
+    window.save()
+    assert _pump(lambda: client.saves == 1 and not window.dirty)
+    assert client.path.read_text() == "Host web1\n    User typed\n"
+    assert [b.patterns for b in window.draft.blocks] == ["web1"]
+
+
+def test_save_writes_the_text_page_not_the_older_rules(window):
+    client = window._test_client
+    web = window.draft.blocks[1]
+    window._option_widgets[web.options[0].uid]["value"].set_text("root")
+    assert _pump(lambda: window.dirty)
+    newer = CONFIG.replace("User deploy", "User newest")
+    window.raw_view.get_buffer().set_text(newer)
+    window.save()
+    assert _pump(lambda: client.saves == 1)
+    assert client.path.read_text() == newer

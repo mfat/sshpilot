@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.110",
+  "api_implementation_version": "0.111",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -4452,7 +4452,7 @@
       "host",
       "user",
       "port",
-      "run_new_exec"
+      "allowed_exec"
     ],
     "EventEnvelope": [
       "protocol_version",

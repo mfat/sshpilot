@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.110",
+  "api_implementation_version": "0.111",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -4742,11 +4742,11 @@
           "type": "int | None"
         },
         {
-          "default": false,
-          "name": "run_new_exec",
+          "default": [],
+          "name": "allowed_exec",
           "required": false,
           "sensitive": false,
-          "type": "bool"
+          "type": "tuple[str, ...]"
         }
       ],
       "status": "Implemented"

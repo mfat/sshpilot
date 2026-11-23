@@ -1679,7 +1679,9 @@ class ConnectionApplicationService:
             return value.rstrip(".")
 
     def evaluate_ssh_config_draft(
-        self, request: EvaluateSshConfigDraftRequest
+        self,
+        request: EvaluateSshConfigDraftRequest,
+        cancelled: Optional[Callable[[], bool]] = None,
     ) -> SshConfigDraftEvaluation:
         """What OpenSSH would use for a host if the draft root were saved.
 
@@ -1688,6 +1690,10 @@ class ConnectionApplicationService:
         the user's own ``~/.ssh/config`` and is launched without ``-F``),
         and the options Settings force are passed ahead of it. Nothing is
         written. See :mod:`sshpilot.core.ssh_config_draft`.
+
+        *cancelled* is polled while OpenSSH runs; when it turns true the
+        query is killed and ``OPERATION_CANCELLED`` is raised (the daemon
+        passes it so an edit supersedes the evaluation before it).
         """
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
@@ -1696,7 +1702,11 @@ class ConnectionApplicationService:
                 ErrorCode.INVALID_REQUEST,
                 "An SSH config draft request is required",
             )
-        from .ssh_config_draft import DraftContext, evaluate_draft
+        from .ssh_config_draft import (
+            DraftContext,
+            DraftEvaluationCancelled,
+            evaluate_draft,
+        )
 
         try:
             saved_text = self._repository.get_ssh_config_text().text
@@ -1708,7 +1718,13 @@ class ConnectionApplicationService:
             isolated=bool(self._repository.ssh_config_isolated),
             overrides=tuple(self._forced_ssh_option_args()),
         )
-        return evaluate_draft(request, context, saved_text)
+        try:
+            return evaluate_draft(request, context, saved_text, cancelled)
+        except DraftEvaluationCancelled:
+            raise SshPilotError(
+                ErrorCode.OPERATION_CANCELLED,
+                "The SSH config draft evaluation was superseded",
+            ) from None
 
     def get_ssh_config_text(self) -> SshConfigText:
         """Return the daemon-selected active SSH config text for the raw editor."""
