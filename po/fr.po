@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-23 10:35+0330\n"
+"POT-Creation-Date: 2026-11-23 10:47+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -2713,8 +2713,8 @@ msgstr "Laisser l’ordre à chaque connexion liée"
 
 #: src/sshpilot/connection_dialog_auth.py:588
 #: src/sshpilot/connection_dialog_auth.py:810
-msgid "Remove this host's order so the inherited one applies"
-msgstr "Supprimer l’ordre de cet hôte pour que l’ordre hérité s’applique"
+msgid "Use authentication order set by OpenSSH configuration"
+msgstr "Utiliser l’ordre d’authentification défini par la configuration OpenSSH"
 
 #: src/sshpilot/connection_dialog_auth.py:639
 msgid "Move up"
@@ -18217,6 +18217,15 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#, fuzzy
+#~ msgid "Clear and let OpenSSH configuration manage authentication order"
+#~ msgstr "Supprimer l’ordre d’authentification personnalisé ?"
+
+#~ msgid "Remove this host's order and use the one from your SSH config files"
+#~ msgstr ""
+#~ "Supprimer l’ordre de cet hôte et utiliser celui de vos fichiers de "
+#~ "configuration SSH"
 
 #~ msgid "OpenSSH will try:"
 #~ msgstr "OpenSSH essaiera :"

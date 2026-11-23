@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-23 10:35+0330\n"
+"POT-Creation-Date: 2026-11-23 10:47+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -2690,8 +2690,8 @@ msgstr "ترتیب را به هر اتصال پیوندشده واگذار کن"
 
 #: src/sshpilot/connection_dialog_auth.py:588
 #: src/sshpilot/connection_dialog_auth.py:810
-msgid "Remove this host's order so the inherited one applies"
-msgstr "حذف ترتیب این میزبان تا ترتیب به‌ارث‌رسیده اعمال شود"
+msgid "Use authentication order set by OpenSSH configuration"
+msgstr "استفاده از ترتیب احراز هویت تعیین‌شده در پیکربندی OpenSSH"
 
 #: src/sshpilot/connection_dialog_auth.py:639
 msgid "Move up"
@@ -17850,6 +17850,15 @@ msgstr "عبور مستقیم"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "رونوشت کلید به سرور"
+
+#, fuzzy
+#~ msgid "Clear and let OpenSSH configuration manage authentication order"
+#~ msgstr "ترتیب سفارشی احراز هویت حذف شود؟"
+
+#~ msgid "Remove this host's order and use the one from your SSH config files"
+#~ msgstr ""
+#~ "حذف ترتیب این میزبان و استفاده از ترتیب تعیین‌شده در فایل‌های پیکربندی SSH "
+#~ "شما"
 
 #~ msgid "OpenSSH will try:"
 #~ msgstr "OpenSSH امتحان می‌کند:"

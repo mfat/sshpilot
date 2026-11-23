@@ -585,7 +585,7 @@ class AuthPolicyGroup:
         self.reset_button.set_valign(Gtk.Align.CENTER)
         self.reset_button.set_tooltip_text(
             _("Leave the order to each linked connection") if self.profile else
-            _("Remove this host's order so the inherited one applies")
+            _("Use authentication order set by OpenSSH configuration")
         )
         self.reset_button.connect("clicked", self._on_reset_clicked)
         self._reset_alert = None
@@ -807,7 +807,7 @@ class AuthPolicyGroup:
             self.reset_button.set_tooltip_text(
                 self._lock_note if self._order_locked else (
                     _("Leave the order to each linked connection") if self.profile else
-                    _("Remove this host's order so the inherited one applies")
+                    _("Use authentication order set by OpenSSH configuration")
                 )
             )
             # A profile is not one host: no order is in force, so its

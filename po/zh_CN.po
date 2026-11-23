@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-23 10:35+0330\n"
+"POT-Creation-Date: 2026-11-23 10:47+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -2606,8 +2606,8 @@ msgstr "由每个关联连接自行决定顺序"
 
 #: src/sshpilot/connection_dialog_auth.py:588
 #: src/sshpilot/connection_dialog_auth.py:810
-msgid "Remove this host's order so the inherited one applies"
-msgstr "移除此主机的顺序，以应用继承的顺序"
+msgid "Use authentication order set by OpenSSH configuration"
+msgstr "使用 OpenSSH 配置设置的身份验证顺序"
 
 #: src/sshpilot/connection_dialog_auth.py:639
 msgid "Move up"
@@ -17313,6 +17313,13 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#, fuzzy
+#~ msgid "Clear and let OpenSSH configuration manage authentication order"
+#~ msgstr "移除自定义认证顺序？"
+
+#~ msgid "Remove this host's order and use the one from your SSH config files"
+#~ msgstr "移除此主机的顺序，改用 SSH 配置文件中的顺序"
 
 #~ msgid "OpenSSH will try:"
 #~ msgstr "OpenSSH 将尝试："
