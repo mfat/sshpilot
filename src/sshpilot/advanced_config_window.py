@@ -70,7 +70,15 @@ _CSS = """
 .advcfg-pill.accent { background-color: alpha(@accent_color, 0.15); color: @accent_color; }
 .advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
-.advcfg-block { padding: 10px 12px; }
+.advcfg-block { padding: 0; }
+.advcfg-header { padding: 7px 10px; background-color: alpha(currentColor, 0.07);
+  border-radius: 12px 12px 0 0; border-bottom: 1px solid alpha(currentColor, 0.10); }
+.advcfg-header.movable:hover { background-color: alpha(currentColor, 0.11); }
+.advcfg-body { padding: 8px 12px 10px 12px; }
+.advcfg-options { margin-left: 18px; padding-left: 12px;
+  border-left: 2px solid alpha(currentColor, 0.14); }
+.advcfg-options:dir(rtl) { margin-left: 0; padding-left: 0; margin-right: 18px;
+  padding-right: 12px; border-left: none; border-right: 2px solid alpha(currentColor, 0.14); }
 .advcfg-block.disabled { opacity: 0.6; }
 .advcfg-drop-before { box-shadow: 0 -3px 0 0 @accent_color; }
 .advcfg-drop-after { box-shadow: 0 3px 0 0 @accent_color; }
@@ -283,6 +291,7 @@ class AdvancedConfigWindow(Adw.Window):
         self.context_label.add_css_class("dim-label")
         self.context_label.add_css_class("caption")
         self.context_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.context_label.set_visible(False)
         box.append(self.context_label)
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         outer.append(box)
@@ -894,19 +903,28 @@ class AdvancedConfigWindow(Adw.Window):
         )
 
     def _build_block(self, index: int, block: Block) -> Gtk.Widget:
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        # A card in two parts: a header band, which is the handle the block
+        # is dragged by, and under it the block's options, indented the way
+        # they are written below a Host or Match line.
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         card.add_css_class("card")
         card.add_css_class("advcfg-block")
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        body.add_css_class("advcfg-body")
         if block.disabled:
             card.add_css_class("disabled")
         widgets: dict = {"card": card, "block": block}
         self._block_widgets[block.uid] = widgets
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header.add_css_class("advcfg-header")
         movable = block.kind != GLOBAL
+        if movable:
+            header.add_css_class("movable")
+            header.set_cursor_from_name("grab")
+            header.set_tooltip_text(_("Drag to reorder"))
         handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
         handle.add_css_class("dim-label")
-        handle.set_tooltip_text(_("Drag to reorder") if movable else None)
         handle.set_opacity(1.0 if movable else 0.3)
         header.append(handle)
         number = Gtk.Label(label=f"#{index + 1}")
@@ -952,24 +970,27 @@ class AdvancedConfigWindow(Adw.Window):
                 header.append(button)
         header.append(self._block_menu(block))
         card.append(header)
+        card.append(body)
 
         if block.note or block.uid in self._notes_open:
             note = Gtk.Entry(text=block.note)
             note.set_placeholder_text(_("Note (written as a comment above the block)"))
             note.add_css_class("dim-label")
             note.connect("changed", self._on_note_changed, block)
-            card.append(note)
+            body.append(note)
             widgets["note"] = note
         warning = Gtk.Label(xalign=0, wrap=True)
         warning.add_css_class("error")
         warning.set_visible(False)
-        card.append(warning)
+        body.append(warning)
         widgets["warning"] = warning
 
         rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        if block.kind != GLOBAL:
+            rows.add_css_class("advcfg-options")   # global options are not indented
         for option in block.options:
             rows.append(self._build_option(block, option))
-        card.append(rows)
+        body.append(rows)
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         add = Gtk.Button(label=_("Add Option"))
@@ -989,7 +1010,7 @@ class AdvancedConfigWindow(Adw.Window):
         preset_button.add_css_class("flat")
         preset_button.insert_action_group("preset", group)
         footer.append(preset_button)
-        card.append(footer)
+        rows.append(footer)
 
         if movable:
             source = Gtk.DragSource()
@@ -997,13 +1018,22 @@ class AdvancedConfigWindow(Adw.Window):
             source.connect("prepare", lambda *_a, u=block.uid: Gdk.ContentProvider.new_for_value(
                 f"advcfg-block:{u}"
             ))
-            handle.add_controller(source)
+            source.connect("drag-begin", lambda src, _drag, c=card: self._drag_icon(src, c))
+            header.add_controller(source)       # the whole band, not only the grip
         target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
         target.connect("motion", self._on_drop_motion, card)
         target.connect("leave", lambda *_a, c=card: self._clear_drop(c))
         target.connect("drop", self._on_block_drop, block, card)
         card.add_controller(target)
         return card
+
+    @staticmethod
+    def _drag_icon(source, widget) -> None:
+        """Drag a picture of the block or option itself."""
+        try:
+            source.set_icon(Gtk.WidgetPaintable.new(widget), 0, 0)
+        except Exception:
+            pass
 
     def _block_menu(self, block: Block) -> Gtk.Widget:
         menu = Gio.Menu()
@@ -1323,6 +1353,7 @@ class AdvancedConfigWindow(Adw.Window):
         self.context_label.set_label(
             messages.context_text(evaluation, self._display_name) if evaluation else ""
         )
+        self.context_label.set_visible(evaluation is not None)
         self._render_effective()
         self._render_trace()
         self._render_includes()
