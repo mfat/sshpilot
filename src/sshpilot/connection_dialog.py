@@ -1666,7 +1666,15 @@ class ConnectionDialog(
     save_button = Gtk.Template.Child()
     effective_config_button = Gtk.Template.Child()
     edit_ssh_config_button = Gtk.Template.Child()
-    
+    config_buttons_box = Gtk.Template.Child()
+    split_view = Gtk.Template.Child()
+    sidebar_page = Gtk.Template.Child()
+    sidebar_list = Gtk.Template.Child()
+    content_page = Gtk.Template.Child()
+    content_title = Gtk.Template.Child()
+    content_stack = Gtk.Template.Child()
+    narrow_breakpoint = Gtk.Template.Child()
+
     def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None, as_new=False):
         super().__init__()
         
@@ -1711,8 +1719,12 @@ class ConnectionDialog(
         # Gtk.Application.get_windows().
         from .window_dialogs import associate_window_with_parent_application
         associate_window_with_parent_application(self, parent)
-        # Set default size for better UX
-        self.set_default_size(600, 700)
+        # Room for the section sidebar beside a full-width page.
+        self.set_default_size(880, 680)
+        try:
+            self.sidebar_page.set_title(self.get_title())
+        except Exception:
+            pass
         
         self.validator = SSHConnectionValidator()
         self.validation_results: Dict[str, ValidationResult] = {}
@@ -1732,12 +1744,10 @@ class ConnectionDialog(
     
     def setup_ui(self):
         """Wire the dynamic content + buttons into the template skeleton."""
-        # The container skeleton (header bar, separator, Cancel/Save button box)
-        # lives in connection_dialog.blp; here we mount the tabbed preferences
-        # content and wire the pinned buttons.
+        # The skeleton (split view, header bars with Cancel/Save, the SSH
+        # configuration buttons) lives in connection_dialog.blp; here the
+        # pages go into content_stack and their rows into the sidebar.
         self.preferences_content = self.create_preferences_content()
-        self.preferences_content.set_vexpand(True)
-        self.content_mount.append(self.preferences_content)
 
         self.cancel_button.connect("clicked", self.on_cancel_clicked)
         self.save_button.connect("clicked", self.on_save_clicked)
@@ -1774,7 +1784,8 @@ class ConnectionDialog(
             self.start_login_profile_load()
         except Exception:
             logger.debug("Login profile picker unavailable", exc_info=True)
-    
+        self._wire_content_title()
+
     def _build_connection_tab_pages(self):
         """Build the connection editor tab pages as (name, title, widget) tuples."""
 
@@ -1787,13 +1798,15 @@ class ConnectionDialog(
             return box
 
         general_page = _page_box()
-        for group in self.build_connection_groups():
-            general_page.append(group)
         # Container for declarative FieldSpec rows rendered when a plugin
-        # protocol is selected; empty and hidden for SSH.
+        # protocol is selected; empty and hidden for SSH. It goes before
+        # Organize, which stays the page's last word for every protocol.
         self._plugin_fields_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._plugin_fields_box.set_visible(False)
-        general_page.append(self._plugin_fields_box)
+        for group in self.build_connection_groups():
+            if group is getattr(self, '_organize_group', None):
+                general_page.append(self._plugin_fields_box)
+            general_page.append(group)
 
         authentication_page = _page_box()
         for group in self.build_authentication_groups():
@@ -1834,6 +1847,17 @@ class ConnectionDialog(
             ("advanced", _("Advanced"), advanced_page),
             ("wol", _("Wake on LAN"), wol_page),
         ]
+
+    #: Sidebar icon of each page, bundled where the app ships one
+    #: (icon_utils falls back to the icon theme).
+    _PAGE_ICONS = {
+        "connection": "network-server-symbolic",
+        "authentication": "dialog-password-symbolic",
+        "forwarding": "network-transmit-receive-symbolic",
+        "commands": "utilities-terminal-symbolic",
+        "advanced": "preferences-system-symbolic",
+        "wol": "system-shutdown-symbolic",
+    }
 
     def _wire_session_type_toggle(self):
         """Connect the forwarding-only switch to Advanced SessionType."""
@@ -1937,13 +1961,13 @@ class ConnectionDialog(
         finally:
             self._end_port_forwarding_ssh_option_sync()
 
-    # Wider than Adw.PreferencesPage's 600 so the dialog doesn't feel empty;
+    # Wider than Adw.PreferencesPage's 600 so the page doesn't feel empty;
     # only reins in content on very wide windows.
     _CLAMP_ARGS = {"maximum_size": 900, "tightening_threshold": 700}
 
     @classmethod
     def _wrap_page_scrolled(cls, widget):
-        """Give a tab page its own scroller so scroll position doesn't carry over between tabs."""
+        """Give a page its own scroller so scroll position doesn't carry over between pages."""
         clamp = Adw.Clamp(**cls._CLAMP_ARGS)
         clamp.set_child(widget)
         scrolled = Gtk.ScrolledWindow()
@@ -1952,89 +1976,234 @@ class ConnectionDialog(
         scrolled.set_child(clamp)
         return scrolled
 
-    def _create_preferences_viewstack_content(self, pages):
-        """Card-style tabs via Adw.ViewStack + Adw.InlineViewSwitcher (libadwaita 1.7+)."""
-        stack = Adw.ViewStack()
-        stack.set_vexpand(True)
+    def _build_sidebar_row(self, name, title):
+        """One sidebar entry, built like a Settings sidebar row.
+
+        The suffix icon marks a page holding a setting that something else
+        overrides (_sync_sidebar_override_marks): the banner says those
+        fields are marked, and on another page they would not be seen.
+        """
+        row = Adw.ActionRow()
+        try:
+            row.set_use_markup(False)
+        except Exception:
+            pass
+        row.set_title(title)
+        row.set_name(name)
+        try:
+            from . import icon_utils
+            icon = icon_utils.new_image_from_icon_name(self._PAGE_ICONS.get(name, ""))
+        except Exception:
+            icon = Gtk.Image.new_from_icon_name(self._PAGE_ICONS.get(name, ""))
+        row.add_prefix(icon)
+        mark = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        mark.add_css_class("warning")
+        mark.set_tooltip_text(_("A setting on this page is overridden"))
+        mark.set_visible(False)
+        row.add_suffix(mark)
+        row._sshpilot_override_mark = mark
+        return row
+
+    def _build_sidebar_navigation(self, pages):
+        """Pages in content_stack, one sidebar row each (Settings-window layout).
+
+        Works on every supported libadwaita (NavigationSplitView is 1.4+), so
+        there is no separate fallback layout to keep in step.
+        """
+        stack = self.content_stack
         self._stack_pages = {}
+        self._sidebar_rows = {}
+        self._page_titles = {}
+        self._page_widgets = {}
         for name, title, widget in pages:
             scrolled = self._wrap_page_scrolled(widget)
-            stack.add_titled(scrolled, name, title)
-            try:
-                self._stack_pages[name] = stack.get_page(scrolled)
-            except Exception:
-                pass
+            self._stack_pages[name] = stack.add_named(scrolled, name)
+            self._page_widgets[name] = scrolled
+            self._page_titles[name] = title
+            row = self._build_sidebar_row(name, title)
+            self.sidebar_list.append(row)
+            self._sidebar_rows[name] = row
 
-        switcher = Adw.InlineViewSwitcher()
-        switcher.set_stack(stack)
-        switcher.set_hexpand(True)
-        switcher.set_halign(Gtk.Align.FILL)
-        _ensure_toggle_suggested_css()
-        switcher.add_css_class("toggle-suggested")
+        self._selected_page_name = None
+        self._narrow_layout = False
+        self._single_page_layout = False
+        self.sidebar_list.connect("row-selected", self._on_sidebar_row_selected)
         try:
-            switcher.set_display_mode(Adw.InlineViewSwitcherDisplayMode.LABELS)
+            if hasattr(Adw, 'LengthUnit'):
+                self.split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
         except Exception:
             pass
         try:
-            switcher.set_can_shrink(False)
+            self.narrow_breakpoint.connect("apply", self._on_narrow_breakpoint, True)
+            self.narrow_breakpoint.connect("unapply", self._on_narrow_breakpoint, False)
         except Exception:
-            pass
-        try:
-            switcher.set_homogeneous(False)
-        except Exception:
-            pass
-
-        switcher_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        switcher_card.add_css_class("card")
-        switcher_card.set_hexpand(True)
-        switcher_card.set_margin_start(24)
-        switcher_card.set_margin_end(24)
-        switcher_card.set_margin_top(12)
-        switcher_card.append(switcher)
-        self._switcher_card = switcher_card
-
-        # Same clamp as the pages so the switcher stays aligned with the
-        # content edges when the dialog is resized.
-        switcher_clamp = Adw.Clamp(**self._CLAMP_ARGS)
-        switcher_clamp.set_child(switcher_card)
-
-        def _relayout_switcher(*_args):
-            try:
-                switcher.queue_resize()
-            except Exception:
-                pass
-            return False
-
-        switcher.connect("map", lambda *_a: GLib.idle_add(_relayout_switcher))
-
-        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        container.set_vexpand(True)
-        container.append(switcher_clamp)
-        container.append(stack)
-        return container
-
-    def _create_preferences_notebook_content(self, pages):
-        """Fallback tabbed layout for libadwaita < 1.7 (no InlineViewSwitcher)."""
-        notebook = Gtk.Notebook()
-        notebook.set_show_tabs(True)
-        notebook.set_show_border(False)
-        notebook.set_vexpand(True)
-        self._notebook_pages = {}
-        self._notebook_order = []
-        for name, title, widget in pages:
-            scrolled = self._wrap_page_scrolled(widget)
-            notebook.append_page(scrolled, Gtk.Label(label=title))
-            self._notebook_pages[name] = scrolled
-            self._notebook_order.append((name, scrolled, title))
-        self._notebook = notebook
-        return notebook
+            logger.debug("Could not watch the narrow-layout breakpoint", exc_info=True)
+        if pages:
+            self.select_page(pages[0][0])
+        return stack
 
     def create_preferences_content(self):
-        """Create tabbed preferences content."""
-        pages = self._build_connection_tab_pages()
-        if hasattr(Adw, "InlineViewSwitcher"):
-            return self._create_preferences_viewstack_content(pages)
-        return self._create_preferences_notebook_content(pages)
+        """Build the pages and the sidebar that selects them."""
+        return self._build_sidebar_navigation(self._build_connection_tab_pages())
+
+    # -- sidebar navigation ------------------------------------------------
+
+    def _on_sidebar_row_selected(self, _listbox, row):
+        if row is None:
+            return
+        name = row.get_name()
+        changed = name != getattr(self, '_selected_page_name', None)
+        self._selected_page_name = name
+        try:
+            self.content_stack.set_visible_child_name(name)
+        except Exception:
+            logger.debug("Could not show page %s", name, exc_info=True)
+        self._update_content_title()
+        # Collapsed: go to the page. Only on a real change, so returning to
+        # the list (which reselects the current row) doesn't bounce back.
+        if changed:
+            try:
+                if self.split_view.get_collapsed():
+                    self.split_view.set_show_content(True)
+            except Exception:
+                pass
+
+    def select_page(self, name) -> bool:
+        """Show page *name* (e.g. ``"authentication"``); False if hidden or unknown."""
+        row = (getattr(self, '_sidebar_rows', None) or {}).get(name)
+        if row is None or not row.get_visible():
+            return False
+        if self.sidebar_list.get_selected_row() is not row:
+            self.sidebar_list.select_row(row)
+        try:
+            if self.split_view.get_collapsed():
+                self.split_view.set_show_content(True)
+        except Exception:
+            pass
+        return True
+
+    def _page_containing(self, widget):
+        """Name of the page *widget* is on, or None."""
+        pages = {id(w): name for name, w in (getattr(self, '_page_widgets', None) or {}).items()}
+        while widget is not None:
+            name = pages.get(id(widget))
+            if name is not None:
+                return name
+            try:
+                widget = widget.get_parent()
+            except Exception:
+                return None
+        return None
+
+    def _focus_row(self, row):
+        """Bring the row's page forward before focusing it.
+
+        A row on a page that isn't shown cannot take focus, so a Save
+        refused over, say, the hostname used to do nothing visible while
+        another page was open.
+        """
+        name = self._page_containing(row)
+        if name is not None:
+            self.select_page(name)
+        super()._focus_row(row)
+
+    def _on_narrow_breakpoint(self, _breakpoint, narrow):
+        self._narrow_layout = bool(narrow)
+        self._sync_split_layout()
+
+    def _sync_split_layout(self):
+        """Collapse to list -> page when narrow, or when one page is left.
+
+        A lone page (e.g. Serial) shows without a sidebar, and without a
+        back button to a list of one.
+        """
+        single = bool(getattr(self, '_single_page_layout', False))
+        collapsed = single or bool(getattr(self, '_narrow_layout', False))
+        try:
+            was_collapsed = self.split_view.get_collapsed()
+            self.split_view.set_collapsed(collapsed)
+            self.content_page.set_can_pop(not single)
+            # Open on the page rather than the list: a new connection starts
+            # with typing the host.
+            if collapsed and (single or not was_collapsed):
+                self.split_view.set_show_content(True)
+        except Exception:
+            logger.debug("Could not update the split layout", exc_info=True)
+
+    def _wire_content_title(self):
+        """Keep the header subtitle on what the connection reaches."""
+        for name in ('hostname_row', 'username_row', 'port_row'):
+            row = getattr(self, name, None)
+            if row is not None:
+                try:
+                    row.connect('changed', lambda *_a: self._update_content_title())
+                except Exception:
+                    pass
+        self._update_content_title()
+
+    def _connection_target_text(self) -> str:
+        """``user@host:port`` as typed; the port only when not the default."""
+        try:
+            host, user, port = self._connection_target()
+        except Exception:
+            return ""
+        if not host:
+            return ""
+        text = f"{user}@{host}" if user else host
+        if self._selected_protocol_id() == 'ssh':
+            default_port = 22
+        else:
+            default_port = getattr(self._selected_protocol_backend(), 'default_port', 0) or 0
+        if port and port != default_port:
+            text = f"{text}:{port}"
+        return text
+
+    def _update_content_title(self):
+        name = getattr(self, '_selected_page_name', None)
+        title = (getattr(self, '_page_titles', None) or {}).get(name) or _("Connection")
+        try:
+            self.content_page.set_title(title)
+            self.content_title.set_title(title)
+            self.content_title.set_subtitle(self._connection_target_text())
+        except Exception:
+            pass
+
+    def _sync_sidebar_override_marks(self):
+        """Mark each sidebar entry whose page holds an overridden setting."""
+        rows = getattr(self, '_sidebar_rows', None) or {}
+        if not rows:
+            return
+        from .connection_dialog_overrides import OVERRIDDEN
+
+        marked = set()
+        try:
+            ssh = self._selected_protocol_id() == 'ssh'
+        except Exception:
+            ssh = True
+        if ssh:
+            row_count = 0
+            for name, page in (getattr(self, '_page_widgets', None) or {}).items():
+                pending = [page]
+                while pending:
+                    widget = pending.pop()
+                    if getattr(widget, '_sshpilot_override_state', None) == OVERRIDDEN:
+                        marked.add(name)
+                        row_count += 1
+                    child = widget.get_first_child()
+                    while child is not None:
+                        pending.append(child)
+                        child = child.get_next_sibling()
+            # The rest of the count is Advanced's free-form options, which
+            # mark their own entries rather than a field row.
+            try:
+                if self._overridden_field_count() > row_count:
+                    marked.add('advanced')
+            except Exception:
+                pass
+        for name, row in rows.items():
+            mark = getattr(row, '_sshpilot_override_mark', None)
+            if mark is not None:
+                mark.set_visible(name in marked)
     
     def setup_keyboard_shortcuts(self):
         """Setup keyboard shortcuts for common actions"""
@@ -3594,16 +3763,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.hostname_row = Adw.EntryRow(title=_("Hostname / IP address"))
         basic_group.add(self.hostname_row)
 
-        # Username
-        self.username_row = Adw.EntryRow(title=_("Username"))
-        self._add_username_profile_button(self.username_row)
-        basic_group.add(self.username_row)
-        
-        # Port (match style of fields above using EntryRow)
+        # Port next to the host it belongs to, then the user: the order the
+        # plugin protocols' fields take, and the familiar host/port/user one.
         self.port_row = Adw.EntryRow(title=_("Port"))
         _set_entry_row_hint(self.port_row, digits=True, max_length=5)
         self.port_row.set_text("22")
         basic_group.add(self.port_row)
+
+        # Username
+        self.username_row = Adw.EntryRow(title=_("Username"))
+        self._add_username_profile_button(self.username_row)
+        basic_group.add(self.username_row)
+
+        # Where the connection sits in the sidebar: app metadata, kept apart
+        # from what it connects to, and the same for every protocol.
+        organize_group = Adw.PreferencesGroup(title=_("Organize"))
 
         # Tags (app metadata, stored in connections_meta — not in ssh_config).
         # Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
@@ -3619,12 +3793,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Inline autocompletion from existing tags (GtkEntryCompletion is
         # deprecated and never supported Adw.EntryRow, so done by hand).
         self._setup_comma_autocomplete(self.tags_row, self._tag_candidates)
-        basic_group.add(self.tags_row)
+        organize_group.add(self.tags_row)
 
         # Group (sidebar folder, owned by the daemon's group store). Applied
         # by the window after the save succeeds, and only when changed.
         self.group_row = self._build_group_row()
-        basic_group.add(self.group_row)
+        organize_group.add(self.group_row)
 
         # Wake-on-LAN Group
         wol_group = Adw.PreferencesGroup(
@@ -3745,11 +3919,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # parts when a plugin protocol is selected.
         self._host_group = basic_group
         self._routing_group = proxy_group
+        self._organize_group = organize_group
         self._wol_group = wol_group
 
-        # Wake on LAN lives on its own tab — see _build_connection_tab_pages —
+        # Wake on LAN lives on its own page — see _build_connection_tab_pages —
         # shown only for protocols that target a host (_apply_protocol_to_ui).
-        return [basic_group, proxy_group]
+        return [basic_group, proxy_group, organize_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -4368,53 +4543,38 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         return getattr(backend, 'protocol_id', 'ssh') or 'ssh'
 
     def _set_page_visible(self, name: str, visible: bool):
+        """Show or hide a page and its sidebar entry.
+
+        Hiding the page on show moves to the first page still shown.
+        """
         page = (getattr(self, '_stack_pages', None) or {}).get(name)
         if page is not None:
             try:
                 page.set_visible(visible)
             except Exception:
                 pass
+        row = (getattr(self, '_sidebar_rows', None) or {}).get(name)
+        if row is None:
             return
-        # Gtk.Notebook fallback (libadwaita < 1.7): remove/re-insert the page,
-        # keeping the original tab order.
-        notebook = getattr(self, '_notebook', None)
-        order = getattr(self, '_notebook_order', None)
-        if notebook is None or not order:
-            return
-        try:
-            for index, (page_name, scrolled, title) in enumerate(order):
-                if page_name != name:
-                    continue
-                current = notebook.page_num(scrolled)
-                if visible and current == -1:
-                    insert_at = sum(
-                        1 for n, s, _t in order[:index]
-                        if notebook.page_num(s) != -1
-                    )
-                    notebook.insert_page(scrolled, Gtk.Label(label=title), insert_at)
-                elif not visible and current != -1:
-                    notebook.remove_page(current)
-                return
-        except Exception as e:
-            logger.debug("Notebook page visibility failed: %s", e)
+        row.set_visible(visible)
+        if not visible and getattr(self, '_selected_page_name', None) == name:
+            for other, other_row in self._sidebar_rows.items():
+                if other_row.get_visible():
+                    self.select_page(other)
+                    break
 
     def _update_switcher_visibility(self):
-        """Hide the tab switcher when only one page is visible (e.g. a non-SSH
-        protocol leaves just 'Connection') so there's no orphan full-width tab."""
-        pages = getattr(self, '_stack_pages', None)
-        if pages:
+        """Drop the sidebar when only one page is left (e.g. a non-SSH
+        protocol with just 'Connection'), and the SSH configuration buttons
+        when the protocol isn't SSH."""
+        rows = getattr(self, '_sidebar_rows', None) or {}
+        visible = sum(1 for row in rows.values() if row.get_visible())
+        self._single_page_layout = bool(rows) and visible <= 1
+        self._sync_split_layout()
+        box = getattr(self, 'config_buttons_box', None)
+        if box is not None:
             try:
-                visible = sum(1 for p in pages.values() if p.get_visible())
-            except Exception:
-                visible = 2
-            card = getattr(self, '_switcher_card', None)
-            if card is not None:
-                card.set_visible(visible > 1)
-            return
-        notebook = getattr(self, '_notebook', None)
-        if notebook is not None:
-            try:
-                notebook.set_show_tabs(notebook.get_n_pages() > 1)
+                box.set_visible(self._selected_protocol_id() == 'ssh')
             except Exception:
                 pass
 
@@ -4422,6 +4582,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._apply_protocol_to_ui()
         self._sync_config_read_only_ui()
         self._sync_override_banner()
+        self._update_content_title()
 
     def set_config_read_only(self, read_only, unavailable=False):
         """Offer an SSH connection view-only: its config file is read-only.
@@ -4548,25 +4709,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._restore_protocol_values(protocol_id, previous)
 
     def _add_header_rows(self, rows):
-        """Put a protocol's general fields in the first group, before Tags.
+        """Put a protocol's general fields in the first group.
 
-        PreferencesGroup only appends, so Tags is taken out and put back
-        after them: it is app metadata and reads as the group's last word.
+        Tags and Group have their own group (Organize), so the fields simply
+        follow the name.
         """
         host_group = getattr(self, '_host_group', None)
         if host_group is None or not rows:
             return
-        trailing = [
-            row for row in (getattr(self, 'tags_row', None),
-                            getattr(self, 'group_row', None))
-            if row is not None
-        ]
         try:
-            for row in trailing:
-                host_group.remove(row)
             for row in rows:
-                host_group.add(row)
-            for row in trailing:
                 host_group.add(row)
         except Exception:
             logger.debug("Could not place protocol fields", exc_info=True)
@@ -5357,6 +5509,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         advanced_tab = getattr(self, 'advanced_tab', None)
         has_invalid = getattr(advanced_tab, 'has_invalid_options', None)
         if callable(has_invalid) and has_invalid():
+            self.select_page("advanced")
             self.show_error(
                 _("An SSH option on the Advanced tab is not valid. Fix or remove it, then save again.")
             )

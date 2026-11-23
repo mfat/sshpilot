@@ -902,3 +902,7 @@ class ConnectionDialogOverridesMixin:
                 )
             banner.set_title(title)
         banner.set_revealed(show)
+        # The marked fields may be on pages other than the one shown.
+        sync_marks = getattr(self, "_sync_sidebar_override_marks", None)
+        if callable(sync_marks):
+            sync_marks()
