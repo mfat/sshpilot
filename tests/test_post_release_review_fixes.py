@@ -619,7 +619,8 @@ def test_profile_extra_box_refuses_options_the_section_owns():
     for line in ("PasswordAuthentication no", "preferredauthentications=password",
                  "ChallengeResponseAuthentication no"):
         message = extra_option_has_own_setting("Compression yes\n" + line)
-        assert message and line.split("=")[0].split()[0].lower() in message
+        # Named as typed.
+        assert message and line.split("=")[0].split()[0] in message
 
 
 def test_summary_does_not_call_a_disabled_password_a_password_profile():
