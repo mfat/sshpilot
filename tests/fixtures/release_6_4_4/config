@@ -71,6 +71,11 @@ Host linked-extra
     ServerAliveInterval 15
     Compression yes
 
+Host linked-jump
+    HostName linked-jump.example.com
+    User hop
+    ProxyCommand ssh -W %h:%p  bastion.example.com
+
 Host group-a
     HostName group-a.example.com
     User ops

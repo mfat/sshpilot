@@ -70,6 +70,7 @@ SAVED = {
     "linked-key": {},
     "linked-pw": {},
     "linked-extra": {},
+    "linked-jump": {},
     "group-a": {},
     "group-b": {},
 }
@@ -90,6 +91,11 @@ tuned = service.create_profile({
     "name": "Tuned", "username": "tuned",
     "extra_ssh_config": "ServerAliveInterval 15\nCompression yes",
 })
+jump = service.create_profile({
+    "name": "Through jump", "username": "hop",
+    "proxy_command": "ssh -W %h:%p  bastion.example.com",
+})
+service.assign_connections(["linked-jump"], LINK_EXPLICIT, jump.id)
 service.assign_connections(["linked-key"], LINK_EXPLICIT, deploy.id)
 service.assign_connections(["linked-pw"], LINK_EXPLICIT, ops.id)
 service.assign_connections(["linked-extra"], LINK_EXPLICIT, tuned.id)

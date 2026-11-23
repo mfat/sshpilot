@@ -32,6 +32,7 @@ LINKED = {
     "linked-key": "Deploy",
     "linked-pw": "Ops password",
     "linked-extra": "Tuned",
+    "linked-jump": "Through jump",
     "group-a": "Ops password",
     "group-b": "Ops password",
 }
@@ -51,6 +52,7 @@ AUTH_KEYS = (
     "identityagent",
     "addkeystoagent",
     "certificatefile",
+    "proxycommand",
 )
 
 
@@ -151,7 +153,7 @@ def test_opening_writes_nothing_and_detaches_nothing(upgraded):
 def test_older_profiles_load_as_the_lines_their_choice_stood_for(upgraded):
     _repo, service, _root = upgraded
     profiles = {p.name: p for p in service.list_profiles()}
-    assert sorted(profiles) == ["Deploy", "Ops password", "Tuned"]
+    assert sorted(profiles) == ["Deploy", "Ops password", "Through jump", "Tuned"]
     assert profiles["Ops password"].extra_ssh_config.splitlines() == [
         f"PreferredAuthentications {NEW_ORDER}",
         "PubkeyAuthentication no",
