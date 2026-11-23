@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-23 14:24+0330\n"
+"POT-Creation-Date: 2026-11-23 14:39+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -116,7 +116,7 @@ msgstr "Ouvrir les connexions ?"
 #: src/sshpilot/bitwarden_setup.py:852 src/sshpilot/bitwarden_setup.py:956
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
-#: src/sshpilot/connection_dialog_auth.py:757
+#: src/sshpilot/connection_dialog_auth.py:767
 #: src/sshpilot/connection_dialog_port_forwarding.py:247
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
@@ -1769,7 +1769,7 @@ msgstr "Ajoutée"
 
 #: src/sshpilot/connection_dialog.py:1187
 #: src/sshpilot/connection_dialog.py:1337
-#: src/sshpilot/connection_dialog_auth.py:758
+#: src/sshpilot/connection_dialog_auth.py:768
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:360
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:489
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:207
@@ -1971,7 +1971,7 @@ msgstr ""
 #. --- Password / password-only options ---
 #. Stored in secure storage, never in the connection data.
 #: src/sshpilot/connection_dialog.py:3395
-#: src/sshpilot/connection_dialog_auth.py:87
+#: src/sshpilot/connection_dialog_auth.py:102
 #: src/sshpilot/gtk/login_profile_messages.py:50
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:51
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:320
@@ -2658,23 +2658,23 @@ msgstr "_Réessayer"
 msgid "_Close"
 msgstr "_Fermer"
 
-#: src/sshpilot/connection_dialog_auth.py:83
+#: src/sshpilot/connection_dialog_auth.py:98
 msgid "Kerberos (GSSAPI)"
 msgstr "Kerberos (GSSAPI)"
 
-#: src/sshpilot/connection_dialog_auth.py:84
+#: src/sshpilot/connection_dialog_auth.py:99
 msgid "Host-based"
 msgstr "Basée sur l’hôte"
 
-#: src/sshpilot/connection_dialog_auth.py:85
+#: src/sshpilot/connection_dialog_auth.py:100
 msgid "Keys (publickey)"
 msgstr "Clés (publickey)"
 
-#: src/sshpilot/connection_dialog_auth.py:86
+#: src/sshpilot/connection_dialog_auth.py:101
 msgid "Keyboard-interactive (PAM, one-time codes)"
 msgstr "Clavier interactif (PAM, codes à usage unique)"
 
-#: src/sshpilot/connection_dialog_auth.py:602
+#: src/sshpilot/connection_dialog_auth.py:611
 msgid ""
 "Lines this profile sets replace a linked connection's own; what it leaves "
 "unset stays the connection's. Methods are tried from the top; unchecked "
@@ -2684,7 +2684,7 @@ msgstr ""
 "ce qu’il laisse non défini reste celui de la connexion. Les méthodes sont "
 "essayées de haut en bas ; les méthodes non cochées sont omises."
 
-#: src/sshpilot/connection_dialog_auth.py:606
+#: src/sshpilot/connection_dialog_auth.py:615
 msgid "Methods are tried from the top. Unchecked methods are left out."
 msgstr ""
 "Les méthodes sont essayées de haut en bas. Les méthodes non cochées sont "
@@ -2692,74 +2692,70 @@ msgstr ""
 
 #. One row that folds the method list away: most hosts never change
 #. it, so the header says what will be tried and the rows wait inside.
-#: src/sshpilot/connection_dialog_auth.py:611
+#: src/sshpilot/connection_dialog_auth.py:620
 msgid "Authentication methods"
 msgstr "Méthodes d’authentification"
 
-#: src/sshpilot/connection_dialog_auth.py:615 src/sshpilot/preferences.py:1738
+#: src/sshpilot/connection_dialog_auth.py:624 src/sshpilot/preferences.py:1738
 #: src/sshpilot/preferences.py:3058 src/sshpilot/preferences.py:6341
 msgid "Reset"
 msgstr "Réinitialiser"
 
-#: src/sshpilot/connection_dialog_auth.py:619
-#: src/sshpilot/connection_dialog_auth.py:884
+#: src/sshpilot/connection_dialog_auth.py:628
+#: src/sshpilot/connection_dialog_auth.py:894
 msgid "Leave the order to each linked connection"
 msgstr "Laisser l’ordre à chaque connexion liée"
 
-#: src/sshpilot/connection_dialog_auth.py:620
-#: src/sshpilot/connection_dialog_auth.py:885
+#: src/sshpilot/connection_dialog_auth.py:629
+#: src/sshpilot/connection_dialog_auth.py:895
 msgid "Use authentication order set by OpenSSH configuration"
 msgstr ""
 "Utiliser l’ordre d’authentification défini par la configuration OpenSSH"
 
-#: src/sshpilot/connection_dialog_auth.py:677
+#: src/sshpilot/connection_dialog_auth.py:686
 msgid "Move up"
 msgstr "Monter"
 
-#: src/sshpilot/connection_dialog_auth.py:678
+#: src/sshpilot/connection_dialog_auth.py:687
 msgid "Move down"
 msgstr "Descendre"
 
-#: src/sshpilot/connection_dialog_auth.py:679
+#: src/sshpilot/connection_dialog_auth.py:688
 msgid "Move to top"
 msgstr "Placer en tête"
 
-#: src/sshpilot/connection_dialog_auth.py:684
+#: src/sshpilot/connection_dialog_auth.py:694
 #: src/sshpilot/login_profile_dialogs.py:279
 #: src/sshpilot/login_profile_dialogs.py:311 src/sshpilot/preferences.py:2877
 #: src/sshpilot/preferences.py:2908
 msgid "Not set"
 msgstr "Non défini"
 
-#: src/sshpilot/connection_dialog_auth.py:684
-msgid "Inherit"
-msgstr "Hériter"
-
-#: src/sshpilot/connection_dialog_auth.py:685
+#: src/sshpilot/connection_dialog_auth.py:695
 msgid "Enable in linked connections"
 msgstr "Activer dans les connexions liées"
 
-#: src/sshpilot/connection_dialog_auth.py:686
+#: src/sshpilot/connection_dialog_auth.py:696
 msgid "Enable for this host"
 msgstr "Activer pour cet hôte"
 
-#: src/sshpilot/connection_dialog_auth.py:687
+#: src/sshpilot/connection_dialog_auth.py:697
 msgid "Disable in linked connections"
 msgstr "Désactiver dans les connexions liées"
 
-#: src/sshpilot/connection_dialog_auth.py:688
+#: src/sshpilot/connection_dialog_auth.py:698
 msgid "Disable for this host"
 msgstr "Désactiver pour cet hôte"
 
-#: src/sshpilot/connection_dialog_auth.py:702
+#: src/sshpilot/connection_dialog_auth.py:712
 msgid "Method options"
 msgstr "Options de la méthode"
 
-#: src/sshpilot/connection_dialog_auth.py:750
+#: src/sshpilot/connection_dialog_auth.py:760
 msgid "Remove the custom authentication order?"
 msgstr "Supprimer l’ordre d’authentification personnalisé ?"
 
-#: src/sshpilot/connection_dialog_auth.py:752
+#: src/sshpilot/connection_dialog_auth.py:762
 msgid ""
 "This will remove your custom authentication order from the SSH configuration "
 "when you save. The host then uses the order it inherits."
@@ -2767,40 +2763,40 @@ msgstr ""
 "Votre ordre d’authentification personnalisé sera supprimé de la "
 "configuration SSH à l’enregistrement. L’hôte utilisera alors l’ordre hérité."
 
-#: src/sshpilot/connection_dialog_auth.py:859
+#: src/sshpilot/connection_dialog_auth.py:869
 msgid "Not known to this dialog; kept as written."
 msgstr "Inconnu de cette boîte de dialogue ; conservé tel quel."
 
-#: src/sshpilot/connection_dialog_auth.py:896
-#: src/sshpilot/connection_dialog_auth.py:951
+#: src/sshpilot/connection_dialog_auth.py:907
+#: src/sshpilot/connection_dialog_auth.py:962
 msgid "Shown once OpenSSH has read the configuration."
 msgstr "Affiché une fois qu’OpenSSH a lu la configuration."
 
-#: src/sshpilot/connection_dialog_auth.py:899
+#: src/sshpilot/connection_dialog_auth.py:910
 msgid "No method: the login cannot succeed."
 msgstr "Aucune méthode : la connexion ne peut pas réussir."
 
-#: src/sshpilot/connection_dialog_auth.py:934
+#: src/sshpilot/connection_dialog_auth.py:945
 msgid "Enabled in this profile"
 msgstr "Activé dans ce profil"
 
-#: src/sshpilot/connection_dialog_auth.py:934
+#: src/sshpilot/connection_dialog_auth.py:945
 msgid "Disabled in this profile"
 msgstr "Désactivé dans ce profil"
 
-#: src/sshpilot/connection_dialog_auth.py:938
+#: src/sshpilot/connection_dialog_auth.py:949
 msgid "Enabled in this block"
 msgstr "Activé dans ce bloc"
 
-#: src/sshpilot/connection_dialog_auth.py:938
+#: src/sshpilot/connection_dialog_auth.py:949
 msgid "Disabled in this block"
 msgstr "Désactivé dans ce bloc"
 
-#: src/sshpilot/connection_dialog_auth.py:955
+#: src/sshpilot/connection_dialog_auth.py:966
 msgid "At least one method must stay checked."
 msgstr "Au moins une méthode doit rester cochée."
 
-#: src/sshpilot/connection_dialog_auth.py:957
+#: src/sshpilot/connection_dialog_auth.py:968
 msgid "Not tried. Check it to add it at the end of the login order."
 msgstr ""
 "Non essayée. Cochez-la pour l’ajouter à la fin de l’ordre de connexion."
@@ -18262,6 +18258,9 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#~ msgid "Inherit"
+#~ msgstr "Hériter"
 
 #~ msgid "Move this method"
 #~ msgstr "Déplacer cette méthode"

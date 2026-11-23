@@ -12,7 +12,7 @@ The two are edited independently, each by its own control:
 * a row's checkbox lists the method in the order or leaves it out. Listed
   means "OpenSSH may try this, at this place, if it is enabled and the
   server offers it". The checkbox never touches a per-method line;
-* a row's menu sets the method's own line in this block: Inherit (no line),
+* a row's menu sets the method's own line in this block: Not set (no line),
   Enable (``yes``) or Disable (``no``). It never touches the order, so a
   disabled method keeps its place and the row says it is disabled.
 
@@ -23,7 +23,7 @@ Saving without an edit writes the lines back exactly as authored. An edit
 of the order writes the checked methods as one ``PreferredAuthentications``
 line. A change of a method's setting replaces every line this block has for
 that switch (both spellings of the keyboard-interactive one) with a single
-line, or with none for Inherit. Lines of other methods stay as written.
+line, or with none for Not set. Lines of other methods stay as written.
 Lines a linked login profile sets cannot be changed here.
 
 Like every other field, this edits the Host block only: which block's
@@ -445,7 +445,7 @@ class AuthPolicy:
     def set_switch(self, method: str, value: Optional[bool]) -> bool:
         """The row's menu: this block's own line for *method*.
 
-        ``True``/``False`` write ``yes``/``no``; ``None`` (Inherit) leaves
+        ``True``/``False`` write ``yes``/``no``; ``None`` (Not set) leaves
         the block without a line. Every line the block has for the switch
         is replaced, repeats and the older spelling included, so removing
         one cannot bring an ignored copy into force. The order is not
@@ -686,11 +686,12 @@ class AuthPolicyGroup:
         moves.append(_("Move up"), "authrow.up")
         moves.append(_("Move down"), "authrow.down")
         moves.append(_("Move to top"), "authrow.top")
-        # A profile is not a host: what it leaves unset is each linked
-        # connection's own, so nothing is "inherited" there.
+        # "Not set" says what the block holds: no line of its own. What
+        # then decides the method (another block, or OpenSSH's default) is
+        # the header's to say.
         choices = Gio.Menu()
         for choice, label in (
-            ("inherit", _("Not set") if self.profile else _("Inherit")),
+            ("inherit", _("Not set")),
             ("yes", _("Enable in linked connections") if self.profile
              else _("Enable for this host")),
             ("no", _("Disable in linked connections") if self.profile
