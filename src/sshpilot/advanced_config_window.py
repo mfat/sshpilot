@@ -738,10 +738,34 @@ class AdvancedConfigWindow(Adw.Window):
 
     # -- selection ----------------------------------------------------------
 
+    @property
+    def filtering(self) -> bool:
+        """A host is typed in the filter: the rules are narrowed to it."""
+        return bool(self.target_entry.get_text().strip())
+
+    def selected_host(self) -> str:
+        """The host the selected block is about: the first name on its Host
+        line that is a plain name, not a pattern. Empty for Match, global
+        and pattern-only blocks, which name no single host."""
+        block = self.draft.find_block(self.selected_uid) if self.selected_uid else None
+        if block is None or block.kind != HOST or block.disabled:
+            return ""
+        for token in block.patterns.split():
+            if token and not any(char in token for char in "*?!\""):
+                return token
+        return ""
+
+    def target_text(self) -> str:
+        """The host OpenSSH is asked about: the filter's, else the selected
+        block's. Selecting a block loads it on the right without narrowing
+        the rules; only the filter narrows them."""
+        return self.target_entry.get_text().strip() or self.selected_host()
+
     def select_block(self, uid: Optional[int]) -> None:
         """Mark one block as the selected one (None: none)."""
         if uid == self.selected_uid:
             return
+        before = self.target_text()
         previous = self._block_widgets.get(self.selected_uid)
         if previous is not None:
             previous["card"].remove_css_class("selected")
@@ -749,6 +773,11 @@ class AdvancedConfigWindow(Adw.Window):
         current = self._block_widgets.get(self.selected_uid)
         if current is not None:
             current["card"].add_css_class("selected")
+        if self.target_text() != before:
+            # Another host is in question: agreements to run a Match exec
+            # command were for the one before.
+            self._allowed_exec.clear()
+            self._schedule_evaluation(now=True)
 
     def move_selected(self, delta: int) -> bool:
         """Alt+Up / Alt+Down: move the selected block one place."""
@@ -1280,7 +1309,7 @@ class AdvancedConfigWindow(Adw.Window):
     # ------------------------------------------------------------------
 
     def _request(self) -> Optional[EvaluateSshConfigDraftRequest]:
-        user, host = split_target(self.target_entry.get_text())
+        user, host = split_target(self.target_text())
         if not host or any(char.isspace() for char in host):
             return None
         try:
@@ -1390,7 +1419,8 @@ class AdvancedConfigWindow(Adw.Window):
             if is_matched:
                 count += 1
             card.set_visible(
-                not answered or bool(is_matched) or uid in self._kept_visible
+                not (answered and self.filtering) or bool(is_matched)
+                or uid in self._kept_visible
             )
             error = errors.get(header_line) if header_line else None
             widgets["warning"].set_label(messages.error_text(error) if error else "")
@@ -1508,7 +1538,10 @@ class AdvancedConfigWindow(Adw.Window):
         self._effective_list.set_visible(answered)
         if not answered:
             if evaluation is None:
-                note = _("Filter by a host to see what OpenSSH would use for it.")
+                note = _(
+                    "Select a block that names a host, or filter by a host, to "
+                    "see what OpenSSH would use for it."
+                )
             elif evaluation.pending_exec:
                 note = messages.pending_exec_text(evaluation)
             else:
@@ -1520,7 +1553,7 @@ class AdvancedConfigWindow(Adw.Window):
         values: Dict[str, List[str]] = {}
         for item in evaluation.values:
             values.setdefault(item.key, []).append(item.value)
-        user, host = split_target(self.target_entry.get_text())
+        user, host = split_target(self.target_text())
         command = "ssh " + (f"-l {user} " if user else "") + host
 
         def first(key, fallback=""):
