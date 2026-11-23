@@ -5,7 +5,7 @@ using Adw 1;
 // sections beside the selected page. The sidebar rows and the pages
 // (content_stack) are built in Python (connection_dialog.py:
 // _build_connection_tab_pages / _build_sidebar_navigation); this file owns the
-// split view, the header bars with Cancel / Save, and the SSH configuration
+// split view, the header bars (Cancel / Save on the page's), and the SSH configuration
 // buttons at the foot of the sidebar.
 template $ConnectionDialog: Adw.Window {
   modal: true;
@@ -32,14 +32,11 @@ template $ConnectionDialog: Adw.Window {
       tag: "connection-sidebar";
 
       child: Adw.ToolbarView {
+        // Just the dialog's title, centred, as in the Settings window: the
+        // sidebar is too narrow to share its header with a button.
         [top]
         Adw.HeaderBar {
           show-end-title-buttons: false;
-
-          [start]
-          Gtk.Button cancel_button {
-            label: _("Cancel");
-          }
         }
 
         content: Gtk.ScrolledWindow {
@@ -103,15 +100,23 @@ template $ConnectionDialog: Adw.Window {
       tag: "connection-content";
 
       child: Adw.ToolbarView {
+        // Cancel and Save on either side of the title, as in other GNOME
+        // dialogs; Cancel (and Escape) stands in for the close button.
         [top]
         Adw.HeaderBar {
           show-start-title-buttons: false;
+          show-end-title-buttons: false;
 
           // Title: the page; subtitle: what the connection reaches
           // (user@host:port), kept current by _update_content_title.
           title-widget: Adw.WindowTitle content_title {
             title: _("Connection");
           };
+
+          [start]
+          Gtk.Button cancel_button {
+            label: _("Cancel");
+          }
 
           [end]
           Gtk.Button save_button {
