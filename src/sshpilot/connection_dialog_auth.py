@@ -517,37 +517,6 @@ def join_extra(other: str, policy_lines: Iterable[str]) -> str:
 # ---------------------------------------------------------------------------
 
 _DRAG_PREFIX = "sshpilot-auth-method:"
-_preview_css_installed = False
-
-
-def _install_preview_css() -> None:
-    """Flat styling for the "OpenSSH will try" preview, once per display."""
-    global _preview_css_installed
-    if _preview_css_installed:
-        return
-    from gi.repository import Gdk, Gtk
-
-    display = Gdk.Display.get_default()
-    if display is None:
-        return
-    provider = Gtk.CssProvider()
-    provider.load_from_data(b"""
-list.auth-order-preview-list,
-list.auth-order-preview-list > row.auth-order-preview,
-list.auth-order-preview-list > row.auth-order-preview:hover {
-  background: transparent;
-  box-shadow: none;
-}
-row.auth-order-preview,
-row.auth-order-preview > box.header {
-  padding-left: 0; padding-right: 0; margin-left: 0; margin-right: 0;
-}
-row.auth-order-preview .subtitle { font-family: monospace; }
-""")
-    Gtk.StyleContext.add_provider_for_display(
-        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
-    _preview_css_installed = True
 
 
 def build_auth_policy_group(on_changed: Callable[[], None], *, profile: bool = False):
@@ -562,8 +531,9 @@ class AuthPolicyGroup:
 
     ``group``      the PreferencesGroup to place in the page;
     ``rows``       method -> its ``Adw.ActionRow`` (``row._check`` is the box);
-    ``order_row``  the "OpenSSH will try" row, marked when an earlier block
-                   decides the order.
+    ``order_row``  the "Authentication methods" expander: its subtitle says
+                   what OpenSSH will try, and it is marked when an earlier
+                   block decides the order.
     """
 
     @classmethod
@@ -595,7 +565,7 @@ class AuthPolicyGroup:
         self._locked_methods: set = set()
         self._lock_note = ""
 
-        self.group = Adw.PreferencesGroup(title=_("Authentication order"))
+        self.group = Adw.PreferencesGroup()
         self.group.set_description(
             _("Lines this profile sets replace a linked connection's own; what "
               "it leaves unset stays the connection's. Methods are tried from "
@@ -603,46 +573,32 @@ class AuthPolicyGroup:
             if self.profile else
             _("Methods are tried from the top. Unchecked methods are left out.")
         )
+
+        # One row that folds the method list away: most hosts never change
+        # it, so the header says what will be tried and the rows wait inside.
+        self.order_row = Adw.ExpanderRow(title=_("Authentication methods"))
+        self.order_row.set_subtitle_lines(2)
+        self.group.add(self.order_row)
+
         self.reset_button = Gtk.Button(label=_("Reset"))
         self.reset_button.add_css_class("flat")
+        self.reset_button.set_valign(Gtk.Align.CENTER)
         self.reset_button.set_tooltip_text(
             _("Leave the order to each linked connection") if self.profile else
             _("Remove this host's order so the inherited one applies")
         )
         self.reset_button.connect("clicked", self._on_reset_clicked)
         self._reset_alert = None
-        self.group.set_header_suffix(self.reset_button)
-
-        self.list = Gtk.ListBox()
-        self.list.add_css_class("boxed-list")
-        self.list.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.group.add(self.list)
+        self.order_row.add_suffix(self.reset_button)
 
         self.rows: Dict[str, object] = {}
         for method in METHODS:
             self.rows[method] = self._make_row(method)
+        # Rows currently inside the expander, in order (it has no child list).
+        self._shown_rows: List[object] = []
 
         self.extra_row = Adw.ActionRow()
         self.extra_row.set_activatable(False)
-
-        # Below the list, in a list of its own: a group places its own rows
-        # ahead of any other child.
-        # A read-only preview, not a setting: no card, the small dim
-        # "property" title above the result, the methods in monospace.
-        _install_preview_css()
-        self.order_row = Adw.ActionRow(title=_("OpenSSH will try:"))
-        self.order_row.set_activatable(False)
-        self.order_row.set_subtitle_selectable(True)
-        self.order_row.add_css_class("property")
-        self.order_row.add_css_class("auth-order-preview")
-        help_list = Gtk.ListBox()
-        help_list.add_css_class("auth-order-preview-list")
-        help_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        help_list.set_margin_top(6)
-        help_list.append(self.order_row)
-        # A profile is not one host: there is no single order in force.
-        help_list.set_visible(not self.profile)
-        self.group.add(help_list)
 
     def _make_row(self, method: str):
         from gi.repository import Adw, Gdk, Gio, GObject, Gtk
@@ -831,11 +787,9 @@ class AuthPolicyGroup:
         """Redraw every row from the model."""
         self._syncing = True
         try:
-            child = self.list.get_first_child()
-            while child is not None:
-                following = child.get_next_sibling()
-                self.list.remove(child)
-                child = following
+            for row in self._shown_rows:
+                self.order_row.remove(row)
+            self._shown_rows = []
             policy = self.policy
             order_set = policy.order_is_set
             for method in policy.rows():
@@ -846,7 +800,7 @@ class AuthPolicyGroup:
                 self.extra_row.set_subtitle(
                     _("Not known to this dialog; kept as written.")
                 )
-                self.list.append(self.extra_row)
+                self._add_row(self.extra_row)
             for method in METHODS:
                 self._show_switch(self.rows[method], method)
             self.reset_button.set_sensitive(order_set and not self._order_locked)
@@ -856,7 +810,12 @@ class AuthPolicyGroup:
                     _("Remove this host's order so the inherited one applies")
                 )
             )
-            will_try = policy.will_try()
+            # A profile is not one host: no order is in force, so its
+            # header lists the methods it checks.
+            will_try = (
+                policy.checked() + policy.unknown_tokens() if self.profile
+                else policy.will_try()
+            )
             if will_try is None:
                 self.order_row.set_subtitle(
                     _("Shown once OpenSSH has read the configuration.")
@@ -868,10 +827,14 @@ class AuthPolicyGroup:
         finally:
             self._syncing = False
 
+    def _add_row(self, row) -> None:
+        self.order_row.add_row(row)
+        self._shown_rows.append(row)
+
     def _show_row(self, row, method: str) -> None:
         # Never dimmed: dim reads as "off" in GNOME. Only checked rows move:
         # unchecked methods are not in the order.
-        self.list.append(row)
+        self._add_row(row)
         actions = row._actions
         checked = self.policy.checked()
         movable = self._can_move(method)
