@@ -63,6 +63,7 @@ from sshpilot.askpass_utils import (
     append_askpass_log,
     classify_prompt,
 )
+from sshpilot.daemon.process_registry import terminate_owned_ancestor
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
 from sshpilot.logging_support import log_context
 
@@ -224,6 +225,8 @@ class InteractionBroker:
         self._session_secrets: Dict[Tuple[str, str], bytearray] = {}
         self._askpass_contexts: Dict[str, _AskpassContext] = {}
         self._askpass_transports: set[socket.socket] = set()
+        # The helper behind each open request, as it reported itself.
+        self._askpass_helper_pids: Dict[socket.socket, int] = {}
         self._askpass_queue: queue.Queue[Optional[socket.socket]] = queue.Queue(
             maxsize=askpass_queue_limit
         )
@@ -1178,7 +1181,9 @@ class InteractionBroker:
                     return context
         return None
 
-    def _mark_context_cancelled(self, token: str) -> None:
+    def _mark_context_cancelled(
+        self, token: str, helper_transport: Optional[socket.socket] = None
+    ) -> None:
         """Record that the user dismissed a prompt for this SSH child.
 
         An askpass helper that declines is indistinguishable to OpenSSH from a
@@ -1187,11 +1192,27 @@ class InteractionBroker:
         questions). Without this flag every Cancel is answered by an identical
         replacement dialog a few milliseconds later, which reads as a prompt
         that cannot be dismissed at all (issue #1236).
+
+        Declining those retries is not enough for the server: each one is an
+        empty answer, so one Cancel reaches it as three failed logins, enough
+        to trip a rate limit or a ban. The child that asked is therefore
+        ended here, while its helper is still waiting and can be traced back
+        to it. Where it cannot be traced (an older helper, an unreadable
+        process table) the flag still keeps the retries silent.
         """
         with self._condition:
             context = self._askpass_contexts.get(token)
+            first = context is not None and not context.cancelled
             if context is not None:
                 context.cancelled = True
+            helper_pid = self._askpass_helper_pids.get(helper_transport)
+        if not first or helper_pid is None:
+            return
+        ended = terminate_owned_ancestor(helper_pid)
+        append_askpass_log(
+            "ASKPASS: prompt cancelled; "
+            + ("ended the connection" if ended else "connection left to end")
+        )
 
     def _context_cancelled(self, token: str) -> bool:
         with self._condition:
@@ -1629,14 +1650,17 @@ class InteractionBroker:
                 value = json.loads(
                     self._receive_exact(transport, request_size).decode("utf-8")
                 )
-                if type(value) is not dict or set(value) not in (
-                    {"token", "prompt"},
-                    {"token", "prompt", "hint"},
+                if type(value) is not dict or not (
+                    {"token", "prompt"} <= set(value) <= {"token", "prompt", "hint", "pid"}
                 ):
                     continue
                 token = value["token"]
                 prompt = value["prompt"]
                 hint = value.get("hint", "")
+                helper_pid = value.get("pid")
+                if type(helper_pid) is int and helper_pid > 1:
+                    with self._condition:
+                        self._askpass_helper_pids[transport] = helper_pid
                 if (
                     type(token) is not str
                     or type(prompt) is not str
@@ -1678,6 +1702,7 @@ class InteractionBroker:
                     pass
                 with self._condition:
                     self._askpass_transports.discard(transport)
+                    self._askpass_helper_pids.pop(transport, None)
 
     @staticmethod
     def _receive_exact(transport: socket.socket, size: int) -> bytes:
@@ -1917,7 +1942,7 @@ class InteractionBroker:
         cancel_check, transport_gone = self._transport_cancel_check(helper_transport)
         result = self.wait_for_result(interaction.id, cancel_check=cancel_check)
         if not transport_gone[0] and self._was_cancelled(interaction.id):
-            self._mark_context_cancelled(token)
+            self._mark_context_cancelled(token, helper_transport)
         if (
             result is None
             or result.decision is not SecretDecision.SUBMIT
@@ -2138,7 +2163,7 @@ class InteractionBroker:
             return None
         result = self.wait_for_result(interaction.id, cancel_check=cancel_check)
         if not transport_gone[0] and self._was_cancelled(interaction.id):
-            self._mark_context_cancelled(token)
+            self._mark_context_cancelled(token, helper_transport)
         if result is None or result.decision is not SecretDecision.SUBMIT or result.secret is None:
             if result is not None:
                 result.clear()

@@ -43,6 +43,9 @@ def main() -> int:
             "token": token,
             "prompt": prompt,
             "hint": os.environ.get("SSH_ASKPASS_PROMPT", ""),
+            # Lets the broker find the ssh that asked, so a cancelled prompt
+            # ends that connection instead of leaving it to retry.
+            "pid": os.getpid(),
         },
         separators=(",", ":"),
     ).encode("utf-8")

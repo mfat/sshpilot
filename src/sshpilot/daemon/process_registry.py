@@ -510,6 +510,73 @@ def forget_owned_process(pid: int) -> None:
         logger.debug("Could not forget an owned process", exc_info=True)
 
 
+def _parent_pid(pid: int) -> Optional[int]:
+    """The parent of *pid*, or ``None`` when it cannot be read."""
+
+    try:
+        import psutil
+
+        return int(psutil.Process(pid).ppid())
+    except Exception:
+        pass
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            data = handle.read()
+    except (OSError, ValueError):
+        return None
+    fields = data[data.rfind(b")") + 2 :].split()
+    try:
+        return int(fields[1])
+    except (IndexError, ValueError):
+        return None
+
+
+# How far up to look for the child we own. An askpass helper is at most a
+# launcher script, a jump-host ssh and a transfer tool away from it.
+_ANCESTOR_LIMIT = 8
+
+
+def terminate_owned_ancestor(pid: int) -> Optional[int]:
+    """End the owned child that *pid* descends from; returns its PID.
+
+    *pid* is a process started on behalf of one of our children (an askpass
+    helper). Its own identity is never trusted: only a process recorded in
+    the registry, whose creation time still matches, is signalled, so the
+    worst a wrong or recycled *pid* can do is nothing. ``None`` when no owned
+    ancestor is found; the caller then leaves the child to end by itself.
+    """
+
+    registry = active_registry()
+    if registry is None or type(pid) is not int or pid <= 1:
+        return None
+    try:
+        owned = {entry.pid: entry for entry in registry.live_entries()}
+    except Exception:
+        return None
+    current: Optional[int] = pid
+    for _step in range(_ANCESTOR_LIMIT):
+        if current is None or current <= 1:
+            return None
+        entry = owned.get(current)
+        if entry is not None:
+            return current if _terminate_registered(entry) else None
+        current = _parent_pid(current)
+    return None
+
+
+def _terminate_registered(entry: RegisteredProcess) -> bool:
+    import signal
+
+    try:
+        if entry.process_group and hasattr(os, "killpg"):
+            os.killpg(entry.pid, signal.SIGTERM)
+        else:
+            os.kill(entry.pid, signal.SIGTERM)
+    except OSError:
+        return False
+    return True
+
+
 def record_owned_process_or_abandon(
     process, *, kind: str, label: str = "", process_group: bool = False
 ) -> None:
