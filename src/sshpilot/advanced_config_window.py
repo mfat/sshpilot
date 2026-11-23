@@ -2,7 +2,7 @@
 
 Left: the configuration as ordered blocks (the global options, then every
 ``Host`` and ``Match`` block), editable and reorderable. Right: what OpenSSH
-resolves for a target host, which line supplies each value, the order the
+resolves for the host filtered by, which line supplies each value, the order the
 blocks are read in, the text itself, and the files ``Include`` lines read.
 
 Nothing here decides what applies. Every answer comes from the daemon, which
@@ -71,8 +71,7 @@ _CSS = """
 .advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
 .advcfg-block { padding: 10px 12px; }
-.advcfg-block.skipped, .advcfg-block.disabled { opacity: 0.55; }
-.advcfg-block.skipped:focus-within, .advcfg-block.disabled:focus-within { opacity: 1; }
+.advcfg-block.disabled { opacity: 0.6; }
 .advcfg-drop-before { box-shadow: 0 -3px 0 0 @accent_color; }
 .advcfg-drop-after { box-shadow: 0 3px 0 0 @accent_color; }
 .advcfg-unused entry { opacity: 0.6; }
@@ -184,6 +183,9 @@ class AdvancedConfigWindow(Adw.Window):
         self._closing = False
         self._request_serial = 0
         self._save_after_evaluation = False
+        # Blocks added or edited under the current filter: they stay on
+        # screen even when they do not apply to the host being filtered by.
+        self._kept_visible: set = set()
         self._evaluated_lines = self._lines
         self._banner_kind = ""
 
@@ -247,16 +249,15 @@ class AdvancedConfigWindow(Adw.Window):
         box.set_margin_start(16)
         box.set_margin_end(16)
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        label = Gtk.Label(label=_("Target host"))
-        label.add_css_class("heading")
-        row.append(label)
-        self.target_entry = Gtk.Entry()
-        self.target_entry.set_placeholder_text(_("[user@]host"))
-        self.target_entry.add_css_class("monospace")
-        self.target_entry.set_width_chars(26)
-        self.target_entry.connect("changed", self._on_target_changed)
-        # An entry with a drop-down of the hosts the configuration names and
-        # the saved connections; any other target can be typed.
+        # One filter, no separate "target" field: a host typed here (or
+        # picked from the drop-down) narrows the rules to the blocks OpenSSH
+        # applies to it and shows what it resolves. Empty: every block.
+        self.target_entry = Gtk.SearchEntry()
+        self.target_entry.set_placeholder_text(
+            _("Filter by host: type a name to see what applies to it")
+        )
+        self.target_entry.set_hexpand(True)
+        self.target_entry.connect("search-changed", self._on_target_changed)
         self._host_list = Gtk.ListBox()
         self._host_list.set_selection_mode(Gtk.SelectionMode.NONE)
         self._host_list.add_css_class("navigation-sidebar")
@@ -277,18 +278,6 @@ class AdvancedConfigWindow(Adw.Window):
         target_box.append(self.target_entry)
         target_box.append(self.target_button)
         row.append(target_box)
-        port_label = Gtk.Label(label=_("Port (-p)"))
-        port_label.add_css_class("dim-label")
-        row.append(port_label)
-        self.port_entry = Gtk.Entry()
-        self.port_entry.set_width_chars(6)
-        self.port_entry.set_max_width_chars(6)
-        self.port_entry.add_css_class("monospace")
-        self.port_entry.set_tooltip_text(
-            _("A port given on the command line, as ssh -p. Empty: none.")
-        )
-        self.port_entry.connect("changed", self._on_target_changed)
-        row.append(self.port_entry)
         box.append(row)
         self.context_label = Gtk.Label(xalign=0)
         self.context_label.add_css_class("dim-label")
@@ -508,10 +497,6 @@ class AdvancedConfigWindow(Adw.Window):
         self._allowed_exec = set()
         self._notes_open = set()
         self._push_history()
-        if not keep_target and not self.target_entry.get_text().strip():
-            names = self.host_names()
-            if names:
-                self.target_entry.set_text(names[0])
         self._render_all()
         if not self._writable:
             self._show_banner(_("This SSH configuration is read-only: changes cannot be saved."))
@@ -725,6 +710,7 @@ class AdvancedConfigWindow(Adw.Window):
         else:
             block = Block(kind=kind, patterns="", options=[Option()])
             self.draft.blocks.append(block)
+        self._kept_visible.add(self.draft.blocks[0 if kind == GLOBAL else -1].uid)
         self._changed(structure=True)
         added = self.draft.blocks[0 if kind == GLOBAL else -1]
         GLib.idle_add(lambda: (self._focus_block(added.uid), False)[1])
@@ -764,6 +750,7 @@ class AdvancedConfigWindow(Adw.Window):
         block = self.draft.find_block(uid)
         if block is None:
             return
+        self._kept_visible.add(uid)
         block.disabled = not block.disabled
         if not can_place(self.draft.blocks):
             block.disabled = not block.disabled
@@ -782,6 +769,7 @@ class AdvancedConfigWindow(Adw.Window):
             kind=block.kind, patterns=block.patterns, disabled=block.disabled,
             options=[Option(key=o.key, value=o.value, comment=o.comment) for o in block.options],
         )
+        self._kept_visible.add(copy.uid)
         self.draft.blocks.insert(self.draft.blocks.index(block) + 1, copy)
         self._changed(structure=True)
 
@@ -1093,6 +1081,7 @@ class AdvancedConfigWindow(Adw.Window):
     def _on_patterns_changed(self, entry, block: Block) -> None:
         if self._rendering:
             return
+        self._kept_visible.add(block.uid)
         block.patterns = entry.get_text()
         self._changed(structure=False)
         self._render_quick_hosts()
@@ -1100,12 +1089,16 @@ class AdvancedConfigWindow(Adw.Window):
     def _on_note_changed(self, entry, block: Block) -> None:
         if self._rendering:
             return
+        self._kept_visible.add(block.uid)
         block.note = entry.get_text()
         self._changed(structure=False)
 
     def _on_option_changed(self, entry, option: Option, field: str) -> None:
         if self._rendering:
             return
+        owner, _option = self.draft.find_option(option.uid)
+        if owner is not None:
+            self._kept_visible.add(owner.uid)
         setattr(option, field, entry.get_text())
         self._changed(structure=False)
 
@@ -1209,11 +1202,9 @@ class AdvancedConfigWindow(Adw.Window):
         user, host = split_target(self.target_entry.get_text())
         if not host or any(char.isspace() for char in host):
             return None
-        port_text = self.port_entry.get_text().strip()
-        port = int(port_text) if port_text.isdigit() and 1 <= int(port_text) <= 65535 else None
         try:
             return EvaluateSshConfigDraftRequest(
-                text=self._text, host=host, user=user, port=port,
+                text=self._text, host=host, user=user,
                 allowed_exec=tuple(sorted(self._allowed_exec)),
             )
         except (TypeError, ValueError):
@@ -1278,6 +1269,7 @@ class AdvancedConfigWindow(Adw.Window):
         # A command can depend on the target (%h, %r): agreement to run it
         # was for the target on screen at the time.
         self._allowed_exec.clear()
+        self._kept_visible.clear()
         self._schedule_evaluation()
 
     def _apply_evaluation(self) -> None:
@@ -1311,15 +1303,14 @@ class AdvancedConfigWindow(Adw.Window):
                 block.disabled, is_matched, block.kind == GLOBAL
             )
             _set_pill(widgets["status"], label, style, tooltip)
-            # The blocks that apply stay plain; the ones OpenSSH skips for
-            # this target step back (and come forward again while edited).
+            # Filtering by a host leaves the blocks OpenSSH applies to it
+            # (and any being worked on); with no host every block shows.
             card = widgets["card"]
             if is_matched:
                 count += 1
-            if is_matched is False:
-                card.add_css_class("skipped")
-            else:
-                card.remove_css_class("skipped")
+            card.set_visible(
+                not answered or bool(is_matched) or uid in self._kept_visible
+            )
             error = errors.get(header_line) if header_line else None
             widgets["warning"].set_label(messages.error_text(error) if error else "")
             widgets["warning"].set_visible(error is not None)
@@ -1433,7 +1424,7 @@ class AdvancedConfigWindow(Adw.Window):
         self._effective_list.set_visible(answered)
         if not answered:
             if evaluation is None:
-                note = _("Enter a target host to see what OpenSSH would use for it.")
+                note = _("Filter by a host to see what OpenSSH would use for it.")
             elif evaluation.pending_exec:
                 note = messages.pending_exec_text(evaluation)
             else:
@@ -1446,9 +1437,7 @@ class AdvancedConfigWindow(Adw.Window):
         for item in evaluation.values:
             values.setdefault(item.key, []).append(item.value)
         user, host = split_target(self.target_entry.get_text())
-        port_text = self.port_entry.get_text().strip()
-        command = "ssh " + (f"-l {user} " if user else "") + (
-            f"-p {port_text} " if port_text else "") + host
+        command = "ssh " + (f"-l {user} " if user else "") + host
 
         def first(key, fallback=""):
             return (values.get(key) or [fallback])[0]

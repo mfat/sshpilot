@@ -73,7 +73,7 @@ def test_context_names_what_a_connection_reads():
 
 
 def test_block_status_waits_for_openssh():
-    assert messages.block_status(False, None, False)[0] == "…"
+    assert messages.block_status(False, None, False)[0] == ""
     assert messages.block_status(True, None, False)[1] == "muted"
     assert messages.block_status(False, True, False)[1] == "success"
     assert messages.block_status(False, False, False)[1] == "muted"

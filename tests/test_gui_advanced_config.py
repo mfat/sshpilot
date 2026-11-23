@@ -95,10 +95,28 @@ def window(gtk, tmp_path):
     client = _Client(path)
     win = AdvancedConfigWindow(None, client, hosts=lambda: ["db1"])
     win._test_client = client
-    assert _pump(lambda: win._evaluation is not None and win._evaluated_serial == win._serial)
+    _filter_by(win, "web1")
     yield win
     win._closing = True
     win.destroy()
+
+
+def _filter_by(win, host):
+    """Type a host into the filter and wait for OpenSSH's answer on it."""
+    assert _pump(lambda: bool(win.draft.blocks))
+    win.target_entry.set_text(host)
+    assert _pump(lambda: (
+        win._evaluation is not None and win._evaluation.evaluated
+        and win._evaluated_serial == win._serial
+        and win._summary_rows["command"].get_subtitle() == f"ssh {host}"
+    ))
+
+
+def _shown(win):
+    return [
+        block.patterns or block.kind for block in win.draft.blocks
+        if win._block_widgets[block.uid]["card"].get_visible()
+    ]
 
 
 def _settled(win):
@@ -121,8 +139,23 @@ def _status(win, option):
     return pill.get_label() if pill.get_visible() else None
 
 
-def test_it_opens_on_the_first_host_with_openssh_s_answer(window):
-    assert window.target_entry.get_text() == "web1"
+def test_it_opens_showing_every_block_and_asks_nothing(gtk, tmp_path):
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    path = tmp_path / "config"
+    path.write_text(CONFIG)
+    win = AdvancedConfigWindow(None, _Client(path))
+    assert _pump(lambda: len(win.draft.blocks) == 3)
+    assert win.target_entry.get_text() == "" and win._evaluation is None
+    assert _shown(win) == ["global", "web1 web2", "*"]
+    assert not any(
+        win._block_widgets[b.uid]["status"].get_visible() for b in win.draft.blocks
+    )
+    win._closing = True
+    win.destroy()
+
+
+def test_filtering_by_a_host_shows_openssh_s_answer(window):
     assert [row._host for row in window._children(window._host_list)] == [
         "web1", "web2", "db1",
     ]
@@ -142,14 +175,27 @@ def test_it_opens_on_the_first_host_with_openssh_s_answer(window):
 def test_another_target_is_asked_again(window):
     window.target_entry.set_text("db1")
     assert _pump(lambda: _effective(window, "user") == "fallback")
+    # The filter leaves the blocks OpenSSH applies to the host.
+    assert _pump(lambda: _shown(window) == ["global", "*"])
     web = window.draft.blocks[1]
-    assert window._block_widgets[web.uid]["status"].get_label() == "Skipped"
     assert [_status(window, o) for o in web.options] == ["Inactive"] * 3
-    # Blocks that do not apply step back; the ones that do stay plain.
-    cards = [window._block_widgets[b.uid]["card"] for b in window.draft.blocks]
-    assert [card.has_css_class("skipped") for card in cards] == [False, True, False]
     window.target_entry.set_text("web1")
-    assert _pump(lambda: not cards[1].has_css_class("skipped"))
+    assert _pump(lambda: _shown(window) == ["global", "web1 web2", "*"])
+    window.target_entry.set_text("")           # no filter: every block
+    assert _pump(lambda: window._evaluation is None)
+    assert _shown(window) == ["global", "web1 web2", "*"]
+
+
+def test_a_block_being_worked_on_stays_while_filtering(window):
+    """Adding or editing a block must not make it vanish under the filter."""
+    window.add_block("host")
+    block = window.draft.blocks[-1]
+    window._block_widgets[block.uid]["patterns"].set_text("elsewhere")
+    assert _settled(window)
+    assert window._block_widgets[block.uid]["status"].get_label() == "Skipped"
+    assert "elsewhere" in _shown(window)
+    window.target_entry.set_text("db1")        # a new filter starts afresh
+    assert _pump(lambda: _shown(window) == ["global", "*"])
 
 
 def test_moving_a_block_changes_what_wins_and_undo_restores_it(window):
@@ -213,6 +259,7 @@ def test_disabling_a_block_writes_comments_and_openssh_skips_it(window):
     assert "# [disabled] Host web1 web2\n" in window._text
     web = window.draft.blocks[1]
     assert window._block_widgets[web.uid]["status"].get_label() == "Disabled"
+    assert "web1 web2" in _shown(window)        # just switched off: still here
 
 
 def test_options_move_between_blocks(window):

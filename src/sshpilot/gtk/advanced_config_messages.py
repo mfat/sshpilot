@@ -76,12 +76,12 @@ def state_tooltip(item: SshConfigDraftLine) -> str:
 
 def block_status(disabled: bool, matched: Optional[bool], is_global: bool) -> tuple:
     """``(label, style, tooltip)`` of a block's pill; ``matched`` is None
-    while OpenSSH has not answered."""
+    (and the label empty) while there is no answer from OpenSSH."""
     if disabled:
         return (_("Disabled"), "muted",
                 _("Written as comments: OpenSSH does not read this block."))
     if matched is None:
-        return ("…", "muted", "")
+        return ("", "muted", "")      # no host is being filtered by
     if is_global:
         return (_("Always"), "success",
                 _("Options above every Host and Match line apply to every target."))
