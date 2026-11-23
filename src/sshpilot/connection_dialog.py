@@ -3072,8 +3072,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if hasattr(self, 'add_keys_to_agent_row'):
                 try:
                     val = str(getattr(self.connection, 'add_keys_to_agent', '') or '').strip().lower()
-                    idx = self._add_keys_values.index(val) if val in self._add_keys_values else 0
-                    self.add_keys_to_agent_row.set_selected(idx)
+                    if val not in self._add_keys_values:
+                        # A lifetime ("1h", "confirm 30m"): listed as
+                        # written, so the row says what is in force and
+                        # Default can clear it.
+                        self._add_keys_values.append(val)
+                        self.add_keys_to_agent_row.get_model().append(val)
+                    self.add_keys_to_agent_row.set_selected(
+                        self._add_keys_values.index(val)
+                    )
                 except Exception:
                     self.add_keys_to_agent_row.set_selected(0)
 

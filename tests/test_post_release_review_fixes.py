@@ -487,3 +487,102 @@ def test_loaded_host_reports_public_keys_as_openssh_does(tmp_path, body, disable
     data = repo.get_record("demo").data
     assert data["pubkey_auth_no"] is disabled
     assert data["auth_method"] == (1 if disabled else 0)
+
+
+# -- "IdentityFile none" beside real keys is kept in place --------------------
+
+def _repo(tmp_path, body):
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    config = tmp_path / "config"
+    config.write_text(
+        "Host demo\n    HostName demo.example\n" + "".join(f"    {l}\n" for l in body)
+    )
+    return config, ConnectionRepository(
+        ssh_store=SshConfigStore(config),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+
+
+def _block_lines(config):
+    return [l.strip() for l in config.read_text().splitlines() if l.startswith("    ")]
+
+
+@pytest.mark.parametrize("body", [
+    ["IdentityFile none", "IdentityFile /keys/work"],
+    ["IdentityFile /keys/work", "IdentityFile none"],
+    ["IdentityFile /keys/a", "IdentityFile none", "IdentityFile /keys/b"],
+    ["IdentityFile none"],
+])
+def test_an_unrelated_save_keeps_identityfile_none_where_it_was(tmp_path, body):
+    config, repo = _repo(tmp_path, body)
+    before = _ssh_g(config).get("identityfile")
+    record = repo.get_record("demo")
+    repo.update_connection("demo", {**record.data, "port": 2222})
+    assert [l for l in _block_lines(config) if l.startswith("IdentityFile")] == body
+    assert _ssh_g(config).get("identityfile") == before
+
+
+def test_replacing_none_with_a_key_drops_none(tmp_path):
+    config, repo = _repo(tmp_path, ["IdentityFile none"])
+    record = repo.get_record("demo")
+    repo.update_connection("demo", {
+        **record.data, "identity_files": ["/keys/new"], "keyfile": "/keys/new",
+        "key_select_mode": 2,
+    })
+    assert [l for l in _block_lines(config) if l.startswith("IdentityFile")] == [
+        "IdentityFile /keys/new",
+    ]
+
+
+def test_a_profile_s_keys_replace_a_mixed_list_without_none():
+    profile = LoginProfile(id=PROFILE_ID, name="p", identity_files=("~/.ssh/p",))
+    out = apply_profile_to_data({
+        "identity_files": ["/keys/work"], "identity_file_none": True,
+        "__identity_none_index": 0, "key_select_mode": 2,
+    }, profile)
+    from sshpilot.ssh_config_formatter import format_ssh_config_entry
+
+    text = format_ssh_config_entry({"nickname": "demo", "hostname": "h", **out})
+    assert "IdentityFile none" not in text
+    assert "IdentityFile ~/.ssh/p" in text
+
+
+# -- PubkeyAuthentication host-bound / unbound --------------------------------
+
+@pytest.mark.parametrize("value", ["host-bound", "unbound"])
+def test_a_restricted_public_key_line_is_named_and_kept(value):
+    from sshpilot.connection_dialog_auth import AuthPolicy
+
+    line = f"PubkeyAuthentication {value}"
+    policy = AuthPolicy.from_lines([line])
+    assert policy.own_switch("publickey") is True
+    assert policy.restriction("publickey") == value
+    assert not policy.set_switch("publickey", True)  # already enabled: kept
+    assert policy.to_lines() == [line]
+    assert policy.set_switch("publickey", False)
+    assert policy.restriction("publickey") == ""
+    assert policy.to_lines() == ["PubkeyAuthentication no"]
+    assert policy.set_switch("publickey", True)       # back: as authored
+    assert policy.to_lines() == [line]
+
+
+def test_not_set_then_enable_writes_a_plain_yes():
+    from sshpilot.connection_dialog_auth import AuthPolicy
+
+    policy = AuthPolicy.from_lines(["PubkeyAuthentication host-bound"])
+    assert policy.set_switch("publickey", None)
+    assert policy.set_switch("publickey", True)
+    assert policy.restriction("publickey") == ""
+    assert policy.to_lines() == ["PubkeyAuthentication yes"]
+
+
+def test_a_plain_yes_has_no_restriction():
+    from sshpilot.connection_dialog_auth import AuthPolicy
+
+    policy = AuthPolicy.from_lines(["PubkeyAuthentication yes", "PasswordAuthentication yes"])
+    assert policy.restriction("publickey") == ""
+    assert policy.restriction("password") == ""

@@ -284,14 +284,18 @@ class LoginProfileEditor:
             else (1 if settings.identities_only else 2)
         )
         key_handling.add(self.identities_only_row)
-        self.add_keys_row = Adw.ComboRow(
-            title=_("Add keys to agent"), model=_string_list(_ADD_KEYS_LABELS)
-        )
         value = settings.add_keys_to_agent
-        self._add_keys_custom = value if value not in _ADD_KEYS_VALUES else ""
-        self.add_keys_row.set_selected(
-            _ADD_KEYS_VALUES.index(value) if value in _ADD_KEYS_VALUES else 0
+        # A lifetime ("1h", "confirm 30m") is listed as written, so the row
+        # says what the profile sets and Default can clear it.
+        self._add_keys_values = list(_ADD_KEYS_VALUES)
+        labels = list(_ADD_KEYS_LABELS)
+        if value not in self._add_keys_values:
+            self._add_keys_values.append(value)
+            labels.append(value)
+        self.add_keys_row = Adw.ComboRow(
+            title=_("Add keys to agent"), model=_string_list(labels)
         )
+        self.add_keys_row.set_selected(self._add_keys_values.index(value))
         key_handling.add(self.add_keys_row)
         page.add(key_handling)
 
@@ -388,9 +392,10 @@ class LoginProfileEditor:
             self.auth_policy.policy.to_lines(),
         )
         selected = self.add_keys_row.get_selected()
-        add_keys = _ADD_KEYS_VALUES[selected] if selected < len(_ADD_KEYS_VALUES) else ""
-        if selected == 0 and self._add_keys_custom:
-            add_keys = self._add_keys_custom
+        add_keys = (
+            self._add_keys_values[selected]
+            if selected < len(self._add_keys_values) else ""
+        )
         return {
             "name": self.name_row.get_text(),
             "username": self.username_row.get_text(),

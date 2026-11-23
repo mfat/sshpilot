@@ -446,12 +446,17 @@ def _parse_host_config(
 
     identity_files: List[str] = []
     identity_suppressed = False
+    # Where "IdentityFile none" stands among the block's key lines, so a
+    # save writes it back in place when the block lists keys as well.
+    identity_none_index: Optional[int] = None
     raw_identity_files: List[str] = []
     for entry in _as_list(config.get("identityfile")):
         unwrapped = _unwrap_ssh_value(entry)
         if unwrapped:
             raw_identity_files.append(str(unwrapped))
         if isinstance(unwrapped, str) and unwrapped.strip().lower() == "none":
+            if not identity_suppressed:
+                identity_none_index = len(identity_files)
             identity_suppressed = True
             continue
         if unwrapped:
@@ -490,6 +495,9 @@ def _parse_host_config(
             _unwrap_ssh_value(config["user"]) if "user" in config else None
         ),
         "__identity_raw_identity_files": raw_identity_files,
+        # Only a block that mixes "none" with keys: a lone "none" is simply
+        # replaced when a key is chosen.
+        "__identity_none_index": identity_none_index if identity_files else None,
         # Directives this host actually authored. ``config`` holds exactly the
         # block's own options — wildcard/negated blocks were diverted to
         # ``rules`` above — so its keys are the authorship evidence. The launch

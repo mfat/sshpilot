@@ -184,8 +184,15 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     )
     # Only write IdentityFile when using a dedicated key mode
     if dedicated_key and identity_files:
-        for kf in identity_files:
-            lines.append(f"    IdentityFile {_quote_if_spaced(kf)}")
+        key_lines = [f"    IdentityFile {_quote_if_spaced(kf)}" for kf in identity_files]
+        # A block may write "none" beside real keys. OpenSSH skips it, but
+        # it is the user's line: it goes back where the block had it.
+        none_index = data.get('__identity_none_index')
+        if data.get('identity_file_none') and type(none_index) is int:
+            key_lines.insert(
+                max(0, min(none_index, len(key_lines))), "    IdentityFile none"
+            )
+        lines.extend(key_lines)
     elif data.get('identity_file_none'):
         lines.append("    IdentityFile none")
 

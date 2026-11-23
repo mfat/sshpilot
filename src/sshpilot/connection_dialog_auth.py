@@ -89,7 +89,9 @@ OPENSSH_SWITCH_DEFAULTS: Dict[str, bool] = {
     "password": True,
 }
 
-_TRUE = {"yes", "true", "on", "1", "unbound", "host-bound"}
+# PubkeyAuthentication values that enable the method with a restriction.
+_RESTRICTED = {"unbound", "host-bound"}
+_TRUE = {"yes", "true", "on", "1", *_RESTRICTED}
 _FALSE = {"no", "false", "off", "0"}
 
 
@@ -274,6 +276,18 @@ class AuthPolicy:
     def own_switch(self, method: str) -> Optional[bool]:
         """This block's own line for *method*: ``None`` when it has none."""
         return self.switches.get(method)
+
+    def restriction(self, method: str) -> str:
+        """The authored value of an enabled switch that is more than "yes".
+
+        ``PubkeyAuthentication`` may be ``host-bound`` or ``unbound``: on,
+        with a restriction. The line is kept as written, so the row names
+        it. Empty for a plain value, and once the line is being rewritten.
+        """
+        if self.switches.get(method) is not True or self._loaded.get(method) is not True:
+            return ""
+        value = _split(self._raw.get(method, ""))[1].lower()
+        return value if value in _RESTRICTED else ""
 
     def disabled_here(self, method: str) -> bool:
         """Listed in the order, but this block's own line switches it off."""
@@ -460,6 +474,9 @@ class AuthPolicy:
         self._drop_passthrough(keywords)
         if value is None:
             self.switches.pop(method, None)
+            # The line is gone: enabling the method again writes a plain
+            # "yes", not the spelling (or restriction) the block had.
+            self._raw.pop(method, None)
         else:
             self.switches[method] = bool(value)
         return True
@@ -940,13 +957,21 @@ class AuthPolicyGroup:
         # method it disables keeps its place in the order.
         if own is None:
             row.set_subtitle(KEYWORD_OF[method])
-        elif self.profile:
+        elif not own:
             row.set_subtitle(
-                _("Enabled in this profile") if own else _("Disabled in this profile")
+                _("Disabled in this profile") if self.profile
+                else _("Disabled in this block")
             )
+        elif self.policy.restriction(method):
+            # {value} is the authored value, e.g. host-bound.
+            row.set_subtitle((
+                _("Enabled in this profile ({value})") if self.profile
+                else _("Enabled in this block ({value})")
+            ).format(value=self.policy.restriction(method)))
         else:
             row.set_subtitle(
-                _("Enabled in this block") if own else _("Disabled in this block")
+                _("Enabled in this profile") if self.profile
+                else _("Enabled in this block")
             )
 
     def _show_switch(self, row, method: str) -> None:
