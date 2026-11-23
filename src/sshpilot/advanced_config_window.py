@@ -75,10 +75,9 @@ _CSS = """
   border-radius: 12px 12px 0 0; border-bottom: 1px solid alpha(currentColor, 0.10); }
 .advcfg-header.movable:hover { background-color: alpha(currentColor, 0.11); }
 .advcfg-body { padding: 8px 12px 10px 12px; }
-.advcfg-options { margin-left: 18px; padding-left: 12px;
-  border-left: 2px solid alpha(currentColor, 0.14); }
-.advcfg-options:dir(rtl) { margin-left: 0; padding-left: 0; margin-right: 18px;
-  padding-right: 12px; border-left: none; border-right: 2px solid alpha(currentColor, 0.14); }
+.advcfg-options { margin-left: 28px; }
+.advcfg-options:dir(rtl) { margin-left: 0; margin-right: 28px; }
+.advcfg-footer { margin-top: 4px; }
 .advcfg-block.disabled { opacity: 0.6; }
 .advcfg-drop-before { box-shadow: 0 -3px 0 0 @accent_color; }
 .advcfg-drop-after { box-shadow: 0 3px 0 0 @accent_color; }
@@ -993,8 +992,9 @@ class AdvancedConfigWindow(Adw.Window):
         body.append(rows)
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        add = Gtk.Button(label=_("Add Option"))
-        add.add_css_class("flat")
+        footer.add_css_class("advcfg-footer")
+        add = Gtk.Button()
+        add.set_child(Adw.ButtonContent(icon_name="list-add-symbolic", label=_("Add Option")))
         add.connect("clicked", lambda *_a, u=block.uid: self.add_option(u))
         footer.append(add)
         presets = Gio.Menu()
@@ -1007,7 +1007,6 @@ class AdvancedConfigWindow(Adw.Window):
             group.add_action(action)
             presets.append(key, f"preset.preset{number_}")
         preset_button = Gtk.MenuButton(label=_("Common Option"), menu_model=presets)
-        preset_button.add_css_class("flat")
         preset_button.insert_action_group("preset", group)
         footer.append(preset_button)
         rows.append(footer)
