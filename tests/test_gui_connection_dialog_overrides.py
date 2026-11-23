@@ -393,8 +393,20 @@ def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gu
         not dialog._override_banner.get_revealed()
     )
 
-    # An order set here loses to the earlier list: it is not used.
-    dialog.auth_password_row._actions.activate_action("top", None)
+    # An order set here loses to the earlier list: it is not used. The rows
+    # can be moved once ssh -G has said what the host inherits. The daemon
+    # editor load starts that lookup (the contract suite covers it); this
+    # dialog is built from a bare Connection, so hand the section the
+    # answer the lookup ends in.
+    assert not dialog.auth_policy.policy.order_known()
+    assert not dialog.auth_password_row._check.get_sensitive()
+    dialog.auth_policy.policy.set_inherited({"preferredauthentications": "publickey"})
+    dialog.auth_policy.sync()
+    assert dialog.auth_password_row._check.get_sensitive()
+    # Password is not in the inherited order: checking it gives the host an
+    # order of its own (publickey,password), which the earlier one beats.
+    dialog.auth_password_row._check.set_active(True)
+    assert dialog.auth_policy.policy.order == ["publickey", "password"]
     assert dialog.auth_order_row._sshpilot_override_state == OVERRIDDEN
     assert dialog.auth_order_row._sshpilot_override_icon.get_visible()
     assert "publickey" in dialog.auth_order_row.get_tooltip_text()
