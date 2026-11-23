@@ -491,9 +491,8 @@ class HeadlessConnectionView:
         Mirrors the retired frontend ``ConnectionManager`` gates.
         """
         try:
-            # Password auth never preloads keys.
-            if self.auth_method == 1:
-                return
+            # Which methods ssh tries is the Host block's business; like
+            # resolve_native_auth, nothing here depends on the login order.
             if self.identity_agent_disabled:
                 return
             if _string(self.identity_agent_directive):

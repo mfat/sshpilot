@@ -36,7 +36,6 @@ headless; :class:`AuthPolicyGroup` draws it.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from gettext import gettext as _
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -45,6 +44,7 @@ from .core.connections.auth_preferences import (
     AUTH_POLICY_KEYWORDS,
     OPENSSH_DEFAULT_PREFERRED_AUTH,
     PREFERRED_AUTH_KEYWORD,
+    split_option,
 )
 
 # Methods in OpenSSH's default order, with the switch that turns each on/off.
@@ -87,13 +87,7 @@ def method_label(method: str) -> str:
     }.get(method, method)
 
 
-def _split(line: str) -> Tuple[str, str]:
-    parts = re.split(r"[\s=]+", line.strip(), maxsplit=1)
-    keyword = parts[0].lower() if parts and parts[0] else ""
-    value = parts[1].strip() if len(parts) == 2 else ""
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        value = value[1:-1]
-    return keyword, value
+_split = split_option
 
 
 def parse_switch(value: object) -> Optional[bool]:
@@ -524,11 +518,6 @@ def join_extra(other: str, policy_lines: Iterable[str]) -> str:
 _DRAG_PREFIX = "sshpilot-auth-method:"
 
 
-def build_auth_policy_group(on_changed: Callable[[], None], *, profile: bool = False):
-    """Create the section; imported lazily so the model stays GTK-free."""
-    return AuthPolicyGroup.create(on_changed, profile=profile)
-
-
 class AuthPolicyGroup:
     """Draws an :class:`AuthPolicy` as an ``Adw.PreferencesGroup``.
 
@@ -792,20 +781,33 @@ class AuthPolicyGroup:
         """Redraw every row from the model."""
         self._syncing = True
         try:
-            for row in self._shown_rows:
-                self.order_row.remove(row)
-            self._shown_rows = []
             policy = self.policy
             order_set = policy.order_is_set
-            for method in policy.rows():
-                self._show_row(self.rows[method], method)
             unknown = policy.unknown_tokens()
+            wanted = [self.rows[method] for method in policy.rows()]
             if unknown:
                 self.extra_row.set_title(", ".join(unknown))
                 self.extra_row.set_subtitle(
                     _("Not known to this dialog; kept as written.")
                 )
-                self._add_row(self.extra_row)
+                wanted.append(self.extra_row)
+            if wanted != self._shown_rows:
+                # The expander only appends, so a new order means taking
+                # the rows out and putting them back; the row being moved
+                # with the keyboard keeps the focus.
+                focused = next(
+                    (row for row in self._shown_rows if self._holds_focus(row)), None
+                )
+                for row in self._shown_rows:
+                    self.order_row.remove(row)
+                self._shown_rows = []
+                for row in wanted:
+                    self.order_row.add_row(row)
+                    self._shown_rows.append(row)
+                if focused is not None and focused in wanted:
+                    focused.grab_focus()
+            for method in policy.rows():
+                self._show_row(self.rows[method], method)
             for method in METHODS:
                 self._show_switch(self.rows[method], method)
             self.reset_button.set_sensitive(order_set and not self._order_locked)
@@ -832,14 +834,16 @@ class AuthPolicyGroup:
         finally:
             self._syncing = False
 
-    def _add_row(self, row) -> None:
-        self.order_row.add_row(row)
-        self._shown_rows.append(row)
+    @staticmethod
+    def _holds_focus(row) -> bool:
+        try:
+            return bool(row.has_focus() or row.get_focus_child() is not None)
+        except Exception:
+            return False
 
     def _show_row(self, row, method: str) -> None:
         # Never dimmed: dim reads as "off" in GNOME. Only checked rows move:
         # unchecked methods are not in the order.
-        self._add_row(row)
         actions = row._actions
         checked = self.policy.checked()
         movable = self._can_move(method)

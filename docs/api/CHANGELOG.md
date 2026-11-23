@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- Behaviour only, no schema change. A login-profile settings payload that
+  omits `identities_only` comes from a client where no field could be left
+  unset, so its form defaults are not settings: `forward_agent: false` and
+  `key_select_mode: 0` without keys read as not set, and a password-mode
+  profile (`auth_method: 1`) sets none of the key fields that mode hid.
+  Current clients' values are taken as sent. In a connection `config_patch`,
+  `auth_method` and `pubkey_auth_no` edit the Host block's authentication
+  lines only when they differ from what the block reads as (for a new
+  connection: from key login with public keys allowed), so sending back the
+  details that were read changes nothing.
 - `LoginProfileSettings.identities_only` (`bool | null`, `null` = not set)
   holds a login profile's IdentitiesOnly, as the connection editor edits it,
   and `LoginProfileField.IDENTITIES_ONLY` names it in assignment previews

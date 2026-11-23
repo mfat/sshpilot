@@ -57,16 +57,41 @@ def password_comes_first(methods: Iterable[str]) -> bool:
     return lowered.index("password") < lowered.index("publickey")
 
 
-def _keyword(line: str) -> str:
+def split_option(line: str) -> Tuple[str, str]:
+    """``(lower-case keyword, value)`` of one option line.
+
+    Both forms ssh_config(5) allows are read (``Keyword value`` and
+    ``Keyword=value``); a value's surrounding quotes are dropped. A blank
+    line or a comment gives ``("", "")``.
+    """
     stripped = line.strip()
     if not stripped or stripped.startswith("#"):
-        return ""
-    return re.split(r"[\s=]+", stripped, maxsplit=1)[0].lower()
+        return "", ""
+    parts = re.split(r"\s*=\s*|\s+", stripped, maxsplit=1)
+    value = parts[1].strip() if len(parts) == 2 else ""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    return parts[0].lower(), value
+
+
+def _keyword(line: str) -> str:
+    return split_option(line)[0]
 
 
 def _value(line: str) -> str:
-    parts = re.split(r"[\s=]+", line.strip(), maxsplit=1)
-    return parts[1].strip() if len(parts) == 2 else ""
+    return split_option(line)[1]
+
+
+def pubkey_disabled(extra: str) -> bool:
+    """True when an extra-options text sets ``PubkeyAuthentication no``.
+
+    As OpenSSH reads it: the first line of the keyword decides.
+    """
+    for line in (extra or "").splitlines():
+        keyword, value = split_option(line)
+        if keyword == PUBKEY_KEYWORD:
+            return value.lower() in ("no", "false")
+    return False
 
 
 def preferred_order(extra: str) -> List[str]:
@@ -119,13 +144,3 @@ def apply_legacy_auth_choice(
             lines = _without(lines, PUBKEY_KEYWORD)
             lines.append("PubkeyAuthentication no")
     return "\n".join(lines)
-
-
-def split_auth_policy(extra: str) -> Tuple[str, str]:
-    """``(policy_lines, other_lines)`` of an extra-options text."""
-    policy, other = [], []
-    for line in (extra or "").splitlines():
-        if not line.strip():
-            continue
-        (policy if _keyword(line) in AUTH_POLICY_KEYWORDS else other).append(line)
-    return "\n".join(policy), "\n".join(other)

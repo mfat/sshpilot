@@ -52,7 +52,6 @@ def _dialog(gtk):
     dialog._add_username_profile_button(dialog.username_row)
     dialog._build_login_profile_group()
     dialog.auth_group = Adw.PreferencesGroup()
-    dialog._register_login_profile_locked_widgets([dialog.auth_group])
     return dialog
 
 

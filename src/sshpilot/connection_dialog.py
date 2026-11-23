@@ -72,7 +72,6 @@ from .ssh_connection_validator import (  # SSHConnectionValidator also re-export
 from .path_list import PathList
 from .connection_dialog_login_profile import (
     ConnectionDialogLoginProfileMixin,
-    login_profile_locked_widgets,
 )
 from .connection_dialog_validation import ConnectionDialogValidationMixin
 from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
@@ -1798,13 +1797,6 @@ class ConnectionDialog(
         authentication_page = _page_box()
         for group in self.build_authentication_groups():
             authentication_page.append(group)
-        # A linked login profile locks these (agent forwarding lives on
-        # Advanced; the Username row is greyed out via _sync_username_row).
-        self._register_login_profile_locked_widgets(
-            login_profile_locked_widgets(self, self._auth_groups_for_login_profile)
-            + [getattr(self, 'forward_agent_row', None),
-               getattr(self, 'forward_agent_value_row', None)]
-        )
 
         forwarding_page = _page_box()
         for group in self.build_port_forwarding_groups():
@@ -3517,7 +3509,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.idonly_group,
             hw_group,
         ]
-        self._auth_groups_for_login_profile = auth_groups
         return [self._build_login_profile_group(), *auth_groups]
 
     def build_connection_groups(self):

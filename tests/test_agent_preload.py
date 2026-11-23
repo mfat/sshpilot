@@ -172,11 +172,13 @@ def test_preload_skips_all_unstored_keys():
     assert lookup.prepared == []
 
 
-def test_preload_skipped_for_password_auth():
+def test_preload_does_not_depend_on_the_login_order():
+    """A password-first host is launched like any other: its key, with a
+    stored passphrase, is preloaded as resolve_native_auth expects."""
     view = _make_view(auth_method=1, resolved_identity_files=['/home/u/.ssh/k'])
     lookup = CredentialLookup(passphrases={'/home/u/.ssh/k': 'secret'})
     view._preload_keys_into_agent(_Cfg(), credential_lookup=lookup)
-    assert lookup.prepared == []
+    assert [entry[0] for entry in lookup.prepared] == ['/home/u/.ssh/k']
 
 
 def test_preload_skipped_when_identity_agent_disabled():

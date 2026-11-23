@@ -30,6 +30,8 @@ from ..connections.auth_preferences import (
     apply_legacy_auth_choice,
     password_comes_first,
     preferred_order,
+    pubkey_disabled,
+    split_option,
 )
 
 # Connection metadata key holding the profile link. Its value is one of:
@@ -46,6 +48,21 @@ LINK_INHERIT = "inherit"
 AUTH_KEY = 0
 AUTH_PASSWORD = 1
 _UNSET_AWARE = "unset_aware"
+# Stored beside ``forward_agent`` (a plain boolean, for versions that read
+# nothing else): True when the profile sets "don't forward", False when it
+# leaves forwarding unset.
+_FORWARD_AGENT_NO = "forward_agent_explicit_no"
+
+# What the Key/Password choice hid, and never wrote, in password mode.
+LEGACY_PASSWORD_MODE_UNSET = {
+    "key_select_mode": None,
+    "identity_files": (),
+    "certificate_files": (),
+    "identity_agent": "",
+    "add_keys_to_agent": "",
+    "pkcs11_provider": "",
+    "security_key_provider": "",
+}
 
 _ID_PREFIX = "lp-"
 _ID_RE = re.compile(r"^lp-[0-9a-f]{16}$")
@@ -180,10 +197,7 @@ def _drop_keyword(extra: str, keyword: str) -> str:
 
 
 def _extra_keyword(line: str) -> str:
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#"):
-        return ""
-    return re.split(r"[\s=]+", stripped, maxsplit=1)[0].lower()
+    return split_option(line)[0]
 
 
 def _clean_extra(value: Any) -> str:
@@ -207,11 +221,31 @@ def _clean_extra(value: Any) -> str:
     return "\n".join(line for line in lines if line and not line.startswith("#"))
 
 
-def legacy_key_select_mode(profile: "LoginProfile") -> Optional[int]:
+def legacy_key_select_mode(profile: "LoginProfile") -> int:
     """The key selection mode a version before ``identities_only`` reads."""
     if profile.identities_only is True:
         return 1
-    return 2 if profile.identity_files else None
+    return 2 if profile.identity_files else 0
+
+
+def without_legacy_defaults(values: Mapping[str, Any]) -> Dict[str, Any]:
+    """Profile values from before fields could be left unset, read as meant.
+
+    Those versions had no "not set": Automatic key selection and "don't
+    forward the agent" were the form's defaults, and password mode hid the
+    key settings without clearing them (and never wrote them to a host). All
+    of these read as not set, so a linked connection keeps its own.
+    Automatic with a stale key list stays Automatic, which drops the list
+    (those keys were never written either).
+    """
+    out = dict(values)
+    if out.get("auth_method") == AUTH_PASSWORD:
+        out.update(LEGACY_PASSWORD_MODE_UNSET)
+    elif out.get("key_select_mode") == 0 and not out.get("identity_files"):
+        out["key_select_mode"] = None
+    if out.get("forward_agent") is False:
+        out["forward_agent"] = None
+    return out
 
 
 @dataclass(frozen=True)
@@ -339,7 +373,10 @@ class LoginProfile:
             "pkcs11_provider": self.pkcs11_provider,
             "security_key_provider": self.security_key_provider,
             "pubkey_auth_no": self.pubkey_auth_no,
-            "forward_agent": self.forward_agent,
+            # A boolean, for versions that accept nothing else; the flag
+            # after it tells "don't forward" from "not set".
+            "forward_agent": bool(self.forward_agent),
+            _FORWARD_AGENT_NO: self.forward_agent is False,
             "forward_agent_target": self.forward_agent_target,
             "proxy_command": self.proxy_command,
             "extra_ssh_config": self.extra_ssh_config,
@@ -364,14 +401,10 @@ class LoginProfile:
             if key in values and isinstance(values[key], list):
                 values[key] = tuple(values[key])
         if not data.get(_UNSET_AWARE):
-            # Stored before fields could be left unset: Automatic key
-            # selection and "don't forward the agent" were only the form's
-            # defaults, so they read as not set (the connection keeps its own).
-            # Automatic with a stale key list stayed Automatic (the keys
-            # were never written); keep that explicit.
-            if values.get("key_select_mode") == 0 and not values.get("identity_files"):
-                values["key_select_mode"] = None
-            if values.get("forward_agent") is False:
+            values = without_legacy_defaults(values)
+        elif _FORWARD_AGENT_NO in data and values.get("forward_agent") is False:
+            # (Without the flag the stored value is already None/True/False.)
+            if not data[_FORWARD_AGENT_NO]:
                 values["forward_agent"] = None
         # Profiles saved while ProxyCommand lived in extra text keep working:
         # the first command becomes the dedicated field.
@@ -393,10 +426,12 @@ class LoginProfile:
     def settings(self) -> Dict[str, Any]:
         """Editable, non-identity fields (what an update request may change)."""
         data = self.to_dict()
-        for key in ("id", "revision", "has_password", "has_sudo_password", _UNSET_AWARE):
+        for key in ("id", "revision", "has_password", "has_sudo_password",
+                    _UNSET_AWARE, _FORWARD_AGENT_NO):
             data.pop(key, None)
         # Legacy input only (see the field); never read back as a setting.
         data["key_select_mode"] = None
+        data["forward_agent"] = self.forward_agent
         return data
 
 
@@ -475,11 +510,7 @@ def apply_profile_to_data(data: Mapping[str, Any], profile: LoginProfile) -> Dic
     )
     # The editor's older Key/Password view of the result.
     order = preferred_order(out["extra_ssh_config"])
-    pubkey_no = any(
-        _extra_keyword(line) == "pubkeyauthentication"
-        and line.split(None, 1)[-1].strip().lower() == "no"
-        for line in split_config_lines(out["extra_ssh_config"])
-    )
+    pubkey_no = pubkey_disabled(out["extra_ssh_config"])
     out["auth_method"] = AUTH_PASSWORD if (pubkey_no or password_comes_first(order)) else AUTH_KEY
     out["pubkey_auth_no"] = pubkey_no
     out["preferred_authentications"] = order

@@ -414,19 +414,31 @@ class ConnectionDialogOverridesMixin:
         """
         parent = getattr(self, "parent_window", None)
         client = getattr(parent, "client", None)
+        fallback_hook = getattr(self, "_auth_policy_set_fallback", None)
+
+        def builtin_fallback() -> None:
+            # Nothing can say what the host inherits (yet): the
+            # authentication section starts from OpenSSH's built-in order,
+            # so it stays editable. A later answer replaces it.
+            if callable(fallback_hook):
+                fallback_hook({})
+
         if not (
             callable(getattr(parent, "_daemon_ready", None))
             and parent._daemon_ready()
         ):
+            builtin_fallback()
             return
         connection = getattr(self, "connection", None)
         editing = connection is not None and getattr(self, "is_editing", False)
         alias = ""
         if editing:
             if not callable(getattr(client, "get_effective_config", None)):
+                builtin_fallback()
                 return
         else:
             if not callable(getattr(client, "get_earlier_directives", None)):
+                builtin_fallback()
                 return
             self._watch_alias_for_earlier_directives()
             row = getattr(self, "nickname_row", None)
@@ -435,6 +447,8 @@ class ConnectionDialogOverridesMixin:
             getattr(self, "_earlier_fetch_serial", 0) + 1
         )
         if not editing and not alias:
+            # No alias yet, so no block can be matched.
+            builtin_fallback()
             self._set_earlier_directives({})
             return
 
@@ -445,9 +459,8 @@ class ConnectionDialogOverridesMixin:
         def apply(earlier, inherited_auth):
             if serial != getattr(self, "_earlier_fetch_serial", 0):
                 return False
-            hook = getattr(self, "_auth_policy_set_fallback", None)
-            if callable(hook):
-                hook(inherited_auth)
+            if callable(fallback_hook):
+                fallback_hook(inherited_auth if inherited_auth is not None else {})
             if earlier is not None:
                 self._set_earlier_directives(earlier)
             return False

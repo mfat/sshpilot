@@ -94,7 +94,7 @@ def test_switching_a_password_first_host_to_key_login_keeps_its_key(tmp_path):
 
 
 def test_switching_a_key_host_to_password_login_keeps_its_key(tmp_path):
-    from sshpilot.ssh_config_formatter import PASSWORD_MODE_PREFERRED_AUTH
+    from sshpilot.core.connections.auth_preferences import PASSWORD_MODE_PREFERRED_AUTH
     from tests.test_auth_method_update import _update
 
     lines, data = _update(

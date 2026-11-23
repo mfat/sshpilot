@@ -15,10 +15,6 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from .core.connections.auth_preferences import (  # noqa: F401 - re-exported
-    PASSWORD_MODE_PREFERRED_AUTH,
-)
-
 from .ssh_config_document import (
     HostBlock,
     _split_config_option,

@@ -73,6 +73,13 @@ _SETTINGS_FIELDS = (
     frozenset(LoginProfileSettings.__dataclass_fields__)  # type: ignore[attr-defined]
     - _OPTIONAL_SETTINGS_FIELDS
 )
+# Key settings the older Key/Password choice hid in password mode.
+_KEY_SOURCE_FIELDS = (
+    "identity_agent",
+    "add_keys_to_agent",
+    "pkcs11_provider",
+    "security_key_provider",
+)
 
 
 def login_profile_settings_to_wire(settings: LoginProfileSettings) -> Dict[str, Any]:
@@ -117,20 +124,39 @@ def login_profile_settings_from_wire(value: Any) -> LoginProfileSettings:
             "extra_ssh_config",
         )
     }
+    auth_method = _integer(data["auth_method"], "auth_method")
+    key_select_mode = (
+        None if data["key_select_mode"] is None
+        else _integer(data["key_select_mode"], "key_select_mode")
+    )
+    identity_files = _strings(data["identity_files"], "identity_files")
+    certificate_files = _strings(data["certificate_files"], "certificate_files")
+    forward_agent = (
+        None if data["forward_agent"] is None
+        else _boolean(data["forward_agent"], "forward_agent")
+    )
+    if "identities_only" not in data:
+        # A peer from before fields could be left unset. It has to send
+        # every field, so its form defaults say nothing: Automatic key
+        # selection and "don't forward the agent" read as not set, and so
+        # do the key settings its password mode hid and never applied.
+        if auth_method == 1:
+            key_select_mode = None
+            identity_files = certificate_files = ()
+            for name in _KEY_SOURCE_FIELDS:
+                text[name] = ""
+        elif key_select_mode == 0 and not identity_files:
+            key_select_mode = None
+        if forward_agent is False:
+            forward_agent = None
     return LoginProfileSettings(
         name=_text(data["name"], "name"),
-        auth_method=_integer(data["auth_method"], "auth_method"),
-        key_select_mode=(
-            None if data["key_select_mode"] is None
-            else _integer(data["key_select_mode"], "key_select_mode")
-        ),
-        identity_files=_strings(data["identity_files"], "identity_files"),
-        certificate_files=_strings(data["certificate_files"], "certificate_files"),
+        auth_method=auth_method,
+        key_select_mode=key_select_mode,
+        identity_files=identity_files,
+        certificate_files=certificate_files,
         pubkey_auth_no=_boolean(data["pubkey_auth_no"], "pubkey_auth_no"),
-        forward_agent=(
-            None if data["forward_agent"] is None
-            else _boolean(data["forward_agent"], "forward_agent")
-        ),
+        forward_agent=forward_agent,
         identities_only=(
             None if data.get("identities_only") is None
             else _boolean(data["identities_only"], "identities_only")

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from gettext import gettext as _
-from typing import Any, List, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from gi.repository import Adw, Gtk
 
@@ -30,7 +30,6 @@ class ConnectionDialogLoginProfileMixin:
     _login_profile_inherited = None
     _login_profile_controller_obj = None
     _login_profile_loading = False
-    _login_profile_locked_widgets: Sequence[Any] = ()
     _username_profile_button = None
     _username_profile_list = None
     # The user's own username, kept while the row shows a profile's.
@@ -151,9 +150,6 @@ class ConnectionDialogLoginProfileMixin:
         row.set_editable(False)
         row.set_title(_("Username (using a login profile)"))
         self._set_username_row_greyed(row, True)
-
-    def _register_login_profile_locked_widgets(self, widgets: Sequence[Any]) -> None:
-        self._login_profile_locked_widgets = tuple(w for w in widgets if w is not None)
 
     # -- loading ---------------------------------------------------------------
 
@@ -366,12 +362,16 @@ class ConnectionDialogLoginProfileMixin:
             password_row.set_tooltip_text(note if has_password else None)
         section = getattr(self, "auth_policy", None)
         if section is not None:
-            from .connection_dialog_auth import METHOD_OF_KEYWORD, split_policy_lines
+            from .connection_dialog_auth import (
+                METHOD_OF_KEYWORD,
+                split_option,
+                split_policy_lines,
+            )
 
             lines, _other = split_policy_lines(
                 profile.settings.extra_ssh_config if profile else ""
             )
-            keywords = {line.split(None, 1)[0].lower() for line in lines if line.strip()}
+            keywords = {split_option(line)[0] for line in lines}
             section.set_profile_locks(
                 order="preferredauthentications" in keywords,
                 methods={METHOD_OF_KEYWORD[k] for k in keywords if k in METHOD_OF_KEYWORD},
@@ -432,8 +432,3 @@ PROFILE_FIELD_ROWS = {
     "proxy_command": ("proxy_command_row",),
 }
 
-
-def login_profile_locked_widgets(dialog: Any, auth_groups: List[Any]) -> List[Any]:
-    """Kept for callers that register widgets; locking is per field now
-    (``PROFILE_FIELD_ROWS``), so nothing is locked wholesale."""
-    return []

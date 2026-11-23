@@ -2094,6 +2094,7 @@ class ConnectionApplicationService:
         return data
 
     def _apply_config_patch(self, data: Dict[str, Any], patch: Dict[str, Any]) -> None:
+        legacy_auth_before = (data.get("auth_method"), data.get("pubkey_auth_no"))
         for key, value in patch.items():
             if key in ("proxy_jump", "identity_files", "certificate_files"):
                 if isinstance(value, str):
@@ -2121,26 +2122,44 @@ class ConnectionApplicationService:
                     ) from error
             else:
                 data[key] = value
-        self._apply_legacy_auth_choice(data, patch)
+        self._apply_legacy_auth_choice(data, patch, legacy_auth_before)
 
     @staticmethod
-    def _apply_legacy_auth_choice(data: Dict[str, Any], patch: Mapping[str, Any]) -> None:
+    def _apply_legacy_auth_choice(
+        data: Dict[str, Any],
+        patch: Mapping[str, Any],
+        before: Tuple[Any, Any] = (None, None),
+    ) -> None:
         """Write the editor's Key/Password choice as Host-block lines.
 
         The login order and per-method switches are ordinary lines in
         ``extra_ssh_config``; the older choice only edits them, and only when
-        the patch carries it (a client that changed it).
+        the patch changes it. *before* is ``(auth_method, pubkey_auth_no)``
+        as read from the Host block (nothing for a new connection, which
+        starts from key login with public keys allowed). A client that sends
+        back what it read, or creates a connection with those defaults,
+        leaves the authored lines alone.
         """
-        if "auth_method" not in patch and "pubkey_auth_no" not in patch:
+
+        def method(value: Any) -> int:
+            try:
+                return 1 if int(value or 0) == 1 else 0
+            except (TypeError, ValueError):
+                return 0
+
+        auth_method = pubkey_auth_no = None
+        if "auth_method" in patch and method(patch["auth_method"]) != method(before[0]):
+            auth_method = method(patch["auth_method"])
+        if "pubkey_auth_no" in patch and bool(patch["pubkey_auth_no"]) != bool(before[1]):
+            pubkey_auth_no = bool(patch["pubkey_auth_no"])
+        if auth_method is None and pubkey_auth_no is None:
             return
         from .connections.auth_preferences import apply_legacy_auth_choice
 
         data["extra_ssh_config"] = apply_legacy_auth_choice(
             str(data.get("extra_ssh_config") or ""),
-            auth_method=patch.get("auth_method") if "auth_method" in patch else None,
-            pubkey_auth_no=(
-                bool(patch["pubkey_auth_no"]) if "pubkey_auth_no" in patch else None
-            ),
+            auth_method=auth_method,
+            pubkey_auth_no=pubkey_auth_no,
         )
 
     def duplicate_connection(
