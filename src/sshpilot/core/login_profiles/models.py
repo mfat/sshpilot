@@ -30,6 +30,7 @@ from ..connections.auth_preferences import (
     apply_legacy_auth_choice,
     password_comes_first,
     preferred_order,
+    canonical_keyword,
     pubkey_disabled,
     split_option,
 )
@@ -445,13 +446,16 @@ EDITABLE_FIELDS = frozenset(
 # ---------------------------------------------------------------------------
 
 def _merge_extra(connection_extra: str, profile_extra: str) -> str:
-    """Profile extra directives replace same-keyword lines of the connection."""
+    """Profile extra directives replace the connection's lines of the same
+    setting. Spellings OpenSSH treats as one setting count as one: a kept
+    ``ChallengeResponseAuthentication`` line would come first and beat the
+    profile's ``KbdInteractiveAuthentication``."""
     profile_lines = [line for line in split_config_lines(profile_extra or "") if line.strip()]
-    owned = set(extra_keywords(profile_extra))
+    owned = {canonical_keyword(key) for key in extra_keywords(profile_extra)}
     kept = [
         line
         for line in split_config_lines(connection_extra or "")
-        if line.strip() and _extra_keyword(line) not in owned
+        if line.strip() and canonical_keyword(_extra_keyword(line)) not in owned
     ]
     return "\n".join(kept + profile_lines)
 

@@ -44,7 +44,9 @@ from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 from .core.connections.auth_preferences import (
     AUTH_POLICY_KEYWORDS,
     OPENSSH_DEFAULT_PREFERRED_AUTH,
+    AUTH_KEYWORD_ALIASES,
     PREFERRED_AUTH_KEYWORD,
+    canonical_keyword,
     split_option,
 )
 
@@ -62,7 +64,20 @@ KEYWORD_OF: Dict[str, str] = dict(METHOD_KEYWORDS)
 METHOD_OF_KEYWORD: Dict[str, str] = {
     keyword.lower(): method for method, keyword in METHOD_KEYWORDS
 }
-METHOD_OF_KEYWORD["challengeresponseauthentication"] = "keyboard-interactive"
+for _alias, _current in AUTH_KEYWORD_ALIASES.items():
+    METHOD_OF_KEYWORD[_alias] = METHOD_OF_KEYWORD[_current]
+
+
+def first_of_setting(source: Mapping[str, str], keyword: str) -> Optional[str]:
+    """The value *source* holds for *keyword*'s setting, under any spelling.
+
+    *source* lists values in the order OpenSSH obtains them, so when two
+    spellings of one setting are present the first is the one in force.
+    """
+    for name, value in source.items():
+        if canonical_keyword(name) == keyword:
+            return value
+    return None
 DEFAULT_ORDER: Tuple[str, ...] = tuple(OPENSSH_DEFAULT_PREFERRED_AUTH.split(","))
 
 # OpenSSH's built-in values, used when no line sets a switch.
@@ -203,10 +218,7 @@ class AuthPolicy:
     def _fallback_switch(self, method: str) -> Optional[bool]:
         if not self.fallback_known:
             return None
-        keyword = KEYWORD_OF[method].lower()
-        value = self.fallback.get(keyword)
-        if value is None and method == "keyboard-interactive":
-            value = self.fallback.get("challengeresponseauthentication")
+        value = first_of_setting(self.fallback, KEYWORD_OF[method].lower())
         parsed = parse_switch(value) if value is not None else None
         return OPENSSH_SWITCH_DEFAULTS[method] if parsed is None else parsed
 
@@ -324,12 +336,9 @@ class AuthPolicy:
     def _decided_elsewhere(self, keyword: str) -> Optional[str]:
         """A forced (command line) or earlier-block value, forced first."""
         for source in (self.forced, self.earlier):
-            if keyword in source:
-                return source[keyword]
-            if keyword == "kbdinteractiveauthentication" and (
-                "challengeresponseauthentication" in source
-            ):
-                return source["challengeresponseauthentication"]
+            value = first_of_setting(source, keyword)
+            if value is not None:
+                return value
         return None
 
     def effective_order(self) -> Optional[List[str]]:

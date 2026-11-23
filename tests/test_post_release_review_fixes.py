@@ -289,3 +289,128 @@ def test_frontend_profile_fields_match_the_model():
         settings = LoginProfileSettings(**sample)
         profile = LoginProfile(id=PROFILE_ID, **sample)
         assert controller.settings_owned_fields(settings) == profile_owned_fields(profile)
+
+
+# -- spellings OpenSSH reads as one setting -----------------------------------
+
+def _ssh_g(config, host="demo"):
+    import shutil
+    import subprocess
+
+    if shutil.which("ssh") is None:
+        pytest.skip("needs the OpenSSH client")
+    out = subprocess.run(
+        ["ssh", "-G", "-F", str(config), host], capture_output=True, text=True, check=True,
+    ).stdout
+    return dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
+
+
+@pytest.mark.parametrize("alias, current", [
+    ("ChallengeResponseAuthentication", "kbdinteractiveauthentication"),
+    ("TISAuthentication", "kbdinteractiveauthentication"),
+    ("SKeyAuthentication", "kbdinteractiveauthentication"),
+    ("DSAAuthentication", "pubkeyauthentication"),
+])
+def test_the_alias_table_is_openssh_s(tmp_path, alias, current):
+    from sshpilot.core.connections.auth_preferences import canonical_keyword
+
+    assert canonical_keyword(alias) == current
+    config = tmp_path / "config"
+    config.write_text(f"Host demo\n    {alias} no\n")
+    assert _ssh_g(config)[current] in ("no", "false")
+
+
+def test_profile_setting_replaces_a_hosts_older_spelling(tmp_path):
+    profile = LoginProfile(
+        id=PROFILE_ID, name="p", extra_ssh_config="KbdInteractiveAuthentication yes"
+    )
+    out = apply_profile_to_data(
+        {"extra_ssh_config": "ChallengeResponseAuthentication no\nCompression yes"},
+        profile,
+    )
+    assert out["extra_ssh_config"].splitlines() == [
+        "Compression yes", "KbdInteractiveAuthentication yes",
+    ]
+    config = tmp_path / "config"
+    config.write_text(
+        "Host demo\n" + "".join(f"    {l}\n" for l in out["extra_ssh_config"].splitlines())
+    )
+    assert _ssh_g(config)["kbdinteractiveauthentication"] == "yes"
+
+
+def test_profile_using_the_older_spelling_replaces_the_current_one():
+    profile = LoginProfile(
+        id=PROFILE_ID, name="p", extra_ssh_config="ChallengeResponseAuthentication no"
+    )
+    out = apply_profile_to_data(
+        {"extra_ssh_config": "KbdInteractiveAuthentication yes"}, profile
+    )
+    assert out["extra_ssh_config"] == "ChallengeResponseAuthentication no"
+
+
+_TWO_SPELLINGS = (
+    "Host *\n"
+    "    ChallengeResponseAuthentication no\n"
+    "    KbdInteractiveAuthentication yes\n"
+)
+
+
+def test_inherited_lookup_returns_the_first_spelling_only(tmp_path):
+    from sshpilot.core.ssh_config_effective import inherited_directives
+
+    config = tmp_path / "config"
+    config.write_text(_TWO_SPELLINGS)
+    assert _ssh_g(config)["kbdinteractiveauthentication"] == "no"
+    from sshpilot.core.connections.auth_preferences import AUTH_POLICY_KEYWORDS
+
+    found = inherited_directives("demo", str(config), AUTH_POLICY_KEYWORDS)
+    assert [(item["key"], item["value"]) for item in found.values()] == [
+        ("challengeresponseauthentication", "no"),
+    ]
+
+
+def test_earlier_lookup_sees_an_alias_above_the_hosts_own_line(tmp_path):
+    from sshpilot.core.ssh_config_effective import earlier_directives
+
+    config = tmp_path / "config"
+    config.write_text(
+        _TWO_SPELLINGS + "\nHost demo\n    KbdInteractiveAuthentication yes\n"
+    )
+    assert _ssh_g(config)["kbdinteractiveauthentication"] == "no"
+    found = earlier_directives("demo", str(config))
+    assert [(item["key"], item["value"]) for item in found] == [
+        ("challengeresponseauthentication", "no"),
+    ]
+
+
+def test_preview_follows_the_first_spelling_in_force():
+    from sshpilot.connection_dialog_auth import AuthPolicy
+
+    for attr in ("earlier", "forced"):
+        policy = AuthPolicy.from_lines([])
+        policy.set_fallback({})
+        setattr(policy, attr, {
+            "challengeresponseauthentication": "no",
+            "kbdinteractiveauthentication": "yes",
+        })
+        assert "keyboard-interactive" not in policy.will_try(), attr
+    policy = AuthPolicy.from_lines([])
+    policy.set_fallback({"challengeresponseauthentication": "no"})
+    assert "keyboard-interactive" not in policy.will_try()
+    # Inherit on a saved line falls back to the same answer.
+    policy = AuthPolicy.from_lines(["KbdInteractiveAuthentication yes"])
+    policy.set_inherited({"kbdinteractiveauthentication": "yes"})
+    policy.set_fallback({"tisauthentication": "no"})
+    assert policy.set_switch("keyboard-interactive", None)
+    assert "keyboard-interactive" not in policy.will_try()
+
+
+def test_every_alias_is_the_methods_own_setting_in_the_editor():
+    from sshpilot.connection_dialog_auth import AuthPolicy, split_policy_lines
+
+    lines, other = split_policy_lines("DSAAuthentication no\nCompression yes")
+    assert lines == ["DSAAuthentication no"] and other == "Compression yes"
+    policy = AuthPolicy.from_lines(lines + ["PubkeyAuthentication yes"])
+    assert policy.own_switch("publickey") is False
+    assert policy.set_switch("publickey", None)
+    assert policy.to_lines() == []

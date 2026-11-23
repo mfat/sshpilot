@@ -892,6 +892,8 @@ def earlier_directives(
     pending: Dict[str, Dict[str, object]] = {}
     own_keys: Set[str] = set()
 
+    from .connections.auth_preferences import canonical_keyword
+
     def effective_value(key: str) -> str:
         value = (effective or {}).get(key)
         if isinstance(value, list):
@@ -961,25 +963,30 @@ def earlier_directives(
                 continue
             if own and _without_own:
                 continue  # as if the host's own blocks set nothing
+            # Spellings OpenSSH reads as one setting are one setting here:
+            # the first line wins whatever it is called. The entry keeps the
+            # keyword as written.
+            setting = canonical_keyword(keyword)
             if own:
-                if keyword in seen_keys:
+                if setting in seen_keys:
                     # Something before this line set it first. When that was
                     # a line after the first own block, it beats this one.
-                    if keyword in pending and keyword not in own_keys:
-                        found[keyword] = pending.pop(keyword)
+                    if setting in pending and setting not in own_keys:
+                        found[setting] = pending.pop(setting)
                     continue
-                seen_keys.add(keyword)
-                own_keys.add(keyword)
+                seen_keys.add(setting)
+                own_keys.add(setting)
                 continue
-            if keyword in seen_keys:
+            if setting in seen_keys:
                 continue
             if active is None:
-                # Undecided Match block: believed only on OpenSSH's evidence.
-                if effective_value(keyword).lower() != value.lower():
+                # Undecided Match block: believed only on OpenSSH's evidence
+                # (ssh -G prints the current spelling).
+                if effective_value(setting).lower() != value.lower():
                     continue
                 if _undecided is not None:
                     _undecided.add(keyword)
-            seen_keys.add(keyword)
+            seen_keys.add(setting)
             entry = {
                 "key": keyword,
                 "value": value,
@@ -988,9 +995,9 @@ def earlier_directives(
                 "line": number,
             }
             if reached_own and not _without_own:
-                pending[keyword] = entry
+                pending[setting] = entry
             else:
-                found[keyword] = entry
+                found[setting] = entry
 
     walk(root, True, "", False, 1, [])
     if not reached_own and not new_host and not _whole:
@@ -1197,6 +1204,8 @@ def inherited_directives(
     """
     from ..platform.paths import openssh_user_dir
 
+    from .connections.auth_preferences import canonical_keyword
+
     wanted = {str(k).lower() for k in keys}
     files = [launch_file] if launch_file else [
         str(openssh_user_dir() / "config"), openssh_system_config(),
@@ -1209,7 +1218,8 @@ def inherited_directives(
         ):
             key = str(item["key"])
             if key in wanted:
-                found.setdefault(key, item)
+                # One answer per setting, whatever each file calls it.
+                found.setdefault(canonical_keyword(key), item)
     return found
 
 

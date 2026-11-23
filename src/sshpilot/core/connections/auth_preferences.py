@@ -31,15 +31,31 @@ PASSWORD_MODE_PREFERRED_AUTH = (
 # The keyword of each login-policy line, lower case.
 PREFERRED_AUTH_KEYWORD = "preferredauthentications"
 PUBKEY_KEYWORD = "pubkeyauthentication"
+KBDINTERACTIVE_KEYWORD = "kbdinteractiveauthentication"
+# Other names OpenSSH accepts for the same setting (readconf.c). A block may
+# use any of them, and the first line of the setting wins whatever its
+# spelling, so they are one setting everywhere a keyword is compared.
+AUTH_KEYWORD_ALIASES = {
+    "challengeresponseauthentication": KBDINTERACTIVE_KEYWORD,
+    "skeyauthentication": KBDINTERACTIVE_KEYWORD,
+    "tisauthentication": KBDINTERACTIVE_KEYWORD,
+    "dsaauthentication": PUBKEY_KEYWORD,
+}
 AUTH_POLICY_KEYWORDS = frozenset({
     PREFERRED_AUTH_KEYWORD,
     PUBKEY_KEYWORD,
     "passwordauthentication",
-    "kbdinteractiveauthentication",
-    "challengeresponseauthentication",  # older name of the line above
+    KBDINTERACTIVE_KEYWORD,
     "gssapiauthentication",
     "hostbasedauthentication",
+    *AUTH_KEYWORD_ALIASES,
 })
+
+
+def canonical_keyword(keyword: str) -> str:
+    """The setting a keyword names: an alias gives its current spelling."""
+    lowered = str(keyword).strip().lower()
+    return AUTH_KEYWORD_ALIASES.get(lowered, lowered)
 
 
 def password_comes_first(methods: Iterable[str]) -> bool:
@@ -89,7 +105,7 @@ def pubkey_disabled(extra: str) -> bool:
     """
     for line in (extra or "").splitlines():
         keyword, value = split_option(line)
-        if keyword == PUBKEY_KEYWORD:
+        if canonical_keyword(keyword) == PUBKEY_KEYWORD:
             return value.lower() in ("no", "false")
     return False
 
@@ -106,7 +122,7 @@ def _without(lines: List[str], keyword: str, value: Optional[str] = None) -> Lis
     return [
         line for line in lines
         if not (
-            _keyword(line) == keyword
+            canonical_keyword(_keyword(line)) == keyword
             and (value is None or _value(line).lower() == value)
         )
     ]
