@@ -398,8 +398,6 @@ def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gu
     # editor load starts that lookup (the contract suite covers it); this
     # dialog is built from a bare Connection, so hand the section the
     # answer the lookup ends in.
-    assert not dialog.auth_policy.policy.order_known()
-    assert not dialog.auth_password_row._check.get_sensitive()
     dialog.auth_policy.policy.set_inherited({"preferredauthentications": "publickey"})
     dialog.auth_policy.sync()
     assert dialog.auth_password_row._check.get_sensitive()

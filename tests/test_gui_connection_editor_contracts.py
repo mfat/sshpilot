@@ -142,6 +142,29 @@ def _auth_shows(attr, value):
     return check
 
 
+def _auth_choose(attr, choice):
+    """Pick Inherit / Enable / Disable in a method row's menu."""
+    def act(dialog):
+        from gi.repository import GLib
+
+        getattr(dialog, attr)._actions.activate_action(
+            "switch", GLib.Variant("s", choice)
+        )
+    return act
+
+
+def _auth_setting_is(attr, method, value):
+    """The row's menu and the model hold *value* as this host's own line."""
+    def check(dialog):
+        from sshpilot.connection_dialog_auth import switch_choice
+
+        row = getattr(dialog, attr)
+        state = row._actions.lookup_action("switch").get_state().get_string()
+        return (dialog.auth_policy.policy.own_switch(method) is value
+                and state == switch_choice(value))
+    return check
+
+
 def _auth_order_is(order):
     return lambda d: d.auth_policy.policy.order == list(order)
 
@@ -270,6 +293,30 @@ CONTRACTS = [
             ("keyboard-interactive", "auth_kbdinteractive_row", "keyboard-interactive"),
             ("kerberos", "auth_gssapi_row", "gssapi-with-mic"),
             ("host-based", "auth_hostbased_row", "hostbased"),
+        )
+    ],
+    # Authentication: a method's own setting writes that method's line and
+    # nothing else (no order line); Inherit takes the line out again.
+    *[
+        C(f"{label} {word} for this host", (attr,),
+          _auth_choose(attr, choice), _auth_setting_is(attr, method, value),
+          (f"{keyword} {choice}",),
+          clear=_auth_choose(attr, "inherit"),
+          cleared=_all(_auth_setting_is(attr, method, None), _auth_order_inherited),
+          ssh_g={keyword.lower(): resolved})
+        for label, attr, method, keyword in (
+            ("keys", "auth_publickey_row", "publickey", "PubkeyAuthentication"),
+            ("password", "auth_password_row", "password", "PasswordAuthentication"),
+            ("keyboard-interactive", "auth_kbdinteractive_row",
+             "keyboard-interactive", "KbdInteractiveAuthentication"),
+            ("kerberos", "auth_gssapi_row", "gssapi-with-mic", "GSSAPIAuthentication"),
+            ("host-based", "auth_hostbased_row", "hostbased",
+             "HostbasedAuthentication"),
+        )
+        for word, choice, value, resolved in (
+            # ssh -G prints PubkeyAuthentication as true/false.
+            ("enabled", "yes", True, "true" if method == "publickey" else "yes"),
+            ("disabled", "no", False, "false" if method == "publickey" else "no"),
         )
     ],
     # Keys: no mode. The identity file list, IdentitiesOnly and the
