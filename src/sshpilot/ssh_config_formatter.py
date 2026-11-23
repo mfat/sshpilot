@@ -190,13 +190,14 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     if dedicated_key and identity_files:
         for kf in identity_files:
             lines.append(f"    IdentityFile {_quote_if_spaced(kf)}")
-
-        if key_select_mode == 1:
-            lines.append("    IdentitiesOnly yes")
     elif data.get('identity_file_none'):
         lines.append("    IdentityFile none")
 
-    if key_select_mode != 1 and data.get('identities_only_explicit_no'):
+    # IdentitiesOnly is its own setting: a block may set it without naming a
+    # key (the identities then come from other blocks or the agent).
+    if key_select_mode == 1:
+        lines.append("    IdentitiesOnly yes")
+    elif data.get('identities_only_explicit_no'):
         lines.append("    IdentitiesOnly no")
 
     # Add certificate(s) if specified (exclude placeholder text)
