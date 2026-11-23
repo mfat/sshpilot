@@ -71,8 +71,8 @@ _CSS = """
 .advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
 .advcfg-block { padding: 10px 12px; }
-.advcfg-block.matched { box-shadow: inset 3px 0 0 0 @success_color; }
-.advcfg-block.disabled { opacity: 0.6; }
+.advcfg-block.skipped, .advcfg-block.disabled { opacity: 0.55; }
+.advcfg-block.skipped:focus-within, .advcfg-block.disabled:focus-within { opacity: 1; }
 .advcfg-drop-before { box-shadow: 0 -3px 0 0 @accent_color; }
 .advcfg-drop-after { box-shadow: 0 3px 0 0 @accent_color; }
 .advcfg-unused entry { opacity: 0.6; }
@@ -1311,12 +1311,15 @@ class AdvancedConfigWindow(Adw.Window):
                 block.disabled, is_matched, block.kind == GLOBAL
             )
             _set_pill(widgets["status"], label, style, tooltip)
+            # The blocks that apply stay plain; the ones OpenSSH skips for
+            # this target step back (and come forward again while edited).
             card = widgets["card"]
             if is_matched:
-                card.add_css_class("matched")
                 count += 1
+            if is_matched is False:
+                card.add_css_class("skipped")
             else:
-                card.remove_css_class("matched")
+                card.remove_css_class("skipped")
             error = errors.get(header_line) if header_line else None
             widgets["warning"].set_label(messages.error_text(error) if error else "")
             widgets["warning"].set_visible(error is not None)

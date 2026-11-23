@@ -145,6 +145,11 @@ def test_another_target_is_asked_again(window):
     web = window.draft.blocks[1]
     assert window._block_widgets[web.uid]["status"].get_label() == "Skipped"
     assert [_status(window, o) for o in web.options] == ["Inactive"] * 3
+    # Blocks that do not apply step back; the ones that do stay plain.
+    cards = [window._block_widgets[b.uid]["card"] for b in window.draft.blocks]
+    assert [card.has_css_class("skipped") for card in cards] == [False, True, False]
+    window.target_entry.set_text("web1")
+    assert _pump(lambda: not cards[1].has_css_class("skipped"))
 
 
 def test_moving_a_block_changes_what_wins_and_undo_restores_it(window):
