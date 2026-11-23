@@ -257,6 +257,10 @@ def _editor_details_to_connection(details):
         security_key_provider=getattr(details, 'security_key_provider', '') or '',
         add_keys_to_agent=getattr(details, 'add_keys_to_agent', '') or '',
         key_select_mode=int(getattr(details, 'key_select_mode', 0) or 0),
+        identities_only_explicit_no=bool(
+            getattr(details, 'identities_only_explicit_no', False)
+        ),
+        identity_file_none=bool(getattr(details, 'identity_file_none', False)),
         x11_forwarding=bool(getattr(details, 'x11_forwarding', False)),
         extra_ssh_config=getattr(details, 'extra_ssh_config', '') or '',
         pre_command=getattr(details, 'pre_command', '') or '',
@@ -1134,6 +1138,11 @@ class FileListEditor(Adw.PreferencesGroup):
                 self._remove_row_widget(btn)
         for btn in self._add_rows:
             self._add_row_widget(btn)
+
+    def set_empty_placeholder(self, text):
+        """Change what the empty list says (``empty_placeholder`` set it)."""
+        if self._empty_row is not None:
+            self._empty_row.set_title(text)
 
     def _sync_empty_placeholder(self):
         """Show or hide the empty-state row above the add button."""
@@ -2102,20 +2111,30 @@ class ConnectionDialog(
         }
         section.sync()
 
+    #: "Only offer listed identities" choices -> IdentitiesOnly value.
+    _IDENTITIES_ONLY_VALUES = ("", "yes", "no")
+
+    def _selected_identities_only(self) -> str:
+        """IdentitiesOnly this block sets: ``""`` (not set), ``yes`` or ``no``."""
+        try:
+            index = self.key_only_row.get_selected()
+        except Exception:
+            return ""
+        values = self._IDENTITIES_ONLY_VALUES
+        return values[index] if 0 <= index < len(values) else ""
+
     def _selected_key_mode(self) -> int:
-        """0 = automatic, 1 = specific + IdentitiesOnly, 2 = specific."""
-        try:
-            specific = bool(getattr(self, 'key_select_row', None)
-                            and self.key_select_row.get_selected() == 1)
-        except Exception:
-            specific = False
-        if not specific:
-            return 0
-        try:
-            only = self.key_only_row.get_active()
-        except Exception:
-            only = True
-        return 1 if only else 2
+        """The stored key mode, derived from what the block sets.
+
+        There is no mode in the dialog: the identity file list and
+        IdentitiesOnly are edited directly. The stored encoding stays
+        (0 = no IdentityFile lines, 1 = IdentitiesOnly yes, 2 = IdentityFile
+        lines without it) so the writer, the daemon and login profiles read
+        it unchanged.
+        """
+        if self._selected_identities_only() == "yes":
+            return 1
+        return 2 if self._collect_identity_files() else 0
 
     def _collect_identity_files(self):
         try:
@@ -2243,34 +2262,24 @@ class ConnectionDialog(
         except Exception:
             pass
 
-    #: Rows that only apply to specific-key mode, and the login profile field
-    #: that locks each of them. Certificates are not among them: CertificateFile
-    #: is written in both modes and pairs with OpenSSH's default or agent keys.
-    _SPECIFIC_KEY_ROWS = (
+    #: Key rows a linked login profile can lock, and the field that does.
+    _PROFILE_KEY_ROWS = (
         ('key_editor', 'identity_files'),
         ('key_only_row', 'key_select_mode'),
     )
 
     def on_key_select_changed(self, *args):
-        """Enable the specific-key rows only in specific-key mode.
+        """Apply the profile locks to the key rows.
 
-        In Automatic mode the private keys and "Only use the selected keys"
-        stay visible but inactive, so users can see what would apply without
-        being able to edit it. Certificates stay editable in both modes. A
-        linked login profile that sets one of these fields keeps its row
-        locked in either mode (``_apply_login_profile_locks``).
+        The identity file list and "Only offer listed identities" are always
+        editable, like any other field of the Host block; only a linked
+        login profile that sets one of them locks its row.
         """
-        try:
-            use_specific = bool(getattr(self, 'key_select_row', None)
-                                and self.key_select_row.get_selected() == 1)
-        except Exception:
-            use_specific = False
-
         locked = getattr(self, '_profile_locked_fields', None) or set()
-        for name, field in self._SPECIFIC_KEY_ROWS:
+        for name, field in self._PROFILE_KEY_ROWS:
             widget = getattr(self, name, None)
             if widget is not None:
-                widget.set_sensitive(use_specific and field not in locked)
+                widget.set_sensitive(field not in locked)
 
     def _generate_ssh_config_from_settings(self):
         """Generate SSH config block from current connection settings"""
@@ -2286,8 +2295,6 @@ class ConnectionDialog(
             host_val = host.get_text().strip() if host else "example.com"
             username_val = username.get_text().strip() if username else "user"
             port_val = port.get_text().strip() if port else "22"
-
-            key_select_mode_val = self._selected_key_mode()
 
             # Full lists of identity files / certificates from the editors
             identity_files = self._collect_identity_files()
@@ -2324,14 +2331,15 @@ class ConnectionDialog(
                 if fa_text:
                     config_lines.append(f"    ForwardAgent {fa_text}")
 
-            # Keys and certificates (specific-key mode only)
-            if key_select_mode_val in (1, 2) and identity_files:
-                for kf in identity_files:
-                    config_lines.append(f"    IdentityFile {kf}")
-                if key_select_mode_val == 1:
-                    config_lines.append("    IdentitiesOnly yes")
-                for cert in certificate_files:
-                    config_lines.append(f"    CertificateFile {cert}")
+            # Identity files, IdentitiesOnly and certificates, each on its own
+            # (as ssh_config_formatter writes them).
+            for kf in identity_files:
+                config_lines.append(f"    IdentityFile {kf}")
+            identities_only = self._selected_identities_only()
+            if identities_only:
+                config_lines.append(f"    IdentitiesOnly {identities_only}")
+            for cert in certificate_files:
+                config_lines.append(f"    CertificateFile {cert}")
             # The authentication order and switches, as written
             section = getattr(self, 'auth_policy', None)
             if section is not None:
@@ -2803,6 +2811,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "port": (int(t) if (t := text("port_row")) else ""),
             "protocol": getattr(self.connection, "protocol", "ssh") or "ssh",
             "key_select_mode": self._selected_key_mode(),
+            "identities_only_explicit_no": self._selected_identities_only() == "no",
             "add_keys_to_agent": self._selected_add_keys_to_agent(),
             "aliases": tuple(getattr(self.connection, "aliases", ()) or ()),
             "identity_files": tuple(self._collect_identity_files()),
@@ -2883,7 +2892,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'display_name_row', 'nickname_row', 'hostname_row', 'username_row', 'port_row',
             'proxy_jump_row', 'forward_agent_row',
             'auth_policy', 'key_editor', 'cert_editor', 'password_row',
-            'key_select_row', 'key_only_row'
+            'key_only_row'
         ]
         for attr in required_attrs:
             if not hasattr(self, attr):
@@ -3030,7 +3039,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 )
                 if single:
                     identity_files = [single]
-            has_specific_key = bool(identity_files)
             self.key_editor.set_paths(identity_files)
 
             # Certificates: full list, with single-value fallback.
@@ -3092,30 +3100,34 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 self._orig_password = ""
 
-            # Key selection mode → Automatic/Specific radios + IdentitiesOnly switch.
+            # IdentitiesOnly as the block sets it: mode 1 is "yes", the
+            # explicit-no flag "no", anything else not set.
             # (Per-key passphrases are loaded on demand by the editor's key button.)
             try:
                 try:
                     mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
                 except Exception:
-                    try:
-                        mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
-                    except Exception:
-                        mode = 0
-                # A certificate alone does not pick keys: it pairs with the
-                # default or agent keys, so it leaves Automatic alone.
-                if has_specific_key and mode not in (1, 2):
-                    mode = 2
-                specific = mode in (1, 2)
-                self.key_select_row.set_selected(1 if specific else 0)
-                try:
-                    self.key_only_row.set_active(mode == 1)
-                except Exception:
-                    pass
+                    mode = 0
+                if mode == 1:
+                    choice = 1
+                elif getattr(self.connection, 'identities_only_explicit_no', False):
+                    choice = 2
+                else:
+                    choice = 0
+                self.key_only_row.set_selected(choice)
+            except Exception:
+                pass
+            # "IdentityFile none" is kept as written; the empty list says so.
+            try:
+                self.key_editor.set_empty_placeholder(
+                    _("Set to none: no identity files are offered.")
+                    if getattr(self.connection, 'identity_file_none', False)
+                    else _("No identity files set for this host.")
+                )
             except Exception:
                 pass
 
-            # Enable the specific-key rows for the loaded key selection.
+            # Apply any profile lock to the key rows.
             try:
                 self.on_key_select_changed()
             except Exception:
@@ -3326,21 +3338,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             )
             setattr(self, AUTH_METHOD_ROWS[method], row)
 
-        # --- Key selection mode: Automatic vs Use specific keys ---
-        self.key_selection_group = Adw.PreferencesGroup()
-        key_select_model = Gtk.StringList()
-        key_select_model.append(_("Automatic"))
-        key_select_model.append(_("Use Specific Keys"))
-        self.key_select_row = Adw.ComboRow(title=_("Key selection"))
-        self.key_select_row.set_subtitle(_("Use SSH defaults or pick specific keys below."))
-        self.key_select_row.set_model(key_select_model)
-        self.key_select_row.set_selected(0)
-        self.key_select_row.connect("notify::selected", self.on_key_select_changed)
-        self.key_selection_group.add(self.key_select_row)
-
-        # --- Identity files (private keys) ---
+        # --- Identity files: this block's IdentityFile lines, in order ---
         self.key_editor = FileListEditor(
-            title=_("Private Keys"),
+            title=_("Identity files"),
+            empty_placeholder=_("No identity files set for this host."),
             with_passphrase=True,
             connection_manager=cm,
             parent_window=self.parent_window,
@@ -3355,6 +3356,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 os.path.expanduser(path), secret
             ),
         )
+        self.key_editor.set_description(_("Keys SSH offers (IdentityFile)"))
 
         # --- Certificates ---
         self.cert_editor = FileListEditor(
@@ -3371,10 +3373,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # --- Key handling ---
         self.idonly_group = Adw.PreferencesGroup(title=_("Key handling"))
-        self.key_only_row = Adw.SwitchRow()
-        self.key_only_row.set_title(_("Only use the selected keys"))
-        self.key_only_row.set_subtitle(_("Write IdentitiesOnly yes for this connection."))
-        self.key_only_row.set_active(True)
+        # IdentitiesOnly on its own: a block may set it with no identity file
+        # (the identities then come from other blocks or the agent).
+        identities_only_model = Gtk.StringList()
+        for label in (_("Default"), _("Yes"), _("No")):
+            identities_only_model.append(label)
+        self.key_only_row = Adw.ComboRow(title=_("Only offer listed identities"))
+        self.key_only_row.set_subtitle("IdentitiesOnly")
+        self.key_only_row.set_model(identities_only_model)
+        self.key_only_row.set_selected(0)
+        self.key_only_row._sshpilot_own_value = lambda: (
+            self._selected_identities_only() or None
+        )
         self.idonly_group.add(self.key_only_row)
 
         self._add_keys_values = ['', 'yes', 'no', 'ask', 'confirm']
@@ -3502,7 +3512,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         auth_groups = [
             auth_group,
             password_group,
-            self.key_selection_group,
             self.key_editor,
             self.cert_editor,
             self.idonly_group,
@@ -5436,6 +5445,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'certificate': certificate_value,
             'certificate_files': certificate_files,
             'key_select_mode': key_select_mode_val,
+            'identities_only_explicit_no': self._selected_identities_only() == "no",
             'identity_agent': self._selected_identity_agent(),
             'add_keys_to_agent': self._selected_add_keys_to_agent(),
             'pkcs11_provider': (self.pkcs11_provider_row.get_text().strip()

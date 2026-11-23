@@ -164,10 +164,6 @@ def _auth_reset_order(dialog):
         alert.force_close()
 
 
-def _specific_keys(dialog):
-    dialog.key_select_row.set_selected(1)
-
-
 @dataclass
 class Contract:
     """One user-visible setting and what it must do."""
@@ -276,28 +272,40 @@ CONTRACTS = [
             ("host-based", "auth_hostbased_row", "hostbased"),
         )
     ],
-    C("specific key", ("key_select_row", "key_editor"),
-      _both(_specific_keys, lambda d: d.key_editor.add_path("~/.ssh/id_contract")),
-      _all(lambda d: d.key_select_row.get_selected() == 1,
-           _same_paths("key_editor", ["~/.ssh/id_contract"])),
+    # Keys: no mode. The identity file list, IdentitiesOnly and the
+    # certificates each write their own lines.
+    C("identity file", ("key_editor",),
+      lambda d: d.key_editor.add_path("~/.ssh/id_contract"),
+      _same_paths("key_editor", ["~/.ssh/id_contract"]),
       ("IdentityFile ~/.ssh/id_contract",),
-      clear=lambda d: (d.key_editor.set_paths([]), d.key_select_row.set_selected(0)),
-      cleared=lambda d: d.key_select_row.get_selected() == 0),
-    C("only selected keys", ("key_only_row",),
+      clear=lambda d: d.key_editor.set_paths([]),
+      cleared=_same_paths("key_editor", [])),
+    # A block may set IdentitiesOnly with no identity file of its own.
+    C("identities only yes", ("key_only_row",),
+      _combo("key_only_row", 1), _shows_combo("key_only_row", 1),
+      ("IdentitiesOnly yes",),
+      clear=_combo("key_only_row", 0), cleared=_shows_combo("key_only_row", 0),
+      ssh_g={"identitiesonly": "yes"}),
+    C("identities only no", ("key_only_row",),
+      _combo("key_only_row", 2), _shows_combo("key_only_row", 2),
+      ("IdentitiesOnly no",),
+      clear=_combo("key_only_row", 0), cleared=_shows_combo("key_only_row", 0),
+      ssh_g={"identitiesonly": "no"}),
+    C("identity file with identities only", ("key_editor", "key_only_row"),
       _both(lambda d: d.key_editor.add_path("~/.ssh/id_contract"),
-            _switch("key_only_row", True)),
-      _shows_switch("key_only_row", True),
+            _combo("key_only_row", 1)),
+      _all(_same_paths("key_editor", ["~/.ssh/id_contract"]),
+           _shows_combo("key_only_row", 1)),
       ("IdentityFile ~/.ssh/id_contract", "IdentitiesOnly yes"),
-      prepare=_specific_keys, remains=("IdentityFile ~/.ssh/id_contract",),
-      clear=_switch("key_only_row", False), cleared=_shows_switch("key_only_row", False),
+      clear=_combo("key_only_row", 0), cleared=_shows_combo("key_only_row", 0),
+      remains=("IdentityFile ~/.ssh/id_contract",),
       ssh_g={"identitiesonly": "yes"}),
     C("certificate", ("cert_editor",),
-      _both(lambda d: d.key_editor.add_path("~/.ssh/id_contract"),
-            lambda d: d.cert_editor.add_path("~/.ssh/id_contract-cert.pub")),
+      lambda d: d.cert_editor.add_path("~/.ssh/id_contract-cert.pub"),
       _same_paths("cert_editor", ["~/.ssh/id_contract-cert.pub"]),
-      ("IdentityFile ~/.ssh/id_contract",
-       "CertificateFile ~/.ssh/id_contract-cert.pub"),
-      prepare=_specific_keys),
+      ("CertificateFile ~/.ssh/id_contract-cert.pub",),
+      clear=lambda d: d.cert_editor.set_paths([]),
+      cleared=_same_paths("cert_editor", [])),
     *[
         C(f"add keys to agent {value}", ("add_keys_to_agent_row",),
           _combo("add_keys_to_agent_row", index),

@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- `identities_only_explicit_no` is an editable connection config field (a
+  boolean in `EDITABLE_CONFIG_FIELDS`). The connection editor now edits
+  `IdentitiesOnly` as Default / Yes / No on its own, with no key selection
+  mode: `key_select_mode` stays the stored encoding (1 = `IdentitiesOnly yes`,
+  2 = `IdentityFile` lines without it, 0 = neither), derived by the editor,
+  and the flag lets choosing Default remove an authored `IdentitiesOnly no`.
+  The API implementation version is 0.108; Protocol remains 1.0.
 - `preview_login_profile_update(PreviewLoginProfileUpdateRequest(profile_id,
   settings))` returns `LoginProfileUpdatePreview(linked_count, replaced)`: the
   linked connections whose own values an edit would replace, because the

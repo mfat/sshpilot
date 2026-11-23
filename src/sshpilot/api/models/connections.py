@@ -124,6 +124,7 @@ EDITABLE_CONFIG_FIELDS = frozenset({
     "pubkey_auth_no",
     "proxy_jump", "proxy_command", "forward_agent",
     "forward_agent_explicit_no", "forward_agent_target",
+    "identities_only_explicit_no",
     "forwarding_rules", "x11_forwarding",
     "pre_command", "local_command", "remote_command",
     "extra_ssh_config",
@@ -193,7 +194,7 @@ def _validate_field_value(key: str, value: Any) -> None:
             raise ValueError(f"{key} must be a non-negative integer")
     elif key in (
         "x11_forwarding", "pubkey_auth_no", "forward_agent",
-        "forward_agent_explicit_no",
+        "forward_agent_explicit_no", "identities_only_explicit_no",
     ):
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be a boolean")

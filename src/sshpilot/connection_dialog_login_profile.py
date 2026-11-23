@@ -351,8 +351,7 @@ class ConnectionDialogLoginProfileMixin:
                     widget.set_tooltip_text(note if locked else None)
                 except Exception:
                     pass
-        # The private key and "Only use the selected keys" rows also stay
-        # inactive in Automatic key selection; re-apply that after unlocking.
+        # The key rows apply the same locks (see on_key_select_changed).
         on_key_select_changed = getattr(self, "on_key_select_changed", None)
         if callable(on_key_select_changed):
             try:
@@ -422,7 +421,7 @@ def _profile_icon() -> Gtk.Image:
 #: ``_sync_username_row`` so its profile picker button stays usable; the
 #: authentication order and switches by ``AuthPolicyGroup.set_profile_locks``.
 PROFILE_FIELD_ROWS = {
-    "key_select_mode": ("key_select_row", "key_only_row"),
+    "key_select_mode": ("key_only_row",),
     "identity_files": ("key_editor",),
     "certificate_files": ("cert_editor",),
     "identity_agent": ("identity_agent_row", "identity_agent_value_row"),

@@ -97,7 +97,6 @@ TEXT_ROWS = frozenset({
 #: be pointed out even though the connection sets nothing itself.
 SWITCH_OFF_VALUE = {
     "x11_row": "no",
-    "key_only_row": "no",
     "exit_on_forward_failure_row": "no",
     "port_forwarding_only_row": "default",
 }
@@ -106,7 +105,6 @@ SWITCH_OFF_VALUE = {
 #: (``ForwardX11 no``): the directive and the value the block then holds.
 SWITCH_OFF_AUTHORED = {
     "x11_row": ("forwardx11", "no"),
-    "key_only_row": ("identitiesonly", "no"),
 }
 
 
@@ -607,17 +605,15 @@ class ConnectionDialogOverridesMixin:
         if row_name == "port_forwarding_only_row":
             return "none" if row.get_active() else None
         if row_name in SWITCH_OFF_AUTHORED:
-            on_value = {"x11_row": "yes", "key_only_row": "yes"}
-            usable = row_name != "key_only_row" or row.get_sensitive()
-            if row.get_active() and usable:
-                return on_value[row_name]
+            if row.get_active():
+                return "yes"
             # Off, but the saved block spells the option out: that line is
             # kept on save, and an earlier block can beat it like any other.
             directive, off_value = SWITCH_OFF_AUTHORED[row_name]
             authored = getattr(
                 getattr(self, "connection", None), "authored_directives", None
             ) or ()
-            if usable and getattr(self, "is_editing", False) and directive in authored:
+            if getattr(self, "is_editing", False) and directive in authored:
                 return off_value
             return None
         if row_name == "exit_on_forward_failure_row":
