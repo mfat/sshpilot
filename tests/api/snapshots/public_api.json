@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.108",
+  "api_implementation_version": "0.109",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -4758,7 +4758,8 @@
       "forward_agent",
       "forward_agent_target",
       "proxy_command",
-      "extra_ssh_config"
+      "extra_ssh_config",
+      "identities_only"
     ],
     "LoginProfileSnapshot": [
       "available",
@@ -5854,6 +5855,7 @@
       "username",
       "auth_method",
       "key_select_mode",
+      "identities_only",
       "identity_files",
       "certificate_files",
       "identity_agent",

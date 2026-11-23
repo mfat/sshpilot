@@ -2265,7 +2265,7 @@ class ConnectionDialog(
     #: Key rows a linked login profile can lock, and the field that does.
     _PROFILE_KEY_ROWS = (
         ('key_editor', 'identity_files'),
-        ('key_only_row', 'key_select_mode'),
+        ('key_only_row', 'identities_only'),
     )
 
     def on_key_select_changed(self, *args):

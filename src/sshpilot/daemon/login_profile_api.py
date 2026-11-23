@@ -101,6 +101,7 @@ def settings_from_profile(profile: LoginProfile) -> LoginProfileSettings:
         forward_agent_target=profile.forward_agent_target,
         proxy_command=profile.proxy_command,
         extra_ssh_config=profile.extra_ssh_config,
+        identities_only=profile.identities_only,
     )
 
 
@@ -121,6 +122,7 @@ def _settings_values(settings: LoginProfileSettings) -> dict:
         "forward_agent_target": settings.forward_agent_target,
         "proxy_command": settings.proxy_command,
         "extra_ssh_config": settings.extra_ssh_config,
+        "identities_only": settings.identities_only,
     }
 
 

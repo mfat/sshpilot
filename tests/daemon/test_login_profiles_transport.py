@@ -149,7 +149,7 @@ def test_capability_advertised_only_with_service(env, tmp_path):
 def test_full_flow_over_the_wire(env):
     client, repo, root, secrets, _service = env
     settings = LoginProfileSettings(
-        name="Deploy", username="deploy", key_select_mode=1, identity_files=("/k/deploy",)
+        name="Deploy", username="deploy", identities_only=True, identity_files=("/k/deploy",)
     )
     created = client.create_login_profile(CreateLoginProfileRequest(settings))
     assert created.name == "Deploy" and created.revision == 1
@@ -160,7 +160,7 @@ def test_full_flow_over_the_wire(env):
     changes = {c.field: (c.before, c.after) for c in preview.changes}
     assert changes[LoginProfileField.USERNAME] == ("alice", "deploy")
     # Raw values, not English display text: the frontend words them.
-    assert changes[LoginProfileField.KEY_SELECT_MODE] == ("0", "1")
+    assert changes[LoginProfileField.IDENTITIES_ONLY] == ("", "yes")
 
     assert client.assign_login_profile(
         AssignLoginProfileRequest(("web1",), LoginProfileLinkMode.EXPLICIT, created.id)

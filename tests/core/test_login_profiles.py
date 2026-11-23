@@ -700,12 +700,37 @@ def test_stored_profiles_read_their_old_defaults_as_not_set():
         'key_select_mode': 0, 'forward_agent': False, 'username': '',
     })
     assert old.key_select_mode is None and old.forward_agent is None
+    assert old.identities_only is None
     assert profile_owned_fields(old) == ()
-    # Saved again, an explicit Automatic / No is kept on the next load.
-    chosen = old.with_changes(key_select_mode=0, forward_agent=False)
+    # Saved again, an explicit IdentitiesOnly / ForwardAgent "No" is kept.
+    chosen = old.with_changes(identities_only=False, forward_agent=False)
     again = LoginProfile.from_dict(chosen.to_dict())
-    assert again.key_select_mode == 0 and again.forward_agent is False
-    assert profile_owned_fields(again) == ('key_select_mode', 'forward_agent')
+    assert again.identities_only is False and again.forward_agent is False
+    assert profile_owned_fields(again) == ('identities_only', 'forward_agent')
+
+
+def test_stored_key_selection_modes_become_identities_only():
+    from sshpilot.core.login_profiles.models import LoginProfile, profile_owned_fields
+
+    def load(mode, files=()):
+        return LoginProfile.from_dict({
+            'id': 'lp-0000000000000001', 'name': 'Old', 'unset_aware': True,
+            'key_select_mode': mode, 'identity_files': list(files),
+        })
+
+    only = load(1, ['/k/a'])           # "specific keys only"
+    assert (only.identities_only, only.identity_files) == (True, ('/k/a',))
+    assert profile_owned_fields(only) == ('identities_only', 'identity_files')
+    agent = load(2, ['/k/a'])          # "specific keys and agent"
+    assert (agent.identities_only, agent.identity_files) == (None, ('/k/a',))
+    # Automatic never wrote the keys it listed: they are not kept.
+    automatic = load(0, ['/k/stale'])
+    assert (automatic.identities_only, automatic.identity_files) == (None, ())
+    assert profile_owned_fields(automatic) == ()
+    # Written again, older versions still read a key selection mode.
+    assert only.to_dict()['key_select_mode'] == 1
+    assert agent.to_dict()['key_select_mode'] == 2
+    assert LoginProfile.from_dict(only.to_dict()).identities_only is True
 
 
 def test_preview_update_lists_only_user_set_values_a_profile_would_take_over(env):

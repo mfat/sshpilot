@@ -69,7 +69,7 @@ def test_preview_text():
         )),
         LoginProfileAssignmentPreview("web2", "Deploy", ()),
     ))
-    assert text == "web1:\n  Username: alice → deploy\n  Private Keys: — → /k/a, /k/b"
+    assert text == "web1:\n  Username: alice → deploy\n  Identity files: — → /k/a, /k/b"
     assert format_changes_inline((
         LoginProfileFieldChange(LoginProfileField.AUTH_METHOD, "0", "1"),
         LoginProfileFieldChange(LoginProfileField.PUBKEY_AUTH_NO, "false", "true"),
@@ -82,12 +82,9 @@ def test_preview_text():
 def test_summary_line():
     # Key selection not set: the profile says nothing about keys.
     assert profile_summary_line(_summary(username="deploy")) == "deploy"
-    assert profile_summary_line(
-        _summary(username="deploy", key_select_mode=0)
-    ) == "deploy · automatic keys"
     assert profile_summary_line(_summary(username="root", auth_method=1)) == "root · password"
     assert profile_summary_line(
-        _summary(key_select_mode=1, identity_files=("~/.ssh/id_a", "/k/id_b"))
+        _summary(identities_only=True, identity_files=("~/.ssh/id_a", "/k/id_b"))
     ) == "id_a, id_b"
 
 

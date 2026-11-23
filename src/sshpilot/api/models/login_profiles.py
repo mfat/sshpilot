@@ -54,6 +54,7 @@ class LoginProfileField(str, Enum):
     USERNAME = "username"
     AUTH_METHOD = "auth_method"
     KEY_SELECT_MODE = "key_select_mode"
+    IDENTITIES_ONLY = "identities_only"
     IDENTITY_FILES = "identity_files"
     CERTIFICATE_FILES = "certificate_files"
     IDENTITY_AGENT = "identity_agent"
@@ -145,8 +146,10 @@ class LoginProfileSettings:
     name: str
     username: str = ""
     auth_method: int = 0  # 0 = key, 1 = password
-    # None = not set: a linked connection keeps its own value.
-    key_select_mode: Optional[int] = None  # 0 = automatic, 1 = specific keys only, 2 = specific keys + agent
+    # Legacy input (profiles before ``identities_only``): 0 = automatic,
+    # 1 = specific keys only, 2 = specific keys + agent. Read as
+    # ``identities_only`` (1 = yes); always None in what the daemon returns.
+    key_select_mode: Optional[int] = None
     identity_files: Tuple[str, ...] = ()
     certificate_files: Tuple[str, ...] = ()
     identity_agent: str = ""
@@ -158,6 +161,9 @@ class LoginProfileSettings:
     forward_agent_target: str = ""
     proxy_command: str = ""
     extra_ssh_config: str = ""
+    # IdentitiesOnly, as in the connection editor. None = not set: a linked
+    # connection keeps its own value.
+    identities_only: Optional[bool] = None
 
     def __post_init__(self) -> None:
         _check_text(self.name, "name")
@@ -178,6 +184,8 @@ class LoginProfileSettings:
         _check_bool(self.pubkey_auth_no, "pubkey_auth_no")
         if self.forward_agent is not None:
             _check_bool(self.forward_agent, "forward_agent")
+        if self.identities_only is not None:
+            _check_bool(self.identities_only, "identities_only")
 
 
 @dataclass(frozen=True)

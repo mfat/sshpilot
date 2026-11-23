@@ -87,6 +87,7 @@ def login_profile_settings_to_wire(settings: LoginProfileSettings) -> Dict[str, 
         "forward_agent_target": settings.forward_agent_target,
         "proxy_command": settings.proxy_command,
         "extra_ssh_config": settings.extra_ssh_config,
+        "identities_only": settings.identities_only,
     }
 
 
@@ -118,6 +119,10 @@ def login_profile_settings_from_wire(value: Any) -> LoginProfileSettings:
         forward_agent=(
             None if data["forward_agent"] is None
             else _boolean(data["forward_agent"], "forward_agent")
+        ),
+        identities_only=(
+            None if data["identities_only"] is None
+            else _boolean(data["identities_only"], "identities_only")
         ),
         **text,
     )

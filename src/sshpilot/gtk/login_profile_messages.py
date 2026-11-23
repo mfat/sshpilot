@@ -31,7 +31,8 @@ _FIELD_LABELS = {
     LoginProfileField.USERNAME: N_("Username"),
     LoginProfileField.AUTH_METHOD: N_("Authentication"),
     LoginProfileField.KEY_SELECT_MODE: N_("Key selection"),
-    LoginProfileField.IDENTITY_FILES: N_("Private Keys"),
+    LoginProfileField.IDENTITIES_ONLY: N_("Only offer listed identities"),
+    LoginProfileField.IDENTITY_FILES: N_("Identity files"),
     LoginProfileField.CERTIFICATE_FILES: N_("Certificates"),
     LoginProfileField.ADD_KEYS_TO_AGENT: N_("Add keys to agent"),
     LoginProfileField.PKCS11_PROVIDER: N_("PKCS#11 provider"),
@@ -53,6 +54,7 @@ _KEY_SELECT_MODE_VALUES = {
     "2": N_("Specific keys and agent"),
 }
 _BOOL_VALUES = {"true": N_("Yes"), "false": N_("No")}
+_IDENTITIES_ONLY_VALUES = {"yes": N_("Yes"), "no": N_("No")}
 _ADD_KEYS_VALUES = {
     "yes": N_("Yes"),
     "no": N_("No"),
@@ -62,6 +64,7 @@ _ADD_KEYS_VALUES = {
 _VALUE_TABLES = {
     LoginProfileField.AUTH_METHOD: _AUTH_METHOD_VALUES,
     LoginProfileField.KEY_SELECT_MODE: _KEY_SELECT_MODE_VALUES,
+    LoginProfileField.IDENTITIES_ONLY: _IDENTITIES_ONLY_VALUES,
     LoginProfileField.PUBKEY_AUTH_NO: _BOOL_VALUES,
     LoginProfileField.FORWARD_AGENT: _BOOL_VALUES,
     LoginProfileField.ADD_KEYS_TO_AGENT: _ADD_KEYS_VALUES,
@@ -203,8 +206,6 @@ def profile_summary_line(profile: LoginProfileSummary) -> str:
         parts.append(_("password"))
     elif settings.identity_files:
         parts.append(", ".join(path.rsplit("/", 1)[-1] for path in settings.identity_files))
-    elif settings.key_select_mode == 0:
-        parts.append(_("automatic keys"))
     return " · ".join(parts)
 
 

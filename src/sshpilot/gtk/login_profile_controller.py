@@ -338,7 +338,7 @@ class LoginProfileController:
 #: Profile fields, as in the daemon's model: each is the profile's only when
 #: set (non-empty text or list, or a choice other than "Not set").
 PROFILE_FIELDS = (
-    "username", "key_select_mode", "identity_files", "certificate_files",
+    "username", "identities_only", "identity_files", "certificate_files",
     "identity_agent", "add_keys_to_agent", "pkcs11_provider",
     "security_key_provider", "forward_agent", "proxy_command",
 )
@@ -394,4 +394,8 @@ def settings_from_values(values: Mapping[str, object]) -> LoginProfileSettings:
         forward_agent_target=text("forward_agent_target"),
         proxy_command=text("proxy_command"),
         extra_ssh_config=str(values.get("extra_ssh_config") or "").strip(),
+        identities_only=(
+            None if values.get("identities_only") is None
+            else bool(values["identities_only"])
+        ),
     )

@@ -207,6 +207,13 @@ def _clean_extra(value: Any) -> str:
     return "\n".join(line for line in lines if line and not line.startswith("#"))
 
 
+def legacy_key_select_mode(profile: "LoginProfile") -> Optional[int]:
+    """The key selection mode a version before ``identities_only`` reads."""
+    if profile.identities_only is True:
+        return 1
+    return 2 if profile.identity_files else None
+
+
 @dataclass(frozen=True)
 class LoginProfile:
     """One reusable login profile. Immutable; use :meth:`with_changes`."""
@@ -215,7 +222,9 @@ class LoginProfile:
     name: str
     username: str = ""
     auth_method: int = AUTH_KEY
-    # None = not set: a linked connection keeps its own value.
+    # Legacy input only: the key selection mode of profiles stored before
+    # IdentitiesOnly was its own setting. __post_init__ turns it into
+    # ``identities_only`` and clears it.
     key_select_mode: Optional[int] = None
     identity_files: Tuple[str, ...] = ()
     certificate_files: Tuple[str, ...] = ()
@@ -231,6 +240,9 @@ class LoginProfile:
     has_password: bool = False
     has_sudo_password: bool = False
     revision: int = 1
+    # IdentitiesOnly, as in the connection editor. None = not set: a linked
+    # connection keeps its own value.
+    identities_only: Optional[bool] = None
 
     def __post_init__(self) -> None:
         if not is_profile_id(self.id):
@@ -255,6 +267,17 @@ class LoginProfile:
             raise ValueError("auth_method must be 0 (key) or 1 (password)")
         if self.key_select_mode is not None and self.key_select_mode not in (0, 1, 2):
             raise ValueError("key_select_mode must be 0, 1, 2 or None")
+        if self.identities_only is not None and type(self.identities_only) is not bool:
+            raise TypeError("identities_only must be a boolean or None")
+        if self.key_select_mode is not None:
+            # A stored key selection mode: "specific keys only" was
+            # IdentitiesOnly yes; Automatic never wrote the keys it listed,
+            # so they go; the other modes leave IdentitiesOnly unset.
+            if self.identities_only is None and self.key_select_mode == 1:
+                object.__setattr__(self, "identities_only", True)
+            if self.key_select_mode == 0:
+                object.__setattr__(self, "identity_files", ())
+            object.__setattr__(self, "key_select_mode", None)
         if self.forward_agent is not None and type(self.forward_agent) is not bool:
             raise TypeError("forward_agent must be a boolean or None")
         object.__setattr__(
@@ -306,7 +329,9 @@ class LoginProfile:
             "name": self.name,
             "username": self.username,
             "auth_method": self.auth_method,
-            "key_select_mode": self.key_select_mode,
+            # For versions that read the key selection mode.
+            "key_select_mode": legacy_key_select_mode(self),
+            "identities_only": self.identities_only,
             "identity_files": list(self.identity_files),
             "certificate_files": list(self.certificate_files),
             "identity_agent": self.identity_agent,
@@ -331,6 +356,10 @@ class LoginProfile:
             raise TypeError("login profile must be an object")
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         values = {k: v for k, v in data.items() if k in known}
+        if "identities_only" in data:
+            # Written by a version with IdentitiesOnly of its own; the mode
+            # beside it is only for older readers.
+            values.pop("key_select_mode", None)
         for key in ("identity_files", "certificate_files"):
             if key in values and isinstance(values[key], list):
                 values[key] = tuple(values[key])
@@ -366,6 +395,8 @@ class LoginProfile:
         data = self.to_dict()
         for key in ("id", "revision", "has_password", "has_sudo_password", _UNSET_AWARE):
             data.pop(key, None)
+        # Legacy input only (see the field); never read back as a setting.
+        data["key_select_mode"] = None
         return data
 
 
@@ -406,13 +437,24 @@ def apply_profile_to_data(data: Mapping[str, Any], profile: LoginProfile) -> Dic
         }
         authored.add("user")
         out["__authored_directives"] = tuple(sorted(authored))
-    if "key_select_mode" in fields:
-        out["key_select_mode"] = effective_key_select_mode(profile)
-        out["identity_file_none"] = False
-        out["identities_only_explicit_no"] = False
     if "identity_files" in fields:
         out["identity_files"] = list(profile.identity_files)
         out["keyfile"] = profile.identity_files[0]
+        out["identity_file_none"] = False
+    # The stored key mode is derived as the connection editor derives it:
+    # 1 = IdentitiesOnly yes, 2 = IdentityFile lines, 0 = neither. A profile
+    # that sets only one of the two leaves the connection's other one alone.
+    if "identities_only" in fields or "identity_files" in fields:
+        current = int(out.get("key_select_mode", 0) or 0)
+        if "identities_only" in fields:
+            identities_only_yes = profile.identities_only is True
+            out["identities_only_explicit_no"] = profile.identities_only is False
+        else:
+            identities_only_yes = current == 1
+        has_files = bool(_norm_list(out.get("identity_files"))) and (
+            "identity_files" in fields or current in (1, 2)
+        )
+        out["key_select_mode"] = 1 if identities_only_yes else (2 if has_files else 0)
     if "certificate_files" in fields:
         out["certificate_files"] = list(profile.certificate_files)
         out["certificate"] = profile.certificate_files[0]
@@ -464,9 +506,11 @@ def _norm_list(values: Any) -> List[str]:
 
 #: Profile fields a link can own, in display order. Each is owned only when
 #: the profile sets it; the connection keeps its own value otherwise.
+#: (Links recorded before IdentitiesOnly was its own setting may list
+#: ``key_select_mode``; their fingerprint is recomputed from what they list.)
 PROFILE_FIELDS: Tuple[str, ...] = (
     "username",
-    "key_select_mode",
+    "identities_only",
     "identity_files",
     "certificate_files",
     "identity_agent",
@@ -478,26 +522,11 @@ PROFILE_FIELDS: Tuple[str, ...] = (
 )
 
 
-def effective_key_select_mode(profile: "LoginProfile") -> Optional[int]:
-    """The key selection *profile* applies.
-
-    A profile that lists keys uses them: with key selection left unset it
-    selects specific keys (and the agent), or the keys would never reach
-    OpenSSH -- only those modes write IdentityFile.
-    """
-    if profile.key_select_mode is None and profile.identity_files:
-        return 2
-    return profile.key_select_mode
-
-
 def profile_owned_fields(profile: "LoginProfile") -> Tuple[str, ...]:
     """The fields *profile* sets (empty text/lists and ``None`` are unset)."""
     owned = []
     for name in PROFILE_FIELDS:
-        value = (
-            effective_key_select_mode(profile) if name == "key_select_mode"
-            else getattr(profile, name)
-        )
+        value = getattr(profile, name)
         if value is None or value == "" or value == ():
             continue
         owned.append(name)
@@ -595,6 +624,11 @@ def auth_projection(
             keep.add("forward_agent_explicit_no")
         if "identity_files" in keep and key_mode not in (1, 2):
             projection["identity_files"] = paths("identity_files")
+        if "identities_only" in keep:
+            projection["identities_only"] = (
+                "yes" if key_mode == 1
+                else "no" if data.get("identities_only_explicit_no") else ""
+            )
         projection = {k: v for k, v in projection.items() if k in keep}
     return projection
 
@@ -672,6 +706,7 @@ def matches_legacy_auth_fingerprint(
 DIFF_FIELDS: Tuple[str, ...] = (
     "username",
     "key_select_mode",
+    "identities_only",
     "identity_files",
     "certificate_files",
     "identity_agent",

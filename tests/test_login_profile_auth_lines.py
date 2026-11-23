@@ -7,6 +7,8 @@ choice load as the lines that choice stood for, and links recorded before
 keep matching their fingerprint.
 """
 
+import pytest
+
 from sshpilot.core.connections.auth_preferences import PASSWORD_MODE_PREFERRED_AUTH
 from sshpilot.core.login_profiles.models import (
     LoginProfile,
@@ -66,19 +68,62 @@ def test_a_link_recorded_before_keeps_its_fingerprint():
     assert auth_fingerprint(data, (), legacy_auth=is_legacy_auth_link(legacy)) == legacy
 
 
-def test_a_profile_that_lists_keys_selects_them():
-    # Review: with key selection unset, the keys must still reach OpenSSH.
+def test_a_profile_that_lists_keys_writes_them():
+    # With IdentitiesOnly unset, the keys must still reach OpenSSH.
     from sshpilot.core.login_profiles.models import apply_profile_to_data
     from sshpilot.ssh_config_formatter import format_ssh_config_entry
 
     profile = LoginProfile(id=PID, name="k", identity_files=("/keys/deploy",))
-    assert "key_select_mode" in profile_owned_fields(profile)
+    assert profile_owned_fields(profile) == ("identity_files",)
     out = apply_profile_to_data({"nickname": "test", "key_select_mode": 0}, profile)
     assert "IdentityFile /keys/deploy" in format_ssh_config_entry(out)
 
 
-def test_an_old_automatic_profile_with_stale_keys_stays_automatic():
+@pytest.mark.parametrize("own_mode, explicit_no, line", [
+    (1, False, "IdentitiesOnly yes"),
+    (2, True, "IdentitiesOnly no"),
+])
+def test_a_profile_that_lists_keys_keeps_the_hosts_identities_only(own_mode, explicit_no, line):
+    # Only what the profile sets: its keys, not the host's IdentitiesOnly.
+    from sshpilot.core.login_profiles.models import apply_profile_to_data
+    from sshpilot.ssh_config_formatter import format_ssh_config_entry
+
+    profile = LoginProfile(id=PID, name="k", identity_files=("/keys/deploy",))
+    out = apply_profile_to_data({
+        "nickname": "test", "key_select_mode": own_mode,
+        "identity_files": ["/keys/own"], "identities_only_explicit_no": explicit_no,
+    }, profile)
+    entry = format_ssh_config_entry(out)
+    assert "IdentityFile /keys/deploy" in entry and "/keys/own" not in entry
+    assert line in entry
+
+
+@pytest.mark.parametrize("value, line", [(True, "IdentitiesOnly yes"), (False, "IdentitiesOnly no")])
+def test_a_profile_that_sets_identities_only_keeps_the_hosts_keys(value, line):
+    from sshpilot.core.login_profiles.models import apply_profile_to_data
+    from sshpilot.ssh_config_formatter import format_ssh_config_entry
+
+    profile = LoginProfile(id=PID, name="k", identities_only=value)
+    assert profile_owned_fields(profile) == ("identities_only",)
+    out = apply_profile_to_data({
+        "nickname": "test", "key_select_mode": 2, "identity_files": ["/keys/own"],
+    }, profile)
+    entry = format_ssh_config_entry(out)
+    assert "IdentityFile /keys/own" in entry and line in entry
+
+
+def test_an_old_automatic_profile_drops_its_stale_keys():
     profile = LoginProfile.from_dict({
         "id": PID, "name": "k", "key_select_mode": 0, "identity_files": ["/k"],
     })
-    assert profile.key_select_mode == 0
+    assert profile.identity_files == () and profile.identities_only is None
+
+
+def test_links_that_own_the_old_key_mode_keep_their_fingerprint():
+    # Recorded before IdentitiesOnly was its own profile setting: such a
+    # link lists key_select_mode, and its hash must not move or the
+    # connection would read as edited (drift) and be detached.
+    data = {"username": "deploy", "key_select_mode": 1, "identity_files": ["/k/a"]}
+    assert auth_fingerprint(
+        data, (), owned_fields=("username", "key_select_mode", "identity_files")
+    ) == "v4:69f76523fb06945c8c713c87b79baad2"

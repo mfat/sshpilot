@@ -421,7 +421,7 @@ def _profile_icon() -> Gtk.Image:
 #: ``_sync_username_row`` so its profile picker button stays usable; the
 #: authentication order and switches by ``AuthPolicyGroup.set_profile_locks``.
 PROFILE_FIELD_ROWS = {
-    "key_select_mode": ("key_only_row",),
+    "identities_only": ("key_only_row",),
     "identity_files": ("key_editor",),
     "certificate_files": ("cert_editor",),
     "identity_agent": ("identity_agent_row", "identity_agent_value_row"),

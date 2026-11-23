@@ -129,6 +129,8 @@ def _user_set(field: str, value: Any) -> bool:
     """A value the connection holds itself (not empty, not the default)."""
     if field == "key_select_mode":
         return value not in (None, 0)
+    if field == "identities_only":
+        return value not in (None, "")
     if field == "forward_agent":
         return bool(value)
     return value not in (None, "", [], ())

@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- `LoginProfileSettings.identities_only` (`bool | null`, `null` = not set)
+  holds a login profile's IdentitiesOnly, as the connection editor edits it,
+  and `LoginProfileField.IDENTITIES_ONLY` names it in assignment previews
+  (raw values `yes`, `no`, or empty). `key_select_mode` is now legacy input
+  only: a stored or sent mode is read as `identities_only` (1 = `true`;
+  Automatic drops the key list it never wrote) and the daemon always
+  returns `null` for it. A profile owns `identities_only` and
+  `identity_files` separately, so one that lists keys leaves a linked
+  connection's own IdentitiesOnly alone. Links recorded before keep their
+  fingerprints. The API implementation version is 0.109; Protocol remains 1.0.
 - `identities_only_explicit_no` is an editable connection config field (a
   boolean in `EDITABLE_CONFIG_FIELDS`). The connection editor now edits
   `IdentitiesOnly` as Default / Yes / No on its own, with no key selection

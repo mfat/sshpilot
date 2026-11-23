@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.108",
+  "api_implementation_version": "0.109",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1677,6 +1677,7 @@
       "username",
       "auth_method",
       "key_select_mode",
+      "identities_only",
       "identity_files",
       "certificate_files",
       "identity_agent",
@@ -6664,6 +6665,13 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": null,
+          "name": "identities_only",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[bool]"
         }
       ],
       "status": "Schema only"

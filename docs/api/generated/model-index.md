@@ -3583,6 +3583,7 @@ Synthetic representation:
 | `forward_agent_target` | `str` | No | `` | No |
 | `proxy_command` | `str` | No | `` | No |
 | `extra_ssh_config` | `str` | No | `` | No |
+| `identities_only` | `Optional[bool]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -3594,6 +3595,7 @@ Synthetic representation:
   "extra_ssh_config": "",
   "forward_agent": null,
   "forward_agent_target": "",
+  "identities_only": null,
   "identity_agent": "",
   "identity_files": [],
   "key_select_mode": null,

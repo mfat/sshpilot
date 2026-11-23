@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-23 11:02+0330\n"
+"POT-Creation-Date: 2026-11-23 11:23+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -130,11 +130,11 @@ msgstr "Ouvrir les connexions ?"
 #: src/sshpilot/file_manager_window.py:1859
 #: src/sshpilot/file_manager_window.py:1939
 #: src/sshpilot/file_manager_window.py:2791 src/sshpilot/key_sources.py:274
-#: src/sshpilot/login_profile_dialogs.py:98
-#: src/sshpilot/login_profile_dialogs.py:168
-#: src/sshpilot/login_profile_dialogs.py:589
-#: src/sshpilot/login_profile_dialogs.py:619
-#: src/sshpilot/login_profile_dialogs.py:848
+#: src/sshpilot/login_profile_dialogs.py:91
+#: src/sshpilot/login_profile_dialogs.py:161
+#: src/sshpilot/login_profile_dialogs.py:585
+#: src/sshpilot/login_profile_dialogs.py:615
+#: src/sshpilot/login_profile_dialogs.py:844
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:316
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:504
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:1402
@@ -222,7 +222,7 @@ msgstr ""
 #: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2730
 #: src/sshpilot/file_manager/pane.py:3142
 #: src/sshpilot/known_hosts_editor.py:311
-#: src/sshpilot/login_profile_dialogs.py:637 src/sshpilot/preferences.py:4104
+#: src/sshpilot/login_profile_dialogs.py:633 src/sshpilot/preferences.py:4104
 #: src/sshpilot/preferences.py:4227 src/sshpilot/preferences.py:4639
 #: src/sshpilot/preferences.py:5252 src/sshpilot/preferences.py:7003
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
@@ -295,9 +295,9 @@ msgstr ""
 #: src/sshpilot/command_blocks.py:2400 src/sshpilot/file_manager/pane.py:697
 #: src/sshpilot/file_manager/pane.py:2266
 #: src/sshpilot/file_manager_window.py:1940
-#: src/sshpilot/login_profile_dialogs.py:849
-#: src/sshpilot/login_profile_dialogs.py:859
-#: src/sshpilot/login_profile_dialogs.py:1047 src/sshpilot/sidebar.py:5242
+#: src/sshpilot/login_profile_dialogs.py:845
+#: src/sshpilot/login_profile_dialogs.py:855
+#: src/sshpilot/login_profile_dialogs.py:1043 src/sshpilot/sidebar.py:5242
 #: src/sshpilot/terminal_theme_editor.py:279 src/sshpilot/window.py:2023
 msgid "Delete"
 msgstr "Supprimer"
@@ -375,7 +375,7 @@ msgstr "Nom de la session"
 #. Save button
 #: src/sshpilot/actions.py:866
 #: src/sshpilot/connection_dialog_port_forwarding.py:251
-#: src/sshpilot/login_profile_dialogs.py:171 src/sshpilot/rbw_setup.py:167
+#: src/sshpilot/login_profile_dialogs.py:164 src/sshpilot/rbw_setup.py:167
 #: src/sshpilot/terminal_theme_editor.py:88 src/sshpilot/text_editor.py:379
 #: src/sshpilot/text_editor.py:1767 src/sshpilot/window_dialogs.py:3462
 #: src/sshpilot/window_dialogs.py:3543
@@ -546,8 +546,8 @@ msgid "Touch your security key when it blinks."
 msgstr "Touchez la clé de sécurité lorsqu’elle clignote."
 
 #: src/sshpilot/askpass_utils.py:917 src/sshpilot/connection_dialog.py:3392
-#: src/sshpilot/gtk/login_profile_messages.py:60
-#: src/sshpilot/login_profile_dialogs.py:55 src/sshpilot/window.py:7970
+#: src/sshpilot/gtk/login_profile_messages.py:62
+#: src/sshpilot/login_profile_dialogs.py:48 src/sshpilot/window.py:7970
 msgid "Confirm"
 msgstr "Confirmer"
 
@@ -788,8 +788,8 @@ msgstr ""
 #: src/sshpilot/connection_dialog.py:1069
 #: src/sshpilot/connection_dialog.py:3350
 #: src/sshpilot/connection_dialog.py:3365
-#: src/sshpilot/login_profile_dialogs.py:263
-#: src/sshpilot/login_profile_dialogs.py:279
+#: src/sshpilot/login_profile_dialogs.py:248
+#: src/sshpilot/login_profile_dialogs.py:265
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:261
 #: src/sshpilot/resources/ui/key_chooser_dialog.ui:31
 msgid "Add"
@@ -1642,7 +1642,7 @@ msgstr "Aucune connexion du groupe ne peut exécuter de commandes"
 
 #: src/sshpilot/command_blocks.py:2364 src/sshpilot/file_manager/pane.py:685
 #: src/sshpilot/file_manager/pane.py:2251
-#: src/sshpilot/login_profile_dialogs.py:1042 src/sshpilot/macos_menubar.py:76
+#: src/sshpilot/login_profile_dialogs.py:1038 src/sshpilot/macos_menubar.py:76
 #: src/sshpilot/sidebar.py:5147
 msgid "Edit"
 msgstr "Modifier"
@@ -1803,7 +1803,7 @@ msgstr "Nouvelle connexion"
 #: src/sshpilot/connection_dialog.py:1830
 #: src/sshpilot/forwarding_only_ui.py:236
 #: src/sshpilot/forwarding_only_ui.py:241
-#: src/sshpilot/login_profile_dialogs.py:879 src/sshpilot/terminal.py:1205
+#: src/sshpilot/login_profile_dialogs.py:875 src/sshpilot/terminal.py:1205
 #: src/sshpilot/terminal.py:1210 src/sshpilot/terminal.py:1523
 #: src/sshpilot/terminal.py:1552 src/sshpilot/window.py:3255
 msgid "Connection"
@@ -1811,7 +1811,6 @@ msgstr "Connexion"
 
 #: src/sshpilot/connection_dialog.py:1831
 #: src/sshpilot/gtk/login_profile_messages.py:32
-#: src/sshpilot/login_profile_dialogs.py:244
 msgid "Authentication"
 msgstr "Authentification"
 
@@ -1887,21 +1886,25 @@ msgid "Failed to load connection data"
 msgstr "Échec du chargement des données de connexion"
 
 #: src/sshpilot/connection_dialog.py:3343
+#: src/sshpilot/gtk/login_profile_messages.py:35
+#: src/sshpilot/login_profile_dialogs.py:242
 msgid "Identity files"
 msgstr "Fichiers d’identité"
 
 #: src/sshpilot/connection_dialog.py:3359
+#: src/sshpilot/login_profile_dialogs.py:259
 msgid "Keys SSH offers (IdentityFile)"
 msgstr "Clés proposées par SSH (IdentityFile)"
 
 #: src/sshpilot/connection_dialog.py:3363
-#: src/sshpilot/gtk/login_profile_messages.py:35
-#: src/sshpilot/login_profile_dialogs.py:277
+#: src/sshpilot/gtk/login_profile_messages.py:36
+#: src/sshpilot/login_profile_dialogs.py:263
 msgid "Certificates"
 msgstr "Certificats"
 
 #. --- Key handling ---
 #: src/sshpilot/connection_dialog.py:3375
+#: src/sshpilot/login_profile_dialogs.py:275
 msgid "Key handling"
 msgstr "Gestion des clés"
 
@@ -1909,7 +1912,7 @@ msgstr "Gestion des clés"
 #: src/sshpilot/connection_dialog.py:3392
 #: src/sshpilot/connection_dialog.py:3432
 #: src/sshpilot/connection_dialog.py:3703
-#: src/sshpilot/login_profile_dialogs.py:55
+#: src/sshpilot/login_profile_dialogs.py:48
 #: src/sshpilot/layout_preset_chooser.py:135 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "Par défaut"
@@ -1919,9 +1922,11 @@ msgstr "Par défaut"
 #: src/sshpilot/connection_dialog.py:3704
 #: src/sshpilot/daemon_interaction_dialogs.py:473
 #: src/sshpilot/daemon_interaction_dialogs.py:527
-#: src/sshpilot/gtk/login_profile_messages.py:55
+#: src/sshpilot/gtk/login_profile_messages.py:56
 #: src/sshpilot/gtk/login_profile_messages.py:57
-#: src/sshpilot/login_profile_dialogs.py:55
+#: src/sshpilot/gtk/login_profile_messages.py:59
+#: src/sshpilot/login_profile_dialogs.py:48
+#: src/sshpilot/login_profile_dialogs.py:279
 #: src/sshpilot/login_profile_dialogs.py:311
 msgid "Yes"
 msgstr "Oui"
@@ -1930,27 +1935,31 @@ msgstr "Oui"
 #: src/sshpilot/connection_dialog.py:3392
 #: src/sshpilot/connection_dialog.py:3705
 #: src/sshpilot/daemon_interaction_dialogs.py:472
-#: src/sshpilot/gtk/login_profile_messages.py:55
-#: src/sshpilot/gtk/login_profile_messages.py:58
-#: src/sshpilot/login_profile_dialogs.py:55
+#: src/sshpilot/gtk/login_profile_messages.py:56
+#: src/sshpilot/gtk/login_profile_messages.py:57
+#: src/sshpilot/gtk/login_profile_messages.py:60
+#: src/sshpilot/login_profile_dialogs.py:48
+#: src/sshpilot/login_profile_dialogs.py:279
 #: src/sshpilot/login_profile_dialogs.py:311
 msgid "No"
 msgstr "Non"
 
 #: src/sshpilot/connection_dialog.py:3381
+#: src/sshpilot/gtk/login_profile_messages.py:34
+#: src/sshpilot/login_profile_dialogs.py:278
 msgid "Only offer listed identities"
 msgstr "Ne proposer que les identités listées"
 
 #: src/sshpilot/connection_dialog.py:3392
-#: src/sshpilot/gtk/login_profile_messages.py:59
-#: src/sshpilot/login_profile_dialogs.py:55
+#: src/sshpilot/gtk/login_profile_messages.py:61
+#: src/sshpilot/login_profile_dialogs.py:48
 msgid "Ask"
 msgstr "Demander"
 
 #: src/sshpilot/connection_dialog.py:3394
 #: src/sshpilot/effective_config_dialog.py:43
-#: src/sshpilot/gtk/login_profile_messages.py:36
-#: src/sshpilot/login_profile_dialogs.py:294
+#: src/sshpilot/gtk/login_profile_messages.py:37
+#: src/sshpilot/login_profile_dialogs.py:288
 msgid "Add keys to agent"
 msgstr "Ajouter les clés à l’agent"
 
@@ -1963,7 +1972,7 @@ msgstr ""
 #. Stored in secure storage, never in the connection data.
 #: src/sshpilot/connection_dialog.py:3403
 #: src/sshpilot/connection_dialog_auth.py:86
-#: src/sshpilot/gtk/login_profile_messages.py:49
+#: src/sshpilot/gtk/login_profile_messages.py:50
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:51
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:320
 #: src/sshpilot/rdp_tab.py:450 src/sshpilot/rdp_tab.py:553
@@ -1976,7 +1985,7 @@ msgid "Password (optional)"
 msgstr "Mot de passe (facultatif)"
 
 #: src/sshpilot/connection_dialog.py:3424
-#: src/sshpilot/login_profile_dialogs.py:289
+#: src/sshpilot/login_profile_dialogs.py:298
 msgid "Agent and hardware keys"
 msgstr "Agent et clés matérielles"
 
@@ -1990,7 +1999,7 @@ msgstr ""
 #. Order matches TERMINAL_PANE_CHOICES.
 #: src/sshpilot/connection_dialog.py:3433
 #: src/sshpilot/file_manager/permissions.py:76
-#: src/sshpilot/login_profile_dialogs.py:738
+#: src/sshpilot/login_profile_dialogs.py:734
 #: src/sshpilot/machine_info_dialog.py:2503
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:209
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:216
@@ -2027,7 +2036,7 @@ msgid "Select agent socket"
 msgstr "Sélectionner le socket de l’agent"
 
 #: src/sshpilot/connection_dialog.py:3473
-#: src/sshpilot/gtk/login_profile_messages.py:37
+#: src/sshpilot/gtk/login_profile_messages.py:38
 #: src/sshpilot/login_profile_dialogs.py:302
 msgid "PKCS#11 provider"
 msgstr "Fournisseur PKCS#11"
@@ -2047,7 +2056,7 @@ msgid "Select PKCS#11 provider library"
 msgstr "Sélectionner la bibliothèque du fournisseur PKCS#11"
 
 #: src/sshpilot/connection_dialog.py:3488
-#: src/sshpilot/gtk/login_profile_messages.py:38
+#: src/sshpilot/gtk/login_profile_messages.py:39
 #: src/sshpilot/login_profile_dialogs.py:305
 msgid "FIDO security key provider"
 msgstr "Fournisseur de clé de sécurité FIDO"
@@ -2099,7 +2108,7 @@ msgstr "Nom d’hôte / adresse IP"
 #: src/sshpilot/connection_dialog_login_profile.py:144
 #: src/sshpilot/effective_config_dialog.py:32
 #: src/sshpilot/gtk/login_profile_messages.py:31
-#: src/sshpilot/login_profile_dialogs.py:230
+#: src/sshpilot/login_profile_dialogs.py:223
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:48
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:316
 #: src/sshpilot/rdp_tab.py:549
@@ -2207,7 +2216,7 @@ msgstr "Choisir dans l’inventaire"
 #. hint lives in the tooltip.
 #: src/sshpilot/connection_dialog.py:3692
 #: src/sshpilot/effective_config_dialog.py:36
-#: src/sshpilot/gtk/login_profile_messages.py:42
+#: src/sshpilot/gtk/login_profile_messages.py:43
 #: src/sshpilot/login_profile_dialogs.py:349
 msgid "Proxy command"
 msgstr "Commande proxy"
@@ -2224,7 +2233,7 @@ msgstr ""
 
 #: src/sshpilot/connection_dialog.py:3710
 #: src/sshpilot/effective_config_dialog.py:37
-#: src/sshpilot/gtk/login_profile_messages.py:40
+#: src/sshpilot/gtk/login_profile_messages.py:41
 #: src/sshpilot/login_profile_dialogs.py:310
 msgid "Forward agent"
 msgstr "Transférer l’agent"
@@ -2553,7 +2562,7 @@ msgstr "Impossible d’enregistrer les paramètres de connexion."
 
 #: src/sshpilot/connection_dialog.py:5237
 #: src/sshpilot/file_manager/properties_dialog.py:757
-#: src/sshpilot/login_profile_dialogs.py:879
+#: src/sshpilot/login_profile_dialogs.py:875
 msgid "Group"
 msgstr "Groupe"
 
@@ -2582,7 +2591,7 @@ msgid "Please enter a nickname for this connection"
 msgstr "Saisissez un surnom pour cette connexion"
 
 #: src/sshpilot/connection_dialog.py:5484
-#: src/sshpilot/login_profile_dialogs.py:438
+#: src/sshpilot/login_profile_dialogs.py:434
 msgid "Please correct the invalid key passphrase."
 msgstr "Corrigez la phrase de passe de la clé."
 
@@ -2783,7 +2792,7 @@ msgid "Filter tags…"
 msgstr "Filtrer les étiquettes…"
 
 #: src/sshpilot/connection_dialog_field_helpers.py:377
-#: src/sshpilot/login_profile_dialogs.py:1032
+#: src/sshpilot/login_profile_dialogs.py:1028
 #, python-brace-format
 msgid "{n} connection"
 msgid_plural "{n} connections"
@@ -2791,7 +2800,7 @@ msgstr[0] "{n} connexion"
 msgstr[1] "{n} connexions"
 
 #: src/sshpilot/connection_dialog_login_profile.py:45
-#: src/sshpilot/login_profile_dialogs.py:226
+#: src/sshpilot/login_profile_dialogs.py:219
 msgid "Profile"
 msgstr "Profil"
 
@@ -2808,7 +2817,7 @@ msgid "Username (using a login profile)"
 msgstr "Nom d’utilisateur (avec un profil de connexion)"
 
 #: src/sshpilot/connection_dialog_login_profile.py:232
-#: src/sshpilot/login_profile_dialogs.py:662
+#: src/sshpilot/login_profile_dialogs.py:658
 msgid "Don't use a profile"
 msgstr "Ne pas utiliser de profil"
 
@@ -3741,7 +3750,7 @@ msgstr "Aucun élément ne correspond"
 
 #: src/sshpilot/file_manager/pane.py:1150
 #: src/sshpilot/file_manager/pane_controls.py:145
-#: src/sshpilot/login_profile_dialogs.py:227
+#: src/sshpilot/login_profile_dialogs.py:220
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:183
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:331
 #: src/sshpilot/plugins/builtin/docker_manager/tab_stats.py:22
@@ -5012,8 +5021,8 @@ msgstr ""
 #: src/sshpilot/gtk/asbru_import_messages.py:48
 #: src/sshpilot/gtk/host_info_failure_messages.py:35
 #: src/sshpilot/gtk/host_info_failure_messages.py:36
-#: src/sshpilot/gtk/login_profile_messages.py:111
-#: src/sshpilot/gtk/login_profile_messages.py:112
+#: src/sshpilot/gtk/login_profile_messages.py:114
+#: src/sshpilot/gtk/login_profile_messages.py:115
 #: src/sshpilot/host_info_tab.py:367 src/sshpilot/machine_info_dialog.py:1175
 #: src/sshpilot/machine_info_dialog.py:1549
 msgid "Daemon connection unavailable."
@@ -5154,24 +5163,18 @@ msgid "The operation failed unexpectedly"
 msgstr "L’opération a échoué de manière inattendue"
 
 #: src/sshpilot/gtk/login_profile_messages.py:33
-#: src/sshpilot/login_profile_dialogs.py:246
 msgid "Key selection"
 msgstr "Sélection des clés"
 
-#: src/sshpilot/gtk/login_profile_messages.py:34
-#: src/sshpilot/login_profile_dialogs.py:258
-msgid "Private Keys"
-msgstr "Clés privées"
-
-#: src/sshpilot/gtk/login_profile_messages.py:39
+#: src/sshpilot/gtk/login_profile_messages.py:40
 msgid "Disable public key authentication"
 msgstr "Désactiver l’authentification par clé publique"
 
-#: src/sshpilot/gtk/login_profile_messages.py:41
+#: src/sshpilot/gtk/login_profile_messages.py:42
 msgid "Agent socket to forward"
 msgstr "Socket de l’agent à rediriger"
 
-#: src/sshpilot/gtk/login_profile_messages.py:43
+#: src/sshpilot/gtk/login_profile_messages.py:44
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:89
 #: src/sshpilot/login_profile_dialogs.py:358
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:54
@@ -5179,115 +5182,112 @@ msgstr "Socket de l’agent à rediriger"
 msgid "Extra SSH options"
 msgstr "Options SSH supplémentaires"
 
-#: src/sshpilot/gtk/login_profile_messages.py:49
+#: src/sshpilot/gtk/login_profile_messages.py:50
 msgid "Key-based"
 msgstr "Par clé"
 
-#: src/sshpilot/gtk/login_profile_messages.py:51
-#: src/sshpilot/login_profile_dialogs.py:50
+#: src/sshpilot/gtk/login_profile_messages.py:52
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:375
 #: src/sshpilot/preferences.py:3409
 msgid "Automatic"
 msgstr "Automatique"
 
-#: src/sshpilot/gtk/login_profile_messages.py:52
-#: src/sshpilot/login_profile_dialogs.py:51
+#: src/sshpilot/gtk/login_profile_messages.py:53
 msgid "Specific keys only"
 msgstr "Clés spécifiques uniquement"
 
-#: src/sshpilot/gtk/login_profile_messages.py:53
-#: src/sshpilot/login_profile_dialogs.py:52
+#: src/sshpilot/gtk/login_profile_messages.py:54
 msgid "Specific keys and agent"
 msgstr "Clés spécifiques et agent"
 
-#: src/sshpilot/gtk/login_profile_messages.py:72
+#: src/sshpilot/gtk/login_profile_messages.py:75
 msgid "The login profile no longer exists."
 msgstr "Le profil de connexion n’existe plus."
 
-#: src/sshpilot/gtk/login_profile_messages.py:74
+#: src/sshpilot/gtk/login_profile_messages.py:77
 msgid "A login profile with this name already exists."
 msgstr "Un profil de connexion portant ce nom existe déjà."
 
-#: src/sshpilot/gtk/login_profile_messages.py:76
-#: src/sshpilot/login_profile_dialogs.py:426
+#: src/sshpilot/gtk/login_profile_messages.py:79
+#: src/sshpilot/login_profile_dialogs.py:424
 msgid "Enter a name for the login profile."
 msgstr "Saisissez un nom pour le profil de connexion."
 
-#: src/sshpilot/gtk/login_profile_messages.py:77
+#: src/sshpilot/gtk/login_profile_messages.py:80
 msgid "The login profile name is too long."
 msgstr "Le nom du profil de connexion est trop long."
 
-#: src/sshpilot/gtk/login_profile_messages.py:79
+#: src/sshpilot/gtk/login_profile_messages.py:82
 msgid "The username must not contain spaces."
 msgstr "Le nom d’utilisateur ne doit pas contenir d’espaces."
 
-#: src/sshpilot/gtk/login_profile_messages.py:82
+#: src/sshpilot/gtk/login_profile_messages.py:85
 msgid "Extra SSH options cannot contain Host, Match or Include lines."
 msgstr ""
 "Les options SSH supplémentaires ne peuvent pas contenir de lignes Host, "
 "Match ou Include."
 
-#: src/sshpilot/gtk/login_profile_messages.py:85
+#: src/sshpilot/gtk/login_profile_messages.py:88
 #, python-brace-format
 msgid "{keyword} has its own setting and cannot be used in Extra SSH options."
 msgstr ""
 "{keyword} possède son propre paramètre et ne peut pas être utilisé dans les "
 "options SSH supplémentaires."
 
-#: src/sshpilot/gtk/login_profile_messages.py:88
+#: src/sshpilot/gtk/login_profile_messages.py:91
 #: src/sshpilot/window_dialogs.py:867
 msgid "Login profiles apply to SSH connections."
 msgstr "Les profils de connexion s’appliquent aux connexions SSH."
 
-#: src/sshpilot/gtk/login_profile_messages.py:90
+#: src/sshpilot/gtk/login_profile_messages.py:93
 msgid "The group no longer exists."
 msgstr "Le groupe n’existe plus."
 
-#: src/sshpilot/gtk/login_profile_messages.py:92
+#: src/sshpilot/gtk/login_profile_messages.py:95
 msgid "The replacement login profile is no longer available."
 msgstr "Le profil de connexion de remplacement n’est plus disponible."
 
-#: src/sshpilot/gtk/login_profile_messages.py:94
+#: src/sshpilot/gtk/login_profile_messages.py:97
 msgid "The login profile backup is invalid."
 msgstr "La sauvegarde du profil de connexion n’est pas valide."
 
-#: src/sshpilot/gtk/login_profile_messages.py:96
-#: src/sshpilot/login_profile_dialogs.py:1027
+#: src/sshpilot/gtk/login_profile_messages.py:99
+#: src/sshpilot/login_profile_dialogs.py:1023
 msgid "Login profiles are unavailable: their file could not be read."
 msgstr ""
 "Les profils de connexion sont indisponibles : leur fichier n’a pas pu être "
 "lu."
 
-#: src/sshpilot/gtk/login_profile_messages.py:99
+#: src/sshpilot/gtk/login_profile_messages.py:102
 msgid "Secure storage is not available for login profile passwords."
 msgstr ""
 "Le stockage sécurisé est indisponible pour les mots de passe des profils de "
 "connexion."
 
-#: src/sshpilot/gtk/login_profile_messages.py:105
+#: src/sshpilot/gtk/login_profile_messages.py:108
 msgid "The login profile was changed elsewhere. Reopen it and try again."
 msgstr ""
 "Le profil de connexion a été modifié ailleurs. Rouvrez-le et réessayez."
 
-#: src/sshpilot/gtk/login_profile_messages.py:107
+#: src/sshpilot/gtk/login_profile_messages.py:110
 msgid "The connection no longer exists."
 msgstr "La connexion n’existe plus."
 
-#: src/sshpilot/gtk/login_profile_messages.py:109
+#: src/sshpilot/gtk/login_profile_messages.py:112
 msgid "The password could not be stored in secure storage."
 msgstr "Le mot de passe n’a pas pu être enregistré dans le stockage sécurisé."
 
-#: src/sshpilot/gtk/login_profile_messages.py:114
+#: src/sshpilot/gtk/login_profile_messages.py:117
 #: src/sshpilot/window_dialogs.py:807
 msgid "The SSH Pilot daemon does not support login profiles."
 msgstr "Le démon SSH Pilot ne prend pas en charge les profils de connexion."
 
-#: src/sshpilot/gtk/login_profile_messages.py:142
+#: src/sshpilot/gtk/login_profile_messages.py:145
 #, python-brace-format
 msgid "{label}: {before} → {after}"
 msgstr "{label}: {before} → {after}"
 
-#: src/sshpilot/gtk/login_profile_messages.py:175
+#: src/sshpilot/gtk/login_profile_messages.py:178
 #, python-brace-format
 msgid ""
 "This replaces the following user-set values on {count} of {total} linked "
@@ -5302,15 +5302,11 @@ msgstr[1] ""
 "Cela remplace les valeurs suivantes définies par l’utilisateur sur {count} "
 "des {total} connexions liées : {fields}."
 
-#: src/sshpilot/gtk/login_profile_messages.py:203
+#: src/sshpilot/gtk/login_profile_messages.py:206
 msgid "password"
 msgstr "mot de passe"
 
-#: src/sshpilot/gtk/login_profile_messages.py:207
-msgid "automatic keys"
-msgstr "clés automatiques"
-
-#: src/sshpilot/gtk/login_profile_messages.py:214
+#: src/sshpilot/gtk/login_profile_messages.py:215
 #, python-brace-format
 msgid ""
 "{count} connection was detached from its login profile because its SSH "
@@ -5325,18 +5321,18 @@ msgstr[1] ""
 "{count} connexions ont été détachées de leur profil de connexion car leur "
 "configuration SSH a été modifiée."
 
-#: src/sshpilot/gtk/login_profile_messages.py:230
+#: src/sshpilot/gtk/login_profile_messages.py:231
 msgid ""
 "The profile was saved, but a password or passphrase could not be stored."
 msgstr ""
 "Le profil a été enregistré, mais un mot de passe ou une phrase de passe n’a "
 "pas pu l’être."
 
-#: src/sshpilot/gtk/login_profile_messages.py:235
+#: src/sshpilot/gtk/login_profile_messages.py:236
 msgid "The key passphrase could not be stored."
 msgstr "La phrase de passe de la clé n’a pas pu être enregistrée."
 
-#: src/sshpilot/gtk/login_profile_messages.py:243
+#: src/sshpilot/gtk/login_profile_messages.py:244
 msgid "The login profile operation failed."
 msgstr "L’opération sur le profil de connexion a échoué."
 
@@ -7455,25 +7451,29 @@ msgstr ""
 "Les lignes du journal peuvent contenir des noms d’hôte, des noms "
 "d’utilisateur et des chemins de fichiers. Vérifiez-les avant tout partage."
 
-#: src/sshpilot/login_profile_dialogs.py:49
+#: src/sshpilot/login_profile_dialogs.py:212
+msgid "New profile"
+msgstr "Nouveau profil"
+
+#: src/sshpilot/login_profile_dialogs.py:214
+msgid "Edit Login Profile"
+msgstr "Modifier le profil de connexion"
+
+#: src/sshpilot/login_profile_dialogs.py:214
+#: src/sshpilot/login_profile_dialogs.py:965
+#: src/sshpilot/login_profile_dialogs.py:984
+msgid "New Login Profile"
+msgstr "Nouveau profil de connexion"
+
+#: src/sshpilot/login_profile_dialogs.py:243
+msgid "No identity files set by this profile."
+msgstr "Ce profil ne définit aucun fichier d’identité."
+
+#: src/sshpilot/login_profile_dialogs.py:279
 #: src/sshpilot/login_profile_dialogs.py:311 src/sshpilot/preferences.py:2877
 #: src/sshpilot/preferences.py:2908
 msgid "Not set"
 msgstr "Non défini"
-
-#: src/sshpilot/login_profile_dialogs.py:219
-msgid "New profile"
-msgstr "Nouveau profil"
-
-#: src/sshpilot/login_profile_dialogs.py:221
-msgid "Edit Login Profile"
-msgstr "Modifier le profil de connexion"
-
-#: src/sshpilot/login_profile_dialogs.py:221
-#: src/sshpilot/login_profile_dialogs.py:969
-#: src/sshpilot/login_profile_dialogs.py:988
-msgid "New Login Profile"
-msgstr "Nouveau profil de connexion"
 
 #: src/sshpilot/login_profile_dialogs.py:318
 msgid "Agent socket to forward (optional)"
@@ -7524,64 +7524,64 @@ msgstr ""
 "Une directive par ligne, par exemple ServerAliveInterval 30. Elles "
 "remplacent les mêmes directives des connexions liées."
 
-#: src/sshpilot/login_profile_dialogs.py:586
+#: src/sshpilot/login_profile_dialogs.py:582
 msgid "Replace connection settings?"
 msgstr "Remplacer les paramètres de connexion ?"
 
-#: src/sshpilot/login_profile_dialogs.py:587
+#: src/sshpilot/login_profile_dialogs.py:583
 msgid "The login profile will replace these settings:"
 msgstr "Le profil de connexion remplacera ces paramètres :"
 
-#: src/sshpilot/login_profile_dialogs.py:590
+#: src/sshpilot/login_profile_dialogs.py:586
 msgid "Apply Profile"
 msgstr "Appliquer le profil"
 
-#: src/sshpilot/login_profile_dialogs.py:612
+#: src/sshpilot/login_profile_dialogs.py:608
 msgid "Replace user-set values?"
 msgstr "Remplacer les valeurs définies par l’utilisateur ?"
 
-#: src/sshpilot/login_profile_dialogs.py:614
+#: src/sshpilot/login_profile_dialogs.py:610
 msgid "Show connections"
 msgstr "Afficher les connexions"
 
-#: src/sshpilot/login_profile_dialogs.py:620
-#: src/sshpilot/login_profile_dialogs.py:671
-#: src/sshpilot/login_profile_dialogs.py:740
+#: src/sshpilot/login_profile_dialogs.py:616
+#: src/sshpilot/login_profile_dialogs.py:667
+#: src/sshpilot/login_profile_dialogs.py:736
 #: src/sshpilot/resources/ui/authorized_key_entry_dialog.ui:27
 msgid "Apply"
 msgstr "Appliquer"
 
-#: src/sshpilot/login_profile_dialogs.py:658
-#: src/sshpilot/login_profile_dialogs.py:734 src/sshpilot/window_dialogs.py:806
+#: src/sshpilot/login_profile_dialogs.py:654
+#: src/sshpilot/login_profile_dialogs.py:730 src/sshpilot/window_dialogs.py:806
 #: src/sshpilot/window_dialogs.py:916
 msgid "Login profiles unavailable"
 msgstr "Profils de connexion indisponibles"
 
-#: src/sshpilot/login_profile_dialogs.py:667
+#: src/sshpilot/login_profile_dialogs.py:663
 msgid "Inherit from group"
 msgstr "Hériter du groupe"
 
-#: src/sshpilot/login_profile_dialogs.py:671
+#: src/sshpilot/login_profile_dialogs.py:667
 msgid "Assign Login Profile"
 msgstr "Attribuer un profil de connexion"
 
-#: src/sshpilot/login_profile_dialogs.py:677
+#: src/sshpilot/login_profile_dialogs.py:673
 #, python-brace-format
 msgid "Applies to {count} connection."
 msgid_plural "Applies to {count} connections."
 msgstr[0] "S’applique à {count} connexion."
 msgstr[1] "S’applique à {count} connexions."
 
-#: src/sshpilot/login_profile_dialogs.py:682
-#: src/sshpilot/login_profile_dialogs.py:747
+#: src/sshpilot/login_profile_dialogs.py:678
+#: src/sshpilot/login_profile_dialogs.py:743
 msgid "Login profile"
 msgstr "Profil de connexion"
 
-#: src/sshpilot/login_profile_dialogs.py:740
+#: src/sshpilot/login_profile_dialogs.py:736
 msgid "Group Login Profile"
 msgstr "Profil de connexion du groupe"
 
-#: src/sshpilot/login_profile_dialogs.py:744
+#: src/sshpilot/login_profile_dialogs.py:740
 msgid ""
 "Connections in this group, and in nested groups without their own profile, "
 "can inherit it."
@@ -7589,30 +7589,30 @@ msgstr ""
 "Les connexions de ce groupe et des groupes imbriqués sans profil propre "
 "peuvent en hériter."
 
-#: src/sshpilot/login_profile_dialogs.py:756
+#: src/sshpilot/login_profile_dialogs.py:752
 msgid "Members that inherit the profile"
 msgstr "Membres héritant du profil"
 
-#: src/sshpilot/login_profile_dialogs.py:757
+#: src/sshpilot/login_profile_dialogs.py:753
 msgid "Members with their own explicit profile are unchecked by default."
 msgstr ""
 "Les membres possédant leur propre profil explicite sont décochés par défaut."
 
-#: src/sshpilot/login_profile_dialogs.py:771
+#: src/sshpilot/login_profile_dialogs.py:767
 #, python-brace-format
 msgid "Uses profile “{name}”"
 msgstr "Utilise le profil « {name} »"
 
-#: src/sshpilot/login_profile_dialogs.py:839
+#: src/sshpilot/login_profile_dialogs.py:835
 msgid "Could not delete the profile"
 msgstr "Impossible de supprimer le profil"
 
-#: src/sshpilot/login_profile_dialogs.py:844
+#: src/sshpilot/login_profile_dialogs.py:840
 #, python-brace-format
 msgid "Delete “{name}”?"
 msgstr "Supprimer « {name} » ?"
 
-#: src/sshpilot/login_profile_dialogs.py:845
+#: src/sshpilot/login_profile_dialogs.py:841
 msgid ""
 "No connection or group uses this profile. Its stored passwords are deleted "
 "too."
@@ -7620,12 +7620,12 @@ msgstr ""
 "Aucune connexion ni aucun groupe n’utilise ce profil. Ses mots de passe "
 "enregistrés seront également supprimés."
 
-#: src/sshpilot/login_profile_dialogs.py:859
+#: src/sshpilot/login_profile_dialogs.py:855
 #, python-brace-format
 msgid "Delete “{name}”"
 msgstr "Supprimer « {name} »"
 
-#: src/sshpilot/login_profile_dialogs.py:864
+#: src/sshpilot/login_profile_dialogs.py:860
 msgid ""
 "These connections and groups use the profile. Choose what each should use "
 "instead. Detached connections keep their current settings."
@@ -7635,33 +7635,33 @@ msgstr ""
 "actuels."
 
 #. list of (label, profile_id or None)
-#: src/sshpilot/login_profile_dialogs.py:871
+#: src/sshpilot/login_profile_dialogs.py:867
 msgid "Apply to all"
 msgstr "Appliquer à tous"
 
-#: src/sshpilot/login_profile_dialogs.py:873
-#: src/sshpilot/login_profile_dialogs.py:919
+#: src/sshpilot/login_profile_dialogs.py:869
+#: src/sshpilot/login_profile_dialogs.py:915
 msgid "New Profile…"
 msgstr "Nouveau profil…"
 
-#: src/sshpilot/login_profile_dialogs.py:874
+#: src/sshpilot/login_profile_dialogs.py:870
 msgid "Affected"
 msgstr "Connexions et groupes concernés"
 
-#: src/sshpilot/login_profile_dialogs.py:885
+#: src/sshpilot/login_profile_dialogs.py:881
 msgid "Detach (keep current values)"
 msgstr "Détacher (conserver les valeurs actuelles)"
 
-#: src/sshpilot/login_profile_dialogs.py:955 src/sshpilot/macos_menubar.py:96
+#: src/sshpilot/login_profile_dialogs.py:951 src/sshpilot/macos_menubar.py:96
 #: src/sshpilot/window.py:4280
 msgid "Login Profiles"
 msgstr "Profils de connexion"
 
-#: src/sshpilot/login_profile_dialogs.py:976
+#: src/sshpilot/login_profile_dialogs.py:972
 msgid "No Login Profiles"
 msgstr "Aucun profil de connexion"
 
-#: src/sshpilot/login_profile_dialogs.py:977
+#: src/sshpilot/login_profile_dialogs.py:973
 msgid ""
 "A login profile bundles a username, keys and passwords. Assign it to "
 "connections or groups to reuse it."
@@ -7669,14 +7669,14 @@ msgstr ""
 "Un profil de connexion regroupe un nom d’utilisateur, des clés et des mots "
 "de passe. Attribuez-le à des connexions ou à des groupes pour le réutiliser."
 
-#: src/sshpilot/login_profile_dialogs.py:1035
+#: src/sshpilot/login_profile_dialogs.py:1031
 #, python-brace-format
 msgid "{n} group"
 msgid_plural "{n} groups"
 msgstr[0] "{n} groupe"
 msgstr[1] "{n} groupes"
 
-#: src/sshpilot/login_profile_dialogs.py:1072
+#: src/sshpilot/login_profile_dialogs.py:1068
 #, python-brace-format
 msgid "{count} connection was detached and kept its settings."
 msgid_plural "{count} connections were detached and kept their settings."
@@ -18225,6 +18225,12 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#~ msgid "Private Keys"
+#~ msgstr "Clés privées"
+
+#~ msgid "automatic keys"
+#~ msgstr "clés automatiques"
 
 #~ msgid "Use Specific Keys"
 #~ msgstr "Utiliser des clés spécifiques"

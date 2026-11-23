@@ -44,13 +44,6 @@ from sshpilot.gtk.login_profile_messages import (
 
 logger = logging.getLogger(__name__)
 
-# Index 0 is "Not set": a linked connection keeps its own key selection.
-_KEY_MODE_OPTIONS = (
-    _("Not set"),
-    _("Automatic"),
-    _("Specific keys only"),
-    _("Specific keys and agent"),
-)
 _ADD_KEYS_VALUES = ("", "yes", "no", "ask", "confirm")
 _ADD_KEYS_LABELS = (_("Default"), _("Yes"), _("No"), _("Ask"), _("Confirm"))
 
@@ -241,21 +234,13 @@ class LoginProfileEditor:
         self.auth_policy.load(AuthPolicy.from_lines(policy_lines))
         page.add(self.auth_policy.group)
 
-        auth = Adw.PreferencesGroup(title=_("Authentication"))
-        self.key_mode_row = Adw.ComboRow(
-            title=_("Key selection"), model=_string_list(_KEY_MODE_OPTIONS)
-        )
-        self.key_mode_row.set_selected(
-            0 if settings.key_select_mode is None else settings.key_select_mode + 1
-        )
-        self.key_mode_row.connect("notify::selected", self._sync_visibility)
-        auth.add(self.key_mode_row)
-        page.add(auth)
-
         window = self.dialog
         key_manager = getattr(parent_window, "key_manager", None)
+        # As in the connection editor: the identity files, the certificates
+        # and IdentitiesOnly, each its own setting (no key selection mode).
         self.key_editor = FileListEditor(
-            title=_("Private Keys"),
+            title=_("Identity files"),
+            empty_placeholder=_("No identity files set by this profile."),
             with_passphrase=True,
             parent_window=parent_window,
             add_actions=[{
@@ -271,6 +256,7 @@ class LoginProfileEditor:
                 if key_manager is not None else None
             ),
         )
+        self.key_editor.set_description(_("Keys SSH offers (IdentityFile)"))
         self.key_editor.set_paths(list(settings.identity_files))
         page.add(self.key_editor)
         self.cert_editor = FileListEditor(
@@ -286,10 +272,18 @@ class LoginProfileEditor:
         self.cert_editor.set_paths(list(settings.certificate_files))
         page.add(self.cert_editor)
 
-        agent = Adw.PreferencesGroup(title=_("Agent and hardware keys"))
-        self.identity_agent_row = Adw.EntryRow(title="IdentityAgent")
-        self.identity_agent_row.set_text(settings.identity_agent)
-        agent.add(self.identity_agent_row)
+        key_handling = Adw.PreferencesGroup(title=_("Key handling"))
+        # Not set / Yes / No: unset leaves each connection's IdentitiesOnly.
+        self.identities_only_row = Adw.ComboRow(
+            title=_("Only offer listed identities"),
+            model=_string_list((_("Not set"), _("Yes"), _("No"))),
+        )
+        self.identities_only_row.set_subtitle("IdentitiesOnly")
+        self.identities_only_row.set_selected(
+            0 if settings.identities_only is None
+            else (1 if settings.identities_only else 2)
+        )
+        key_handling.add(self.identities_only_row)
         self.add_keys_row = Adw.ComboRow(
             title=_("Add keys to agent"), model=_string_list(_ADD_KEYS_LABELS)
         )
@@ -298,7 +292,13 @@ class LoginProfileEditor:
         self.add_keys_row.set_selected(
             _ADD_KEYS_VALUES.index(value) if value in _ADD_KEYS_VALUES else 0
         )
-        agent.add(self.add_keys_row)
+        key_handling.add(self.add_keys_row)
+        page.add(key_handling)
+
+        agent = Adw.PreferencesGroup(title=_("Agent and hardware keys"))
+        self.identity_agent_row = Adw.EntryRow(title="IdentityAgent")
+        self.identity_agent_row.set_text(settings.identity_agent)
+        agent.add(self.identity_agent_row)
         self.pkcs11_row = Adw.EntryRow(title=_("PKCS#11 provider"))
         self.pkcs11_row.set_text(settings.pkcs11_provider)
         agent.add(self.pkcs11_row)
@@ -377,8 +377,6 @@ class LoginProfileEditor:
         self.dialog.present()
 
     def _sync_visibility(self, *_args) -> None:
-        specific = self.key_mode_row.get_selected() in (2, 3)
-        self.key_editor.set_visible(specific)
         self.forward_target_row.set_visible(self.forward_agent_row.get_selected() == 1)
 
     def values(self) -> Dict[str, object]:
@@ -396,9 +394,9 @@ class LoginProfileEditor:
         return {
             "name": self.name_row.get_text(),
             "username": self.username_row.get_text(),
-            "key_select_mode": (
-                None if self.key_mode_row.get_selected() == 0
-                else self.key_mode_row.get_selected() - 1
+            "key_select_mode": None,
+            "identities_only": {0: None, 1: True, 2: False}.get(
+                self.identities_only_row.get_selected()
             ),
             "identity_files": list(self.key_editor.get_paths()),
             "certificate_files": list(self.cert_editor.get_paths()),
@@ -431,12 +429,10 @@ class LoginProfileEditor:
         except (TypeError, ValueError) as error:
             _show_error(self._banner, error)
             return
-        passphrase_ops: list = []
-        if self.key_editor.get_visible():
-            passphrase_ops = self.key_editor.pending_passphrase_operations()
-            if passphrase_ops is None:
-                self.dialog.show_error(_("Please correct the invalid key passphrase."))
-                return
+        passphrase_ops = self.key_editor.pending_passphrase_operations()
+        if passphrase_ops is None:
+            self.dialog.show_error(_("Please correct the invalid key passphrase."))
+            return
         self._banner.set_revealed(False)
         self._save.set_sensitive(False)
 
