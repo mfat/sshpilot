@@ -49,6 +49,7 @@ from .models import (
     ProfileLink,
     apply_profile_to_data,
     auth_fingerprint,
+    has_legacy_link_fields,
     is_legacy_auth_link,
     link_fingerprint,
     matches_legacy_auth_fingerprint,
@@ -833,14 +834,16 @@ class LoginProfileService:
                 continue
             if (
                 link.applied
-                and is_legacy_auth_link(link.applied)
+                and (is_legacy_auth_link(link.applied) or has_legacy_link_fields(link))
                 and link.rev == revision_token(eff.profile)
             ):
                 # Recorded by a version where a profile owned every field.
                 # It matched above, so the block is as that version wrote it:
                 # record what the profile owns now, without rewriting the
                 # block. Otherwise a field the dialog now leaves editable
-                # (one the profile does not set) would read as drift.
+                # (one the profile does not set) would read as drift. Links
+                # that list a retired field (key_select_mode) move to the
+                # profile's current fields the same way.
                 keys = profile_owned_keywords(eff.profile)
                 fields = profile_owned_fields(eff.profile)
                 upgraded = ProfileLink(

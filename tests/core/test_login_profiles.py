@@ -751,3 +751,45 @@ def test_preview_update_lists_only_user_set_values_a_profile_would_take_over(env
     assert service.preview_update(profile.id, {'identity_agent': '/run/b.sock'}) == (3, ())
     # Nothing was written.
     assert 'User alice' in _block(root, 'web1')
+
+
+@pytest.mark.parametrize('drift', [False, True])
+def test_a_link_owning_the_retired_key_select_mode_keeps_matching(env, drift):
+    """Links recorded while profiles had a key selection mode do not detach.
+
+    They list ``key_select_mode`` among their fields; the fingerprint is
+    validated with it, then the link records what the profile owns now
+    without rewriting the Host block.
+    """
+    from sshpilot.core.login_profiles.models import auth_fingerprint
+
+    repo, service, root, _secrets, _events = env
+    profile = service.create_profile({
+        'name': 'Keys', 'identity_files': ('~/.ssh/work',), 'identities_only': True,
+    })
+    service.assign_connections(('web1',), LINK_EXPLICIT, profile.id)
+    assert 'IdentitiesOnly yes' in root.read_text()
+    link = _link(repo, 'web1')
+    old_fields = ['key_select_mode', 'identity_files']
+    record = repo.get_record('web1')
+    stored = link.to_metadata()
+    stored['fields'] = old_fields
+    stored['applied'] = auth_fingerprint(
+        record.data, link.extra_keys, owned_fields=old_fields,
+    )
+    with service._operation():  # metadata as the previous release stored it
+        repo.update_connection_metadata('web1', {'login_profile': stored})
+        if drift:
+            repo.update_connection('web1', {'key_select_mode': 2})
+    assert parse_link({'login_profile': stored}).fields == tuple(old_fields)
+    before = root.read_text()
+    detached = service.reconcile()
+    if drift:
+        assert len(detached) == 1 and detached[0].reason == DETACH_DRIFT
+        return
+    assert detached == ()
+    assert root.read_text() == before
+    migrated = _link(repo, 'web1')
+    assert migrated.fields == ('identities_only', 'identity_files')
+    assert service.reconcile() == ()
+    assert _link(repo, 'web1') == migrated

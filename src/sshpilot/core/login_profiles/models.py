@@ -521,6 +521,11 @@ PROFILE_FIELDS: Tuple[str, ...] = (
     "proxy_command",
 )
 
+#: Fields a stored link may list that no profile owns any more. They are kept
+#: when a link is read so its fingerprint still validates; reconciliation then
+#: records the profile's current fields without touching the Host block.
+LEGACY_LINK_FIELDS: Tuple[str, ...] = ("key_select_mode",)
+
 
 def profile_owned_fields(profile: "LoginProfile") -> Tuple[str, ...]:
     """The fields *profile* sets (empty text/lists and ``None`` are unset)."""
@@ -673,6 +678,11 @@ def is_legacy_auth_link(applied: str) -> bool:
     )
 
 
+def has_legacy_link_fields(link: "ProfileLink") -> bool:
+    """Whether *link* lists a field that profiles no longer own."""
+    return any(name in LEGACY_LINK_FIELDS for name in link.fields)
+
+
 def link_fingerprint(data: Mapping[str, Any], link: "ProfileLink") -> str:
     """Recompute *link*'s fingerprint the way it was recorded."""
     if link.applied.startswith(OWNED_FIELDS_FINGERPRINT):
@@ -784,7 +794,7 @@ def parse_link(metadata: Optional[Mapping[str, Any]]) -> Optional[ProfileLink]:
     fields_raw = raw.get("fields")
     fields = tuple(
         f for f in (fields_raw if isinstance(fields_raw, (list, tuple)) else ())
-        if isinstance(f, str) and f in PROFILE_FIELDS
+        if isinstance(f, str) and (f in PROFILE_FIELDS or f in LEGACY_LINK_FIELDS)
     )
     if mode == LINK_EXPLICIT and is_profile_id(raw.get("id")):
         return ProfileLink(LINK_EXPLICIT, str(raw["id"]), applied, rev, extra_keys, fields)

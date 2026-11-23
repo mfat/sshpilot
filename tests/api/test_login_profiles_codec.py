@@ -174,3 +174,18 @@ def test_changed_event_envelope_roundtrip():
     )
     assert decoded.type is EventType.LOGIN_PROFILES_CHANGED
     assert decoded.payload == payload
+
+
+def test_settings_from_a_client_without_identities_only_are_accepted():
+    """A client from before ``identities_only`` sends only ``key_select_mode``."""
+    from sshpilot.api.transport.login_profile_codec import (
+        login_profile_settings_from_wire,
+        login_profile_settings_to_wire,
+    )
+    from sshpilot.api.models.login_profiles import LoginProfileSettings
+
+    wire = login_profile_settings_to_wire(LoginProfileSettings(name="Old", key_select_mode=1))
+    del wire["identities_only"]
+    settings = login_profile_settings_from_wire(wire)
+    assert settings.identities_only is None
+    assert settings.key_select_mode == 1

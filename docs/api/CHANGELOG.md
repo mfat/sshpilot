@@ -13,8 +13,11 @@ notes remain separate.
   Automatic drops the key list it never wrote) and the daemon always
   returns `null` for it. A profile owns `identities_only` and
   `identity_files` separately, so one that lists keys leaves a linked
-  connection's own IdentitiesOnly alone. Links recorded before keep their
-  fingerprints. The API implementation version is 0.109; Protocol remains 1.0.
+  connection's own IdentitiesOnly alone. A settings payload may omit
+  `identities_only` (older clients do); it reads as `null`. Links recorded
+  before keep their fingerprints, including ones that list
+  `key_select_mode` among their fields, which then move to the profile's
+  current fields without rewriting the Host block. The API implementation version is 0.109; Protocol remains 1.0.
 - `identities_only_explicit_no` is an editable connection config field (a
   boolean in `EDITABLE_CONFIG_FIELDS`). The connection editor now edits
   `IdentitiesOnly` as Default / Yes / No on its own, with no key selection

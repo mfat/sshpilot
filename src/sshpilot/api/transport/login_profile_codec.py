@@ -66,7 +66,13 @@ def _mode(value: Any) -> Optional[LoginProfileLinkMode]:
 
 # -- settings / summaries ------------------------------------------------------
 
-_SETTINGS_FIELDS = frozenset(LoginProfileSettings.__dataclass_fields__)  # type: ignore[attr-defined]
+# Added after older clients shipped; they omit it, so it reads as unset and
+# the profile model converts their ``key_select_mode`` instead.
+_OPTIONAL_SETTINGS_FIELDS = frozenset({"identities_only"})
+_SETTINGS_FIELDS = (
+    frozenset(LoginProfileSettings.__dataclass_fields__)  # type: ignore[attr-defined]
+    - _OPTIONAL_SETTINGS_FIELDS
+)
 
 
 def login_profile_settings_to_wire(settings: LoginProfileSettings) -> Dict[str, Any]:
@@ -92,7 +98,12 @@ def login_profile_settings_to_wire(settings: LoginProfileSettings) -> Dict[str, 
 
 
 def login_profile_settings_from_wire(value: Any) -> LoginProfileSettings:
-    data = _strict_fields(value, required=_SETTINGS_FIELDS, context="login profile settings")
+    data = _strict_fields(
+        value,
+        required=_SETTINGS_FIELDS,
+        optional=_OPTIONAL_SETTINGS_FIELDS,
+        context="login profile settings",
+    )
     text = {
         name: _text(data[name], name, allow_empty=True)
         for name in (
@@ -121,7 +132,7 @@ def login_profile_settings_from_wire(value: Any) -> LoginProfileSettings:
             else _boolean(data["forward_agent"], "forward_agent")
         ),
         identities_only=(
-            None if data["identities_only"] is None
+            None if data.get("identities_only") is None
             else _boolean(data["identities_only"], "identities_only")
         ),
         **text,
