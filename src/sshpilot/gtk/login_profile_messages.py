@@ -222,13 +222,16 @@ def extra_option_has_own_setting(extra_text: str) -> str:
     A line typed there would stand above the section's own and decide the
     setting without the section showing it.
     """
-    from ..connection_dialog_auth import is_policy_line, split_option
+    import re
+
+    from ..connection_dialog_auth import is_policy_line
 
     for line in (extra_text or "").splitlines():
         if is_policy_line(line):
+            # The keyword as typed.
             return _(
                 _REASON_TEMPLATES[LoginProfileErrorReason.EXTRA_MANAGED_OPTION]
-            ).format(keyword=split_option(line)[0])
+            ).format(keyword=re.split(r"[\s=]", line.strip(), maxsplit=1)[0])
     return ""
 
 
