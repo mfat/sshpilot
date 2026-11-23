@@ -524,6 +524,216 @@ class ConfigSyntaxError:
             raise ValueError("config syntax error line must be a positive integer")
 
 
+class SshConfigDraftLineState(str, Enum):
+    """What OpenSSH does with one option line of an evaluated draft."""
+
+    #: Its block applies and this line supplies the option's value.
+    APPLIED = "applied"
+    #: Its block applies, but an earlier line already set the option.
+    SHADOWED = "shadowed"
+    #: Its block applies; OpenSSH collects every value of this option.
+    ACCUMULATED = "accumulated"
+    #: Its block does not apply to the target.
+    INACTIVE = "inactive"
+    #: Its block applies, but Settings force the option on the command line.
+    FORCED = "forced"
+    #: An ``Include`` line that was read.
+    INCLUDE = "include"
+
+
+def _draft_text(value: Any, name: str, *, empty: bool = True) -> None:
+    if type(value) is not str or "\x00" in value or (not empty and not value):
+        raise ValueError(f"SSH config draft {name} is invalid")
+
+
+def _draft_line(value: Any, name: str, *, minimum: int = 0) -> None:
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"SSH config draft {name} is invalid")
+
+
+@dataclass(frozen=True)
+class EvaluateSshConfigDraftRequest:
+    """Ask what OpenSSH would use for ``host`` if ``text`` were saved.
+
+    ``text`` is the whole root SSH configuration as it would be written.
+    ``user`` and ``port`` stand for ``ssh -l``/``-p`` on the command line.
+    ``run_new_exec`` allows ``Match exec`` commands the saved configuration
+    does not contain: OpenSSH runs such a command to evaluate the block, so
+    a draft that adds one is not evaluated until the user agrees.
+    """
+
+    text: str = field(repr=False)
+    host: str
+    user: Optional[str] = None
+    port: Optional[int] = None
+    run_new_exec: bool = False
+
+    def __post_init__(self) -> None:
+        _draft_text(self.text, "text")
+        _draft_text(self.host, "host", empty=False)
+        if self.user is not None:
+            _draft_text(self.user, "user", empty=False)
+        if self.port is not None and (
+            type(self.port) is not int or not 1 <= self.port <= 65535
+        ):
+            raise ValueError("SSH config draft port is invalid")
+        if type(self.run_new_exec) is not bool:
+            raise TypeError("SSH config draft run_new_exec must be a boolean")
+
+
+@dataclass(frozen=True)
+class SshConfigDraftValue:
+    """One ``keyword value`` pair: a line of ``ssh -G`` or a forced option."""
+
+    key: str
+    value: str
+
+    def __post_init__(self) -> None:
+        _draft_text(self.key, "key", empty=False)
+        _draft_text(self.value, "value")
+
+
+@dataclass(frozen=True)
+class SshConfigDraftSource:
+    """The line that supplies an option's value.
+
+    ``file`` is empty for a line of the draft itself, else the file OpenSSH
+    read it from (an included file or the system-wide configuration).
+    ``block`` is the header of the block holding the line, empty above every
+    block.
+    """
+
+    key: str
+    file: str
+    line: int
+    block: str
+
+    def __post_init__(self) -> None:
+        _draft_text(self.key, "source key", empty=False)
+        _draft_text(self.file, "source file")
+        _draft_text(self.block, "source block")
+        _draft_line(self.line, "source line", minimum=1)
+
+
+@dataclass(frozen=True)
+class SshConfigDraftLine:
+    """The state of one option line of the draft.
+
+    For ``SHADOWED``, ``decided_file``/``decided_line``/``decided_block``
+    name the earlier line that set the option (as in
+    :class:`SshConfigDraftSource`); otherwise they are empty and 0.
+    """
+
+    line: int
+    state: SshConfigDraftLineState
+    decided_file: str = ""
+    decided_line: int = 0
+    decided_block: str = ""
+
+    def __post_init__(self) -> None:
+        _draft_line(self.line, "line", minimum=1)
+        if not isinstance(self.state, SshConfigDraftLineState):
+            raise TypeError("SSH config draft line state is invalid")
+        _draft_text(self.decided_file, "decided file")
+        _draft_text(self.decided_block, "decided block")
+        _draft_line(self.decided_line, "decided line")
+
+
+@dataclass(frozen=True)
+class SshConfigDraftInclude:
+    """The files one ``Include`` line of the draft reads, in order."""
+
+    line: int
+    files: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _draft_line(self.line, "include line", minimum=1)
+        if type(self.files) is not tuple:
+            raise TypeError("SSH config draft include files must be a tuple")
+        for path in self.files:
+            _draft_text(path, "include file", empty=False)
+
+
+@dataclass(frozen=True)
+class SshConfigDraftError:
+    """A line OpenSSH rejects. ``file`` is empty for the draft itself;
+    ``line`` is 0 when OpenSSH names none. ``diagnostic`` is OpenSSH's own
+    text, shown as it is and never interpreted."""
+
+    file: str
+    line: int
+    diagnostic: str
+
+    def __post_init__(self) -> None:
+        _draft_text(self.file, "error file")
+        _draft_text(self.diagnostic, "error diagnostic")
+        _draft_line(self.line, "error line")
+
+
+@dataclass(frozen=True)
+class SshConfigDraftEvaluation:
+    """What OpenSSH resolves for a host from a draft root configuration.
+
+    The draft is evaluated the way a launch reads the saved file: with the
+    system-wide configuration when the root is the user's own
+    ``~/.ssh/config`` (``system_config`` names it, empty when it is not
+    read), with ``Include`` lines read where OpenSSH reads them, and with
+    the options Settings force on the command line (``forced``).
+
+    ``pending_exec`` is not empty when the draft adds ``Match exec``
+    commands and the request did not allow running them: nothing was
+    evaluated. ``errors`` is not empty when OpenSSH rejects the draft.
+    Otherwise ``values`` is ``ssh -G`` for the host, ``defaults`` the
+    keywords whose value is OpenSSH's built-in one, ``matched_blocks`` the
+    header lines of the ``Host``/``Match`` blocks of the draft that apply,
+    ``lines`` the state of each option line, ``sources`` the line supplying
+    each option, and ``includes`` what each ``Include`` line read.
+    """
+
+    values: Tuple[SshConfigDraftValue, ...] = ()
+    defaults: Tuple[str, ...] = ()
+    matched_blocks: Tuple[int, ...] = ()
+    lines: Tuple[SshConfigDraftLine, ...] = ()
+    sources: Tuple[SshConfigDraftSource, ...] = ()
+    includes: Tuple[SshConfigDraftInclude, ...] = ()
+    forced: Tuple[SshConfigDraftValue, ...] = ()
+    errors: Tuple[SshConfigDraftError, ...] = ()
+    pending_exec: Tuple[str, ...] = ()
+    system_config: str = ""
+    isolated: bool = False
+
+    def __post_init__(self) -> None:
+        for name, kind in (
+            ("values", SshConfigDraftValue),
+            ("lines", SshConfigDraftLine),
+            ("sources", SshConfigDraftSource),
+            ("includes", SshConfigDraftInclude),
+            ("forced", SshConfigDraftValue),
+            ("errors", SshConfigDraftError),
+        ):
+            items = getattr(self, name)
+            if type(items) is not tuple or any(type(item) is not kind for item in items):
+                raise TypeError(f"SSH config draft {name} is invalid")
+        for name in ("defaults", "pending_exec"):
+            items = getattr(self, name)
+            if type(items) is not tuple:
+                raise TypeError(f"SSH config draft {name} must be a tuple")
+            for item in items:
+                _draft_text(item, name, empty=False)
+        if type(self.matched_blocks) is not tuple:
+            raise TypeError("SSH config draft matched_blocks must be a tuple")
+        for line in self.matched_blocks:
+            _draft_line(line, "matched block", minimum=1)
+        _draft_text(self.system_config, "system config")
+        if type(self.isolated) is not bool:
+            raise TypeError("SSH config draft isolated must be a boolean")
+
+    @property
+    def evaluated(self) -> bool:
+        """OpenSSH accepted the draft and resolved the host."""
+        return not self.errors and not self.pending_exec
+
+
 @dataclass(frozen=True)
 class EffectiveConfigComparison:
     """Daemon-owned authored-vs-effective OpenSSH comparison."""

@@ -63,8 +63,10 @@ from ..api.models.connections import (
     DeleteConnectionsRequest,
     DeleteConnectionsResult,
     ForwardingRule,
+    EvaluateSshConfigDraftRequest,
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
+    SshConfigDraftEvaluation,
     SshConfigText,
     UpdateConnectionRequest,
     UNSET,
@@ -96,6 +98,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
+    "evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -1674,6 +1677,38 @@ class ConnectionApplicationService:
             return ipaddress.ip_address(value).compressed.casefold()
         except ValueError:
             return value.rstrip(".")
+
+    def evaluate_ssh_config_draft(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> SshConfigDraftEvaluation:
+        """What OpenSSH would use for a host if the draft root were saved.
+
+        The draft is read as a launch reads the saved file: the same test
+        decides whether the system-wide configuration applies (the root is
+        the user's own ``~/.ssh/config`` and is launched without ``-F``),
+        and the options Settings force are passed ahead of it. Nothing is
+        written. See :mod:`sshpilot.core.ssh_config_draft`.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        if type(request) is not EvaluateSshConfigDraftRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "An SSH config draft request is required",
+            )
+        from .ssh_config_draft import DraftContext, evaluate_draft
+
+        try:
+            saved_text = self._repository.get_ssh_config_text().text
+        except Exception:
+            # No readable root yet: every Match exec in the draft is new.
+            saved_text = ""
+        context = DraftContext(
+            root_path=str(self._repository.root_config_path),
+            isolated=bool(self._repository.ssh_config_isolated),
+            overrides=tuple(self._forced_ssh_option_args()),
+        )
+        return evaluate_draft(request, context, saved_text)
 
     def get_ssh_config_text(self) -> SshConfigText:
         """Return the daemon-selected active SSH config text for the raw editor."""

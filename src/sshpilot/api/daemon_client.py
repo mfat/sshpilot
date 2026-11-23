@@ -55,6 +55,8 @@ from .models.connections import (
     ConfigConflict,
     ConfigSyntaxError,
     EarlierDirective,
+    EvaluateSshConfigDraftRequest,
+    SshConfigDraftEvaluation,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
@@ -427,6 +429,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
+    "evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -900,6 +903,24 @@ class DaemonClient:
             return earlier_directives_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid inherited authentication lines")
+
+    def evaluate_ssh_config_draft(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> SshConfigDraftEvaluation:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from .transport.config_draft_codec import (
+            evaluate_ssh_config_draft_request_to_wire,
+            ssh_config_draft_evaluation_from_wire,
+        )
+
+        result = self._request(
+            "connections.evaluate_ssh_config_draft",
+            evaluate_ssh_config_draft_request_to_wire(request),
+        )
+        try:
+            return ssh_config_draft_evaluation_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid SSH config draft evaluation")
 
     def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)

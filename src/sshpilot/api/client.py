@@ -20,6 +20,8 @@ from .models.connections import (
     ConfigConflict,
     ConfigSyntaxError,
     EarlierDirective,
+    EvaluateSshConfigDraftRequest,
+    SshConfigDraftEvaluation,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
@@ -253,6 +255,11 @@ class SshPilotClient(Protocol):
         ...
 
     def get_inherited_auth(self, host: str) -> Tuple[EarlierDirective, ...]:
+        ...
+
+    def evaluate_ssh_config_draft(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> SshConfigDraftEvaluation:
         ...
 
     def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:

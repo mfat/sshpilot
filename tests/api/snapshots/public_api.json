@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.109",
+  "api_implementation_version": "0.110",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -255,6 +255,10 @@
     },
     "duplicate_connection": {
       "capability": "connections.write",
+      "status": "implemented"
+    },
+    "evaluate_ssh_config_draft": {
+      "capability": "connections.config.read",
       "status": "implemented"
     },
     "export_secret_backup": {
@@ -824,6 +828,7 @@
     "detach_session",
     "detach_sftp",
     "duplicate_connection",
+    "evaluate_ssh_config_draft",
     "export_secret_backup",
     "fetch_public_keys",
     "forget_master_password",
@@ -1412,6 +1417,16 @@
         }
       ],
       "return": "ConnectionMutationResult"
+    },
+    "evaluate_ssh_config_draft": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "EvaluateSshConfigDraftRequest"
+        }
+      ],
+      "return": "SshConfigDraftEvaluation"
     },
     "export_secret_backup": {
       "parameters": [
@@ -2925,6 +2940,9 @@
     "connections.duplicate": {
       "capability": "connections.write"
     },
+    "connections.evaluate_ssh_config_draft": {
+      "capability": "connections.config.read"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
@@ -3692,6 +3710,7 @@
     "EDITABLE_FIELDS",
     "EarlierDirective",
     "EffectiveConfigComparison",
+    "EvaluateSshConfigDraftRequest",
     "ExecutionInteractionMode",
     "ExternalTerminalLaunchSpec",
     "FORBIDDEN_IN_PATCH",
@@ -3897,6 +3916,13 @@
     "SocketConnection",
     "SocketDirection",
     "SplitConnectionRequest",
+    "SshConfigDraftError",
+    "SshConfigDraftEvaluation",
+    "SshConfigDraftInclude",
+    "SshConfigDraftLine",
+    "SshConfigDraftLineState",
+    "SshConfigDraftSource",
+    "SshConfigDraftValue",
     "SshConfigText",
     "SshConfigUnavailableReason",
     "StartScpTransferRequest",
@@ -4420,6 +4446,13 @@
       "protocol_version",
       "request_id",
       "error"
+    ],
+    "EvaluateSshConfigDraftRequest": [
+      "text",
+      "host",
+      "user",
+      "port",
+      "run_new_exec"
     ],
     "EventEnvelope": [
       "protocol_version",
@@ -5288,6 +5321,45 @@
       "config_patch",
       "expected_generation"
     ],
+    "SshConfigDraftError": [
+      "file",
+      "line",
+      "diagnostic"
+    ],
+    "SshConfigDraftEvaluation": [
+      "values",
+      "defaults",
+      "matched_blocks",
+      "lines",
+      "sources",
+      "includes",
+      "forced",
+      "errors",
+      "pending_exec",
+      "system_config",
+      "isolated"
+    ],
+    "SshConfigDraftInclude": [
+      "line",
+      "files"
+    ],
+    "SshConfigDraftLine": [
+      "line",
+      "state",
+      "decided_file",
+      "decided_line",
+      "decided_block"
+    ],
+    "SshConfigDraftSource": [
+      "key",
+      "file",
+      "line",
+      "block"
+    ],
+    "SshConfigDraftValue": [
+      "key",
+      "value"
+    ],
     "SshConfigText": [
       "text",
       "revision",
@@ -6090,6 +6162,14 @@
     "SocketDirection": [
       "incoming",
       "outgoing"
+    ],
+    "SshConfigDraftLineState": [
+      "applied",
+      "shadowed",
+      "accumulated",
+      "inactive",
+      "forced",
+      "include"
     ],
     "SshConfigUnavailableReason": [
       "dangling_link",

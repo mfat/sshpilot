@@ -225,6 +225,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
     "connections.list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "connections.list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "connections.check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -509,6 +510,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.get_effective_config",
         "connections.get_earlier_directives",
         "connections.get_inherited_auth",
+        "connections.evaluate_ssh_config_draft",
         "connections.list_config_conflicts",
         "connections.list_config_syntax_errors",
         "connections.check_unsaved_host",
@@ -796,6 +798,9 @@ class RequestDispatcher:
             "connections.get_effective_config": self._handle_get_effective_config,
             "connections.get_earlier_directives": self._handle_get_earlier_directives,
             "connections.get_inherited_auth": self._handle_get_inherited_auth,
+            "connections.evaluate_ssh_config_draft": (
+                self._handle_evaluate_ssh_config_draft
+            ),
             "connections.list_config_conflicts": self._handle_list_config_conflicts,
             "connections.list_config_syntax_errors": (
                 self._handle_list_config_syntax_errors
@@ -1469,6 +1474,25 @@ class RequestDispatcher:
         return DeferredResult(
             operation=lambda: earlier_directives_to_wire(
                 self._connections.get_inherited_auth(host)
+            ),
+            command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_evaluate_ssh_config_draft(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.config_draft_codec import (
+            evaluate_ssh_config_draft_request_from_wire,
+            ssh_config_draft_evaluation_to_wire,
+        )
+
+        draft = evaluate_ssh_config_draft_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: ssh_config_draft_evaluation_to_wire(
+                self._connections.evaluate_ssh_config_draft(draft)
             ),
             command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
             on_rejected=lambda: None,

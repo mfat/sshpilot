@@ -2119,6 +2119,42 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: EvaluateSshConfigDraftRequest -->
+## `EvaluateSshConfigDraftRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Ask what OpenSSH would use for ``host`` if ``text`` were saved.
+
+``text`` is the whole root SSH configuration as it would be written.
+``user`` and ``port`` stand for ``ssh -l``/``-p`` on the command line.
+``run_new_exec`` allows ``Match exec`` commands the saved configuration
+does not contain: OpenSSH runs such a command to evaluate the block, so
+a draft that adds one is not evaluated until the user agrees.
+
+**Related methods:** `evaluate_ssh_config_draft`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `text` | `str` | Yes | — | No |
+| `host` | `str` | Yes | — | No |
+| `user` | `str | None` | No | `null` | No |
+| `port` | `int | None` | No | `null` | No |
+| `run_new_exec` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "host": "example",
+  "port": null,
+  "run_new_exec": false,
+  "text": "example",
+  "user": null
+}
+```
+
 <!-- api-model: EventEnvelope -->
 ## `EventEnvelope`
 
@@ -6072,6 +6108,206 @@ Synthetic representation:
   "port": null,
   "source_config_path": "example",
   "username": null
+}
+```
+
+<!-- api-model: SshConfigDraftError -->
+## `SshConfigDraftError`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** A line OpenSSH rejects. ``file`` is empty for the draft itself;
+``line`` is 0 when OpenSSH names none. ``diagnostic`` is OpenSSH's own
+text, shown as it is and never interpreted.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `file` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+| `diagnostic` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "diagnostic": "example",
+  "file": "example",
+  "line": 0
+}
+```
+
+<!-- api-model: SshConfigDraftEvaluation -->
+## `SshConfigDraftEvaluation`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** What OpenSSH resolves for a host from a draft root configuration.
+
+The draft is evaluated the way a launch reads the saved file: with the
+system-wide configuration when the root is the user's own
+``~/.ssh/config`` (``system_config`` names it, empty when it is not
+read), with ``Include`` lines read where OpenSSH reads them, and with
+the options Settings force on the command line (``forced``).
+
+``pending_exec`` is not empty when the draft adds ``Match exec``
+commands and the request did not allow running them: nothing was
+evaluated. ``errors`` is not empty when OpenSSH rejects the draft.
+Otherwise ``values`` is ``ssh -G`` for the host, ``defaults`` the
+keywords whose value is OpenSSH's built-in one, ``matched_blocks`` the
+header lines of the ``Host``/``Match`` blocks of the draft that apply,
+``lines`` the state of each option line, ``sources`` the line supplying
+each option, and ``includes`` what each ``Include`` line read.
+
+**Related methods:** `evaluate_ssh_config_draft`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `values` | `tuple[SshConfigDraftValue, ...]` | No | `[]` | No |
+| `defaults` | `tuple[str, ...]` | No | `[]` | No |
+| `matched_blocks` | `tuple[int, ...]` | No | `[]` | No |
+| `lines` | `tuple[SshConfigDraftLine, ...]` | No | `[]` | No |
+| `sources` | `tuple[SshConfigDraftSource, ...]` | No | `[]` | No |
+| `includes` | `tuple[SshConfigDraftInclude, ...]` | No | `[]` | No |
+| `forced` | `tuple[SshConfigDraftValue, ...]` | No | `[]` | No |
+| `errors` | `tuple[SshConfigDraftError, ...]` | No | `[]` | No |
+| `pending_exec` | `tuple[str, ...]` | No | `[]` | No |
+| `system_config` | `str` | No | `` | No |
+| `isolated` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "defaults": [],
+  "errors": [],
+  "forced": [],
+  "includes": [],
+  "isolated": false,
+  "lines": [],
+  "matched_blocks": [],
+  "pending_exec": [],
+  "sources": [],
+  "system_config": "",
+  "values": []
+}
+```
+
+<!-- api-model: SshConfigDraftInclude -->
+## `SshConfigDraftInclude`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The files one ``Include`` line of the draft reads, in order.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `line` | `int` | Yes | — | No |
+| `files` | `tuple[str, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "files": [],
+  "line": 0
+}
+```
+
+<!-- api-model: SshConfigDraftLine -->
+## `SshConfigDraftLine`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The state of one option line of the draft.
+
+For ``SHADOWED``, ``decided_file``/``decided_line``/``decided_block``
+name the earlier line that set the option (as in
+:class:`SshConfigDraftSource`); otherwise they are empty and 0.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `line` | `int` | Yes | — | No |
+| `state` | `SshConfigDraftLineState` | Yes | — | No |
+| `decided_file` | `str` | No | `` | No |
+| `decided_line` | `int` | No | `0` | No |
+| `decided_block` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "decided_block": "",
+  "decided_file": "",
+  "decided_line": 0,
+  "line": 0,
+  "state": "applied"
+}
+```
+
+<!-- api-model: SshConfigDraftSource -->
+## `SshConfigDraftSource`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The line that supplies an option's value.
+
+``file`` is empty for a line of the draft itself, else the file OpenSSH
+read it from (an included file or the system-wide configuration).
+``block`` is the header of the block holding the line, empty above every
+block.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key` | `str` | Yes | — | No |
+| `file` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+| `block` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "block": "example",
+  "file": "example",
+  "key": "example",
+  "line": 0
+}
+```
+
+<!-- api-model: SshConfigDraftValue -->
+## `SshConfigDraftValue`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One ``keyword value`` pair: a line of ``ssh -G`` or a forced option.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key` | `str` | Yes | — | No |
+| `value` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key": "example",
+  "value": "example"
 }
 ```
 
