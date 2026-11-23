@@ -120,6 +120,10 @@ _ACTION_KEYWORDS = {
         "edit ssh config;ssh configuration;configure hosts;ssh config;"
         "config file"
     ),
+    "app.advanced-ssh-config": N_(
+        "advanced configuration;ssh config blocks;host match order;"
+        "effective config;precedence;which option wins"
+    ),
     "win.edit-known-hosts": N_(
         "known hosts;host keys;fingerprints;server fingerprints"
     ),

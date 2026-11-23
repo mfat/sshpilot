@@ -4276,6 +4276,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         ssh_section = Gio.Menu()
         ssh_section.append(_('SSH Config Editor'), 'app.edit-ssh-config')
+        ssh_section.append(_('Advanced Configuration'), 'app.advanced-ssh-config')
         ssh_section.append(_('Known Hosts Editor'), 'win.edit-known-hosts')
         ssh_section.append(_('Login Profiles'), 'win.manage-login-profiles')
         ssh_section.append(_('Manage Local authorized_keys…'), 'win.manage-local-authorized-keys')
@@ -6317,6 +6318,61 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
             self.show_toast(_("Could not open the SSH config editor."))
+            return None
+
+    def _open_advanced_config(self):
+        """Open Advanced Configuration: the SSH configuration as blocks,
+        with what OpenSSH resolves for a target host.
+
+        Like the SSH Config Editor it works on the daemon-selected file and
+        never touches it from GTK. One window at a time: opening again
+        presents the one that is open. Returns the window, or None.
+        """
+        existing = getattr(self, '_advanced_config_window', None)
+        if existing is not None:
+            existing.present()
+            return existing
+        try:
+            from .advanced_config_window import AdvancedConfigWindow
+
+            client = getattr(self, 'client', None)
+            try:
+                supported = client is not None and client.get_capabilities().supports(
+                    ApiCapability.CONNECTIONS_CONFIG_READ
+                ) and callable(getattr(client, 'evaluate_ssh_config_draft', None))
+            except Exception:
+                supported = False
+            if not supported:
+                self.show_toast(_(
+                    "SSH config editing requires the background service. "
+                    "Start it and try again."
+                ))
+                return None
+
+            def hosts():
+                names = []
+                for connection in self.connection_manager.get_connections():
+                    protocol = str(getattr(connection, 'protocol', '') or 'ssh')
+                    name = str(getattr(connection, 'nickname', '') or '')
+                    if protocol == 'ssh' and name:
+                        names.append(name)
+                return names
+
+            def saved():
+                schedule = getattr(self, '_schedule_config_precedence_check', None)
+                if callable(schedule):
+                    schedule()
+
+            window = AdvancedConfigWindow(self, client, hosts=hosts, on_saved=saved)
+            self._advanced_config_window = window
+            window.connect(
+                'destroy', lambda *_a: setattr(self, '_advanced_config_window', None)
+            )
+            window.present()
+            return window
+        except Exception as e:
+            logger.error(f"Failed to open Advanced Configuration: {e}", exc_info=True)
+            self.show_toast(_("Could not open Advanced Configuration."))
             return None
 
     def show_connection_selection_for_ssh_copy(self):

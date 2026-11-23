@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-23 14:53+0330\n"
+"POT-Creation-Date: 2026-11-23 15:27+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -75,7 +75,7 @@ msgstr "{connections} und {subgroups}"
 #. Split view shortcuts — registered, customizable actions; show their
 #. current (possibly overridden) accelerators like every other group.
 #: src/sshpilot/actions.py:346 src/sshpilot/actions.py:409
-#: src/sshpilot/shortcut_editor.py:258 src/sshpilot/split_view.py:2321
+#: src/sshpilot/shortcut_editor.py:259 src/sshpilot/split_view.py:2321
 #: src/sshpilot/window_help.py:250 src/sshpilot/window_session.py:150
 #: src/sshpilot/window_tabs.py:1560 src/sshpilot/window_tabs.py:1708
 #: src/sshpilot/window_tabs.py:1917
@@ -132,11 +132,11 @@ msgstr "Verbindungen öffnen?"
 #: src/sshpilot/file_manager_window.py:1859
 #: src/sshpilot/file_manager_window.py:1939
 #: src/sshpilot/file_manager_window.py:2791 src/sshpilot/key_sources.py:274
-#: src/sshpilot/login_profile_dialogs.py:91
-#: src/sshpilot/login_profile_dialogs.py:161
-#: src/sshpilot/login_profile_dialogs.py:590
-#: src/sshpilot/login_profile_dialogs.py:620
-#: src/sshpilot/login_profile_dialogs.py:849
+#: src/sshpilot/login_profile_dialogs.py:92
+#: src/sshpilot/login_profile_dialogs.py:162
+#: src/sshpilot/login_profile_dialogs.py:600
+#: src/sshpilot/login_profile_dialogs.py:630
+#: src/sshpilot/login_profile_dialogs.py:859
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:316
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:504
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:1402
@@ -146,15 +146,15 @@ msgstr "Verbindungen öffnen?"
 #: src/sshpilot/rdp_tab.py:457 src/sshpilot/rdp_tab.py:525
 #: src/sshpilot/rdp_tab.py:558 src/sshpilot/rbw_setup.py:167
 #: src/sshpilot/scp_window.py:320 src/sshpilot/scp_window.py:1142
-#: src/sshpilot/shortcut_editor.py:605 src/sshpilot/terminal_manager.py:1032
+#: src/sshpilot/shortcut_editor.py:607 src/sshpilot/terminal_manager.py:1032
 #: src/sshpilot/terminal_manager.py:1691
 #: src/sshpilot/terminal_theme_editor.py:85
 #: src/sshpilot/terminal_theme_editor.py:278 src/sshpilot/text_editor.py:1352
 #: src/sshpilot/text_editor.py:1645 src/sshpilot/text_editor.py:1779
 #: src/sshpilot/window.py:1452 src/sshpilot/window.py:2008
 #: src/sshpilot/window.py:2022 src/sshpilot/window.py:4058
-#: src/sshpilot/window.py:6225 src/sshpilot/window.py:6475
-#: src/sshpilot/window.py:7974 src/sshpilot/window.py:8122
+#: src/sshpilot/window.py:6226 src/sshpilot/window.py:6531
+#: src/sshpilot/window.py:8030 src/sshpilot/window.py:8178
 #: src/sshpilot/window_dialogs.py:602 src/sshpilot/window_dialogs.py:1064
 #: src/sshpilot/window_dialogs.py:2106 src/sshpilot/window_dialogs.py:2228
 #: src/sshpilot/window_dialogs.py:2411 src/sshpilot/window_dialogs.py:2495
@@ -174,6 +174,8 @@ msgstr "Verbindungen öffnen?"
 #: src/sshpilot/resources/ui/scp_download_window.ui:25
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:21
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
+#: src/sshpilot/advanced_config_window.py:519
+#: src/sshpilot/advanced_config_window.py:579
 msgid "Cancel"
 msgstr "Abbrechen"
 
@@ -198,8 +200,8 @@ msgstr "Geteilte Ansicht — {name}"
 #: src/sshpilot/connection_dialog.py:5891 src/sshpilot/file_manager/pane.py:57
 #: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1216
 #: src/sshpilot/terminal_manager.py:1179 src/sshpilot/text_editor.py:1840
-#: src/sshpilot/window.py:6648 src/sshpilot/window.py:8471
-#: src/sshpilot/window.py:8495 src/sshpilot/window_broadcast.py:160
+#: src/sshpilot/window.py:6704 src/sshpilot/window.py:8527
+#: src/sshpilot/window.py:8551 src/sshpilot/window_broadcast.py:160
 #: src/sshpilot/window_dialogs.py:3341 src/sshpilot/window_dialogs.py:3367
 #: src/sshpilot/window_dialogs.py:3412 src/sshpilot/window_dialogs.py:3447
 #: src/sshpilot/window_dialogs.py:3483 src/sshpilot/window_dialogs.py:3486
@@ -207,7 +209,7 @@ msgstr "Geteilte Ansicht — {name}"
 msgid "Error"
 msgstr "Fehler"
 
-#: src/sshpilot/actions.py:520 src/sshpilot/window.py:6649
+#: src/sshpilot/actions.py:520 src/sshpilot/window.py:6705
 #, python-brace-format
 msgid ""
 "Could not open the Copy Key window.\n"
@@ -224,7 +226,7 @@ msgstr ""
 #: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2730
 #: src/sshpilot/file_manager/pane.py:3142
 #: src/sshpilot/known_hosts_editor.py:311
-#: src/sshpilot/login_profile_dialogs.py:638 src/sshpilot/preferences.py:4104
+#: src/sshpilot/login_profile_dialogs.py:648 src/sshpilot/preferences.py:4104
 #: src/sshpilot/preferences.py:4227 src/sshpilot/preferences.py:4639
 #: src/sshpilot/preferences.py:5252 src/sshpilot/preferences.py:7003
 #: src/sshpilot/rbw_setup.py:123 src/sshpilot/rbw_setup.py:129
@@ -233,10 +235,10 @@ msgstr ""
 #: src/sshpilot/terminal_manager.py:1182 src/sshpilot/terminal_manager.py:1347
 #: src/sshpilot/text_editor.py:1841 src/sshpilot/welcome_page.py:919
 #: src/sshpilot/window.py:1453 src/sshpilot/window.py:1519
-#: src/sshpilot/window.py:1530 src/sshpilot/window.py:6345
-#: src/sshpilot/window.py:6392 src/sshpilot/window.py:6412
-#: src/sshpilot/window.py:6617 src/sshpilot/window.py:6650
-#: src/sshpilot/window.py:8664 src/sshpilot/window.py:8725
+#: src/sshpilot/window.py:1530 src/sshpilot/window.py:6401
+#: src/sshpilot/window.py:6448 src/sshpilot/window.py:6468
+#: src/sshpilot/window.py:6673 src/sshpilot/window.py:6706
+#: src/sshpilot/window.py:8720 src/sshpilot/window.py:8781
 #: src/sshpilot/window_broadcast.py:144 src/sshpilot/window_broadcast.py:163
 #: src/sshpilot/window_dialogs.py:586 src/sshpilot/window_dialogs.py:995
 #: src/sshpilot/window_dialogs.py:3149 src/sshpilot/window_dialogs.py:3752
@@ -257,7 +259,7 @@ msgstr[0] "Wake-on-LAN wird an den Host {n} gesendet"
 msgstr[1] "Wake-on-LAN wird an {n} Hosts gesendet"
 
 #: src/sshpilot/actions.py:660 src/sshpilot/actions.py:811
-#: src/sshpilot/window.py:8414 src/sshpilot/window.py:8485
+#: src/sshpilot/window.py:8470 src/sshpilot/window.py:8541
 #: src/sshpilot/window_dialogs.py:3346 src/sshpilot/window_dialogs.py:3417
 #: src/sshpilot/window_dialogs.py:3535 src/sshpilot/window_dialogs.py:3587
 msgid "Service unavailable"
@@ -299,9 +301,9 @@ msgstr ""
 #: src/sshpilot/command_blocks.py:2400 src/sshpilot/file_manager/pane.py:697
 #: src/sshpilot/file_manager/pane.py:2266
 #: src/sshpilot/file_manager_window.py:1940
-#: src/sshpilot/login_profile_dialogs.py:850
 #: src/sshpilot/login_profile_dialogs.py:860
-#: src/sshpilot/login_profile_dialogs.py:1048 src/sshpilot/sidebar.py:5242
+#: src/sshpilot/login_profile_dialogs.py:870
+#: src/sshpilot/login_profile_dialogs.py:1058 src/sshpilot/sidebar.py:5242
 #: src/sshpilot/terminal_theme_editor.py:279 src/sshpilot/window.py:2023
 msgid "Delete"
 msgstr "Löschen"
@@ -382,7 +384,7 @@ msgstr "Sitzungsname"
 #. Save button
 #: src/sshpilot/actions.py:866
 #: src/sshpilot/connection_dialog_port_forwarding.py:251
-#: src/sshpilot/login_profile_dialogs.py:164 src/sshpilot/rbw_setup.py:167
+#: src/sshpilot/login_profile_dialogs.py:165 src/sshpilot/rbw_setup.py:167
 #: src/sshpilot/terminal_theme_editor.py:88 src/sshpilot/text_editor.py:379
 #: src/sshpilot/text_editor.py:1767 src/sshpilot/window_dialogs.py:3462
 #: src/sshpilot/window_dialogs.py:3543
@@ -390,6 +392,7 @@ msgstr "Sitzungsname"
 #: src/sshpilot/resources/ui/command_edit_dialog.ui:25
 #: src/sshpilot/resources/ui/connection_dialog.ui:65
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:31
+#: src/sshpilot/advanced_config_window.py:212
 msgid "Save"
 msgstr "Speichern"
 
@@ -441,7 +444,7 @@ msgid "Add to Current"
 msgstr "Zu aktuellen hinzufügen"
 
 #: src/sshpilot/actions.py:985 src/sshpilot/preferences.py:5570
-#: src/sshpilot/shortcut_editor.py:606 src/sshpilot/text_editor.py:488
+#: src/sshpilot/shortcut_editor.py:608 src/sshpilot/text_editor.py:488
 msgid "Replace"
 msgstr "Ersetzen"
 
@@ -530,7 +533,7 @@ msgstr "Authentifizierung erforderlich"
 msgid "Response"
 msgstr "Antwort"
 
-#: src/sshpilot/askpass_utils.py:840 src/sshpilot/window.py:7931
+#: src/sshpilot/askpass_utils.py:840 src/sshpilot/window.py:7987
 msgid "Security Key"
 msgstr "Sicherheitsschlüssel"
 
@@ -540,7 +543,7 @@ msgstr "Sicherheitsschlüssel"
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:449
 #: src/sshpilot/preferences.py:5360 src/sshpilot/sshcopyid_window.py:678
 #: src/sshpilot/terminal.py:1253 src/sshpilot/window.py:3267
-#: src/sshpilot/window.py:7935 src/sshpilot/window_tabs.py:328
+#: src/sshpilot/window.py:7991 src/sshpilot/window_tabs.py:328
 #: src/sshpilot/window_tabs.py:1178 src/sshpilot/window_tabs.py:1354
 #: src/sshpilot/window_tabs.py:1404
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:27
@@ -548,17 +551,17 @@ msgstr "Sicherheitsschlüssel"
 msgid "Close"
 msgstr "Schließen"
 
-#: src/sshpilot/askpass_utils.py:870 src/sshpilot/window.py:7933
+#: src/sshpilot/askpass_utils.py:870 src/sshpilot/window.py:7989
 msgid "Touch your security key when it blinks."
 msgstr "Berühren Sie Ihren Sicherheitsschlüssel, wenn er blinkt."
 
 #: src/sshpilot/askpass_utils.py:917 src/sshpilot/connection_dialog.py:3391
 #: src/sshpilot/gtk/login_profile_messages.py:62
-#: src/sshpilot/login_profile_dialogs.py:48 src/sshpilot/window.py:7970
+#: src/sshpilot/login_profile_dialogs.py:49 src/sshpilot/window.py:8026
 msgid "Confirm"
 msgstr "Bestätigen"
 
-#: src/sshpilot/askpass_utils.py:920 src/sshpilot/window.py:7975
+#: src/sshpilot/askpass_utils.py:920 src/sshpilot/window.py:8031
 msgid "Allow"
 msgstr "Zulassen"
 
@@ -801,8 +804,8 @@ msgstr ""
 #: src/sshpilot/connection_dialog.py:1068
 #: src/sshpilot/connection_dialog.py:3349
 #: src/sshpilot/connection_dialog.py:3364
-#: src/sshpilot/login_profile_dialogs.py:248
-#: src/sshpilot/login_profile_dialogs.py:265
+#: src/sshpilot/login_profile_dialogs.py:249
+#: src/sshpilot/login_profile_dialogs.py:266
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:261
 #: src/sshpilot/resources/ui/key_chooser_dialog.ui:31
 msgid "Add"
@@ -880,6 +883,7 @@ msgid "Discard changes to authorized_keys?"
 msgstr "Änderungen an authorized_keys verwerfen?"
 
 #: src/sshpilot/authorized_keys_window.py:798
+#: src/sshpilot/advanced_config_window.py:580
 msgid "Discard"
 msgstr "Verwerfen"
 
@@ -1540,8 +1544,8 @@ msgid "Open terminal sessions for commands that require a PTY or Ctrl+C"
 msgstr ""
 "Terminal-Sitzungen für Befehle öffnen, die ein PTY oder Strg+C erfordern"
 
-#: src/sshpilot/command_blocks.py:1158 src/sshpilot/omni_search.py:181
-#: src/sshpilot/preferences.py:3273 src/sshpilot/shortcut_editor.py:72
+#: src/sshpilot/command_blocks.py:1158 src/sshpilot/omni_search.py:185
+#: src/sshpilot/preferences.py:3273 src/sshpilot/shortcut_editor.py:73
 #: src/sshpilot/settings_index.py:55 src/sshpilot/window.py:3967
 #: src/sshpilot/window_help.py:203
 msgid "Command Snippets"
@@ -1656,7 +1660,7 @@ msgstr "Keine Verbindungen in der Gruppe"
 
 #: src/sshpilot/command_blocks.py:2364 src/sshpilot/file_manager/pane.py:685
 #: src/sshpilot/file_manager/pane.py:2251
-#: src/sshpilot/login_profile_dialogs.py:1043 src/sshpilot/macos_menubar.py:76
+#: src/sshpilot/login_profile_dialogs.py:1053 src/sshpilot/macos_menubar.py:76
 #: src/sshpilot/sidebar.py:5147
 msgid "Edit"
 msgstr "Bearbeiten"
@@ -1670,7 +1674,7 @@ msgstr "Duplizieren"
 #. The banner title is a sibling label, and GTK/PyGObject cannot publish
 #. a labelled-by relation, so name the entry directly.
 #: src/sshpilot/command_blocks.py:2370 src/sshpilot/macos_menubar.py:90
-#: src/sshpilot/shortcut_editor.py:63 src/sshpilot/window.py:4017
+#: src/sshpilot/shortcut_editor.py:64 src/sshpilot/window.py:4017
 #: src/sshpilot/window.py:4042 src/sshpilot/window.py:4273
 #: src/sshpilot/window_help.py:202
 msgid "Broadcast Command"
@@ -1696,19 +1700,20 @@ msgstr "Zu Favoriten hinzufügen"
 msgid "Command deleted"
 msgstr "Befehl gelöscht"
 
-#: src/sshpilot/command_converter.py:275 src/sshpilot/omni_search.py:808
+#: src/sshpilot/command_converter.py:275 src/sshpilot/omni_search.py:812
 msgid "Only SSH commands are allowed. Example: ssh user@host"
 msgstr "Nur SSH-Befehle sind zulässig. Beispiel: ssh user@host"
 
 #: src/sshpilot/command_palette.py:86 src/sshpilot/connection_dialog.py:3995
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:88
-#: src/sshpilot/omni_search.py:909 src/sshpilot/omni_search.py:936
-#: src/sshpilot/omni_search.py:971
+#: src/sshpilot/omni_search.py:913 src/sshpilot/omni_search.py:940
+#: src/sshpilot/omni_search.py:975
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:188
 #: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:84
 #: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:121
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:109
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:130
+#: src/sshpilot/advanced_config_window.py:383
 msgid "Command"
 msgstr "Befehl"
 
@@ -1817,9 +1822,10 @@ msgstr "Neue Verbindung"
 #: src/sshpilot/connection_dialog.py:1822
 #: src/sshpilot/forwarding_only_ui.py:236
 #: src/sshpilot/forwarding_only_ui.py:241
-#: src/sshpilot/login_profile_dialogs.py:880 src/sshpilot/terminal.py:1205
+#: src/sshpilot/login_profile_dialogs.py:890 src/sshpilot/terminal.py:1205
 #: src/sshpilot/terminal.py:1210 src/sshpilot/terminal.py:1523
 #: src/sshpilot/terminal.py:1552 src/sshpilot/window.py:3255
+#: src/sshpilot/advanced_config_window.py:380
 msgid "Connection"
 msgstr "Verbindung"
 
@@ -1837,7 +1843,7 @@ msgid "Commands"
 msgstr "Befehle"
 
 #: src/sshpilot/connection_dialog.py:1826
-#: src/sshpilot/connection_dialog.py:4758 src/sshpilot/omni_search.py:220
+#: src/sshpilot/connection_dialog.py:4758 src/sshpilot/omni_search.py:224
 #: src/sshpilot/preferences.py:2749 src/sshpilot/preferences.py:3274
 #: src/sshpilot/settings_index.py:56
 msgid "Advanced"
@@ -1900,24 +1906,25 @@ msgstr "Laden der Verbindungsdaten fehlgeschlagen"
 
 #: src/sshpilot/connection_dialog.py:3342
 #: src/sshpilot/gtk/login_profile_messages.py:35
-#: src/sshpilot/login_profile_dialogs.py:242
+#: src/sshpilot/login_profile_dialogs.py:243
+#: src/sshpilot/advanced_config_window.py:387
 msgid "Identity files"
 msgstr "Identitätsdateien"
 
 #: src/sshpilot/connection_dialog.py:3358
-#: src/sshpilot/login_profile_dialogs.py:259
+#: src/sshpilot/login_profile_dialogs.py:260
 msgid "Keys SSH offers (IdentityFile)"
 msgstr "Schlüssel, die SSH anbietet (IdentityFile)"
 
 #: src/sshpilot/connection_dialog.py:3362
 #: src/sshpilot/gtk/login_profile_messages.py:36
-#: src/sshpilot/login_profile_dialogs.py:263
+#: src/sshpilot/login_profile_dialogs.py:264
 msgid "Certificates"
 msgstr "Zertifikate"
 
 #. --- Key handling ---
 #: src/sshpilot/connection_dialog.py:3374
-#: src/sshpilot/login_profile_dialogs.py:275
+#: src/sshpilot/login_profile_dialogs.py:276
 msgid "Key handling"
 msgstr "Schlüsselverwaltung"
 
@@ -1925,7 +1932,7 @@ msgstr "Schlüsselverwaltung"
 #: src/sshpilot/connection_dialog.py:3391
 #: src/sshpilot/connection_dialog.py:3431
 #: src/sshpilot/connection_dialog.py:3701
-#: src/sshpilot/login_profile_dialogs.py:48
+#: src/sshpilot/login_profile_dialogs.py:49
 #: src/sshpilot/layout_preset_chooser.py:135 src/sshpilot/split_view.py:1375
 msgid "Default"
 msgstr "Standard"
@@ -1938,9 +1945,9 @@ msgstr "Standard"
 #: src/sshpilot/gtk/login_profile_messages.py:56
 #: src/sshpilot/gtk/login_profile_messages.py:57
 #: src/sshpilot/gtk/login_profile_messages.py:59
-#: src/sshpilot/login_profile_dialogs.py:48
-#: src/sshpilot/login_profile_dialogs.py:279
-#: src/sshpilot/login_profile_dialogs.py:315
+#: src/sshpilot/login_profile_dialogs.py:49
+#: src/sshpilot/login_profile_dialogs.py:280
+#: src/sshpilot/login_profile_dialogs.py:316
 msgid "Yes"
 msgstr "Ja"
 
@@ -1951,28 +1958,28 @@ msgstr "Ja"
 #: src/sshpilot/gtk/login_profile_messages.py:56
 #: src/sshpilot/gtk/login_profile_messages.py:57
 #: src/sshpilot/gtk/login_profile_messages.py:60
-#: src/sshpilot/login_profile_dialogs.py:48
-#: src/sshpilot/login_profile_dialogs.py:279
-#: src/sshpilot/login_profile_dialogs.py:315
+#: src/sshpilot/login_profile_dialogs.py:49
+#: src/sshpilot/login_profile_dialogs.py:280
+#: src/sshpilot/login_profile_dialogs.py:316
 msgid "No"
 msgstr "Nein"
 
 #: src/sshpilot/connection_dialog.py:3380
 #: src/sshpilot/gtk/login_profile_messages.py:34
-#: src/sshpilot/login_profile_dialogs.py:278
+#: src/sshpilot/login_profile_dialogs.py:279
 msgid "Only offer listed identities"
 msgstr "Nur aufgeführte Identitäten anbieten"
 
 #: src/sshpilot/connection_dialog.py:3391
 #: src/sshpilot/gtk/login_profile_messages.py:61
-#: src/sshpilot/login_profile_dialogs.py:48
+#: src/sshpilot/login_profile_dialogs.py:49
 msgid "Ask"
 msgstr "Nachfragen"
 
 #: src/sshpilot/connection_dialog.py:3393
 #: src/sshpilot/effective_config_dialog.py:43
 #: src/sshpilot/gtk/login_profile_messages.py:37
-#: src/sshpilot/login_profile_dialogs.py:296
+#: src/sshpilot/login_profile_dialogs.py:297
 msgid "Add keys to agent"
 msgstr "Schlüssel zum Agent hinzufügen"
 
@@ -1998,7 +2005,7 @@ msgid "Password (optional)"
 msgstr "Passwort (optional)"
 
 #: src/sshpilot/connection_dialog.py:3423
-#: src/sshpilot/login_profile_dialogs.py:302
+#: src/sshpilot/login_profile_dialogs.py:303
 msgid "Agent and hardware keys"
 msgstr "Agent- und Hardware-Schlüssel"
 
@@ -2011,12 +2018,12 @@ msgstr ""
 #. Order matches TERMINAL_PANE_CHOICES.
 #: src/sshpilot/connection_dialog.py:3432
 #: src/sshpilot/file_manager/permissions.py:76
-#: src/sshpilot/login_profile_dialogs.py:739
+#: src/sshpilot/login_profile_dialogs.py:749
 #: src/sshpilot/machine_info_dialog.py:2503
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:209
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:216
-#: src/sshpilot/preferences.py:3207 src/sshpilot/shortcut_editor.py:442
-#: src/sshpilot/shortcut_editor.py:456
+#: src/sshpilot/preferences.py:3207 src/sshpilot/shortcut_editor.py:444
+#: src/sshpilot/shortcut_editor.py:458
 msgid "None"
 msgstr "Keine"
 
@@ -2049,7 +2056,7 @@ msgstr "Agent-Socket auswählen"
 
 #: src/sshpilot/connection_dialog.py:3472
 #: src/sshpilot/gtk/login_profile_messages.py:38
-#: src/sshpilot/login_profile_dialogs.py:306
+#: src/sshpilot/login_profile_dialogs.py:307
 msgid "PKCS#11 provider"
 msgstr "PKCS#11-Anbieter"
 
@@ -2069,7 +2076,7 @@ msgstr "PKCS#11-Anbieterbibliothek auswählen"
 
 #: src/sshpilot/connection_dialog.py:3487
 #: src/sshpilot/gtk/login_profile_messages.py:39
-#: src/sshpilot/login_profile_dialogs.py:309
+#: src/sshpilot/login_profile_dialogs.py:310
 msgid "FIDO security key provider"
 msgstr "Anbieter für FIDO-Sicherheitsschlüssel"
 
@@ -2120,7 +2127,7 @@ msgstr "Hostname / IP-Adresse"
 #: src/sshpilot/connection_dialog_login_profile.py:143
 #: src/sshpilot/effective_config_dialog.py:32
 #: src/sshpilot/gtk/login_profile_messages.py:31
-#: src/sshpilot/login_profile_dialogs.py:223
+#: src/sshpilot/login_profile_dialogs.py:224
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:48
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:316
 #: src/sshpilot/rdp_tab.py:549
@@ -2196,12 +2203,12 @@ msgid "Detect MAC"
 msgstr "MAC erkennen"
 
 #: src/sshpilot/connection_dialog.py:3661
-#: src/sshpilot/login_profile_dialogs.py:350
+#: src/sshpilot/login_profile_dialogs.py:351
 msgid "Routing"
 msgstr "Routing"
 
 #: src/sshpilot/connection_dialog.py:3662
-#: src/sshpilot/login_profile_dialogs.py:351
+#: src/sshpilot/login_profile_dialogs.py:352
 msgid "Optional SSH path settings used before authentication."
 msgstr ""
 "Optionale SSH-Pfadeinstellungen, die vor der Authentifizierung verwendet "
@@ -2230,12 +2237,12 @@ msgstr "Aus dem Bestand auswählen"
 #: src/sshpilot/connection_dialog.py:3690
 #: src/sshpilot/effective_config_dialog.py:36
 #: src/sshpilot/gtk/login_profile_messages.py:43
-#: src/sshpilot/login_profile_dialogs.py:353
+#: src/sshpilot/login_profile_dialogs.py:354
 msgid "Proxy command"
 msgstr "Proxy-Befehl"
 
 #: src/sshpilot/connection_dialog.py:3692
-#: src/sshpilot/login_profile_dialogs.py:356
+#: src/sshpilot/login_profile_dialogs.py:357
 msgid ""
 "Runs locally to relay the connection, e.g. ssh -W %h:%p bastion. A "
 "ProxyCommand executes a local command — only keep values you trust."
@@ -2247,7 +2254,7 @@ msgstr ""
 #: src/sshpilot/connection_dialog.py:3708
 #: src/sshpilot/effective_config_dialog.py:37
 #: src/sshpilot/gtk/login_profile_messages.py:41
-#: src/sshpilot/login_profile_dialogs.py:314
+#: src/sshpilot/login_profile_dialogs.py:315
 msgid "Forward agent"
 msgstr "Agent weiterleiten"
 
@@ -2527,9 +2534,9 @@ msgstr "Gerät"
 #. Use the same neutral fallback as the local tab. Shell-provided
 #. titles can still replace it later.
 #. Move the existing terminal out of the main tab_view into pane 0
-#: src/sshpilot/connection_dialog.py:4764 src/sshpilot/omni_search.py:206
+#: src/sshpilot/connection_dialog.py:4764 src/sshpilot/omni_search.py:210
 #: src/sshpilot/preferences.py:1280 src/sshpilot/preferences.py:3266
-#: src/sshpilot/shortcut_editor.py:252 src/sshpilot/settings_index.py:48
+#: src/sshpilot/shortcut_editor.py:253 src/sshpilot/settings_index.py:48
 #: src/sshpilot/split_view.py:407 src/sshpilot/split_view.py:608
 #: src/sshpilot/split_view.py:611 src/sshpilot/split_view.py:809
 #: src/sshpilot/split_view.py:832 src/sshpilot/split_view.py:834
@@ -2582,7 +2589,7 @@ msgstr "Die Verbindungseinstellungen konnten nicht gespeichert werden."
 
 #: src/sshpilot/connection_dialog.py:5235
 #: src/sshpilot/file_manager/properties_dialog.py:757
-#: src/sshpilot/login_profile_dialogs.py:880
+#: src/sshpilot/login_profile_dialogs.py:890
 msgid "Group"
 msgstr "Gruppe"
 
@@ -2611,7 +2618,7 @@ msgid "Please enter a nickname for this connection"
 msgstr "Bitte geben Sie einen Anzeigenamen für diese Verbindung ein"
 
 #: src/sshpilot/connection_dialog.py:5482
-#: src/sshpilot/login_profile_dialogs.py:439
+#: src/sshpilot/login_profile_dialogs.py:449
 msgid "Please correct the invalid key passphrase."
 msgstr "Bitte korrigieren Sie die ungültige Schlüssel-Passphrase."
 
@@ -2733,10 +2740,12 @@ msgstr ""
 "verwenden"
 
 #: src/sshpilot/connection_dialog_auth.py:703
+#: src/sshpilot/advanced_config_window.py:915
 msgid "Move up"
 msgstr "Nach oben"
 
 #: src/sshpilot/connection_dialog_auth.py:704
+#: src/sshpilot/advanced_config_window.py:916
 msgid "Move down"
 msgstr "Nach unten"
 
@@ -2745,8 +2754,8 @@ msgid "Move to top"
 msgstr "Ganz nach oben"
 
 #: src/sshpilot/connection_dialog_auth.py:711
-#: src/sshpilot/login_profile_dialogs.py:279
-#: src/sshpilot/login_profile_dialogs.py:315 src/sshpilot/preferences.py:2877
+#: src/sshpilot/login_profile_dialogs.py:280
+#: src/sshpilot/login_profile_dialogs.py:316 src/sshpilot/preferences.py:2877
 #: src/sshpilot/preferences.py:2908
 msgid "Not set"
 msgstr "Nicht gesetzt"
@@ -2863,7 +2872,7 @@ msgid "Filter tags…"
 msgstr "Tags filtern…"
 
 #: src/sshpilot/connection_dialog_field_helpers.py:377
-#: src/sshpilot/login_profile_dialogs.py:1033
+#: src/sshpilot/login_profile_dialogs.py:1043
 #, python-brace-format
 msgid "{n} connection"
 msgid_plural "{n} connections"
@@ -2871,7 +2880,7 @@ msgstr[0] "{n} Verbindung"
 msgstr[1] "{n} Verbindungen"
 
 #: src/sshpilot/connection_dialog_login_profile.py:44
-#: src/sshpilot/login_profile_dialogs.py:219
+#: src/sshpilot/login_profile_dialogs.py:220
 msgid "Profile"
 msgstr "Profil"
 
@@ -2888,7 +2897,7 @@ msgid "Username (using a login profile)"
 msgstr "Benutzername (unter Verwendung eines Anmeldeprofils)"
 
 #: src/sshpilot/connection_dialog_login_profile.py:228
-#: src/sshpilot/login_profile_dialogs.py:663
+#: src/sshpilot/login_profile_dialogs.py:673
 msgid "Don't use a profile"
 msgstr "Verwenden Sie kein Profil"
 
@@ -3016,8 +3025,8 @@ msgstr "Zeigen, was SSH für diesen Host verwendet (gespeicherter Stand)"
 msgid "Save the connection to see what SSH uses for it"
 msgstr "Speichern Sie die Verbindung, um zu sehen, was SSH dafür verwendet"
 
-#: src/sshpilot/connection_dialog_overrides.py:831 src/sshpilot/window.py:8635
-#: src/sshpilot/window.py:8645 src/sshpilot/window.py:9632
+#: src/sshpilot/connection_dialog_overrides.py:831 src/sshpilot/window.py:8691
+#: src/sshpilot/window.py:8701 src/sshpilot/window.py:9688
 msgid "Effective configuration unavailable"
 msgstr "Effektive Konfiguration nicht verfügbar"
 
@@ -3482,12 +3491,12 @@ msgid_plural "{n} running sessions"
 msgstr[0] "{n} laufende Sitzung"
 msgstr[1] "{n} laufende Sitzungen"
 
-#: src/sshpilot/daemon_quit_policy.py:627 src/sshpilot/window.py:8120
+#: src/sshpilot/daemon_quit_policy.py:627 src/sshpilot/window.py:8176
 msgid "Quit SSH Pilot?"
 msgstr "SSH Pilot beenden?"
 
 #: src/sshpilot/daemon_quit_policy.py:629 src/sshpilot/shortcut_editor.py:50
-#: src/sshpilot/window.py:4332 src/sshpilot/window_help.py:55
+#: src/sshpilot/window.py:4333 src/sshpilot/window_help.py:55
 msgid "Quit"
 msgstr "Beenden"
 
@@ -3816,7 +3825,7 @@ msgstr "Es stimmen keine Artikel überein"
 
 #: src/sshpilot/file_manager/pane.py:1150
 #: src/sshpilot/file_manager/pane_controls.py:145
-#: src/sshpilot/login_profile_dialogs.py:220
+#: src/sshpilot/login_profile_dialogs.py:221
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:183
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:331
 #: src/sshpilot/plugins/builtin/docker_manager/tab_stats.py:22
@@ -4135,6 +4144,7 @@ msgid "Descending"
 msgstr "Absteigend"
 
 #: src/sshpilot/file_manager/pane_controls.py:153
+#: src/sshpilot/advanced_config_window.py:354
 msgid "Order"
 msgstr "Reihenfolge"
 
@@ -5177,8 +5187,8 @@ msgstr "Die angeforderte Host-Informationsprobe ist nicht vorhanden."
 #: src/sshpilot/gtk/host_info_failure_messages.py:33
 #: src/sshpilot/gtk/identity_failure_messages.py:16
 #: src/sshpilot/gtk/scp_failure_messages.py:19
-#: src/sshpilot/gtk/transfer_error_messages.py:25 src/sshpilot/window.py:8608
-#: src/sshpilot/window.py:8633
+#: src/sshpilot/gtk/transfer_error_messages.py:25 src/sshpilot/window.py:8664
+#: src/sshpilot/window.py:8689
 msgid "The selected connection no longer exists in the daemon."
 msgstr "Die ausgewählte Verbindung existiert nicht mehr im Daemon."
 
@@ -5253,7 +5263,7 @@ msgstr "Agent-Socket zum Weiterleiten"
 
 #: src/sshpilot/gtk/login_profile_messages.py:44
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:89
-#: src/sshpilot/login_profile_dialogs.py:362
+#: src/sshpilot/login_profile_dialogs.py:363
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:54
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:96
 msgid "Extra SSH options"
@@ -5286,7 +5296,7 @@ msgid "A login profile with this name already exists."
 msgstr "Es existiert bereits ein Anmeldeprofil mit diesem Namen."
 
 #: src/sshpilot/gtk/login_profile_messages.py:79
-#: src/sshpilot/login_profile_dialogs.py:429
+#: src/sshpilot/login_profile_dialogs.py:430
 msgid "Enter a name for the login profile."
 msgstr "Geben Sie einen Namen für das Anmeldeprofil ein."
 
@@ -5329,7 +5339,7 @@ msgid "The login profile backup is invalid."
 msgstr "Die Sicherung des Anmeldeprofils ist ungültig."
 
 #: src/sshpilot/gtk/login_profile_messages.py:99
-#: src/sshpilot/login_profile_dialogs.py:1028
+#: src/sshpilot/login_profile_dialogs.py:1038
 msgid "Login profiles are unavailable: their file could not be read."
 msgstr ""
 "Anmeldeprofile sind nicht verfügbar: Ihre Datei konnte nicht gelesen werden."
@@ -5377,11 +5387,11 @@ msgstr[1] ""
 "Dadurch werden die folgenden selbst gesetzten Werte bei {count} von {total} "
 "verknüpften Verbindungen ersetzt: {fields}."
 
-#: src/sshpilot/gtk/login_profile_messages.py:206
+#: src/sshpilot/gtk/login_profile_messages.py:212
 msgid "password"
 msgstr "Passwort"
 
-#: src/sshpilot/gtk/login_profile_messages.py:215
+#: src/sshpilot/gtk/login_profile_messages.py:241
 #, fuzzy, python-brace-format
 msgid ""
 "{count} connection was detached from its login profile because its SSH "
@@ -5396,18 +5406,18 @@ msgstr[1] ""
 "{count}-Verbindungen wurden von ihrem Anmeldeprofil getrennt, weil ihre SSH-"
 "Konfiguration bearbeitet wurde."
 
-#: src/sshpilot/gtk/login_profile_messages.py:231
+#: src/sshpilot/gtk/login_profile_messages.py:257
 msgid ""
 "The profile was saved, but a password or passphrase could not be stored."
 msgstr ""
 "Das Profil wurde gespeichert, aber ein Passwort oder eine Passphrase konnte "
 "nicht gespeichert werden."
 
-#: src/sshpilot/gtk/login_profile_messages.py:236
+#: src/sshpilot/gtk/login_profile_messages.py:262
 msgid "The key passphrase could not be stored."
 msgstr "Die Schlüsselpassphrase konnte nicht gespeichert werden."
 
-#: src/sshpilot/gtk/login_profile_messages.py:244
+#: src/sshpilot/gtk/login_profile_messages.py:270
 msgid "The login profile operation failed."
 msgstr "Der Anmeldeprofilvorgang ist fehlgeschlagen."
 
@@ -6216,7 +6226,7 @@ msgstr ""
 
 #. Window/taskbar title; the header title shows the daemon-resolved
 #. display name as the subtitle automatically.
-#: src/sshpilot/gtk/config_syntax_notice.py:66 src/sshpilot/window.py:6311
+#: src/sshpilot/gtk/config_syntax_notice.py:66 src/sshpilot/window.py:6312
 #: src/sshpilot/resources/ui/connection_dialog.ui:49
 msgid "Edit SSH Config"
 msgstr "SSH Config bearbeiten"
@@ -7450,8 +7460,8 @@ msgstr "Protokollordner öffnen"
 msgid "Save Log As…"
 msgstr "Protokoll speichern unter…"
 
-#: src/sshpilot/log_viewer.py:577 src/sshpilot/macos_menubar.py:126
-#: src/sshpilot/window.py:4326
+#: src/sshpilot/log_viewer.py:577 src/sshpilot/macos_menubar.py:127
+#: src/sshpilot/window.py:4327
 msgid "Export Diagnostics…"
 msgstr "Diagnosedaten exportieren…"
 
@@ -7531,33 +7541,33 @@ msgstr ""
 "Protokollzeilen können Hostnamen, Benutzernamen und Dateipfade enthalten. "
 "Bitte vor dem Teilen prüfen."
 
-#: src/sshpilot/login_profile_dialogs.py:212
+#: src/sshpilot/login_profile_dialogs.py:213
 msgid "New profile"
 msgstr "Neues Profil"
 
-#: src/sshpilot/login_profile_dialogs.py:214
+#: src/sshpilot/login_profile_dialogs.py:215
 msgid "Edit Login Profile"
 msgstr "Anmeldeprofil bearbeiten"
 
-#: src/sshpilot/login_profile_dialogs.py:214
-#: src/sshpilot/login_profile_dialogs.py:970
-#: src/sshpilot/login_profile_dialogs.py:989
+#: src/sshpilot/login_profile_dialogs.py:215
+#: src/sshpilot/login_profile_dialogs.py:980
+#: src/sshpilot/login_profile_dialogs.py:999
 msgid "New Login Profile"
 msgstr "Neues Anmeldeprofil"
 
-#: src/sshpilot/login_profile_dialogs.py:243
+#: src/sshpilot/login_profile_dialogs.py:244
 msgid "No identity files set by this profile."
 msgstr "Dieses Profil legt keine Identitätsdateien fest."
 
-#: src/sshpilot/login_profile_dialogs.py:322
+#: src/sshpilot/login_profile_dialogs.py:323
 msgid "Agent socket to forward (optional)"
 msgstr "Agent-Socket zum Weiterleiten (optional)"
 
-#: src/sshpilot/login_profile_dialogs.py:328
+#: src/sshpilot/login_profile_dialogs.py:329
 msgid "Secrets"
 msgstr "Geheimnisse"
 
-#: src/sshpilot/login_profile_dialogs.py:329
+#: src/sshpilot/login_profile_dialogs.py:330
 msgid ""
 "Stored in your secure storage and shared by every connection using this "
 "profile."
@@ -7565,31 +7575,31 @@ msgstr ""
 "Wird in Ihrem sicheren Speicher gespeichert und von jeder Verbindung "
 "geteilt, die dieses Profil verwendet."
 
-#: src/sshpilot/login_profile_dialogs.py:332
+#: src/sshpilot/login_profile_dialogs.py:333
 msgid "Login password"
 msgstr "Login-Passwort"
 
-#: src/sshpilot/login_profile_dialogs.py:334
+#: src/sshpilot/login_profile_dialogs.py:335
 msgid "Remove stored login password"
 msgstr "Gespeichertes Login-Passwort entfernen"
 
-#: src/sshpilot/login_profile_dialogs.py:337
+#: src/sshpilot/login_profile_dialogs.py:338
 msgid "Sudo password"
 msgstr "Sudo-Passwort"
 
-#: src/sshpilot/login_profile_dialogs.py:339
+#: src/sshpilot/login_profile_dialogs.py:340
 msgid "Remove stored sudo password"
 msgstr "Entfernen Sie das gespeicherte Sudo-Passwort"
 
-#: src/sshpilot/login_profile_dialogs.py:344
+#: src/sshpilot/login_profile_dialogs.py:345
 msgid "Login password (stored — type to replace)"
 msgstr "Login-Passwort (gespeichert – zum Ersetzen eingeben)"
 
-#: src/sshpilot/login_profile_dialogs.py:346
+#: src/sshpilot/login_profile_dialogs.py:347
 msgid "Sudo password (stored — type to replace)"
 msgstr "Sudo-Passwort (gespeichert – zum Ersetzen eingeben)"
 
-#: src/sshpilot/login_profile_dialogs.py:363
+#: src/sshpilot/login_profile_dialogs.py:364
 msgid ""
 "One directive per line, e.g. ServerAliveInterval 30. They replace the same "
 "directives of linked connections."
@@ -7597,64 +7607,65 @@ msgstr ""
 "Eine Direktive pro Zeile, z.B. ServerAliveInterval 30. Sie ersetzen die "
 "gleichen Anweisungen verknüpfter Verbindungen."
 
-#: src/sshpilot/login_profile_dialogs.py:587
+#: src/sshpilot/login_profile_dialogs.py:597
 msgid "Replace connection settings?"
 msgstr "Verbindungseinstellungen ersetzen?"
 
-#: src/sshpilot/login_profile_dialogs.py:588
+#: src/sshpilot/login_profile_dialogs.py:598
 msgid "The login profile will replace these settings:"
 msgstr "Das Anmeldeprofil ersetzt diese Einstellungen:"
 
-#: src/sshpilot/login_profile_dialogs.py:591
+#: src/sshpilot/login_profile_dialogs.py:601
 msgid "Apply Profile"
 msgstr "Profil anwenden"
 
-#: src/sshpilot/login_profile_dialogs.py:613
+#: src/sshpilot/login_profile_dialogs.py:623
 msgid "Replace user-set values?"
 msgstr "Selbst gesetzte Werte ersetzen?"
 
-#: src/sshpilot/login_profile_dialogs.py:615
+#: src/sshpilot/login_profile_dialogs.py:625
 msgid "Show connections"
 msgstr "Verbindungen anzeigen"
 
-#: src/sshpilot/login_profile_dialogs.py:621
-#: src/sshpilot/login_profile_dialogs.py:672
-#: src/sshpilot/login_profile_dialogs.py:741
+#: src/sshpilot/login_profile_dialogs.py:631
+#: src/sshpilot/login_profile_dialogs.py:682
+#: src/sshpilot/login_profile_dialogs.py:751
 #: src/sshpilot/resources/ui/authorized_key_entry_dialog.ui:27
+#: src/sshpilot/advanced_config_window.py:442
 msgid "Apply"
 msgstr "Anwenden"
 
-#: src/sshpilot/login_profile_dialogs.py:659
-#: src/sshpilot/login_profile_dialogs.py:735 src/sshpilot/window_dialogs.py:806
+#: src/sshpilot/login_profile_dialogs.py:669
+#: src/sshpilot/login_profile_dialogs.py:745 src/sshpilot/window_dialogs.py:806
 #: src/sshpilot/window_dialogs.py:916
 msgid "Login profiles unavailable"
 msgstr "Anmeldeprofile nicht verfügbar"
 
-#: src/sshpilot/login_profile_dialogs.py:668
+#: src/sshpilot/login_profile_dialogs.py:678
 msgid "Inherit from group"
 msgstr "Von der Gruppe erben"
 
-#: src/sshpilot/login_profile_dialogs.py:672
+#: src/sshpilot/login_profile_dialogs.py:682
 msgid "Assign Login Profile"
 msgstr "Anmeldeprofil zuweisen"
 
-#: src/sshpilot/login_profile_dialogs.py:678
+#: src/sshpilot/login_profile_dialogs.py:688
 #, python-brace-format
 msgid "Applies to {count} connection."
 msgid_plural "Applies to {count} connections."
 msgstr[0] "Gilt für die Verbindung {count}."
 msgstr[1] "Gilt für {count} Verbindungen."
 
-#: src/sshpilot/login_profile_dialogs.py:683
-#: src/sshpilot/login_profile_dialogs.py:748
+#: src/sshpilot/login_profile_dialogs.py:693
+#: src/sshpilot/login_profile_dialogs.py:758
 msgid "Login profile"
 msgstr "Anmeldeprofil"
 
-#: src/sshpilot/login_profile_dialogs.py:741
+#: src/sshpilot/login_profile_dialogs.py:751
 msgid "Group Login Profile"
 msgstr "Gruppen-Anmeldeprofil"
 
-#: src/sshpilot/login_profile_dialogs.py:745
+#: src/sshpilot/login_profile_dialogs.py:755
 msgid ""
 "Connections in this group, and in nested groups without their own profile, "
 "can inherit it."
@@ -7662,31 +7673,31 @@ msgstr ""
 "Verbindungen in dieser Gruppe und in verschachtelten Gruppen ohne eigenes "
 "Profil können es erben."
 
-#: src/sshpilot/login_profile_dialogs.py:757
+#: src/sshpilot/login_profile_dialogs.py:767
 msgid "Members that inherit the profile"
 msgstr "Mitglieder, die das Profil erben"
 
-#: src/sshpilot/login_profile_dialogs.py:758
+#: src/sshpilot/login_profile_dialogs.py:768
 msgid "Members with their own explicit profile are unchecked by default."
 msgstr ""
 "Mitglieder mit einem eigenen expliziten Profil sind standardmäßig "
 "deaktiviert."
 
-#: src/sshpilot/login_profile_dialogs.py:772
+#: src/sshpilot/login_profile_dialogs.py:782
 #, python-brace-format
 msgid "Uses profile “{name}”"
 msgstr "Verwendet Profil „{name}“"
 
-#: src/sshpilot/login_profile_dialogs.py:840
+#: src/sshpilot/login_profile_dialogs.py:850
 msgid "Could not delete the profile"
 msgstr "Das Profil konnte nicht gelöscht werden"
 
-#: src/sshpilot/login_profile_dialogs.py:845
+#: src/sshpilot/login_profile_dialogs.py:855
 #, python-brace-format
 msgid "Delete “{name}”?"
 msgstr "„{name}“ löschen?"
 
-#: src/sshpilot/login_profile_dialogs.py:846
+#: src/sshpilot/login_profile_dialogs.py:856
 msgid ""
 "No connection or group uses this profile. Its stored passwords are deleted "
 "too."
@@ -7694,12 +7705,12 @@ msgstr ""
 "Keine Verbindung oder Gruppe verwendet dieses Profil. Auch die gespeicherten "
 "Passwörter werden gelöscht."
 
-#: src/sshpilot/login_profile_dialogs.py:860
+#: src/sshpilot/login_profile_dialogs.py:870
 #, python-brace-format
 msgid "Delete “{name}”"
 msgstr "„{name}“ löschen"
 
-#: src/sshpilot/login_profile_dialogs.py:865
+#: src/sshpilot/login_profile_dialogs.py:875
 msgid ""
 "These connections and groups use the profile. Choose what each should use "
 "instead. Detached connections keep their current settings."
@@ -7709,33 +7720,33 @@ msgstr ""
 "aktuellen Einstellungen."
 
 #. list of (label, profile_id or None)
-#: src/sshpilot/login_profile_dialogs.py:872
+#: src/sshpilot/login_profile_dialogs.py:882
 msgid "Apply to all"
 msgstr "Bewerben Sie sich für alle"
 
-#: src/sshpilot/login_profile_dialogs.py:874
-#: src/sshpilot/login_profile_dialogs.py:920
+#: src/sshpilot/login_profile_dialogs.py:884
+#: src/sshpilot/login_profile_dialogs.py:930
 msgid "New Profile…"
 msgstr "Neues Profil…"
 
-#: src/sshpilot/login_profile_dialogs.py:875
+#: src/sshpilot/login_profile_dialogs.py:885
 msgid "Affected"
 msgstr "Betroffen"
 
-#: src/sshpilot/login_profile_dialogs.py:886
+#: src/sshpilot/login_profile_dialogs.py:896
 msgid "Detach (keep current values)"
 msgstr "Trennen (aktuelle Werte beibehalten)"
 
-#: src/sshpilot/login_profile_dialogs.py:956 src/sshpilot/macos_menubar.py:96
-#: src/sshpilot/window.py:4280
+#: src/sshpilot/login_profile_dialogs.py:966 src/sshpilot/macos_menubar.py:97
+#: src/sshpilot/window.py:4281
 msgid "Login Profiles"
 msgstr "Anmeldeprofile"
 
-#: src/sshpilot/login_profile_dialogs.py:977
+#: src/sshpilot/login_profile_dialogs.py:987
 msgid "No Login Profiles"
 msgstr "Keine Anmeldeprofile"
 
-#: src/sshpilot/login_profile_dialogs.py:978
+#: src/sshpilot/login_profile_dialogs.py:988
 msgid ""
 "A login profile bundles a username, keys and passwords. Assign it to "
 "connections or groups to reuse it."
@@ -7743,14 +7754,14 @@ msgstr ""
 "Ein Login-Profil bündelt einen Benutzernamen, Schlüssel und Passwörter. "
 "Weisen Sie es Verbindungen oder Gruppen zu, um es wiederzuverwenden."
 
-#: src/sshpilot/login_profile_dialogs.py:1036
+#: src/sshpilot/login_profile_dialogs.py:1046
 #, python-brace-format
 msgid "{n} group"
 msgid_plural "{n} groups"
 msgstr[0] "{n} Gruppe"
 msgstr[1] "{n} Gruppen"
 
-#: src/sshpilot/login_profile_dialogs.py:1073
+#: src/sshpilot/login_profile_dialogs.py:1083
 #, python-brace-format
 msgid "{count} connection was detached and kept its settings."
 msgid_plural "{count} connections were detached and kept their settings."
@@ -7820,8 +7831,8 @@ msgstr ""
 "Benutzer %(user)s · System %(system)s · E/A-Warten %(iowait)s · Steal "
 "%(steal)s · Leerlauf %(idle)s"
 
-#: src/sshpilot/machine_info_dialog.py:1023 src/sshpilot/omni_search.py:585
-#: src/sshpilot/omni_search.py:597 src/sshpilot/sidebar.py:1997
+#: src/sshpilot/machine_info_dialog.py:1023 src/sshpilot/omni_search.py:589
+#: src/sshpilot/omni_search.py:601 src/sshpilot/sidebar.py:1997
 #: src/sshpilot/welcome_page.py:336
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:1013
 msgid "Dashboard"
@@ -8146,15 +8157,15 @@ msgstr "Neues lokales Terminal"
 msgid "New Split View"
 msgstr "Neue geteilte Ansicht"
 
-#: src/sshpilot/macos_menubar.py:55 src/sshpilot/window.py:4287
+#: src/sshpilot/macos_menubar.py:55 src/sshpilot/window.py:4288
 msgid "Save Session…"
 msgstr "Sitzung speichern…"
 
-#: src/sshpilot/macos_menubar.py:56 src/sshpilot/window.py:4288
+#: src/sshpilot/macos_menubar.py:56 src/sshpilot/window.py:4289
 msgid "Open Session…"
 msgstr "Sitzung öffnen…"
 
-#: src/sshpilot/macos_menubar.py:57 src/sshpilot/window.py:4289
+#: src/sshpilot/macos_menubar.py:57 src/sshpilot/window.py:4290
 msgid "Manage Sessions…"
 msgstr "Sitzungen verwalten…"
 
@@ -8167,30 +8178,31 @@ msgid "Restore…"
 msgstr "Wiederherstellen…"
 
 #: src/sshpilot/macos_menubar.py:67 src/sshpilot/text_editor.py:412
-#: src/sshpilot/window.py:3668
+#: src/sshpilot/window.py:3668 src/sshpilot/advanced_config_window.py:206
 msgid "Undo"
 msgstr "Rückgängig"
 
 #: src/sshpilot/macos_menubar.py:68 src/sshpilot/text_editor.py:418
+#: src/sshpilot/advanced_config_window.py:208
 msgid "Redo"
 msgstr "Wiederholen"
 
-#: src/sshpilot/macos_menubar.py:79 src/sshpilot/omni_search.py:179
-#: src/sshpilot/shortcut_editor.py:73 src/sshpilot/window.py:2411
+#: src/sshpilot/macos_menubar.py:79 src/sshpilot/omni_search.py:183
+#: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window.py:2411
 #: src/sshpilot/window_help.py:52
 msgid "Toggle Sidebar"
 msgstr "Seitenleiste umschalten"
 
-#: src/sshpilot/macos_menubar.py:80 src/sshpilot/window.py:4298
+#: src/sshpilot/macos_menubar.py:80 src/sshpilot/window.py:4299
 msgid "Toggle Full Screen"
 msgstr "Vollbildmodus umschalten"
 
-#: src/sshpilot/macos_menubar.py:81 src/sshpilot/shortcut_editor.py:70
+#: src/sshpilot/macos_menubar.py:81 src/sshpilot/shortcut_editor.py:71
 #: src/sshpilot/window_help.py:235
 msgid "Tab Overview"
 msgstr "Tab-Übersicht"
 
-#: src/sshpilot/macos_menubar.py:86 src/sshpilot/window.py:4301
+#: src/sshpilot/macos_menubar.py:86 src/sshpilot/window.py:4302
 msgid "View"
 msgstr "Ansicht"
 
@@ -8214,63 +8226,70 @@ msgstr "Dateien verwalten"
 msgid "SSH Config Editor"
 msgstr "SSH-Konfigurationseditor"
 
-#: src/sshpilot/macos_menubar.py:95 src/sshpilot/window.py:4279
+#: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
+#: src/sshpilot/window.py:4279 src/sshpilot/advanced_config_window.py:163
+#: src/sshpilot/advanced_config_window.py:204
+#: src/sshpilot/advanced_config_window.py:825
+msgid "Advanced Configuration"
+msgstr "Erweiterte Konfiguration"
+
+#: src/sshpilot/macos_menubar.py:96 src/sshpilot/window.py:4280
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:10
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:20
 msgid "Known Hosts Editor"
 msgstr "known_hosts-Editor"
 
-#: src/sshpilot/macos_menubar.py:98 src/sshpilot/window.py:4281
+#: src/sshpilot/macos_menubar.py:99 src/sshpilot/window.py:4282
 msgid "Manage Local authorized_keys…"
 msgstr "Lokale authorized_keys verwalten…"
 
-#: src/sshpilot/macos_menubar.py:107 src/sshpilot/window.py:4310
+#: src/sshpilot/macos_menubar.py:108 src/sshpilot/window.py:4311
 msgid "Tools"
 msgstr "Werkzeuge"
 
-#: src/sshpilot/macos_menubar.py:110 src/sshpilot/shortcut_editor.py:66
+#: src/sshpilot/macos_menubar.py:111 src/sshpilot/shortcut_editor.py:67
 #: src/sshpilot/window_help.py:230
 msgid "Next Tab"
 msgstr "Nächster Tab"
 
-#: src/sshpilot/macos_menubar.py:111 src/sshpilot/shortcut_editor.py:67
+#: src/sshpilot/macos_menubar.py:112 src/sshpilot/shortcut_editor.py:68
 #: src/sshpilot/window_help.py:231
 msgid "Previous Tab"
 msgstr "Vorheriger Tab"
 
 #. Window group
-#: src/sshpilot/macos_menubar.py:113 src/sshpilot/preferences.py:1754
+#: src/sshpilot/macos_menubar.py:114 src/sshpilot/preferences.py:1754
 #: src/sshpilot/settings_index.py:80
 msgid "Window"
 msgstr "Fenster"
 
-#: src/sshpilot/macos_menubar.py:121 src/sshpilot/preferences.py:2157
-#: src/sshpilot/shortcut_editor.py:65 src/sshpilot/window.py:4321
+#: src/sshpilot/macos_menubar.py:122 src/sshpilot/preferences.py:2157
+#: src/sshpilot/shortcut_editor.py:66 src/sshpilot/window.py:4322
 #: src/sshpilot/window_help.py:58 src/sshpilot/window_help.py:140
 #: src/sshpilot/window_help.py:146
 msgid "Keyboard Shortcuts"
 msgstr "Tastenkürzel"
 
-#: src/sshpilot/macos_menubar.py:122 src/sshpilot/shortcut_editor.py:64
-#: src/sshpilot/window.py:4322 src/sshpilot/window_help.py:57
+#: src/sshpilot/macos_menubar.py:123 src/sshpilot/shortcut_editor.py:65
+#: src/sshpilot/window.py:4323 src/sshpilot/window_help.py:57
 msgid "Documentation"
 msgstr "Dokumentation"
 
-#: src/sshpilot/macos_menubar.py:123 src/sshpilot/window.py:4323
+#: src/sshpilot/macos_menubar.py:124 src/sshpilot/window.py:4324
 msgid "Check for Updates"
 msgstr "Nach Aktualisierungen suchen"
 
-#: src/sshpilot/macos_menubar.py:124 src/sshpilot/window.py:1383
-#: src/sshpilot/window.py:4324
+#: src/sshpilot/macos_menubar.py:125 src/sshpilot/window.py:1383
+#: src/sshpilot/window.py:4325
 msgid "View Logs…"
 msgstr "Protokolle anzeigen…"
 
-#: src/sshpilot/macos_menubar.py:125 src/sshpilot/window.py:1384
-#: src/sshpilot/window.py:4325
+#: src/sshpilot/macos_menubar.py:126 src/sshpilot/window.py:1384
+#: src/sshpilot/window.py:4326
 msgid "Report a Problem…"
 msgstr "Problem melden…"
 
-#: src/sshpilot/macos_menubar.py:127 src/sshpilot/window.py:4327
+#: src/sshpilot/macos_menubar.py:128 src/sshpilot/window.py:4328
 msgid "Help"
 msgstr "Hilfe"
 
@@ -8335,144 +8354,152 @@ msgstr ""
 "Config;Konfigurationsdatei"
 
 #: src/sshpilot/omni_search.py:124
+msgid ""
+"advanced configuration;ssh config blocks;host match order;effective "
+"config;precedence;which option wins"
+msgstr ""
+"erweiterte konfiguration;ssh-konfigurationsblöcke;host-match-"
+"reihenfolge;effektive konfiguration;vorrang;welche option gewinnt"
+
+#: src/sshpilot/omni_search.py:128
 msgid "known hosts;host keys;fingerprints;server fingerprints"
 msgstr "bekannte Hosts;Host-Schlüssel;Fingerabdrücke;Server-Fingerabdrücke"
 
-#: src/sshpilot/omni_search.py:127
+#: src/sshpilot/omni_search.py:131
 msgid ""
 "identities;identity;credentials;accounts;users;usernames;logins;saved logins"
 msgstr ""
 "Identitäten;Identität;Zugangsdaten;Konten;Benutzer;Benutzernamen;Anmeldungen;gespeicherte "
 "Anmeldungen"
 
-#: src/sshpilot/omni_search.py:131
+#: src/sshpilot/omni_search.py:135
 msgid "authorized keys;public keys;access keys;authorized_keys"
 msgstr ""
 "autorisierte Schlüssel;öffentliche "
 "Schlüssel;Zugriffsschlüssel;authorized_keys"
 
-#: src/sshpilot/omni_search.py:133
+#: src/sshpilot/omni_search.py:137
 msgid "save layout;save workspace;save tabs"
 msgstr "Layout speichern;Arbeitsbereich speichern;Tabs speichern"
 
-#: src/sshpilot/omni_search.py:135
+#: src/sshpilot/omni_search.py:139
 msgid "load session;restore session;load layout;load workspace;restore tabs"
 msgstr ""
 "Sitzung laden;Sitzung wiederherstellen;Layout laden;Arbeitsbereich "
 "laden;Tabs wiederherstellen"
 
-#: src/sshpilot/omni_search.py:138
+#: src/sshpilot/omni_search.py:142
 msgid "sessions;workspaces;layouts"
 msgstr "Sitzungen;Arbeitsbereiche;Layouts"
 
-#: src/sshpilot/omni_search.py:139
+#: src/sshpilot/omni_search.py:143
 msgid "backup;export;export settings;save settings"
 msgstr "Sicherung;exportieren;Einstellungen exportieren;Einstellungen sichern"
 
-#: src/sshpilot/omni_search.py:140
+#: src/sshpilot/omni_search.py:144
 msgid "restore;import;import settings;load settings"
 msgstr ""
 "wiederherstellen;importieren;Einstellungen importieren;Einstellungen laden"
 
-#: src/sshpilot/omni_search.py:141
+#: src/sshpilot/omni_search.py:145
 msgid "fullscreen;full screen;maximize"
 msgstr "Vollbild;ganzer Bildschirm;maximieren"
 
-#: src/sshpilot/omni_search.py:143
+#: src/sshpilot/omni_search.py:147
 msgid "hide sidebar;show sidebar;sidebar;connection list;side panel"
 msgstr ""
 "Seitenleiste ausblenden;Seitenleiste "
 "einblenden;Seitenleiste;Verbindungsliste;Seitenbereich"
 
-#: src/sshpilot/omni_search.py:146
+#: src/sshpilot/omni_search.py:150
 msgid "snippets;command snippets;saved commands;macros;command library"
 msgstr ""
 "Snippets;Befehlsschnipsel;gespeicherte Befehle;Makros;Befehlsbibliothek"
 
-#: src/sshpilot/omni_search.py:149
+#: src/sshpilot/omni_search.py:153
 msgid "settings;preferences;prefs;options;configure app;configuration"
 msgstr "Einstellungen;Präferenzen;Optionen;App konfigurieren;Konfiguration"
 
-#: src/sshpilot/omni_search.py:152
+#: src/sshpilot/omni_search.py:156
 msgid "shortcuts;hotkeys;keybindings;key bindings;keyboard shortcuts"
 msgstr "Tastenkürzel;Hotkeys;Tastenbelegung;Tastaturkürzel"
 
-#: src/sshpilot/omni_search.py:154
+#: src/sshpilot/omni_search.py:158
 msgid "help;docs;manual;guide;user guide;documentation"
 msgstr "Hilfe;Dokumentation;Handbuch;Anleitung;Benutzerhandbuch"
 
-#: src/sshpilot/omni_search.py:155
+#: src/sshpilot/omni_search.py:159
 msgid "update;upgrade;new version;latest version"
 msgstr "Aktualisierung;aktualisieren;neue Version;neueste Version"
 
-#: src/sshpilot/omni_search.py:156
+#: src/sshpilot/omni_search.py:160
 msgid "logs;log file;debug log"
 msgstr "Protokolle;Logs;Protokolldatei;Debug-Protokoll"
 
-#: src/sshpilot/omni_search.py:157
+#: src/sshpilot/omni_search.py:161
 msgid "bug;crash;issue;report bug;feedback"
 msgstr "Fehler;Absturz;Problem;Fehler melden;Rückmeldung"
 
-#: src/sshpilot/omni_search.py:158
+#: src/sshpilot/omni_search.py:162
 msgid "diagnostics;debug info;support bundle"
 msgstr "Diagnose;Debug-Informationen;Support-Paket"
 
-#: src/sshpilot/omni_search.py:159
+#: src/sshpilot/omni_search.py:163
 msgid "about;version;credits;license"
 msgstr "Info;Version;Danksagungen;Lizenz"
 
-#: src/sshpilot/omni_search.py:160
+#: src/sshpilot/omni_search.py:164
 msgid "quit;exit;close app"
 msgstr "beenden;schließen;App schließen"
 
-#: src/sshpilot/omni_search.py:166
+#: src/sshpilot/omni_search.py:170
 msgid "dark mode;dark theme;night mode;dark style"
 msgstr "dunkler Modus;dunkles Thema;Nachtmodus;dunkler Stil"
 
-#: src/sshpilot/omni_search.py:169
+#: src/sshpilot/omni_search.py:173
 msgid "light mode;light theme;day mode;light style"
 msgstr "heller Modus;helles Thema;Tagmodus;heller Stil"
 
-#: src/sshpilot/omni_search.py:172
+#: src/sshpilot/omni_search.py:176
 msgid "system theme;follow system;automatic theme;auto theme"
 msgstr "Systemthema;System folgen;automatisches Thema;Auto-Thema"
 
-#: src/sshpilot/omni_search.py:183 src/sshpilot/theme_selector.py:66
+#: src/sshpilot/omni_search.py:187 src/sshpilot/theme_selector.py:66
 msgid "Dark Style"
 msgstr "Dunkler Stil"
 
-#: src/sshpilot/omni_search.py:185 src/sshpilot/theme_selector.py:65
+#: src/sshpilot/omni_search.py:189 src/sshpilot/theme_selector.py:65
 msgid "Light Style"
 msgstr "Heller Stil"
 
-#: src/sshpilot/omni_search.py:187 src/sshpilot/preferences.py:750
+#: src/sshpilot/omni_search.py:191 src/sshpilot/preferences.py:750
 #: src/sshpilot/preferences.py:1685 src/sshpilot/window.py:3453
 #: src/sshpilot/window.py:3464
 msgid "Follow System"
 msgstr "System folgen"
 
-#: src/sshpilot/omni_search.py:194
+#: src/sshpilot/omni_search.py:198
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:182
 #: src/sshpilot/preferences.py:2120 src/sshpilot/preferences.py:3263
-#: src/sshpilot/shortcut_editor.py:246 src/sshpilot/settings_index.py:45
+#: src/sshpilot/shortcut_editor.py:247 src/sshpilot/settings_index.py:45
 msgid "General"
 msgstr "Allgemein"
 
-#: src/sshpilot/omni_search.py:195
+#: src/sshpilot/omni_search.py:199
 msgid ""
 "language;tabs;start page;startup;header bar;tips;window "
 "size;interface;quit;confirm"
 msgstr "Sprache;Tabs;Startseite;Programmstart;Kopfleiste;Tipps;beenden;bestätigen"
 
 #. Terminal appearance group
-#: src/sshpilot/omni_search.py:198 src/sshpilot/preferences.py:683
+#: src/sshpilot/omni_search.py:202 src/sshpilot/preferences.py:683
 #: src/sshpilot/preferences.py:2134 src/sshpilot/preferences.py:3264
 #: src/sshpilot/settings_index.py:46 src/sshpilot/settings_index.py:123
 #: src/sshpilot/settings_index.py:124
 msgid "Appearance"
 msgstr "Erscheinungsbild"
 
-#: src/sshpilot/omni_search.py:199
+#: src/sshpilot/omni_search.py:203
 msgid ""
 "theme;accent color;accent colour;monospace font;group colors;group "
 "colours;group layout;appearance"
@@ -8480,13 +8507,13 @@ msgstr ""
 "Thema;Akzentfarbe;Akzentfarbe;Monospace-"
 "Schrift;Gruppenfarben;Gruppenfarben;Gruppenlayout;Erscheinungsbild"
 
-#: src/sshpilot/omni_search.py:202 src/sshpilot/layout_preset_chooser.py:135
+#: src/sshpilot/omni_search.py:206 src/sshpilot/layout_preset_chooser.py:135
 #: src/sshpilot/preferences.py:2144 src/sshpilot/preferences.py:3265
 #: src/sshpilot/settings_index.py:47
 msgid "Sidebar"
 msgstr "Seitenleiste"
 
-#: src/sshpilot/omni_search.py:203
+#: src/sshpilot/omni_search.py:207
 msgid ""
 "sidebar settings;sidebar mode;compact sidebar;connection rows;row style;flat "
 "rows;card rows;row buttons;sidebar"
@@ -8495,7 +8522,7 @@ msgstr ""
 "Seitenleiste;Verbindungszeilen;Zeilenstil;flache "
 "Zeilen;Kartenzeilen;Zeilenschaltflächen;Seitenleiste"
 
-#: src/sshpilot/omni_search.py:207
+#: src/sshpilot/omni_search.py:211
 msgid ""
 "font;font size;color scheme;colour scheme;terminal "
 "theme;colors;cursor;scrollback;bell;terminal settings"
@@ -8503,76 +8530,76 @@ msgstr ""
 "Schrift;Schriftart;Schriftgröße;Farbschema;Terminal-"
 "Thema;Farben;Cursor;Rücklauf;Glocke;Terminal-Einstellungen"
 
-#: src/sshpilot/omni_search.py:210 src/sshpilot/preferences.py:3121
+#: src/sshpilot/omni_search.py:214 src/sshpilot/preferences.py:3121
 #: src/sshpilot/preferences.py:3267 src/sshpilot/settings_index.py:49
 msgid "File Management"
 msgstr "Dateiverwaltung"
 
-#: src/sshpilot/omni_search.py:211
+#: src/sshpilot/omni_search.py:215
 msgid "file manager settings;transfers;hidden files;file management"
 msgstr ""
 "Dateimanager-Einstellungen;Übertragungen;versteckte Dateien;Dateiverwaltung"
 
-#: src/sshpilot/omni_search.py:213 src/sshpilot/preferences.py:3269
+#: src/sshpilot/omni_search.py:217 src/sshpilot/preferences.py:3269
 #: src/sshpilot/settings_index.py:51
 msgid "SSH Options"
 msgstr "SSH-Optionen"
 
-#: src/sshpilot/omni_search.py:214
+#: src/sshpilot/omni_search.py:218
 msgid "ssh settings;keepalive;compression;timeout;ssh options"
 msgstr ""
 "SSH-Einstellungen;Keepalive;Kompression;Zeitüberschreitung;SSH-Optionen"
 
-#: src/sshpilot/omni_search.py:216 src/sshpilot/preferences.py:2760
+#: src/sshpilot/omni_search.py:220 src/sshpilot/preferences.py:2760
 #: src/sshpilot/preferences.py:3270 src/sshpilot/settings_index.py:52
 msgid "Security & Credentials"
 msgstr "Sicherheit und Zugangsdaten"
 
-#: src/sshpilot/omni_search.py:217
+#: src/sshpilot/omni_search.py:221
 msgid "security;passwords;keyring;password storage;secrets;credentials"
 msgstr "Sicherheit;Passwörter;Schlüsselbund;Passwortspeicher;Geheimnisse;Zugangsdaten"
 
-#: src/sshpilot/omni_search.py:219 src/sshpilot/preferences.py:3272
+#: src/sshpilot/omni_search.py:223 src/sshpilot/preferences.py:3272
 #: src/sshpilot/settings_index.py:54
 msgid "Plugins"
 msgstr "Plugins"
 
-#: src/sshpilot/omni_search.py:219
+#: src/sshpilot/omni_search.py:223
 msgid "plugins;extensions;add-ons;addons"
 msgstr "Plugins;Erweiterungen;Add-ons"
 
-#: src/sshpilot/omni_search.py:220
+#: src/sshpilot/omni_search.py:224
 msgid "advanced settings;advanced"
 msgstr "erweiterte Einstellungen;erweitert"
 
-#: src/sshpilot/omni_search.py:561
+#: src/sshpilot/omni_search.py:565
 msgid "Choose a connection"
 msgstr "Eine Verbindung auswählen"
 
-#: src/sshpilot/omni_search.py:710
+#: src/sshpilot/omni_search.py:714
 #, python-brace-format
 msgid "Connect using {protocol}"
 msgstr "Mit {protocol} verbinden"
 
-#: src/sshpilot/omni_search.py:783 src/sshpilot/omni_search.py:792
+#: src/sshpilot/omni_search.py:787 src/sshpilot/omni_search.py:796
 msgid "Invalid SSH command"
 msgstr "Ungültiger SSH-Befehl"
 
-#: src/sshpilot/omni_search.py:798
+#: src/sshpilot/omni_search.py:802
 msgid "Connect using SSH"
 msgstr "Mit SSH verbinden"
 
-#: src/sshpilot/omni_search.py:806
+#: src/sshpilot/omni_search.py:810
 msgid "No SSH destination specified"
 msgstr "Kein SSH-Ziel angegeben"
 
-#: src/sshpilot/omni_search.py:811
+#: src/sshpilot/omni_search.py:815
 #, python-brace-format
 msgid "Could not parse SSH destination: {command}"
 msgstr "SSH-Ziel konnte nicht geparst werden: {command}"
 
-#: src/sshpilot/omni_search.py:946 src/sshpilot/preferences.py:216
-#: src/sshpilot/shortcut_editor.py:61 src/sshpilot/window.py:4315
+#: src/sshpilot/omni_search.py:950 src/sshpilot/preferences.py:216
+#: src/sshpilot/shortcut_editor.py:62 src/sshpilot/window.py:4316
 #: src/sshpilot/window_help.py:56
 #: src/sshpilot/resources/ui/preferences_window.ui:10
 #: src/sshpilot/resources/ui/preferences_window.ui:30
@@ -8582,7 +8609,7 @@ msgstr "Einstellungen"
 
 #. Translators: an omni-search result that opens a page of
 #. Settings, e.g. "Settings › Terminal".
-#: src/sshpilot/omni_search.py:962
+#: src/sshpilot/omni_search.py:966
 #, python-brace-format
 msgid "Settings › {page}"
 msgstr "Einstellungen › {page}"
@@ -8590,26 +8617,26 @@ msgstr "Einstellungen › {page}"
 #. The placeholder is the only visible text and GTK does not expose it
 #. as an accessible name; and it carries the (rebindable) shortcut, so
 #. it would not be a stable one either.
-#: src/sshpilot/omni_search.py:1038
+#: src/sshpilot/omni_search.py:1042
 msgid "Search connections and commands"
 msgstr "Verbindungen und Befehle durchsuchen"
 
-#: src/sshpilot/omni_search.py:1107
+#: src/sshpilot/omni_search.py:1111
 msgid "Press Shift twice to search connections, tools or type ssh commands"
 msgstr ""
 "Umschalttaste zweimal drücken, um Verbindungen oder Werkzeuge zu suchen oder "
 "SSH-Befehle einzugeben"
 
-#: src/sshpilot/omni_search.py:1115
+#: src/sshpilot/omni_search.py:1119
 msgid "Search connections, tools or type ssh commands"
 msgstr "Verbindungen oder Werkzeuge suchen oder SSH-Befehle eingeben"
 
-#: src/sshpilot/omni_search.py:1137
+#: src/sshpilot/omni_search.py:1141
 #, python-brace-format
 msgid "Try: “{name}”  or  “ssh {target}”  or  “sftp {name2}”"
 msgstr "Versuchen Sie: „{name}“ oder „ssh {target}“ oder „sftp {name2}“"
 
-#: src/sshpilot/omni_search.py:1140
+#: src/sshpilot/omni_search.py:1144
 msgid "Try: “ssh root@203.0.113.7”  or  “sftp”  or  “preferences”"
 msgstr "Versuchen Sie: „ssh root@203.0.113.7“ oder „sftp“ oder „preferences“"
 
@@ -9085,7 +9112,7 @@ msgstr "Up/reployment (compose up -d)"
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_compose.py:98
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:350
-#: src/sshpilot/window.py:5079
+#: src/sshpilot/window.py:5080
 msgid "Start"
 msgstr "Starten"
 
@@ -9787,6 +9814,7 @@ msgid "Daemon host"
 msgstr "Daemon-Host"
 
 #: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:92
+#: src/sshpilot/advanced_config_window.py:385
 msgid "User"
 msgstr "Benutzer"
 
@@ -9876,6 +9904,7 @@ msgstr "Adaptiv (Standard)"
 
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:59
 #: src/sshpilot/preferences.py:1042
+#: src/sshpilot/gtk/advanced_config_messages.py:86
 msgid "Always"
 msgstr "Immer"
 
@@ -10328,7 +10357,8 @@ msgstr "Cursor blinkt"
 msgid "Enabled"
 msgstr "Ermöglicht"
 
-#: src/sshpilot/preferences.py:750 src/sshpilot/shortcut_editor.py:444
+#: src/sshpilot/preferences.py:750 src/sshpilot/shortcut_editor.py:446
+#: src/sshpilot/gtk/advanced_config_messages.py:81
 msgid "Disabled"
 msgstr "Deaktiviert"
 
@@ -11814,6 +11844,7 @@ msgid "Active"
 msgstr "Aktiv"
 
 #: src/sshpilot/preferences.py:4971
+#: src/sshpilot/gtk/advanced_config_messages.py:24
 msgid "Inactive"
 msgstr "Inaktiv"
 
@@ -12886,116 +12917,116 @@ msgstr "Omnisearch"
 msgid "Search in Terminal"
 msgstr "Im Terminal suchen"
 
-#: src/sshpilot/shortcut_editor.py:60 src/sshpilot/sidebar.py:2761
+#: src/sshpilot/shortcut_editor.py:61 src/sshpilot/sidebar.py:2761
 #: src/sshpilot/sidebar.py:2816 src/sshpilot/sidebar.py:2876
 #: src/sshpilot/window_help.py:200
 msgid "Local Terminal"
 msgstr "Lokales Terminal"
 
-#: src/sshpilot/shortcut_editor.py:62 src/sshpilot/window_help.py:234
+#: src/sshpilot/shortcut_editor.py:63 src/sshpilot/window_help.py:234
 msgid "Close Tab"
 msgstr "Tab schließen"
 
-#: src/sshpilot/shortcut_editor.py:68 src/sshpilot/window_help.py:232
+#: src/sshpilot/shortcut_editor.py:69 src/sshpilot/window_help.py:232
 msgid "Move Tab Left"
 msgstr "Tab nach links verschieben"
 
-#: src/sshpilot/shortcut_editor.py:69 src/sshpilot/window_help.py:233
+#: src/sshpilot/shortcut_editor.py:70 src/sshpilot/window_help.py:233
 msgid "Move Tab Right"
 msgstr "Tab nach rechts verschieben"
 
-#: src/sshpilot/shortcut_editor.py:71 src/sshpilot/window_help.py:236
+#: src/sshpilot/shortcut_editor.py:72 src/sshpilot/window_help.py:236
 msgid "New Split View Tab"
 msgstr "Neuer Tab mit geteilter Ansicht"
 
-#: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window_help.py:53
+#: src/sshpilot/shortcut_editor.py:75 src/sshpilot/window_help.py:53
 msgid "Toggle Fullscreen"
 msgstr "Vollbild umschalten"
 
-#: src/sshpilot/shortcut_editor.py:75
+#: src/sshpilot/shortcut_editor.py:76
 msgid "Focus Pane Left"
 msgstr "Linken Bereich fokussieren"
 
-#: src/sshpilot/shortcut_editor.py:76
+#: src/sshpilot/shortcut_editor.py:77
 msgid "Focus Pane Down"
 msgstr "Unteren Bereich fokussieren"
 
-#: src/sshpilot/shortcut_editor.py:77
+#: src/sshpilot/shortcut_editor.py:78
 msgid "Focus Pane Up"
 msgstr "Oberen Bereich fokussieren"
 
-#: src/sshpilot/shortcut_editor.py:78
+#: src/sshpilot/shortcut_editor.py:79
 msgid "Focus Pane Right"
 msgstr "Rechten Bereich fokussieren"
 
-#: src/sshpilot/shortcut_editor.py:79
+#: src/sshpilot/shortcut_editor.py:80
 msgid "Resize Pane Left"
 msgstr "Bereich nach links vergrößern"
 
-#: src/sshpilot/shortcut_editor.py:80
+#: src/sshpilot/shortcut_editor.py:81
 msgid "Resize Pane Down"
 msgstr "Bereich nach unten vergrößern"
 
-#: src/sshpilot/shortcut_editor.py:81
+#: src/sshpilot/shortcut_editor.py:82
 msgid "Resize Pane Up"
 msgstr "Bereich nach oben vergrößern"
 
-#: src/sshpilot/shortcut_editor.py:82
+#: src/sshpilot/shortcut_editor.py:83
 msgid "Resize Pane Right"
 msgstr "Bereich nach rechts vergrößern"
 
-#: src/sshpilot/shortcut_editor.py:83 src/sshpilot/window_tabs.py:321
+#: src/sshpilot/shortcut_editor.py:84 src/sshpilot/window_tabs.py:321
 msgid "Split Side by Side"
 msgstr "Nebeneinander teilen"
 
-#: src/sshpilot/shortcut_editor.py:84
+#: src/sshpilot/shortcut_editor.py:85
 msgid "Split Top / Bottom"
 msgstr "Oben / unten teilen"
 
-#: src/sshpilot/shortcut_editor.py:85
+#: src/sshpilot/shortcut_editor.py:86
 msgid "Add Pane"
 msgstr "Bereich hinzufügen"
 
-#: src/sshpilot/shortcut_editor.py:88
+#: src/sshpilot/shortcut_editor.py:89
 msgid "Shortcuts disabled while terminal pass-through mode is active"
 msgstr ""
 "Tastenkürzel sind deaktiviert, solange der Terminal-Durchreichemodus aktiv "
 "ist"
 
-#: src/sshpilot/shortcut_editor.py:249
+#: src/sshpilot/shortcut_editor.py:250
 msgid "Connection Management"
 msgstr "Verbindungsverwaltung"
 
-#: src/sshpilot/shortcut_editor.py:255
+#: src/sshpilot/shortcut_editor.py:256
 msgid "Tab Management"
 msgstr "Tab-Verwaltung"
 
-#: src/sshpilot/shortcut_editor.py:259
+#: src/sshpilot/shortcut_editor.py:260
 msgid "Active whenever a split view tab is open."
 msgstr "Aktiv, sobald ein Tab mit geteilter Ansicht geöffnet ist."
 
-#: src/sshpilot/shortcut_editor.py:290 src/sshpilot/shortcut_editor.py:544
+#: src/sshpilot/shortcut_editor.py:292 src/sshpilot/shortcut_editor.py:546
 #: src/sshpilot/window_help.py:218
 msgid "No shortcut assigned"
 msgstr "Kein Tastenkürzel zugewiesen"
 
-#: src/sshpilot/shortcut_editor.py:305
+#: src/sshpilot/shortcut_editor.py:307
 msgid "Assign new shortcut"
 msgstr "Neues Tastenkürzel zuweisen"
 
-#: src/sshpilot/shortcut_editor.py:314
+#: src/sshpilot/shortcut_editor.py:316
 msgid "Reset to default"
 msgstr "Auf Standard zurücksetzen"
 
-#: src/sshpilot/shortcut_editor.py:449
+#: src/sshpilot/shortcut_editor.py:451
 msgid "Double Shift"
 msgstr "Zweimal Umschalt"
 
-#: src/sshpilot/shortcut_editor.py:599
+#: src/sshpilot/shortcut_editor.py:601
 msgid "Shortcut Already In Use"
 msgstr "Tastenkürzel bereits belegt"
 
-#: src/sshpilot/shortcut_editor.py:601
+#: src/sshpilot/shortcut_editor.py:603
 #, python-brace-format
 msgid ""
 "This shortcut is already assigned to “{action}”. Replacing it will disable "
@@ -13523,7 +13554,7 @@ msgid "Hide File Pane"
 msgstr "Dateibereich ausblenden"
 
 #: src/sshpilot/split_view.py:498 src/sshpilot/split_view.py:587
-#: src/sshpilot/window.py:5023 src/sshpilot/window.py:5026
+#: src/sshpilot/window.py:5024 src/sshpilot/window.py:5027
 msgid "Exit Fullscreen"
 msgstr "Vollbild verlassen"
 
@@ -13612,11 +13643,13 @@ msgid "Choose a keyword"
 msgstr "Schlüsselwort auswählen"
 
 #: src/sshpilot/ssh_option_list.py:159 src/sshpilot/ssh_option_list.py:161
+#: src/sshpilot/advanced_config_window.py:1026
 msgid "Value"
 msgstr "Wert"
 
 #. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
 #: src/sshpilot/ssh_option_list.py:273 src/sshpilot/ssh_option_list.py:277
+#: src/sshpilot/advanced_config_window.py:948
 msgid "Add Option"
 msgstr "Option hinzufügen"
 
@@ -13657,8 +13690,8 @@ msgstr "Neuen Schlüssel erzeugen"
 msgid "Select key:"
 msgstr "Schlüssel auswählen:"
 
-#: src/sshpilot/sshcopyid_window.py:223 src/sshpilot/window.py:6444
-#: src/sshpilot/window.py:6452 src/sshpilot/window.py:6455
+#: src/sshpilot/sshcopyid_window.py:223 src/sshpilot/window.py:6500
+#: src/sshpilot/window.py:6508 src/sshpilot/window.py:6511
 msgid "Key file name"
 msgstr "Schlüsseldateiname"
 
@@ -13670,7 +13703,7 @@ msgstr "Schlüsseltyp:"
 msgid "ssh-ed25519 AAAA… comment"
 msgstr "ssh-ed25519 AAAA… Kommentar"
 
-#: src/sshpilot/sshcopyid_window.py:336 src/sshpilot/window.py:6468
+#: src/sshpilot/sshcopyid_window.py:336 src/sshpilot/window.py:6524
 msgid "Encrypt with passphrase"
 msgstr "Mit Passphrase verschlüsseln"
 
@@ -13738,18 +13771,18 @@ msgstr "Öffentlichen Schlüssel einfügen"
 msgid "Could not copy the pasted key to the server."
 msgstr "Der eingefügte Schlüssel konnte nicht auf den Server kopiert werden."
 
-#: src/sshpilot/sshcopyid_window.py:823 src/sshpilot/window.py:6502
+#: src/sshpilot/sshcopyid_window.py:823 src/sshpilot/window.py:6558
 msgid "Enter a key file name (e.g. id_ed25519)"
 msgstr "Geben Sie einen Schlüsseldateinamen ein (z. B. id_ed25519)"
 
-#: src/sshpilot/sshcopyid_window.py:825 src/sshpilot/window.py:6504
+#: src/sshpilot/sshcopyid_window.py:825 src/sshpilot/window.py:6560
 msgid "Key file name must not contain '/' or start with '.'"
 msgstr ""
 "Der Schlüsseldateiname darf kein '/' enthalten und nicht mit '.' beginnen"
 
 #: src/sshpilot/sshcopyid_window.py:832 src/sshpilot/sshcopyid_window.py:881
 #: src/sshpilot/sshcopyid_window.py:927 src/sshpilot/sshcopyid_window.py:974
-#: src/sshpilot/window.py:6571 src/sshpilot/window.py:6587
+#: src/sshpilot/window.py:6627 src/sshpilot/window.py:6643
 msgid "Key Generation Failed"
 msgstr "Schlüsselerzeugung fehlgeschlagen"
 
@@ -13784,8 +13817,8 @@ msgstr "Ein Schlüssel mit diesem Namen existiert bereits."
 msgid "The key name is invalid."
 msgstr "Der Schlüsselname ist ungültig."
 
-#: src/sshpilot/sshcopyid_window.py:973 src/sshpilot/window.py:6572
-#: src/sshpilot/window.py:6588
+#: src/sshpilot/sshcopyid_window.py:973 src/sshpilot/window.py:6628
+#: src/sshpilot/window.py:6644
 msgid "Could not generate the SSH key."
 msgstr "Der SSH-Schlüssel konnte nicht erzeugt werden."
 
@@ -14546,7 +14579,7 @@ msgstr "Änderungen verwerfen"
 msgid "Follow System Style"
 msgstr "System folgen"
 
-#: src/sshpilot/web_tab.py:82
+#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:544
 msgid "Reload"
 msgstr "Neu laden"
 
@@ -14881,42 +14914,42 @@ msgstr "Senden"
 msgid "e.g., ls -la"
 msgstr "z. B. ls -la"
 
-#: src/sshpilot/window.py:4290
+#: src/sshpilot/window.py:4291
 msgid "Sessions"
 msgstr "Sitzungen"
 
-#: src/sshpilot/window.py:4293 src/sshpilot/window_dialogs.py:1057
+#: src/sshpilot/window.py:4294 src/sshpilot/window_dialogs.py:1057
 #: src/sshpilot/window_dialogs.py:1062
 msgid "Backup"
 msgstr "Sichern"
 
-#: src/sshpilot/window.py:4294 src/sshpilot/window_dialogs.py:2412
+#: src/sshpilot/window.py:4295 src/sshpilot/window_dialogs.py:2412
 #: src/sshpilot/window_dialogs.py:2791
 msgid "Restore"
 msgstr "Wiederherstellen"
 
-#: src/sshpilot/window.py:4295
+#: src/sshpilot/window.py:4296
 msgid "Backup/Restore"
 msgstr "Sichern / Wiederherstellen"
 
-#: src/sshpilot/window.py:4328
+#: src/sshpilot/window.py:4329
 msgid "About"
 msgstr "Info"
 
-#: src/sshpilot/window.py:4737
+#: src/sshpilot/window.py:4738
 msgid "Groups"
 msgstr "Gruppen"
 
-#: src/sshpilot/window.py:4763
+#: src/sshpilot/window.py:4764
 msgid "Ungrouped"
 msgstr "Nicht gruppiert"
 
-#: src/sshpilot/window.py:5025
+#: src/sshpilot/window.py:5026
 #, python-brace-format
 msgid "Exit Fullscreen ({accels})"
 msgstr "Vollbild verlassen ({accels})"
 
-#: src/sshpilot/window.py:5331
+#: src/sshpilot/window.py:5332
 #, python-brace-format
 msgid ""
 "Switched to connection list — ↑/↓ navigate, Enter open, {modifier}+Enter new "
@@ -14925,21 +14958,21 @@ msgstr ""
 "Zur Verbindungsliste gewechselt — ↑/↓ navigieren, Eingabetaste öffnen, "
 "{modifier}+Eingabetaste neuer Tab"
 
-#: src/sshpilot/window.py:5408 src/sshpilot/window.py:5672
+#: src/sshpilot/window.py:5409 src/sshpilot/window.py:5673
 msgid "Search mode — Type to filter connections, Esc to clear and hide"
 msgstr ""
 "Suchmodus — Tippen, um Verbindungen zu filtern, Esc zum Leeren und Ausblenden"
 
-#: src/sshpilot/window.py:5690
+#: src/sshpilot/window.py:5691
 #, python-brace-format
 msgid "Search hidden — {modifier}+F to search again"
 msgstr "Suche ausgeblendet — {modifier}+F zum erneuten Suchen"
 
-#: src/sshpilot/window.py:6198
+#: src/sshpilot/window.py:6199
 msgid "Could not open the connection"
 msgstr "Die Verbindung konnte nicht geöffnet werden"
 
-#: src/sshpilot/window.py:6199
+#: src/sshpilot/window.py:6200
 msgid ""
 "SSH Pilot could not prepare this destination. Check the address and try "
 "again."
@@ -14947,7 +14980,7 @@ msgstr ""
 "SSH Pilot konnte dieses Ziel nicht vorbereiten. Prüfen Sie die Adresse und "
 "versuchen Sie es erneut."
 
-#: src/sshpilot/window.py:6217
+#: src/sshpilot/window.py:6218
 #, python-brace-format
 msgid ""
 "\"{host}\" is part of a configuration block with [{count}] other host. How "
@@ -14962,19 +14995,19 @@ msgstr[1] ""
 "„{host}“ ist Teil eines Konfigurationsblocks mit [{count}] anderen Hosts. "
 "Wie möchten Sie Ihre Änderungen anwenden?"
 
-#: src/sshpilot/window.py:6224
+#: src/sshpilot/window.py:6225
 msgid "Warning"
 msgstr "Warnung"
 
-#: src/sshpilot/window.py:6226
+#: src/sshpilot/window.py:6227
 msgid "Manually Edit SSH Configuration"
 msgstr "SSH-Konfiguration manuell bearbeiten"
 
-#: src/sshpilot/window.py:6227
+#: src/sshpilot/window.py:6228
 msgid "Edit as Separate Connection"
 msgstr "Als separate Verbindung bearbeiten"
 
-#: src/sshpilot/window.py:6280
+#: src/sshpilot/window.py:6281 src/sshpilot/window.py:6347
 msgid ""
 "SSH config editing requires the background service. Start it and try again."
 msgstr ""
@@ -14982,37 +15015,41 @@ msgstr ""
 "Starten Sie ihn und versuchen Sie es erneut."
 
 #. the daemon resolves the active config file
-#: src/sshpilot/window.py:6298 src/sshpilot/window.py:6313
+#: src/sshpilot/window.py:6299 src/sshpilot/window.py:6314
 msgid "SSH Config"
 msgstr "SSH Config"
 
-#: src/sshpilot/window.py:6319
+#: src/sshpilot/window.py:6320
 msgid "Could not open the SSH config editor."
 msgstr "Der SSH-Konfigurationseditor konnte nicht geöffnet werden."
 
-#: src/sshpilot/window.py:6357 src/sshpilot/window.py:7249
+#: src/sshpilot/window.py:6375
+msgid "Could not open Advanced Configuration."
+msgstr "Die erweiterte Konfiguration konnte nicht geöffnet werden."
+
+#: src/sshpilot/window.py:6413 src/sshpilot/window.py:7305
 msgid "Daemon unavailable"
 msgstr "Daemon nicht verfügbar"
 
-#: src/sshpilot/window.py:6358
+#: src/sshpilot/window.py:6414
 msgid "Connect to the SSH Pilot daemon and retry this operation."
 msgstr ""
 "Verbinden Sie sich mit dem SSH Pilot-Daemon und wiederholen Sie diesen "
 "Vorgang."
 
-#: src/sshpilot/window.py:6368
+#: src/sshpilot/window.py:6424
 msgid "Operation mode change rejected"
 msgstr "Änderung des Betriebsmodus abgelehnt"
 
-#: src/sshpilot/window.py:6369
+#: src/sshpilot/window.py:6425
 msgid "SSH Pilot could not change the active SSH configuration scope."
 msgstr "SSH Pilot konnte den aktiven SSH-Konfigurationsbereich nicht ändern."
 
-#: src/sshpilot/window.py:6379
+#: src/sshpilot/window.py:6435
 msgid "Operation mode recovery required"
 msgstr "Wiederherstellung des Betriebsmodus erforderlich"
 
-#: src/sshpilot/window.py:6381
+#: src/sshpilot/window.py:6437
 msgid ""
 "The daemon could not restore a consistent SSH configuration mode. Do not "
 "start new operations until the daemon is restarted or the reported state is "
@@ -15022,181 +15059,181 @@ msgstr ""
 "wiederherstellen. Starten Sie keine neuen Operationen, bis der Daemon neu "
 "gestartet oder der gemeldete Zustand repariert wurde."
 
-#: src/sshpilot/window.py:6406
+#: src/sshpilot/window.py:6462
 msgid "Key Service Unavailable"
 msgstr "Schlüsseldienst nicht verfügbar"
 
-#: src/sshpilot/window.py:6408
+#: src/sshpilot/window.py:6464
 msgid ""
 "SSH keys require the background service. Restart the service and try again."
 msgstr ""
 "SSH-Schlüssel erfordern den Hintergrunddienst. Starten Sie den Dienst neu "
 "und versuchen Sie es erneut."
 
-#: src/sshpilot/window.py:6429
+#: src/sshpilot/window.py:6485
 msgid "Generate SSH Key"
 msgstr "SSH-Schlüssel erzeugen"
 
-#: src/sshpilot/window.py:6433
+#: src/sshpilot/window.py:6489
 msgid "New SSH Key"
 msgstr "Neuer SSH-Schlüssel"
 
-#: src/sshpilot/window.py:6461
+#: src/sshpilot/window.py:6517
 msgid "Key type"
 msgstr "Schlüsseltyp"
 
-#: src/sshpilot/window.py:6476
+#: src/sshpilot/window.py:6532
 msgid "Generate"
 msgstr "Erzeugen"
 
-#: src/sshpilot/window.py:6517
+#: src/sshpilot/window.py:6573
 #, python-brace-format
 msgid "A key named '{name}' already exists. Try '{suggestion}' instead."
 msgstr ""
 "Ein Schlüssel namens '{name}' existiert bereits. Versuchen Sie stattdessen "
 "'{suggestion}'."
 
-#: src/sshpilot/window.py:6614
+#: src/sshpilot/window.py:6670
 msgid "No Server Selected"
 msgstr "Kein Server ausgewählt"
 
-#: src/sshpilot/window.py:6615
+#: src/sshpilot/window.py:6671
 msgid "Select a server first!"
 msgstr "Wählen Sie zuerst einen Server aus!"
 
-#: src/sshpilot/window.py:7010
+#: src/sshpilot/window.py:7066
 #, python-brace-format
 msgid "Hide Sidebar (F9, {modifier}+B)"
 msgstr "Seitenleiste ausblenden (F9, {modifier}+B)"
 
-#: src/sshpilot/window.py:7016
+#: src/sshpilot/window.py:7072
 #, python-brace-format
 msgid "Show Sidebar (F9, {modifier}+B)"
 msgstr "Seitenleiste anzeigen (F9, {modifier}+B)"
 
-#: src/sshpilot/window.py:7018
+#: src/sshpilot/window.py:7074
 msgid "Hover to peek at the sidebar"
 msgstr "Darauf zeigen, um kurz in die Seitenleiste zu sehen"
 
-#: src/sshpilot/window.py:7250
+#: src/sshpilot/window.py:7306
 msgid "Connect to the SSH Pilot daemon and retry the deletion."
 msgstr ""
 "Verbinden Sie sich mit dem SSH Pilot-Daemon und wiederholen Sie den "
 "Löschvorgang."
 
-#: src/sshpilot/window.py:7295
+#: src/sshpilot/window.py:7351
 msgid "Failed to delete connection"
 msgstr "Verbindung konnte nicht gelöscht werden"
 
-#: src/sshpilot/window.py:7297
+#: src/sshpilot/window.py:7353
 msgid "The connection could not be deleted. No list changes were applied."
 msgstr ""
 "Die Verbindung konnte nicht gelöscht werden. Es wurden keine Änderungen an "
 "der Liste vorgenommen."
 
-#: src/sshpilot/window.py:7928
+#: src/sshpilot/window.py:7984
 msgid "Touch your security key to continue."
 msgstr "Berühren Sie Ihren Sicherheitsschlüssel, um fortzufahren."
 
-#: src/sshpilot/window.py:7972
+#: src/sshpilot/window.py:8028
 msgid "Allow this key operation?"
 msgstr "Diesen Schlüsselvorgang zulassen?"
 
-#: src/sshpilot/window.py:8095
+#: src/sshpilot/window.py:8151
 #, python-brace-format
 msgid "You have {count} open terminal tab."
 msgid_plural "You have {count} open terminal tabs."
 msgstr[0] "Sie haben {count} geöffnete Terminal-Registerkarte."
 msgstr[1] "Sie haben {count} geöffnete Terminal-Registerkarten."
 
-#: src/sshpilot/window.py:8100
+#: src/sshpilot/window.py:8156
 msgid "Closing the application will disconnect this connection."
 msgstr "Beim Schließen der Anwendung wird diese Verbindung getrennt."
 
-#: src/sshpilot/window.py:8102
+#: src/sshpilot/window.py:8158
 msgid "Closing the application will disconnect all connections."
 msgstr "Beim Schließen der Anwendung werden alle Verbindungen getrennt."
 
-#: src/sshpilot/window.py:8105
+#: src/sshpilot/window.py:8161
 #, python-brace-format
 msgid "You have {count} local terminal with an active job."
 msgid_plural "You have {count} local terminals with active jobs."
 msgstr[0] "Sie haben {count} lokales Terminal mit einem aktiven Job."
 msgstr[1] "Sie haben {count} lokale Terminals mit aktiven Jobs."
 
-#: src/sshpilot/window.py:8110
+#: src/sshpilot/window.py:8166
 msgid "Closing the application will terminate the running process."
 msgstr "Beim Schließen der Anwendung wird der laufende Prozess beendet."
 
-#: src/sshpilot/window.py:8112
+#: src/sshpilot/window.py:8168
 msgid "Closing the application will terminate all running processes."
 msgstr "Beim Schließen der Anwendung werden alle laufenden Prozesse beendet."
 
-#: src/sshpilot/window.py:8122
+#: src/sshpilot/window.py:8178
 msgid "Quit Anyway"
 msgstr "Trotzdem beenden"
 
-#: src/sshpilot/window.py:8291
+#: src/sshpilot/window.py:8347
 msgid "SSH command copied"
 msgstr "SSH-Befehl kopiert"
 
-#: src/sshpilot/window.py:8300 src/sshpilot/window.py:8306
+#: src/sshpilot/window.py:8356 src/sshpilot/window.py:8362
 msgid "SSH command unavailable"
 msgstr "SSH-Befehl nicht verfügbar"
 
-#: src/sshpilot/window.py:8301
+#: src/sshpilot/window.py:8357
 msgid "This daemon cannot prepare the SSH command for this connection."
 msgstr ""
 "Dieser Daemon kann den SSH-Befehl für diese Verbindung nicht vorbereiten."
 
-#: src/sshpilot/window.py:8307
+#: src/sshpilot/window.py:8363
 msgid "The SSH command for this connection could not be prepared."
 msgstr "Der SSH-Befehl für diese Verbindung konnte nicht vorbereitet werden."
 
-#: src/sshpilot/window.py:8415 src/sshpilot/window.py:8486
+#: src/sshpilot/window.py:8471 src/sshpilot/window.py:8542
 msgid "Connect to the SSH Pilot daemon before moving connections."
 msgstr ""
 "Verbinden Sie sich mit dem SSH Pilot-Daemon, bevor Sie Verbindungen "
 "verschieben."
 
-#: src/sshpilot/window.py:8472 src/sshpilot/window.py:8496
+#: src/sshpilot/window.py:8528 src/sshpilot/window.py:8552
 #, python-brace-format
 msgid "Failed to move connection: {error}"
 msgstr "Verbindung konnte nicht verschoben werden: {error}"
 
-#: src/sshpilot/window.py:8565 src/sshpilot/window.py:8602
-#: src/sshpilot/window.py:8622
+#: src/sshpilot/window.py:8621 src/sshpilot/window.py:8658
+#: src/sshpilot/window.py:8678
 msgid "External terminal unavailable"
 msgstr "Externes Terminal nicht verfügbar"
 
-#: src/sshpilot/window.py:8566 src/sshpilot/window.py:8603
+#: src/sshpilot/window.py:8622 src/sshpilot/window.py:8659
 msgid "This daemon cannot prepare an external SSH launch."
 msgstr "Dieser Daemon kann keinen externen SSH-Start vorbereiten."
 
-#: src/sshpilot/window.py:8607 src/sshpilot/window.py:8632
+#: src/sshpilot/window.py:8663 src/sshpilot/window.py:8688
 msgid "Connection unavailable"
 msgstr "Verbindung nicht verfügbar"
 
-#: src/sshpilot/window.py:8623
+#: src/sshpilot/window.py:8679
 msgid "The daemon could not prepare this SSH launch."
 msgstr "Der Daemon konnte diesen SSH-Start nicht vorbereiten."
 
-#: src/sshpilot/window.py:8636
+#: src/sshpilot/window.py:8692
 msgid "This daemon does not provide effective SSH configuration comparison."
 msgstr ""
 "Dieser Daemon bietet keinen Vergleich der effektiven SSH-Konfiguration."
 
-#: src/sshpilot/window.py:8646
+#: src/sshpilot/window.py:8702
 msgid "SSH Pilot could not resolve or compare the effective SSH configuration."
 msgstr ""
 "SSH Pilot konnte die effektive SSH-Konfiguration nicht auflösen oder "
 "vergleichen."
 
-#: src/sshpilot/window.py:8656
+#: src/sshpilot/window.py:8712
 msgid "No Terminal Found"
 msgstr "Kein Terminal gefunden"
 
-#: src/sshpilot/window.py:8658
+#: src/sshpilot/window.py:8714
 #, fuzzy
 msgid ""
 "Could not find a suitable terminal application. Please install Windows "
@@ -15205,7 +15242,7 @@ msgstr ""
 "Es konnte keine geeignete Terminal-Anwendung gefunden werden. Bitte "
 "installieren Sie ein Terminal wie gnome-terminal, konsole oder xterm."
 
-#: src/sshpilot/window.py:8660
+#: src/sshpilot/window.py:8716
 msgid ""
 "Could not find a suitable terminal application. Please install a terminal "
 "like gnome-terminal, konsole, or xterm."
@@ -15213,72 +15250,72 @@ msgstr ""
 "Es konnte keine geeignete Terminal-Anwendung gefunden werden. Bitte "
 "installieren Sie ein Terminal wie gnome-terminal, konsole oder xterm."
 
-#: src/sshpilot/window.py:8680
+#: src/sshpilot/window.py:8736
 msgid "SSH Connection Failed"
 msgstr "SSH-Verbindung fehlgeschlagen"
 
-#: src/sshpilot/window.py:8681
+#: src/sshpilot/window.py:8737
 msgid "Could not establish SSH connection to the server. Please check:"
 msgstr ""
 "Die SSH-Verbindung zum Server konnte nicht hergestellt werden. Bitte prüfen "
 "Sie:"
 
-#: src/sshpilot/window.py:8684
+#: src/sshpilot/window.py:8740
 msgid "• Server is running and accessible"
 msgstr "• Der Server läuft und ist erreichbar"
 
-#: src/sshpilot/window.py:8685
+#: src/sshpilot/window.py:8741
 msgid "• SSH service is enabled on the server"
 msgstr "• Der SSH-Dienst ist auf dem Server aktiviert"
 
-#: src/sshpilot/window.py:8686
+#: src/sshpilot/window.py:8742
 msgid "• Firewall allows SSH connections"
 msgstr "• Die Firewall lässt SSH-Verbindungen zu"
 
-#: src/sshpilot/window.py:8687
+#: src/sshpilot/window.py:8743
 msgid "• Your SSH keys or credentials are correct"
 msgstr "• Ihre SSH-Schlüssel oder Zugangsdaten sind korrekt"
 
-#: src/sshpilot/window.py:8688
+#: src/sshpilot/window.py:8744
 msgid "• Network connectivity to the server"
 msgstr "• Die Netzwerkverbindung zum Server"
 
-#: src/sshpilot/window.py:8691
+#: src/sshpilot/window.py:8747
 msgid "File Manager Error"
 msgstr "Dateimanager-Fehler"
 
-#: src/sshpilot/window.py:8692
+#: src/sshpilot/window.py:8748
 msgid "Failed to open file manager for remote server."
 msgstr "Öffnen des Dateimanagers für den entfernten Server fehlgeschlagen."
 
-#: src/sshpilot/window.py:8694
+#: src/sshpilot/window.py:8750
 msgid "• Try again in a moment"
 msgstr "• Versuchen Sie es gleich noch einmal"
 
-#: src/sshpilot/window.py:8695
+#: src/sshpilot/window.py:8751
 msgid "• Check if the server is accessible"
 msgstr "• Prüfen Sie, ob der Server erreichbar ist"
 
-#: src/sshpilot/window.py:8696
+#: src/sshpilot/window.py:8752
 msgid "• Ensure you have proper permissions"
 msgstr "• Stellen Sie sicher, dass Sie die nötigen Berechtigungen haben"
 
-#: src/sshpilot/window.py:8849 src/sshpilot/window.py:9331
-#: src/sshpilot/window.py:9341
+#: src/sshpilot/window.py:8905 src/sshpilot/window.py:9387
+#: src/sshpilot/window.py:9397
 msgid "Saved, but tags/Wake-on-LAN settings could not be stored."
 msgstr ""
 "Gespeichert, aber Tags und Wake-on-LAN-Einstellungen konnten nicht "
 "gespeichert werden."
 
-#: src/sshpilot/window.py:8927 src/sshpilot/window.py:9600
+#: src/sshpilot/window.py:8983 src/sshpilot/window.py:9656
 msgid "Failed to save connection"
 msgstr "Speichern der Verbindung fehlgeschlagen"
 
-#: src/sshpilot/window.py:9296
+#: src/sshpilot/window.py:9352
 msgid "Saved, but the login profile could not be applied."
 msgstr "Gespeichert, aber das Anmeldeprofil konnte nicht angewendet werden."
 
-#: src/sshpilot/window.py:9633
+#: src/sshpilot/window.py:9689
 msgid ""
 "The daemon could not resolve or compare this connection's effective SSH "
 "configuration."
@@ -18288,6 +18325,444 @@ msgstr "Durchreichen"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Schlüssel auf Server kopieren"
+
+#: src/sshpilot/advanced_config_window.py:217
+msgid "Reload from Disk"
+msgstr "Vom Datenträger neu laden"
+
+#: src/sshpilot/advanced_config_window.py:218
+msgid "Copy Configuration"
+msgstr "Konfiguration kopieren"
+
+#: src/sshpilot/advanced_config_window.py:249
+msgid "Target host"
+msgstr "Zielhost"
+
+#: src/sshpilot/advanced_config_window.py:253
+msgid "[user@]host"
+msgstr "[benutzer@]host"
+
+#: src/sshpilot/advanced_config_window.py:258
+msgid "Port (-p)"
+msgstr "Port (-p)"
+
+#: src/sshpilot/advanced_config_window.py:266
+msgid "A port given on the command line, as ssh -p. Empty: none."
+msgstr "Ein Port auf der Befehlszeile, wie bei ssh -p. Leer: keiner."
+
+#: src/sshpilot/advanced_config_window.py:295
+msgid "Configuration rules"
+msgstr "Konfigurationsregeln"
+
+#: src/sshpilot/advanced_config_window.py:303
+#: src/sshpilot/advanced_config_window.py:889
+#: src/sshpilot/advanced_config_window.py:1463
+msgid "Global"
+msgstr "Global"
+
+#: src/sshpilot/advanced_config_window.py:305
+msgid "Add options above every Host and Match line"
+msgstr "Optionen oberhalb aller Host- und Match-Zeilen hinzufügen"
+
+#: src/sshpilot/advanced_config_window.py:312
+msgid "Add a block at the end"
+msgstr "Einen Block am Ende hinzufügen"
+
+#: src/sshpilot/advanced_config_window.py:347
+msgid "Effective"
+msgstr "Effektiv"
+
+#: src/sshpilot/advanced_config_window.py:352
+msgid ""
+"The order OpenSSH reads the configuration in for this target. The first "
+"value it obtains for an option is the one it keeps."
+msgstr ""
+"Die Reihenfolge, in der OpenSSH die Konfiguration für dieses Ziel liest. Der "
+"erste Wert, den es für eine Option erhält, bleibt gültig."
+
+#: src/sshpilot/advanced_config_window.py:357
+msgid "Text"
+msgstr "Text"
+
+#: src/sshpilot/advanced_config_window.py:361
+msgid ""
+"Files OpenSSH reads for this target besides this one. They are read where "
+"their Include line stands, and are not edited here."
+msgstr ""
+"Dateien, die OpenSSH für dieses Ziel außer dieser liest. Sie werden an der "
+"Stelle ihrer Include-Zeile gelesen und hier nicht bearbeitet."
+
+#: src/sshpilot/advanced_config_window.py:363
+msgid "Includes"
+msgstr "Includes"
+
+#: src/sshpilot/advanced_config_window.py:384
+msgid "Host name and port"
+msgstr "Hostname und Port"
+
+#: src/sshpilot/advanced_config_window.py:386
+msgid "Proxy"
+msgstr "Proxy"
+
+#: src/sshpilot/advanced_config_window.py:396
+msgid "Filter options or values"
+msgstr "Optionen oder Werte filtern"
+
+#: src/sshpilot/advanced_config_window.py:400
+msgid "Configured"
+msgstr "Konfiguriert"
+
+#: src/sshpilot/advanced_config_window.py:401
+msgid "Hide options left at OpenSSH's default"
+msgstr "Optionen ausblenden, die auf dem OpenSSH-Standard stehen"
+
+#: src/sshpilot/advanced_config_window.py:402
+#: src/sshpilot/gtk/advanced_config_messages.py:22
+msgid "Shadowed"
+msgstr "Verdeckt"
+
+#: src/sshpilot/advanced_config_window.py:403
+msgid "Only options with lines that are not used"
+msgstr "Nur Optionen mit Zeilen, die nicht verwendet werden"
+
+#: src/sshpilot/advanced_config_window.py:435
+msgid ""
+"The configuration as it will be saved. Edit it and apply to read it into the "
+"rules again."
+msgstr ""
+"Die Konfiguration, wie sie gespeichert wird. Bearbeiten und anwenden, um sie "
+"erneut in die Regeln einzulesen."
+
+#: src/sshpilot/advanced_config_window.py:482
+msgid "The SSH configuration could not be read."
+msgstr "Die SSH-Konfiguration konnte nicht gelesen werden."
+
+#: src/sshpilot/advanced_config_window.py:501
+#: src/sshpilot/advanced_config_window.py:547
+msgid "This SSH configuration is read-only: changes cannot be saved."
+msgstr ""
+"Diese SSH-Konfiguration ist schreibgeschützt: Änderungen können nicht "
+"gespeichert werden."
+
+#: src/sshpilot/advanced_config_window.py:513
+msgid "Save a configuration OpenSSH rejects?"
+msgstr "Eine Konfiguration speichern, die OpenSSH ablehnt?"
+
+#: src/sshpilot/advanced_config_window.py:515
+msgid ""
+"OpenSSH refuses the whole configuration over one such line, so no SSH "
+"connection starts until it is corrected."
+msgstr ""
+"OpenSSH lehnt wegen einer solchen Zeile die gesamte Konfiguration ab; bis "
+"zur Korrektur startet keine SSH-Verbindung."
+
+#: src/sshpilot/advanced_config_window.py:520
+msgid "Save Anyway"
+msgstr "Trotzdem speichern"
+
+#: src/sshpilot/advanced_config_window.py:543
+msgid "The SSH configuration changed on disk since it was opened."
+msgstr ""
+"Die SSH-Konfiguration wurde seit dem Öffnen auf dem Datenträger geändert."
+
+#: src/sshpilot/advanced_config_window.py:550
+msgid "The SSH configuration could not be saved."
+msgstr "Die SSH-Konfiguration konnte nicht gespeichert werden."
+
+#: src/sshpilot/advanced_config_window.py:555
+msgid "SSH configuration saved"
+msgstr "SSH-Konfiguration gespeichert"
+
+#: src/sshpilot/advanced_config_window.py:572
+msgid "Configuration copied"
+msgstr "Konfiguration kopiert"
+
+#: src/sshpilot/advanced_config_window.py:576
+msgid "Discard unsaved changes?"
+msgstr "Nicht gespeicherte Änderungen verwerfen?"
+
+#: src/sshpilot/advanced_config_window.py:577
+msgid "The changes made here have not been saved to the SSH configuration."
+msgstr ""
+"Die hier vorgenommenen Änderungen wurden nicht in der SSH-Konfiguration "
+"gespeichert."
+
+#: src/sshpilot/advanced_config_window.py:704
+#: src/sshpilot/advanced_config_window.py:733
+msgid ""
+"Global options must stay above every Host and Match block: OpenSSH reads an "
+"option below a Host line as that host's."
+msgstr ""
+"Globale Optionen müssen oberhalb aller Host- und Match-Blöcke bleiben: "
+"OpenSSH liest eine Option unter einer Host-Zeile als Option dieses Hosts."
+
+#: src/sshpilot/advanced_config_window.py:859
+msgid "No Configuration Rules"
+msgstr "Keine Konfigurationsregeln"
+
+#: src/sshpilot/advanced_config_window.py:860
+msgid "Add a Host or Match block to start."
+msgstr "Fügen Sie zum Start einen Host- oder Match-Block hinzu."
+
+#: src/sshpilot/advanced_config_window.py:882
+msgid "Drag to reorder"
+msgstr "Zum Umsortieren ziehen"
+
+#: src/sshpilot/advanced_config_window.py:892
+msgid "Options for every target"
+msgstr "Optionen für jedes Ziel"
+
+#: src/sshpilot/advanced_config_window.py:905
+msgid "Host patterns"
+msgstr "Host-Muster"
+
+#: src/sshpilot/advanced_config_window.py:905
+msgid "Match criteria"
+msgstr "Match-Kriterien"
+
+#: src/sshpilot/advanced_config_window.py:931
+msgid "Note (written as a comment above the block)"
+msgstr "Notiz (wird als Kommentar über dem Block geschrieben)"
+
+#: src/sshpilot/advanced_config_window.py:961
+msgid "Common Option"
+msgstr "Häufige Option"
+
+#: src/sshpilot/advanced_config_window.py:991
+msgid "Enable Block"
+msgstr "Block aktivieren"
+
+#: src/sshpilot/advanced_config_window.py:991
+msgid "Disable Block"
+msgstr "Block deaktivieren"
+
+#: src/sshpilot/advanced_config_window.py:993
+msgid "Add or Edit Note"
+msgstr "Notiz hinzufügen oder bearbeiten"
+
+#: src/sshpilot/advanced_config_window.py:995
+msgid "Duplicate Block"
+msgstr "Block duplizieren"
+
+#: src/sshpilot/advanced_config_window.py:996
+msgid "Delete Block"
+msgstr "Block löschen"
+
+#: src/sshpilot/advanced_config_window.py:999
+msgid "Block options"
+msgstr "Blockoptionen"
+
+#: src/sshpilot/advanced_config_window.py:1015
+msgid "Drag to reorder or to another block"
+msgstr "Zum Umsortieren oder in einen anderen Block ziehen"
+
+#: src/sshpilot/advanced_config_window.py:1020
+msgid "Option"
+msgstr "Option"
+
+#: src/sshpilot/advanced_config_window.py:1032
+msgid "Remove option"
+msgstr "Option entfernen"
+
+#: src/sshpilot/advanced_config_window.py:1203
+msgid "OpenSSH could not be asked about this configuration."
+msgstr "OpenSSH konnte zu dieser Konfiguration nicht befragt werden."
+
+#: src/sshpilot/advanced_config_window.py:1233
+msgid "Run and Evaluate"
+msgstr "Ausführen und auswerten"
+
+#: src/sshpilot/advanced_config_window.py:1285
+msgid "Rejected"
+msgstr "Abgelehnt"
+
+#: src/sshpilot/advanced_config_window.py:1359
+msgid "Show this line in the rules"
+msgstr "Diese Zeile in den Regeln anzeigen"
+
+#: src/sshpilot/advanced_config_window.py:1371
+msgid "Enter a target host to see what OpenSSH would use for it."
+msgstr ""
+"Geben Sie einen Zielhost ein, um zu sehen, was OpenSSH dafür verwenden würde."
+
+#: src/sshpilot/advanced_config_window.py:1453
+msgid "First"
+msgstr "Zuerst"
+
+#: src/sshpilot/advanced_config_window.py:1480
+#: src/sshpilot/advanced_config_window.py:1502
+msgid "System-wide configuration"
+msgstr "Systemweite Konfiguration"
+
+#: src/sshpilot/advanced_config_window.py:1482
+msgid "Last"
+msgstr "Zuletzt"
+
+#: src/sshpilot/advanced_config_window.py:1497
+msgid "No file matches."
+msgstr "Keine Datei passt."
+
+#: src/sshpilot/advanced_config_window.py:1507
+msgid "No other file is read for this target."
+msgstr "Für dieses Ziel wird keine weitere Datei gelesen."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:21
+msgid "Applied"
+msgstr "Angewendet"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:23
+msgid "Accumulated"
+msgstr "Gesammelt"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:25
+msgid "Overridden"
+msgstr "Überschrieben"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:50
+#, python-brace-format
+msgid "{file}, line {line} ({block})"
+msgstr "{file}, Zeile {line} ({block})"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:53
+#, python-brace-format
+msgid "{file}, line {line}"
+msgstr "{file}, Zeile {line}"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:55
+#, python-brace-format
+msgid "line {line} ({block})"
+msgstr "Zeile {line} ({block})"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:56
+#, python-brace-format
+msgid "line {line} (global options)"
+msgstr "Zeile {line} (globale Optionen)"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:63
+msgid "OpenSSH takes this option's value from this line."
+msgstr "OpenSSH übernimmt den Wert dieser Option aus dieser Zeile."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:65
+#, python-brace-format
+msgid "Not used: {where} sets this option first."
+msgstr "Nicht verwendet: {where} setzt diese Option zuerst."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:69
+msgid "OpenSSH collects every value of this option."
+msgstr "OpenSSH sammelt jeden Wert dieser Option."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:71
+msgid "This block does not apply to the target."
+msgstr "Dieser Block gilt nicht für das Ziel."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:73
+msgid "Not used: Settings ▸ SSH Options set this option for every connection."
+msgstr ""
+"Nicht verwendet: Einstellungen ▸ SSH-Optionen setzen diese Option für jede "
+"Verbindung."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:74
+msgid "OpenSSH reads the files this line names at this place."
+msgstr "OpenSSH liest die in dieser Zeile genannten Dateien an dieser Stelle."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:82
+msgid "Written as comments: OpenSSH does not read this block."
+msgstr "Als Kommentare geschrieben: OpenSSH liest diesen Block nicht."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:87
+msgid "Options above every Host and Match line apply to every target."
+msgstr "Optionen oberhalb aller Host- und Match-Zeilen gelten für jedes Ziel."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:89
+msgid "Matched"
+msgstr "Trifft zu"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:89
+msgid "OpenSSH applies this block to the target."
+msgstr "OpenSSH wendet diesen Block auf das Ziel an."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:90
+msgid "Skipped"
+msgstr "Übersprungen"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:90
+msgid "OpenSSH does not apply this block to the target."
+msgstr "OpenSSH wendet diesen Block nicht auf das Ziel an."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:94
+#, python-brace-format
+msgid "{count} matched"
+msgid_plural "{count} matched"
+msgstr[0] "{count} trifft zu"
+msgstr[1] "{count} treffen zu"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:98
+#, python-brace-format
+msgid "{count} block"
+msgid_plural "{count} blocks"
+msgstr[0] "{count} Block"
+msgstr[1] "{count} Blöcke"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:104
+#, python-brace-format
+msgid "OpenSSH rejects {file}, line {line}"
+msgstr "OpenSSH lehnt {file}, Zeile {line} ab"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:108
+#, python-brace-format
+msgid "OpenSSH rejects line {line}"
+msgstr "OpenSSH lehnt Zeile {line} ab"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:110
+msgid "OpenSSH rejects this configuration"
+msgstr "OpenSSH lehnt diese Konfiguration ab"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:117
+#, python-brace-format
+msgid ""
+"This draft adds a Match exec command. OpenSSH runs it to evaluate the block, "
+"so nothing is evaluated until you allow it."
+msgid_plural ""
+"This draft adds {count} Match exec commands. OpenSSH runs them to evaluate "
+"their blocks, so nothing is evaluated until you allow it."
+msgstr[0] ""
+"Dieser Entwurf fügt einen Match-exec-Befehl hinzu. OpenSSH führt ihn aus, um "
+"den Block auszuwerten; daher wird nichts ausgewertet, bis Sie es erlauben."
+msgstr[1] ""
+"Dieser Entwurf fügt {count} Match-exec-Befehle hinzu. OpenSSH führt sie aus, "
+"um ihre Blöcke auszuwerten; daher wird nichts ausgewertet, bis Sie es "
+"erlauben."
+
+#: src/sshpilot/gtk/advanced_config_messages.py:130
+#, python-brace-format
+msgid "Read as a connection reads it: {files}"
+msgstr "Gelesen, wie eine Verbindung es liest: {files}"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:133
+#, python-brace-format
+msgid "{count} option forced by Settings"
+msgid_plural "{count} options forced by Settings"
+msgstr[0] "{count} Option durch Einstellungen erzwungen"
+msgstr[1] "{count} Optionen durch Einstellungen erzwungen"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:141
+msgid "OpenSSH default"
+msgstr "OpenSSH-Standard"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:145
+msgid "Settings ▸ SSH Options"
+msgstr "Einstellungen ▸ SSH-Optionen"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:150
+msgid "Set by the configuration"
+msgstr "Durch die Konfiguration gesetzt"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:155
+#, python-brace-format
+msgid "{count} line not used"
+msgid_plural "{count} lines not used"
+msgstr[0] "{count} Zeile nicht verwendet"
+msgstr[1] "{count} Zeilen nicht verwendet"
 
 #~ msgid "Inherit"
 #~ msgstr "Übernehmen"

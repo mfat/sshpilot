@@ -147,3 +147,5 @@ src/sshpilot/resources/ui/shortcut_editor_window.ui
 src/sshpilot/resources/ui/sshcopyid_window.ui
 src/sshpilot/resources/ui/text_editor_window.ui
 src/sshpilot/resources/ui/window.ui
+src/sshpilot/advanced_config_window.py
+src/sshpilot/gtk/advanced_config_messages.py

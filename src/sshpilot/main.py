@@ -341,6 +341,7 @@ class SshPilotApplication(Adw.Application):
             self.create_action('terminal-search', self.on_terminal_search, ['<Meta><Shift>f'])
             self.create_action('new-key', self.on_new_key, ['<Meta><Shift>k'])
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<Meta><Shift>e'])
+            self.create_action('advanced-ssh-config', self.on_advanced_ssh_config, [])
             self.create_action('manage-files', self.on_manage_files, ['<Meta><Shift>o'])
             logger.debug("Using macOS-specific shortcuts (Meta key = Command key)")
         else:
@@ -361,6 +362,7 @@ class SshPilotApplication(Adw.Application):
             self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
             # Not a terminal-standard combo → disabled by default.
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, [])
+            self.create_action('advanced-ssh-config', self.on_advanced_ssh_config, [])
             self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
             logger.debug("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
 
@@ -2006,6 +2008,12 @@ class SshPilotApplication(Adw.Application):
         win = self._action_window()
         if win and hasattr(win, '_open_ssh_config_editor'):
             win._open_ssh_config_editor()
+
+    def on_advanced_ssh_config(self, action=None, param=None):
+        """Open Advanced Configuration (the SSH configuration as blocks)."""
+        win = self._action_window()
+        if win and hasattr(win, '_open_advanced_config'):
+            win._open_advanced_config()
 
     def _collect_garbage(self) -> bool:
         """Periodic trigger: queue a low-priority idle that runs the cyclic GC on

@@ -374,3 +374,32 @@ def test_a_saved_exec_command_is_not_new(tmp_path):
     assert new_exec_commands(draft, 'Match exec "true"\n    User y\n') == ()
     evaluation = _isolated(tmp_path, draft, saved='Match exec "true"\n    User y\n')
     assert evaluation.evaluated and evaluation.matched_blocks == (1, 3)
+
+
+# -- through the application service -------------------------------------------
+
+def test_the_service_evaluates_in_its_own_root_s_context(tmp_path):
+    """The daemon's entry point: the saved root tells which Match exec is
+    new, and a root that is not ~/.ssh/config gets no system-wide file."""
+    from tests.test_auth_method_update import _service
+
+    service, _repository, root = _service(tmp_path, "    User saved\n")
+    saved = root.read_text()
+    draft = saved + "\nHost *\n    Port 2222\n"
+    host = scan_first_host(saved)
+    evaluation = service.evaluate_ssh_config_draft(_request(draft, host))
+    assert evaluation.evaluated and evaluation.system_config == ""
+    values = dict(_pairs(evaluation))
+    assert values["user"] == "saved" and values["port"] == "2222"
+    assert root.read_text() == saved                       # nothing is written
+
+    marker = tmp_path / "ran"
+    risky = draft + f'\nMatch exec "touch {marker}"\n    Compression yes\n'
+    pending = service.evaluate_ssh_config_draft(_request(risky, host))
+    assert pending.pending_exec == (f"touch {marker}",) and not marker.exists()
+
+
+def scan_first_host(text):
+    from sshpilot.ssh_config_blocks import scan_blocks
+
+    return next(b.patterns.split()[0] for b in scan_blocks(text) if b.kind == "host")
