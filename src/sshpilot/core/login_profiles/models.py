@@ -623,11 +623,28 @@ def auth_projection(
     auth_method = int(data.get("auth_method", 0) or 0)
     key_mode = int(data.get("key_select_mode", 0) or 0)
     owned = {str(k).lower() for k in owned_keywords if str(k).strip()}
-    extra_lines = sorted(
+    all_lines = split_config_lines(str(data.get("extra_ssh_config") or ""))
+    extra_lines = [
         " ".join(line.split())
-        for line in split_config_lines(str(data.get("extra_ssh_config") or ""))
+        for line in all_lines
         if _extra_keyword(line) in owned and _extra_keyword(line) != "proxycommand"
-    )
+    ]
+    # OpenSSH reads some keywords as one setting (ChallengeResponse... is
+    # KbdInteractiveAuthentication) and keeps its first line. A line under
+    # another spelling placed above the profile's therefore decides the
+    # setting: it is recorded, so the block no longer matches the link. With
+    # no such line the projection is what it always was.
+    owned_settings = {canonical_keyword(key) for key in owned}
+    decided: set = set()
+    for line in all_lines:
+        keyword = _extra_keyword(line)
+        setting = canonical_keyword(keyword)
+        if not keyword or setting not in owned_settings or setting in decided:
+            continue
+        decided.add(setting)
+        if keyword not in owned:
+            extra_lines.append("first: " + " ".join(line.split()))
+    extra_lines.sort()
 
     def paths(key: str) -> List[str]:
         values = _norm_list(data.get(key))

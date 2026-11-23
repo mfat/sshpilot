@@ -39,7 +39,7 @@ from ...ssh_config_document import (
 from ...platform.paths import include_base_dir
 from ...ssh_config_formatter import MANAGED_HOST_OPTIONS
 from ..errors import CoreError, ErrorCode
-from .auth_preferences import password_comes_first
+from .auth_preferences import PUBKEY_KEYWORD, canonical_keyword, password_comes_first
 from .models import ConnectionRecord
 
 _MAX_INCLUDE_DEPTH = 32
@@ -369,9 +369,17 @@ def _resolve_auth_method_from_config(config: Dict[str, Any]) -> Tuple[int, List[
             for p in prefer_auth_raw.split(",")
             if p.strip()
         ]
-        pubkey_auth = str(config.get("pubkeyauthentication", "")).strip().lower()
-        pubkey_auth_no = pubkey_auth == "no"
-        if pubkey_auth == "no":
+        # The first line of the setting decides, under any spelling OpenSSH
+        # accepts for it (DSAAuthentication is PubkeyAuthentication).
+        pubkey_auth = ""
+        for key, value in config.items():
+            if canonical_keyword(key) == PUBKEY_KEYWORD:
+                if isinstance(value, list):
+                    value = value[0] if value else ""
+                pubkey_auth = str(_unwrap_ssh_value(value)).strip().lower()
+                break
+        pubkey_auth_no = pubkey_auth in ("no", "false")
+        if pubkey_auth_no:
             return 1, prefer_auth_list, pubkey_auth_no
         if password_comes_first(prefer_auth_list):
             return 1, prefer_auth_list, pubkey_auth_no

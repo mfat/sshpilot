@@ -414,3 +414,76 @@ def test_every_alias_is_the_methods_own_setting_in_the_editor():
     assert policy.own_switch("publickey") is False
     assert policy.set_switch("publickey", None)
     assert policy.to_lines() == []
+
+
+# -- an alias line placed above a profile's line is drift ---------------------
+
+def _fingerprint(extra, owned=("kbdinteractiveauthentication",)):
+    from sshpilot.core.login_profiles.models import auth_fingerprint
+
+    return auth_fingerprint(
+        {"extra_ssh_config": extra}, owned, owned_fields=("username",)
+    )
+
+
+def test_an_alias_above_the_profiles_line_changes_the_fingerprint():
+    applied = _fingerprint("KbdInteractiveAuthentication yes")
+    reversed_ = _fingerprint(
+        "ChallengeResponseAuthentication no\nKbdInteractiveAuthentication yes"
+    )
+    assert reversed_ != applied
+    # Below the profile's line OpenSSH ignores it: not drift.
+    assert _fingerprint(
+        "KbdInteractiveAuthentication yes\nChallengeResponseAuthentication no"
+    ) == applied
+    # Unrelated lines never mattered and still do not.
+    assert _fingerprint("Compression yes\nKbdInteractiveAuthentication yes") == applied
+
+
+def test_a_profile_written_with_the_alias_notices_the_current_spelling_above():
+    owned = ("challengeresponseauthentication",)
+    applied = _fingerprint("ChallengeResponseAuthentication no", owned)
+    assert _fingerprint(
+        "KbdInteractiveAuthentication yes\nChallengeResponseAuthentication no", owned
+    ) != applied
+
+
+def test_fingerprints_without_alias_lines_are_unchanged():
+    """Recorded links must keep matching: the projection is as before."""
+    import hashlib
+    import json
+
+    data = {"extra_ssh_config": "Compression yes\nPubkeyAuthentication no\nUser x"}
+    from sshpilot.core.login_profiles.models import auth_projection
+
+    projection = auth_projection(data, ("pubkeyauthentication", "compression"))
+    assert projection["extra"] == ["Compression yes", "PubkeyAuthentication no"]
+    encoded = json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
+    assert len(hashlib.sha256(encoded).hexdigest()) == 64
+
+
+# -- the loader's Key/Password view reads aliases too -------------------------
+
+@pytest.mark.parametrize("body, disabled", [
+    ("DSAAuthentication no", True),
+    ("PubkeyAuthentication=no", True),
+    ("DSAAuthentication no\n    PubkeyAuthentication yes", True),
+    ("PubkeyAuthentication yes\n    DSAAuthentication no", False),
+    ("PasswordAuthentication no", False),
+])
+def test_loaded_host_reports_public_keys_as_openssh_does(tmp_path, body, disabled):
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    config = tmp_path / "config"
+    config.write_text(f"Host demo\n    HostName demo.example\n    {body}\n")
+    assert (_ssh_g(config)["pubkeyauthentication"] == "false") is disabled
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(config),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    data = repo.get_record("demo").data
+    assert data["pubkey_auth_no"] is disabled
+    assert data["auth_method"] == (1 if disabled else 0)
