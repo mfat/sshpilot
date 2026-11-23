@@ -78,6 +78,8 @@ _CSS = """
 .advcfg-options { margin-left: 28px; }
 .advcfg-options:dir(rtl) { margin-left: 0; margin-right: 28px; }
 .advcfg-footer { margin-top: 4px; }
+.advcfg-block.selected { outline: 2px solid @accent_color; outline-offset: -1px; }
+.advcfg-block.selected > .advcfg-header { background-color: alpha(@accent_color, 0.16); }
 .advcfg-block.disabled { opacity: 0.6; }
 .advcfg-drop-before { box-shadow: 0 -3px 0 0 @accent_color; }
 .advcfg-drop-after { box-shadow: 0 3px 0 0 @accent_color; }
@@ -193,10 +195,20 @@ class AdvancedConfigWindow(Adw.Window):
         # Blocks added or edited under the current filter: they stay on
         # screen even when they do not apply to the host being filtered by.
         self._kept_visible: set = set()
+        #: The block last clicked (or typed in): Alt+Up/Down move it.
+        self.selected_uid: Optional[int] = None
         self._evaluated_lines = self._lines
         self._banner_kind = ""
 
         self._build()
+        keys = Gtk.ShortcutController()
+        keys.set_scope(Gtk.ShortcutScope.LOCAL)
+        for trigger, delta in (("<Alt>Up", -1), ("<Alt>Down", 1)):
+            keys.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(trigger),
+                Gtk.CallbackAction.new(lambda *_a, d=delta: self.move_selected(d)),
+            ))
+        self.add_controller(keys)
         self.connect("close-request", self._on_close_request)
         self._load()
 
@@ -719,9 +731,34 @@ class AdvancedConfigWindow(Adw.Window):
             block = Block(kind=kind, patterns="", options=[Option()])
             self.draft.blocks.append(block)
         self._kept_visible.add(self.draft.blocks[0 if kind == GLOBAL else -1].uid)
+        self.selected_uid = self.draft.blocks[0 if kind == GLOBAL else -1].uid
         self._changed(structure=True)
         added = self.draft.blocks[0 if kind == GLOBAL else -1]
         GLib.idle_add(lambda: (self._focus_block(added.uid), False)[1])
+
+    # -- selection ----------------------------------------------------------
+
+    def select_block(self, uid: Optional[int]) -> None:
+        """Mark one block as the selected one (None: none)."""
+        if uid == self.selected_uid:
+            return
+        previous = self._block_widgets.get(self.selected_uid)
+        if previous is not None:
+            previous["card"].remove_css_class("selected")
+        self.selected_uid = uid if uid in self._block_widgets else None
+        current = self._block_widgets.get(self.selected_uid)
+        if current is not None:
+            current["card"].add_css_class("selected")
+
+    def move_selected(self, delta: int) -> bool:
+        """Alt+Up / Alt+Down: move the selected block one place."""
+        block = self.draft.find_block(self.selected_uid) if self.selected_uid else None
+        if block is None or block.kind == GLOBAL:
+            return True
+        index = self.draft.blocks.index(block) + delta
+        if 0 <= index < len(self.draft.blocks):
+            self.move_block(block.uid, index)
+        return True
 
     def _focus_block(self, uid: int) -> None:
         widgets = self._block_widgets.get(uid)
@@ -778,6 +815,7 @@ class AdvancedConfigWindow(Adw.Window):
             options=[Option(key=o.key, value=o.value, comment=o.comment) for o in block.options],
         )
         self._kept_visible.add(copy.uid)
+        self.selected_uid = copy.uid
         self.draft.blocks.insert(self.draft.blocks.index(block) + 1, copy)
         self._changed(structure=True)
 
@@ -894,6 +932,8 @@ class AdvancedConfigWindow(Adw.Window):
                 title=_("No Configuration Rules"),
                 description=_("Add a Host or Match block to start."),
             ))
+        if self.draft.find_block(self.selected_uid) is None:
+            self.selected_uid = None
         for index, block in enumerate(self.draft.blocks):
             self._blocks_box.append(self._build_block(index, block))
         self._rendering = False
@@ -910,6 +950,18 @@ class AdvancedConfigWindow(Adw.Window):
         card.add_css_class("advcfg-block")
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         body.add_css_class("advcfg-body")
+        # A click anywhere on the card, or typing in one of its fields,
+        # selects the block. The click is only watched, never taken, so
+        # entries and buttons inside still get it.
+        if block.uid == self.selected_uid:
+            card.add_css_class("selected")
+        click = Gtk.GestureClick()
+        click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        click.connect("pressed", lambda *_a, u=block.uid: self.select_block(u))
+        card.add_controller(click)
+        focus = Gtk.EventControllerFocus()
+        focus.connect("enter", lambda *_a, u=block.uid: self.select_block(u))
+        card.add_controller(focus)
         if block.disabled:
             card.add_css_class("disabled")
         widgets: dict = {"card": card, "block": block}
@@ -1411,6 +1463,8 @@ class AdvancedConfigWindow(Adw.Window):
             widget = self._block_widgets[uid]["card"]
         if widget is None:
             return
+        owner, _option = self.draft.find_option(uid)
+        self.select_block(owner.uid if owner is not None else uid)
         widget.grab_focus()
         child = widget.get_first_child()
         (self._option_widgets.get(uid, {}).get("value") or child or widget).grab_focus()

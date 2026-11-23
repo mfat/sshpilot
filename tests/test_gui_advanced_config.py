@@ -363,3 +363,39 @@ def test_save_writes_the_text_page_not_the_older_rules(window):
     window.save()
     assert _pump(lambda: client.saves == 1)
     assert client.path.read_text() == newer
+
+
+def test_clicking_a_block_selects_it_and_alt_arrows_move_it(window):
+    glob, web, star = window.draft.blocks
+    cards = {b.uid: window._block_widgets[b.uid]["card"] for b in window.draft.blocks}
+    assert window.selected_uid is None
+    assert not any(card.has_css_class("selected") for card in cards.values())
+    window.select_block(star.uid)                 # what a click on the card does
+    assert cards[star.uid].has_css_class("selected")
+    window.select_block(web.uid)
+    assert not cards[star.uid].has_css_class("selected")
+    assert cards[web.uid].has_css_class("selected")
+
+    window.move_selected(1)                        # Alt+Down
+    assert [b.patterns for b in window.draft.blocks] == ["", "*", "web1 web2"]
+    assert window.selected_uid == web.uid          # still selected after the redraw
+    assert window._block_widgets[web.uid]["card"].has_css_class("selected")
+    window.move_selected(-1)                       # Alt+Up
+    window.move_selected(-1)                       # not above the global options
+    assert [b.patterns for b in window.draft.blocks] == ["", "web1 web2", "*"]
+
+    window.delete_block(web.uid)
+    assert window.selected_uid is None
+
+
+def test_a_real_click_on_a_card_selects_it(window):
+    from gi.repository import Gtk
+
+    web = window.draft.blocks[1]
+    card = window._block_widgets[web.uid]["card"]
+    gestures = [
+        c for c in card.observe_controllers() if isinstance(c, Gtk.GestureClick)
+    ]
+    assert gestures and gestures[0].get_propagation_phase() == Gtk.PropagationPhase.CAPTURE
+    gestures[0].emit("pressed", 1, 5.0, 5.0)
+    assert window.selected_uid == web.uid
