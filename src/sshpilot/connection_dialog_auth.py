@@ -264,9 +264,25 @@ class AuthPolicy:
     def _is_checked(self, method: str) -> bool:
         return self.in_order(method) and self.switches.get(method) is not False
 
+    def _first_listed(self) -> List[str]:
+        """The order with a repeated known method kept at its first place.
+
+        OpenSSH accepts ``publickey,password,publickey``; the method is
+        tried at its first place, so a repeat adds nothing.
+        """
+        seen: set = set()
+        order: List[str] = []
+        for m in self.shown_order():
+            if m in METHODS:
+                if m in seen:
+                    continue
+                seen.add(m)
+            order.append(m)
+        return order
+
     def checked(self) -> List[str]:
-        """Known methods checked, in order."""
-        return [m for m in self.shown_order() if m in METHODS and self._is_checked(m)]
+        """Known methods checked, in order (each once)."""
+        return [m for m in self._first_listed() if m in METHODS and self._is_checked(m)]
 
     def rows(self) -> List[str]:
         """Known methods in row order: the checked ones in order, then the rest."""
@@ -352,12 +368,13 @@ class AuthPolicy:
 
     def _begin_edit(self) -> None:
         """First edit: the order becomes the checked methods, written as one
-        line (methods this dialog does not know keep their places)."""
+        line (methods this dialog does not know keep their places; a
+        repeated method keeps its first)."""
         if self._before_edit is not None:
             return
         self._before_edit = (self._snapshot(), self.checked())
         self.order = [
-            m for m in self.shown_order() if m not in METHODS or self._is_checked(m)
+            m for m in self._first_listed() if m not in METHODS or self._is_checked(m)
         ]
         self._unknown_after_reset.discard("order")
 

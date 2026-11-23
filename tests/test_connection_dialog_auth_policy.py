@@ -151,6 +151,23 @@ def test_unknown_methods_keep_their_place():
     assert policy.to_lines() == ["PreferredAuthentications password,future-x,publickey"]
 
 
+def test_a_repeated_method_counts_once_at_its_first_place():
+    # Review: OpenSSH accepts a repeated method; moving one crashed.
+    line = "PreferredAuthentications publickey,password,publickey"
+    policy = _policy(line)
+    assert policy.checked() == ["publickey", "password"]
+    assert policy.rows() == [
+        "publickey", "password", "gssapi-with-mic", "hostbased", "keyboard-interactive",
+    ]
+    assert policy.to_lines() == [line]          # not edited: kept as written
+    assert policy.move_by("publickey", 1)
+    assert policy.to_lines() == ["PreferredAuthentications password,publickey"]
+
+    policy = _policy(line)
+    assert policy.set_tried("password", False)
+    assert policy.to_lines() == ["PreferredAuthentications publickey"]
+
+
 def test_the_last_checked_method_cannot_be_unchecked():
     policy = _policy("PreferredAuthentications password")
     assert not policy.set_tried("password", False)
