@@ -1191,3 +1191,93 @@ def test_reload_after_a_save_conflict_asks_before_dropping_the_draft(window):
     assert "mine" in window.editor.text                   # the draft is still here
     asked[0]()                                            # "Discard"
     assert _pump(lambda: "edited elsewhere" in window.editor.text)
+
+
+# -- review of the window's use, 2026-11-24 ----------------------------------------
+
+def test_the_consent_prompt_says_what_would_run_and_for_whom(window, tmp_path):
+    marker = tmp_path / "ran"
+    window.add_block("match")
+    block = window.draft.blocks[-1]
+    command = f"touch {marker} # for %h"
+    window.rules.cards[block.uid].patterns.set_text(f'exec "{command}"')
+    assert _pump(lambda: window.banner.get_revealed() and bool(window.banner.get_button_label()))
+    said = window.banner.get_title()
+    assert command in said and "web1" in said             # the command itself, and the host
+    assert not window.banner.get_use_markup()             # shown as it is written
+    assert not marker.exists()                            # nothing ran to say so
+
+
+def test_copy_takes_the_text_on_the_raw_page_when_it_is_the_newer(window):
+    copied = []
+    window.get_clipboard = lambda: type("Clip", (), {"set": lambda _s, text: copied.append(text)})()
+    window._on_copy()
+    assert copied[-1] == CONFIG
+    buffer = _text_page(window)
+    buffer.insert(buffer.get_end_iter(), "\nHost fix\n    User urgent\n")
+    assert window.results.raw_pending
+    window._on_copy()
+    assert copied[-1].endswith("Host fix\n    User urgent\n")
+    assert window.results.raw_pending                     # copying applied nothing
+    assert "Host fix" not in window.editor.text
+
+
+def test_a_source_in_an_included_file_is_gone_to_and_back(gtk, tmp_path):
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    included = tmp_path / "hosts.conf"
+    included.write_text("Host web1\n    User fromfile\n")
+    path = tmp_path / "config"
+    path.write_text(f"Include {included}\n\nHost web1\n    Port 2222\n")
+    win = AdvancedConfigWindow(None, _Client(path, included=[included]))
+    assert _pump(lambda: len(win.draft.blocks) == 2)      # the Include line, and Host web1
+    win.select_block(win.draft.blocks[-1].uid)
+    assert _pump(lambda: _effective(win, "user") == "fromfile")
+    user = win.results._items["user"]
+    assert (user.file, user.file_line) == (str(included), 2)
+    assert win.source_file(user.file) == str(included)    # one of this configuration's
+    assert win.source_file("/etc/ssh/ssh_config") is None
+
+    win.results.fill_all()                                # the Includes page too
+    rows = [row for row in _children(win.results.include_list) if row.get_activatable()]
+    assert [row.get_title() for row in rows] == [str(included)]
+
+    win.reveal_source(user.file, user.file_line)          # the source, clicked
+    assert _pump(lambda: win._file == str(included) and _selected(win) == "web1")
+    assert win.target_text() == "web1"                    # still the host read about
+    # Once the answer for this file is in: from here, port comes from the root.
+    assert _pump(lambda: _effective(win, "port") == "2222"
+                 and win.source_file(win.results._items["port"].file) == "")
+    port = win.results._items["port"]
+    win.reveal_source(port.file, port.file_line)
+    assert _pump(lambda: win._file == "" and _selected(win) == "web1")
+    win._closing = True
+    win.destroy()
+
+
+def test_a_narrow_window_closes_the_sidebar_and_then_shows_one_pane(window):
+    def shown():
+        return tuple(
+            name for name, widget in (
+                ("sidebar", window.sidebar), ("rules", window.rules), ("results", window.results)
+            ) if widget.get_visible()
+        )
+
+    assert shown() == ("sidebar", "rules", "results") and not window.pane_switch.get_visible()
+    window._set_layout("narrow")                          # no room for all three
+    assert shown() == ("rules", "results")
+    window.sidebar_button.set_active(True)                # opened: in the results' place
+    assert shown() == ("sidebar", "rules")
+    window.sidebar_button.set_active(False)
+
+    window._set_layout("single")                          # no room for two
+    assert shown() == ("rules",) and window.pane_switch.get_visible()
+    window.results_tab.set_active(True)
+    assert shown() == ("results",) and not window.sidebar_button.get_sensitive()
+    window.go_to(host="web1")                             # something in the rules is asked for
+    assert shown() == ("rules",)
+    window.go_to(line=1)                                  # a comment: shown as text
+    assert shown() == ("results",)
+
+    window._set_layout("wide")                            # room again: as it was left
+    assert shown() == ("sidebar", "rules", "results") and not window.pane_switch.get_visible()

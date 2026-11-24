@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from gettext import gettext as _
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import gi
 
@@ -83,8 +83,10 @@ class EffectiveItem(GObject.Object):
         self.forced = forced
         self.unused = unused
         self.configured = forced or source is not None or not default
-        #: The draft's line that supplies the value (0: none of its lines).
+        #: The draft's line that supplies the value (0: none of its lines),
+        #: or the other file and its line.
         self.line = 0
+        self.file, self.file_line = "", 0
         self.tooltip = ""
         if forced:
             self.source = ""
@@ -93,6 +95,7 @@ class EffectiveItem(GObject.Object):
         else:
             self.source = messages.where(source.file, source.line, source.block)
             if source.file:
+                self.file, self.file_line = source.file, source.line
                 self.tooltip = self.source
             else:
                 self.line = source.line
@@ -104,7 +107,8 @@ class EffectiveItem(GObject.Object):
 class _EffectiveCell:
     """The widgets of one visible row; bound to whichever item scrolls in."""
 
-    def __init__(self, on_jump: Callable[[int], None]) -> None:
+    def __init__(self, controller) -> None:
+        self.controller = controller
         self.item: Optional[EffectiveItem] = None
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -121,8 +125,9 @@ class _EffectiveCell:
         self.box.append(self.unused)
         self.forced = pill(messages.forced_source(), "purple")
         self.box.append(self.forced)
-        # A source in this configuration is a button that shows the line; a
-        # source elsewhere is the same button, inert.
+        # A source in this configuration is a button that shows the line,
+        # in this file or in another of its files; a source elsewhere (the
+        # system-wide file) is the same button, inert.
         self.source = Gtk.Button()
         self.source.add_css_class("flat")
         self.source.add_css_class("caption")
@@ -131,10 +136,17 @@ class _EffectiveCell:
         self.label.set_ellipsize(Pango.EllipsizeMode.START)
         self.label.set_max_width_chars(34)
         self.source.set_child(self.label)
-        self.source.connect(
-            "clicked", lambda *_a: self.item and self.item.line and on_jump(self.item.line)
-        )
+        self.source.connect("clicked", self._on_source_clicked)
         self.box.append(self.source)
+
+    def _on_source_clicked(self, *_args) -> None:
+        item = self.item
+        if item is None:
+            return
+        if item.line:
+            self.controller.reveal_line(item.line)
+        elif item.file:
+            self.controller.reveal_source(item.file, item.file_line)
 
     def bind(self, item: EffectiveItem) -> None:
         if self.item is not None and self.item is not item and self.item.cell is self:
@@ -149,8 +161,11 @@ class _EffectiveCell:
         self.source.set_visible(not item.forced)
         self.label.set_label(item.source)
         self.source.set_tooltip_text(item.tooltip or None)
-        self.source.set_sensitive(bool(item.line))
-        (self.label.remove_css_class if item.line else self.label.add_css_class)("dim-label")
+        reachable = bool(item.line) or (
+            bool(item.file) and self.controller.source_file(item.file) is not None
+        )
+        self.source.set_sensitive(reachable)
+        (self.label.remove_css_class if reachable else self.label.add_css_class)("dim-label")
 
 
 class ResultsView(Gtk.Box):
@@ -276,7 +291,7 @@ class ResultsView(Gtk.Box):
         return box
 
     def _setup_effective_row(self, _factory, list_item) -> None:
-        cell = _EffectiveCell(self.controller.reveal_line)
+        cell = _EffectiveCell(self.controller)
         list_item._cell = cell
         list_item.set_child(cell.box)
 
@@ -544,7 +559,7 @@ class ResultsView(Gtk.Box):
                     "a host there, to see what OpenSSH would use for it."
                 )
             elif evaluation.pending_exec:
-                note = messages.pending_exec_text(evaluation)
+                note = messages.pending_exec_text(evaluation, answer.host)
             else:
                 note = "\n".join(messages.error_text(e) for e in evaluation.errors)
             self.note.set_label(note)
@@ -701,11 +716,23 @@ class ResultsView(Gtk.Box):
         for include in evaluation.includes:
             pattern = patterns.get(option_at.get(include.line), "")
             row = Adw.ActionRow(title=GLib.markup_escape_text(f"Include {pattern}"))
-            row.set_subtitle(GLib.markup_escape_text(
-                "\n".join(include.files) or _("No file matches.")
-            ))
-            row.set_subtitle_selectable(True)
+            if not include.files:
+                row.set_subtitle(_("No file matches."))
             self.include_list.append(row)
+            for path in include.files:
+                # One row a file: a file of this configuration is opened
+                # from here, at its first line.
+                item = Adw.ActionRow(title=GLib.markup_escape_text(path))
+                item.set_title_selectable(True)
+                item.add_css_class("property")
+                if self.controller.source_file(path) is not None:
+                    item.set_activatable(True)
+                    item.set_tooltip_text(messages.open_file_tooltip())
+                    item.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+                    item.connect(
+                        "activated", lambda _row, p=path: self.controller.reveal_source(p, 0)
+                    )
+                self.include_list.append(item)
         if evaluation.system_config:
             row = Adw.ActionRow(title=_("System-wide configuration"))
             row.set_subtitle(GLib.markup_escape_text(evaluation.system_config))

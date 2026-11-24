@@ -37,7 +37,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 from .advanced_config_model import (  # noqa: E402
     first_host_name,
@@ -70,6 +70,12 @@ _CHECK_HOST = "sshpilot-config-check"
 #: How long the draft must have stood before its hosts are asked about ahead
 #: of time, and how many of them are: beyond that, a host is asked about
 #: when it is selected.
+#: Below these widths the window has no room for the sidebar beside the two
+#: panes, and for the two panes beside each other; and its own least size.
+_NARROW_BELOW = 1100
+_SINGLE_BELOW = 900
+_MIN_WIDTH, _MIN_HEIGHT = 720, 480
+
 _PREFETCH_DELAY_MS = 350
 _PREFETCH_HOSTS = 150
 
@@ -275,6 +281,9 @@ class AdvancedConfigWindow(Adw.Window):
         self._file_banner_action: Optional[Callable[[], None]] = None
         view.add_top_bar(self.file_banner)
         self.banner = Adw.Banner()
+        # As text: it shows commands and OpenSSH's own words, which are
+        # not markup and may well look like it.
+        self.banner.set_use_markup(False)
         self.banner.connect("button-clicked", self._on_answer_banner_button)
         self._answer_banner_action: Optional[Callable[[], None]] = None
         view.add_top_bar(self.banner)
@@ -297,10 +306,93 @@ class AdvancedConfigWindow(Adw.Window):
             icon_name="sidebar-show-symbolic", active=True,
             tooltip_text=_("Toggle Sidebar"),
         )
-        self.sidebar_button.bind_property(
-            "active", self.sidebar, "visible", GObject.BindingFlags.SYNC_CREATE
-        )
+        self.sidebar_button.connect("toggled", lambda *_a: self._apply_layout())
         header.pack_start(self.sidebar_button)
+        # Shown when the window is too narrow for the rules and the results
+        # side by side: one of them at a time.
+        self.rules_tab = Gtk.ToggleButton(label=_("Rules"), active=True)
+        self.results_tab = Gtk.ToggleButton(label=_("Results"), group=self.rules_tab)
+        self.rules_tab.connect("toggled", self._on_pane_chosen)
+        self.pane_switch = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.pane_switch.add_css_class("linked")
+        self.pane_switch.append(self.rules_tab)
+        self.pane_switch.append(self.results_tab)
+        self.pane_switch.set_visible(False)
+        header.pack_start(self.pane_switch)
+        self._build_layouts()
+
+    # ------------------------------------------------------------------
+    # layouts: three columns, two, or one, by the window's width
+    # ------------------------------------------------------------------
+    #
+    # Side by side the three need some 1100 pixels. Narrower, the sidebar
+    # closes on its own and is opened in the results' place; narrower
+    # still, the rules and the results take turns. The window itself can
+    # then be far smaller than the three columns' own minimum.
+
+    def _build_layouts(self) -> None:
+        #: "wide", "narrow" (no room for the sidebar beside both panes) or
+        #: "single" (no room for both panes).
+        self._layout = "wide"
+        self._single_pane = "rules"
+        #: The sidebar as the user had it while there was room for it.
+        self._sidebar_wanted = True
+        self.set_size_request(_MIN_WIDTH, _MIN_HEIGHT)
+        # The last one that holds is the one applied: the narrowest last.
+        for name, condition in (
+            ("narrow", f"max-width: {_NARROW_BELOW}px"),
+            ("single", f"max-width: {_SINGLE_BELOW}px"),
+        ):
+            breakpoint_ = Adw.Breakpoint.new(Adw.BreakpointCondition.parse(condition))
+            breakpoint_.connect("apply", lambda *_a, n=name: self._set_layout(n))
+            breakpoint_.connect("unapply", lambda *_a, n=name: self._leave_layout(n))
+            self.add_breakpoint(breakpoint_)
+        self._apply_layout()
+
+    def _leave_layout(self, name: str) -> None:
+        if self._layout == name:
+            self._set_layout("wide")
+
+    def _set_layout(self, name: str) -> None:
+        previous, self._layout = self._layout, name
+        if previous == "wide" and name != "wide":
+            self._sidebar_wanted = self.sidebar_button.get_active()
+            self.sidebar_button.set_active(False)
+        elif name == "wide" and previous != "wide":
+            self.sidebar_button.set_active(self._sidebar_wanted)
+        self._apply_layout()
+
+    def _on_pane_chosen(self, *_args) -> None:
+        self._single_pane = "rules" if self.rules_tab.get_active() else "results"
+        self._apply_layout()
+
+    def _apply_layout(self) -> None:
+        side = self.sidebar_button.get_active()
+        rules = results = True
+        if self._layout == "narrow":
+            results = not side              # the sidebar opens in their place
+        elif self._layout == "single":
+            if self._single_pane == "results":
+                rules, side = False, False
+            else:
+                results = False
+        self.sidebar.set_visible(side)
+        self.rules.set_visible(rules)
+        self.results.set_visible(results)
+        self.pane_switch.set_visible(self._layout == "single")
+        # The sidebar goes with the rules: there is no room for it beside
+        # the results alone.
+        self.sidebar_button.set_sensitive(
+            not (self._layout == "single" and self._single_pane == "results")
+        )
+
+    def show_pane(self, name: str) -> None:
+        """Make the rules or the results the pane on screen, when only one
+        of them is (something in it was asked to be shown)."""
+        if self._layout == "single":
+            (self.rules_tab if name == "rules" else self.results_tab).set_active(True)
+        elif self._layout == "narrow" and name == "results":
+            self.sidebar_button.set_active(False)
 
     def _build_sidebar(self) -> Gtk.Widget:
         # The blocks, in the file's order: the same selection as the cards
@@ -715,6 +807,7 @@ class AdvancedConfigWindow(Adw.Window):
             if line:
                 # No block owns the line (a comment, a line OpenSSH cannot
                 # place): it is shown as text.
+                self.show_pane("results")
                 self.results.show_text_line(line)
             elif host:
                 self._toasts.add_toast(Adw.Toast.new(
@@ -731,6 +824,7 @@ class AdvancedConfigWindow(Adw.Window):
                 (item.uid for item in block.options if item.key.strip().lower() == wanted_key),
                 uid,
             )
+        self.show_pane("rules")
         self.select_block(block.uid)
 
         def show() -> bool:
@@ -753,7 +847,11 @@ class AdvancedConfigWindow(Adw.Window):
         return None
 
     def _on_copy(self, *_args) -> None:
-        self.get_clipboard().set(self.editor.text)
+        # What is on screen: text typed on the Raw page and not applied is
+        # the newer of the two, and it is what "the configuration" means to
+        # whoever is looking at it. Copying leaves it as it is, unapplied.
+        pending = self.results.raw_pending
+        self.get_clipboard().set(self.results.raw_text() if pending else self.editor.text)
         self._toasts.add_toast(Adw.Toast.new(_("Configuration copied")))
 
     def _confirm_discard(
@@ -1188,6 +1286,33 @@ class AdvancedConfigWindow(Adw.Window):
             # loop, so the highlight is painted first.
             self._target_changed(idle=not self._answer_ready())
 
+    def source_file(self, path: str) -> Optional[str]:
+        """The file of the configuration a source names, as the daemon
+        names it ("" is the root), or None when it is none of them (the
+        system-wide file, OpenSSH's own): there is nothing to open then."""
+        if not path:
+            return None
+        for ref in self._files[1:]:
+            if ref.file == path:
+                return ref.file
+        evaluation = self._evaluation
+        system = evaluation.system_config if evaluation is not None else ""
+        if self._file and path != system:
+            # Seen from an included file, the one other file a line can be
+            # in is the root, which the daemon names by no path.
+            return ""
+        return None
+
+    def reveal_source(self, path: str, line: int) -> None:
+        """Show line *line* of another file of the configuration (from a
+        source on the Effective page, or a file on the Includes page).
+        Unsaved changes are asked about first, as for any other file."""
+        file = self.source_file(path)
+        if file is None:
+            return
+        host = self.target_text()       # the host being read about stays
+        self.go_to(file=file, line=line, host=host, pin=bool(host))
+
     def reveal_line(self, line: int) -> None:
         """Show the option or block the draft has at *line* (from a source
         on the Effective page)."""
@@ -1200,6 +1325,7 @@ class AdvancedConfigWindow(Adw.Window):
         # line turns out to be in.
         if not self.target_entry.get_text().strip():
             self._set_typed(self.target_text())
+        self.show_pane("rules")
         self.select_block(owner.uid if owner is not None else uid)
         self.rules.reveal(uid)
 
@@ -1498,7 +1624,7 @@ class AdvancedConfigWindow(Adw.Window):
                 self._show_answer_banner(messages.pending_exec_many_hosts_text())
             elif evaluation.pending_exec:
                 self._show_answer_banner(
-                    messages.pending_exec_text(evaluation),
+                    messages.pending_exec_text(evaluation, self.target_text()),
                     _("Run and Evaluate"), self._allow_exec,
                 )
             elif evaluation.errors:

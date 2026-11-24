@@ -147,15 +147,31 @@ def error_text(error: SshConfigDraftError) -> str:
     return f"{prefix}: {error.diagnostic}" if error.diagnostic else prefix
 
 
-def pending_exec_text(evaluation: SshConfigDraftEvaluation) -> str:
+#: A command longer than this is cut in the prompt: it is there to be
+#: recognised, and the whole of it is in the draft.
+_COMMAND_SHOWN = 240
+
+
+def pending_exec_text(evaluation: SshConfigDraftEvaluation, host: str = "") -> str:
+    """What allowing would run, and for which host: the commands
+    themselves, word for word, so that nothing has to be looked for in the
+    draft before saying yes."""
+    if not host:
+        return pending_exec_many_hosts_text()
+    commands = "\n".join(
+        command if len(command) <= _COMMAND_SHOWN else command[:_COMMAND_SHOWN] + "…"
+        for command in evaluation.pending_exec
+    )
     count = len(evaluation.pending_exec)
     return ngettext(
-        "This draft adds a Match exec command. OpenSSH runs it to evaluate "
-        "the block, so nothing is evaluated until you allow it.",
-        "This draft adds {count} Match exec commands. OpenSSH runs them to "
-        "evaluate their blocks, so nothing is evaluated until you allow it.",
+        "This draft adds a Match exec command. OpenSSH runs it on this "
+        "computer to evaluate the block, so nothing is evaluated until you "
+        "allow it for “{host}”:\n{commands}",
+        "This draft adds {count} Match exec commands. OpenSSH runs them on "
+        "this computer to evaluate their blocks, so nothing is evaluated "
+        "until you allow them for “{host}”:\n{commands}",
         count,
-    ).format(count=count)
+    ).format(count=count, host=host, commands=commands)
 
 
 def pending_exec_many_hosts_text() -> str:
@@ -164,6 +180,10 @@ def pending_exec_many_hosts_text() -> str:
         "every host this block is checked against. Select or type one host "
         "to allow it for that host."
     )
+
+
+def open_file_tooltip() -> str:
+    return _("Show this file here")
 
 
 def default_source() -> str:
