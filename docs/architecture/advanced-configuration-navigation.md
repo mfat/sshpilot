@@ -15,7 +15,7 @@ window.open_advanced_config(
     option="user",                # within the block: the option to show
     file=connection.source,       # the file it is in (a connection's source)
     pin=False,                    # make `host` the host OpenSSH is asked about
-    over=None,                    # a modal window to open above
+    over=None,                    # the modal dialog calling, if any
     on_saved=None,                # called after each save made there
 )
 ```
@@ -59,9 +59,12 @@ it; keeping them cancels the navigation.
   daemon gave out (`SshConfigText.files`), never by a path the frontend
   chose: `file=` above is looked up among those names and falls back to the
   root.
-- **Above a modal window.** Nothing else can be used while the connection
-  editor is up, so pass `over=dialog`: the window is then a second, modal one
-  above it, and is not the app's single Advanced Configuration window.
+- **From a modal dialog.** A modal dialog (the connection editor) stops
+  input to the other windows of its window group. Advanced Configuration is
+  therefore an ordinary window in a group of its own: it stays usable while
+  the dialog is up, there is still only one of it, and it can be maximized
+  (a modal child of the dialog could not be). `over=` names the dialog the
+  call comes from and changes nothing else.
 - **Another editor on the same file.** A save in Advanced Configuration does
   not make an open connection editor stale (connection generations are not
   touched by a raw save). Pass `on_saved` to refresh what the caller shows;

@@ -6272,13 +6272,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         *host*, *line*, *option*, *file* and *pin* say where, as
         ``AdvancedConfigWindow.go_to`` takes them; with none of them the
-        window opens as from the menu. *over*: a modal window to open above
-        (the connection editor), since nothing else could be used while it
-        is up. *on_saved* runs after each save made there.
+        window opens as from the menu. *on_saved* runs after each save made
+        there. *over* is the modal window the call comes from, if any (the
+        connection editor): the window is its own, in a window group of its
+        own, so it can be used while that dialog is up, and is not a child
+        of it (a modal child cannot be maximized).
 
         Returns the window, or None when it could not be opened.
         """
-        window = self._open_advanced_config(over=over)
+        window = self._open_advanced_config()
         if window is None:
             return None
         if callable(on_saved):
@@ -6287,18 +6289,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             window.go_to(host=host, line=line, option=option, file=file, pin=pin)
         return window
 
-    def _open_advanced_config(self, over=None):
+    def _open_advanced_config(self):
         """Open Advanced Configuration: the SSH configuration as blocks,
         with what OpenSSH resolves for a target host.
 
         Like the SSH Config Editor it works on the daemon-selected file and
         never touches it from GTK. One window at a time: opening again
-        presents the one that is open. Above a modal window (*over*) it is
-        a window of its own, modal too, and gone with it. Returns the
-        window, or None.
+        presents the one that is open. It is an ordinary window (it can be
+        maximized) in a window group of its own: a modal dialog of the main
+        window, the connection editor above all, stops input to the windows
+        of its own group and no others, so this one stays usable while the
+        dialog that opened it is up. Returns the window, or None.
         """
         existing = getattr(self, '_advanced_config_window', None)
-        if existing is not None and over is None:
+        if existing is not None:
             existing.present()
             return existing
         try:
@@ -6323,14 +6327,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if callable(schedule):
                     schedule()
 
-            window = AdvancedConfigWindow(over or self, client, on_saved=saved)
-            if over is not None:
-                window.set_modal(True)
-            else:
-                self._advanced_config_window = window
-                window.connect(
-                    'destroy', lambda *_a: setattr(self, '_advanced_config_window', None)
-                )
+            # Of the main window, as when opened from the menu (which is the
+            # case known to maximize): not of the dialog that asked for it.
+            window = AdvancedConfigWindow(self, client, on_saved=saved)
+            # Kept on the window: a group lives as long as someone holds it.
+            window._window_group = Gtk.WindowGroup()
+            window._window_group.add_window(window)
+            self._advanced_config_window = window
+            # Forgotten when it closes, so that the next opening makes a
+            # new one. Told by the window itself: "destroy" does not come
+            # while this very attribute still holds the window.
+            window.add_closed_listener(
+                lambda: setattr(self, '_advanced_config_window', None)
+            )
             window.present()
             return window
         except Exception as e:

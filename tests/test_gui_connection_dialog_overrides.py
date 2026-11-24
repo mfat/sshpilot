@@ -399,3 +399,32 @@ def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gu
     dialog.local_command_row.set_text("notify-send connected")
     assert dialog.local_command_row._sshpilot_override_state == OVERRIDDEN
     assert "PermitLocalCommand" in dialog.local_command_row.get_tooltip_text()
+
+
+def test_advanced_configuration_opened_from_a_modal_dialog_is_an_ordinary_window(gui):
+    """Opened from the connection editor it was a modal child of that
+    dialog, which a desktop does not let be maximized. It is the app's one
+    Advanced Configuration window, of the main window, in a window group of
+    its own so that the modal dialog does not stop input to it."""
+    from gi.repository import Gtk
+
+    main = gui.window
+    editor = Gtk.Window(transient_for=main, modal=True)     # stands for the editor
+    editor.present()
+    try:
+        window = main.open_advanced_config(host="nowhere", over=editor)
+        assert window is not None, "Advanced Configuration did not open"
+        assert not window.get_modal() and window.get_resizable()
+        assert window.get_transient_for() is main
+        assert window.get_group() is not main.get_group()
+        assert window.get_group() is not editor.get_group()
+        assert main.open_advanced_config(over=editor) is window     # still only one
+        assert main._open_advanced_config() is window               # the menu's too
+        window.close()
+        _pump(lambda: main._advanced_config_window is None)
+        assert main._advanced_config_window is None                 # closed: forgotten
+        fresh = main._open_advanced_config()                        # so the next one is new
+        assert fresh is not None and fresh is not window
+        fresh.close()
+    finally:
+        editor.destroy()

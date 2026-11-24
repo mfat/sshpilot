@@ -1281,3 +1281,25 @@ def test_a_narrow_window_closes_the_sidebar_and_then_shows_one_pane(window):
 
     window._set_layout("wide")                            # room again: as it was left
     assert shown() == ("sidebar", "rules", "results") and not window.pane_switch.get_visible()
+
+
+def test_the_window_says_when_it_closes(window):
+    """Whoever opened it must learn that it closed, to open a new one next
+    time. GTK's "destroy" does not tell them: it waits for the last
+    reference, and they hold one. Showing the closed window again gave one
+    whose background work no longer reported back."""
+    closed = []
+    window.add_closed_listener(lambda: closed.append(1))
+    web = window.draft.blocks[1]
+    _row(window, web.options[0].uid).value.set_text("unsaved")
+    assert _pump(lambda: window.dirty)
+    asked = []
+    window._confirm_discard = lambda proceed, stay=None: asked.append(proceed)
+    # (The close request itself: a window that is not on screen ignores close().)
+    assert window._on_close_request() is True     # unsaved changes: asked first, kept open
+    assert asked and closed == []                 # not closed yet
+    asked[0]()                                    # "Discard": closes for good
+    assert window._on_close_request() is False
+    assert closed == [1]
+    assert window._on_close_request() is False    # a second close says nothing more
+    assert closed == [1]

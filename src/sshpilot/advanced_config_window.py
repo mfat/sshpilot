@@ -146,6 +146,8 @@ class AdvancedConfigWindow(Adw.Window):
         #: Called after each save, besides *on_saved*: see
         #: :meth:`add_saved_listener`.
         self._saved_listeners: list = []
+        self._closed_listeners: list = []
+        self._told_closed = False
         #: The file on screen, as the daemon names it ("" is the root), and
         #: every file of the configuration (the root first).
         self._file = ""
@@ -872,9 +874,22 @@ class AdvancedConfigWindow(Adw.Window):
         )
         alert.present(self)
 
+    def add_closed_listener(self, callback: Callable[[], None]) -> None:
+        """Run *callback* when the window closes for good. (Not GTK's
+        "destroy": that waits for the last reference to the window, and
+        whoever wants to know that it closed is holding one.)"""
+        self._closed_listeners.append(callback)
+
     def _on_close_request(self, *_args) -> bool:
         if self._closing or not self.dirty:
-            self._closing = True
+            first = not self._told_closed
+            self._closing = self._told_closed = True
+            if first:
+                for listener in self._closed_listeners:
+                    try:
+                        listener()
+                    except Exception:
+                        logger.debug("closed listener failed", exc_info=True)
             return False
 
         def close():
