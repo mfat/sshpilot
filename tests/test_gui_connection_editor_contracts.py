@@ -444,6 +444,8 @@ CONTRACTS = [
 COVERED_ELSEWHERE = {
     "nickname_row": "test_gui_connection_dialog_overrides.py",
     "login_profile_row": "test_gui_connection_dialog_login_profile.py",
+    # Not a setting: it opens the sidebar search.
+    "search_button": "test_protocol_dialog_scope.py",
 }
 
 # Value controls with no end-to-end contract yet. Each entry is a known gap,
@@ -861,3 +863,58 @@ def test_a_save_refused_over_unresolved_hosts_says_why(gui, root):
     assert "Advanced Configuration" in said[0]
     assert dialog.get_visible()                 # still open: nothing was saved
     assert root.read_text() == before
+
+
+# -- what is typed as the alias of a new connection --------------------------
+
+def _new_editor(gui):
+    before = set(map(id, _editors()))
+    gui.window.show_connection_dialog(None)
+    assert _pump(lambda: [d for d in _editors() if id(d) not in before])
+    return next(d for d in _editors() if id(d) not in before)
+
+
+def test_several_aliases_save_as_connections_sharing_one_block(gui, root):
+    n = next(_names)
+    names = [f"multi{n}a", f"multi{n}b", f"multi{n}c"]
+    address = f"192.0.2.{100 + n}"
+    root.write_text("")
+
+    dialog = _new_editor(gui)
+    dialog.nickname_row.set_text(" ".join(names))
+    dialog.hostname_row.set_text(address)
+    dialog.username_row.set_text("deploy")
+    _pump(lambda: False, seconds=0.3)
+    offer = dialog.host_line_offer_row
+    assert offer.get_visible() and "3" in offer.get_title()      # told before saving
+    assert all(name in offer.get_title() for name in names)
+
+    _save(dialog)
+    line = " ".join(names)
+    expected = [f"HostName {address}", "User deploy"]
+    assert _pump(lambda: _canon(_block(root, line)) == _canon(expected), seconds=5), (
+        root.read_text()
+    )
+    assert root.read_text().count("Host ") == 1                   # one block
+    for name in names:
+        assert _pump(lambda: _find(gui.window, name) is not None), f"{name} not listed"
+        resolved = _ssh_g(root, name)
+        assert resolved.get("hostname") == address and resolved.get("user") == "deploy"
+
+
+@pytest.mark.parametrize("typed", ["*.prod", "web?", "!bad", "web1 *.prod"])
+def test_a_pattern_typed_as_the_alias_is_not_saved(gui, root, typed):
+    root.write_text("")
+    dialog = _new_editor(gui)
+    dialog.nickname_row.set_text(typed)
+    dialog.hostname_row.set_text("192.0.2.9")
+    _pump(lambda: False, seconds=0.3)
+    assert dialog.host_line_offer_row.get_visible()
+    assert dialog.host_line_offer_button.get_visible()            # the way out
+    assert not dialog.save_button.get_sensitive()
+
+    dialog.on_save_clicked()
+    _pump(lambda: False, seconds=1.0)
+    assert dialog.get_visible(), "the editor closed as if it had saved"
+    assert root.read_text() == ""
+    dialog.close()

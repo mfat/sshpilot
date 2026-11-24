@@ -161,7 +161,7 @@ def test_plugin_fields_join_the_first_group_without_ssh_rows():
     assert dlg._host_group.get_title() == "Host"
     # Host, port, user: the order the plugin fields above take too.
     assert _visible_row_titles(dlg._host_group) == [
-        "Protocol", "Name (optional)", "SSH Alias (no whitespace allowed)",
+        "Protocol", "Name (optional)", "SSH Alias (spaces separate several hosts)",
         "Hostname / IP address", "Port", "Username",
     ]
 
@@ -504,8 +504,9 @@ def test_a_pattern_is_handed_to_advanced_configuration_and_the_new_dialog_closes
     dlg = _dialog()
     opened = []
     dlg.parent_window.open_advanced_config = lambda **kw: opened.append(kw) or object()
+    # A window never shown has nothing to close: watch the call.
     closed = []
-    dlg.connect("close-request", lambda *_a: closed.append(True) and False)
+    dlg.close = lambda: closed.append(True)
     dlg.nickname_row.set_text("*.prod")
     dlg.hostname_row.set_text("%h.example.com")
     dlg.username_row.set_text("deploy")
@@ -530,6 +531,7 @@ def test_a_saved_connection_keeps_one_name_and_is_sent_to_its_block():
     dlg = _dialog(connection=connection)
     opened = []
     dlg.parent_window.open_advanced_config = lambda **kw: opened.append(kw) or object()
+    _pump_events()          # the saved values arrive in an idle; type after
     dlg.nickname_row.set_text("web1 web2")
     _pump_events()
     assert dlg.host_line_offer_row.get_visible()
@@ -549,3 +551,27 @@ def test_the_host_line_row_is_about_ssh_only():
     _select(dlg, "telnet")
     _pump_events()
     assert not dlg.host_line_offer_row.get_visible()
+
+
+@pytest.mark.integration
+def test_the_search_button_opens_the_sidebar_search_and_finds_a_field():
+    _require_gtk()
+    dlg = _dialog()
+    _pump_events()
+    assert not dlg.search_bar.get_search_mode()
+    dlg.search_button.set_active(True)
+    _pump_events()
+    assert dlg.search_bar.get_search_mode()
+    dlg.search_entry.set_text("port")
+    # The entry reports what was typed after a short pause.
+    import time
+    deadline = time.time() + 3
+    while (dlg.sidebar_stack.get_visible_child_name() != "results"
+           and time.time() < deadline):
+        _pump_events()
+        time.sleep(0.02)
+    assert dlg.sidebar_stack.get_visible_child_name() == "results"
+    assert dlg.search_results.get_row_at_index(0) is not None
+    dlg.search_button.set_active(False)
+    _pump_events()
+    assert dlg.sidebar_stack.get_visible_child_name() == "pages"

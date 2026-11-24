@@ -226,7 +226,7 @@ def test_created_connection_appears_as_a_named_row(app):
     # from Name when the text arrives through EditableText rather than keys.
     app.set_text(
         app.node(
-            role="text", name="SSH Alias (no whitespace allowed)", root=editor
+            role="text", name="SSH Alias (spaces separate several hosts)", root=editor
         ),
         "e2e-host",
     )
@@ -333,7 +333,7 @@ def test_connection_can_be_moved_into_a_group_without_a_drag(app):
     editor = _connection_editor(app)
     for field, value in (
         ("Name (optional)", "movable"),
-        ("SSH Alias (no whitespace allowed)", "movable"),
+        ("SSH Alias (spaces separate several hosts)", "movable"),
         ("Hostname / IP address", "192.0.2.30"),
         ("Username", "tester"),
     ):

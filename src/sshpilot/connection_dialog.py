@@ -5706,7 +5706,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'nickname': (
                 self._typed_primary_alias() or self.nickname_row.get_text().strip()
             ),
-            'shared_nicknames': self._typed_shared_names(),
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
             # "" means inherit: the block authors no Port and OpenSSH resolves
@@ -5747,6 +5746,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
             'extra_ssh_config': extra_ssh_config,
         }
+        # Only when there are some: an edit is compared key by key with what
+        # was loaded, and a key the saved connection never had reads as changed.
+        shared_names = self._typed_shared_names()
+        if shared_names:
+            connection_data['shared_nicknames'] = shared_names
         if self.is_editing:
             connection_data['__changed_fields'] = self._changed_editor_fields(
                 connection_data
