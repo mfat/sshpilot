@@ -80,4 +80,5 @@ it; keeping them cancels the navigation.
 - Connection editor, foot of the dialog: **Advanced Configuration** (`host`,
   `file`, `over`, `on_saved`). It is the dialog's one way into the
   configuration: the "Saved Effective Config" and "Edit SSH Config" buttons
-  that stood beside it are gone, since it shows both.
+  that stood beside it are gone, since it shows both, and with them the
+  effective-config viewer, which only the first of them opened.

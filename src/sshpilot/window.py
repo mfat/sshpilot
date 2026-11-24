@@ -8664,30 +8664,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 _("The daemon could not prepare this SSH launch."),
             )
 
-    def _on_effective_config_error(self, error) -> None:
-        """Handle effective-config failures without using terminal-launch UI."""
-        from .api import ErrorCode, SshPilotError
-
-        code = getattr(error, "code", None)
-        if code is ErrorCode.CONNECTION_NOT_FOUND:
-            heading = _("Connection unavailable")
-            body = _("The selected connection no longer exists in the daemon.")
-        elif code is ErrorCode.UNSUPPORTED_CAPABILITY:
-            heading = _("Effective configuration unavailable")
-            body = _("This daemon does not provide effective SSH configuration comparison.")
-        elif isinstance(error, SshPilotError) and code in {
-            ErrorCode.DAEMON_UNAVAILABLE,
-            ErrorCode.TRANSPORT_CLOSED,
-            ErrorCode.TRANSPORT_TIMEOUT,
-        }:
-            self._show_daemon_unavailable_dialog(error)
-            return
-        else:
-            heading = _("Effective configuration unavailable")
-            body = _("SSH Pilot could not resolve or compare the effective SSH configuration.")
-        logger.warning("Effective-config comparison unavailable code=%s", getattr(code, "value", code))
-        self._error_dialog(heading, body)
-
     def _show_terminal_error_dialog(self):
         """Show error dialog when no terminal is found"""
         try:
@@ -9660,44 +9636,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # A resumed save completes again; move only once.
         dialog._initial_group_id = target
         self.move_connection_to_group(nickname, target or None)
-
-    def show_effective_config_for_connection(self, connection) -> None:
-        """Open the effective-config viewer from a daemon comparison result."""
-        if not self._daemon_ready():
-            self._show_daemon_unavailable_dialog()
-            return
-        host = getattr(connection, "nickname", "") or ""
-        try:
-            self.client_bridge.submit(
-                lambda: self.client.get_effective_config(connection_id_for(connection)),
-                on_success=lambda result: self._present_effective_config_dialog(host, result),
-                on_error=self._on_effective_config_error,
-            )
-        except Exception as error:
-            self._on_effective_config_error(error)
-
-    def _present_effective_config_dialog(self, host, result) -> None:
-        if not result.available:
-            logger.info("Effective-config comparison unavailable for %s", host)
-            self._error_dialog(
-                _("Effective configuration unavailable"),
-                _("The daemon could not resolve or compare this connection's effective SSH configuration."),
-            )
-            return
-        try:
-            from .effective_config_dialog import EffectiveConfigDialog
-            EffectiveConfigDialog.for_result(
-                self,
-                host,
-                {
-                    "has_diff": result.has_diff,
-                    "changes": list(result.changes),
-                    "own": list(result.own),
-                    "full": list(result.full),
-                },
-            )
-        except Exception:
-            logger.debug("Failed to open effective-config diff", exc_info=True)
 
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""

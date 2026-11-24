@@ -1,6 +1,5 @@
 """Regression coverage for daemon error routing in the GTK client."""
 
-from types import SimpleNamespace
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.window import MainWindow
@@ -36,33 +35,6 @@ def test_startup_mode_transport_error_has_no_callback_type_error():
     )
 
     assert calls and calls[-1][2] == "daemon socket closed"
-
-
-def test_effective_config_error_does_not_route_through_external_terminal_handler():
-    window, calls = _window_with_dialog_spy()
-    external = []
-    window._on_external_terminal_launch_error = external.append
-
-    window._on_effective_config_error(
-        SshPilotError(ErrorCode.CONNECTION_NOT_FOUND, "connection deleted")
-    )
-    window._on_effective_config_error(
-        SshPilotError(ErrorCode.UNSUPPORTED_CAPABILITY, "comparison unsupported")
-    )
-
-    assert external == []
-    assert len(calls) == 2
-    assert all("effective" in call[0].lower() or "connection" in call[0].lower() for call in calls)
-
-
-def test_effective_comparison_unavailable_is_not_reported_as_daemon_unavailable():
-    window, calls = _window_with_dialog_spy()
-    result = SimpleNamespace(available=False)
-
-    window._present_effective_config_dialog("prod", result)
-
-    assert len(calls) == 1
-    assert calls[0][0] != "Daemon unavailable"
 
 
 def test_operation_mode_recovery_has_explicit_user_facing_state():
