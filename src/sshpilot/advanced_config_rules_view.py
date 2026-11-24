@@ -44,6 +44,10 @@ COMMON_OPTIONS = (
     ("ServerAliveInterval", "60"),
 )
 
+#: How much of the list stays in view when it is scrolled to its very end:
+#: enough for the last block's header line and the top of its options.
+_LAST_BLOCK_PEEK = 110
+
 _BLOCK_DRAG = "block"
 _OPTION_DRAG = "option"
 
@@ -457,6 +461,7 @@ class RulesView(Gtk.Box):
         self.empty.set_visible(False)
         self.box.append(self.empty)
         self.scroller.set_child(self.box)
+        self.scroller.get_vadjustment().connect("notify::page-size", self._sync_scroll_room)
         self.append(self.scroller)
 
     # -- drag feedback -------------------------------------------------------
@@ -601,22 +606,27 @@ class RulesView(Gtk.Box):
                 return
 
     def scroll_to(self, uid: int) -> None:
-        """Bring a block's card into view, moving as little as that takes.
-        Focus stays where it is (the sidebar's list is being walked)."""
+        """Bring a block's card to the top of the list, wherever it was:
+        the block gone to is read from its first line down. Focus stays
+        where it is (the sidebar's list is being walked)."""
         card = self.cards.get(uid)
         if card is None:
             return
         found, bounds = card.card.compute_bounds(self.box)
         if not found:
             return
-        adjustment = self.scroller.get_vadjustment()
-        top = bounds.get_y() - 14
-        bottom = bounds.get_y() + bounds.get_height() + 14
-        value, page = adjustment.get_value(), adjustment.get_page_size()
-        if top < value or bottom - top > page:
-            adjustment.set_value(top)
-        elif bottom > value + page:
-            adjustment.set_value(bottom - page)
+        # The list's own top margin is the gap left above the card.
+        self.scroller.get_vadjustment().set_value(max(0.0, bounds.get_y()))
+
+    def _sync_scroll_room(self, *_args) -> None:
+        """Leave room under the last block for it to reach the top too:
+        without it the list ends where the last card does, and the blocks
+        at the end of the file could never be brought up."""
+        page = self.scroller.get_vadjustment().get_page_size()
+        room = max(14, int(page) - _LAST_BLOCK_PEEK)
+        if self.box.get_margin_bottom() != room:
+            # Not during the size allocation that told us the page size.
+            GLib.idle_add(lambda: (self.box.set_margin_bottom(room), False)[1])
 
     def reveal(self, uid: int) -> None:
         """Scroll to and flash the option or block with *uid*."""
