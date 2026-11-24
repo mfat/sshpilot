@@ -4416,8 +4416,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # The configuration may have changed: the Rules view, if it is the
         # one shown, reads it again.
         try:
-            from .sidebar_views import refresh_rules
+            from .sidebar_views import refresh_rules, sync_switcher_height
             refresh_rules(self)
+            # Once the rows are there: the dropdown is as tall as one.
+            GLib.idle_add(lambda: (sync_switcher_height(self), False)[1])
         except Exception:
             logger.debug("Could not refresh the sidebar rules", exc_info=True)
         steps = self._rebuild_connection_list_steps()

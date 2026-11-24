@@ -225,11 +225,77 @@ def show_view(window, name: str) -> None:
 
 _VIEWS = (CONNECTIONS, RULES)
 
+#: The dropdown's height until a connection row has been measured.
+_SWITCHER_HEIGHT = 46
+
+_SWITCHER_CSS = """
+dropdown.sidebar-view-switcher > button {
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
+  font-weight: bold;
+  border-radius: 8px;
+  box-shadow: none;
+}
+dropdown.sidebar-view-switcher > button:hover {
+  background-image: image(alpha(currentColor, 0.1));
+}
+dropdown.sidebar-view-switcher > button:active,
+dropdown.sidebar-view-switcher > button:checked {
+  background-image: image(alpha(black, 0.15));
+}
+"""
+
+
+def _install_switcher_css() -> None:
+    from gi.repository import Gdk
+
+    display = Gdk.Display.get_default()
+    if display is None or getattr(display, "_sidebar_switcher_css", False):
+        return
+    provider = Gtk.CssProvider()
+    try:
+        provider.load_from_string(_SWITCHER_CSS)
+    except (AttributeError, TypeError):         # GTK before 4.12
+        provider.load_from_data(_SWITCHER_CSS.encode("utf-8"))
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    display._sidebar_switcher_css = True
+
+
+def sync_switcher_height(window) -> None:
+    """Make the dropdown as tall as a connection row.
+
+    The rows' height follows the sidebar mode and the font, so it is
+    measured from the first connection row there is.
+    """
+    switcher = getattr(window, "_sidebar_view_switcher", None)
+    listbox = getattr(window, "connection_list", None)
+    if switcher is None or listbox is None:
+        return
+    row = listbox.get_first_child()
+    while row is not None:
+        if getattr(row, "connection", None) is not None and row.get_visible():
+            # As drawn, once it has a size; what it asks for before that.
+            height = row.get_height()
+            if height <= 0:
+                try:
+                    height = row.measure(Gtk.Orientation.VERTICAL, -1)[1]
+                except Exception:
+                    return
+            if height > 0:
+                switcher.set_size_request(-1, height)
+            return
+        row = row.get_next_sibling()
+
 
 def build_sidebar_switcher(window, sidebar_box) -> None:
     """The dropdown at the top of the sidebar that picks what it lists."""
+    _install_switcher_css()
     dropdown = Gtk.DropDown.new_from_strings([_("Connections"), _("Rules")])
-    dropdown.add_css_class("flat")
+    # Filled with the accent colour, as a suggested action is.
+    dropdown.add_css_class("sidebar-view-switcher")
+    dropdown.set_size_request(-1, _SWITCHER_HEIGHT)
     dropdown.set_hexpand(True)
     dropdown.set_margin_start(6)
     dropdown.set_margin_end(6)

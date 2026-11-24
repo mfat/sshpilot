@@ -182,3 +182,27 @@ def test_no_rules_and_no_configuration_each_say_so(window):
     window.client.fail = True
     view.refresh()
     assert _pump(lambda: view.empty.get_title() == "Rules Unavailable")
+
+
+def test_the_dropdown_is_as_tall_as_a_connection_row(window, gtk):  # noqa: F811
+    from sshpilot.sidebar_views import sync_switcher_height
+
+    rows = gtk.ListBox()
+    for name in ("web1", "db1"):
+        row = gtk.ListBoxRow()
+        box = gtk.Box(orientation=gtk.Orientation.VERTICAL)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.append(gtk.Label(label=name))
+        box.append(gtk.Label(label="user@192.0.2.1"))
+        row.set_child(box)
+        row.connection = object()
+        rows.append(row)
+    window.connection_scrolled.set_child(rows)
+    window.connection_list = rows
+    _pump(seconds=0.3)
+    sync_switcher_height(window)
+    _pump(seconds=0.3)
+    switcher = window._sidebar_view_switcher
+    assert switcher.has_css_class("sidebar-view-switcher")      # the accent fill
+    assert switcher.get_height() == rows.get_first_child().get_height()
