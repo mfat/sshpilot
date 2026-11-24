@@ -241,7 +241,11 @@ def test_another_target_is_asked_again(window):
     # The block OpenSSH skips for the host folds, where it is.
     assert _pump(lambda: _dimmed(window) == ["web1 web2"])
     web = window.draft.blocks[1]
-    assert [_status(window, o) for o in web.options] == ["Inactive"] * 3
+    # Lines of a block that is not this host's: dimmed with it, no word on them.
+    assert [_status(window, o) for o in web.options] == [None] * 3
+    assert all(
+        _row(window, o.uid).box.has_css_class("advcfg-unused") for o in web.options
+    )
     window.target_entry.set_text("web1")
     assert _pump(lambda: _dimmed(window) == [] and _effective(window, "user") == "deploy")
     window.target_entry.set_text("")           # no host: every block open
@@ -1079,3 +1083,111 @@ def test_undo_and_redo_have_keys_wherever_the_keyboard_is(window):
     assert window._history_key(window.undo) is False       # the text's own undo
     assert names() == ["global", "web1 web2"]
     assert "Ctrl+Z" in window.undo_button.get_tooltip_text()
+
+
+# -- review, 2026-11-24 ---------------------------------------------------------------
+
+def test_a_save_is_of_the_file_it_was_clicked_for(gtk, tmp_path):
+    """Review P1: the save took its text when clicked and its file name and
+    revision when OpenSSH had answered. Opening another file in between
+    wrote the first one's text over the second."""
+    import threading
+
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    included = tmp_path / "hosts.conf"
+    included.write_text("Host inc\n    User alice\n")
+    path = tmp_path / "config"
+    root_text = f"Host top\n    User me\n\nInclude {included}\n"
+    path.write_text(root_text)
+    client = _Client(path, included=[included])
+    win = AdvancedConfigWindow(None, client)
+    assert _pump(lambda: len(win.draft.blocks) == 1 and len(win._files) == 2)
+    _pump(lambda: not win._prefetching and win._prefetch_source == 0, seconds=5)
+
+    gate = threading.Event()
+    real = client.evaluate_ssh_config_draft
+
+    def slow(request):                                    # the save's question waits
+        if request.host == "sshpilot-config-check":
+            gate.wait(5)
+        return real(request)
+
+    client.evaluate_ssh_config_draft = slow
+    _row(win, win.draft.blocks[0].options[0].uid).value.set_text("root")
+    assert _pump(lambda: win.dirty)
+    win.save()
+    assert win._saving
+    # While OpenSSH is being asked, the operator opens the other file and
+    # answers "Discard" to the question about the unsaved changes.
+    win._confirm_discard = lambda proceed, stay=None: proceed()
+    win.open_file(str(included))
+    win.go_to(host="inc", file=str(included))             # and from elsewhere in the app
+    _pump(lambda: False, seconds=0.6)
+    gate.set()
+    _pump(lambda: client.saves >= 1 and not win._saving, seconds=5)
+    assert included.read_text() == "Host inc\n    User alice\n"   # not written over
+    assert path.read_text() == root_text.replace("User me", "User root")
+    assert client.saves == 1
+    # The place asked for meanwhile is gone to now that the save is over.
+    assert _pump(lambda: win._file == str(included))
+    win._closing = True
+    win.destroy()
+
+
+def test_agreeing_to_run_a_command_is_for_the_host_on_screen_only(window, tmp_path):
+    """Review P1: "Run and Evaluate" is an agreement for one host. The
+    hosts asked about ahead of time, a pattern block's hosts and the
+    save's check must not carry it: the command (think %h) would run for
+    hosts nobody chose."""
+    client = window._test_client
+    asked = []
+    real = client.evaluate_ssh_config_draft
+
+    def record(request):
+        asked.append((request.host, request.allowed_exec))
+        return real(request)
+
+    client.evaluate_ssh_config_draft = record
+    marker = tmp_path / "ran-for"
+    window.add_block("match")
+    block = window.draft.blocks[-1]
+    window.rules.cards[block.uid].patterns.set_text(f'exec "echo %h >> {marker}"')
+    assert _pump(lambda: window.banner.get_revealed() and bool(window.banner.get_button_label()))
+    window.banner.emit("button-clicked")                  # agreed: for web1
+    assert _pump(marker.exists)
+    assert _settled(window)
+    _pump(lambda: False, seconds=1.2)                     # let the background asking run
+
+    window.target_entry.set_text("")                      # no host typed any more
+    _pump(lambda: False, seconds=0.5)
+    window.select_block(window.draft.blocks[2].uid)       # Host *: a pattern block
+    _pump(lambda: False, seconds=1.0)
+    assert window.banner.get_revealed() and not window.banner.get_button_label()  # no button
+    window.save()
+    assert _pump(lambda: client.saves == 1)
+
+    carried = {host for host, allowed in asked if allowed}
+    assert carried == {"web1"}, carried
+    assert set(marker.read_text().split()) == {"web1"}    # it ran for web1 and no one else
+
+
+def test_reload_after_a_save_conflict_asks_before_dropping_the_draft(window):
+    """Review P2: the conflict banner's Reload replaced the draft in one
+    click, the draft the save was meant to keep."""
+    client = window._test_client
+    web = window.draft.blocks[1]
+    _row(window, web.options[0].uid).value.set_text("mine")
+    assert _pump(lambda: window.dirty)
+    client.path.write_text(CONFIG + "\n# edited elsewhere\n")
+    window.save()
+    assert _pump(lambda: window.file_banner.get_revealed() and bool(window.file_banner.get_button_label()))
+    asked, loads = [], []
+    window._confirm_discard = lambda proceed, stay=None: asked.append(proceed)
+    real_load = window._load
+    window._load = lambda *args: (loads.append(args), real_load(*args))[1]
+    window.file_banner.emit("button-clicked")
+    assert asked and not loads                            # asked, nothing loaded
+    assert "mine" in window.editor.text                   # the draft is still here
+    asked[0]()                                            # "Discard"
+    assert _pump(lambda: "edited elsewhere" in window.editor.text)

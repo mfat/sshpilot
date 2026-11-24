@@ -476,14 +476,18 @@ class AdvancedConfigWindow(Adw.Window):
                 return
         self._saving = True
         self._update_chrome()
-        text = self.editor.text
+        # The text, the file it is of and the revision it was loaded at are
+        # taken together, now: the save is of this document, whatever is on
+        # screen by the time OpenSSH has been asked. (Another file cannot be
+        # opened while a save is under way either: see open_file.)
+        text, file, revision = self.editor.text, self._file, self._revision
         try:
-            request = EvaluateSshConfigDraftRequest(
-                text=text, host=_CHECK_HOST, allowed_exec=tuple(sorted(self._allowed_exec)),
-                file=self._file,
-            )
+            # No agreed Match exec command goes with this question: it is
+            # about a made-up host, and an agreement is for the host it was
+            # given for. A draft that needs one run is saved unchecked.
+            request = EvaluateSshConfigDraftRequest(text=text, host=_CHECK_HOST, file=file)
         except (TypeError, ValueError):
-            self._write(text)
+            self._write(text, file, revision)
             return
 
         def checked(result, error) -> None:
@@ -491,13 +495,15 @@ class AdvancedConfigWindow(Adw.Window):
             # be checked without running it; and when the check itself
             # fails, the save is not held hostage to it.
             if error is None and result is not None and result.errors:
-                self._confirm_rejected(text, result)
+                self._confirm_rejected(text, file, revision, result)
             else:
-                self._write(text)
+                self._write(text, file, revision)
 
         self._run(lambda: self._ask_once(request), checked)
 
-    def _confirm_rejected(self, text: str, evaluation: SshConfigDraftEvaluation) -> None:
+    def _confirm_rejected(
+        self, text: str, file: str, revision: str, evaluation: SshConfigDraftEvaluation
+    ) -> None:
         alert = Adw.AlertDialog(
             heading=_("Save a configuration OpenSSH rejects?"),
             body=messages.error_text(evaluation.errors[0]) + "\n\n" + _(
@@ -514,32 +520,44 @@ class AdvancedConfigWindow(Adw.Window):
         def answered(_dialog, response: str) -> None:
             self._save_alert = None
             if response == "save":
-                self._write(text)
+                self._write(text, file, revision)
             else:
-                self._saving = False
-                self._update_chrome()
+                self._save_over()
 
         alert.connect("response", answered)
         self._save_alert = alert
         alert.present(self)
 
-    def _write(self, text: str) -> None:
-        request = SaveSshConfigTextRequest(
-            text=text, expected_revision=self._revision, file=self._file
-        )
+    def _write(self, text: str, file: str, revision: str) -> None:
+        if file != self._file or revision != self._revision:
+            # Not the document on screen any more: its text is not written
+            # over another file, nor at another revision.
+            self._save_over()
+            return
+        request = SaveSshConfigTextRequest(text=text, expected_revision=revision, file=file)
         self._run(
             lambda: self._client.save_ssh_config_text(request),
             lambda result, error: self._on_saved_result(text, result, error),
         )
 
+    def _save_over(self) -> None:
+        """A save has ended, written or not: what waited for it goes on."""
+        self._saving = False
+        self._update_chrome()
+        self._sync_file_switcher()
+        self._apply_pending_target()
+
     def _on_saved_result(self, text: str, result, error) -> None:
         self._saving = False
         if error is not None:
+            self._pending_target = None
             code = error.code if isinstance(error, SshPilotError) else None
             if code is ErrorCode.STALE_EDITOR:
                 self._show_file_banner(
                     _("The SSH configuration changed on disk since it was opened."),
-                    _("Reload"), lambda: self._load(),
+                    # Through the menu's Reload: it asks before dropping the
+                    # draft this save was meant to keep.
+                    _("Reload"), self._on_reload,
                 )
             elif code is ErrorCode.SSH_CONFIG_READ_ONLY:
                 self._writable = False
@@ -558,6 +576,8 @@ class AdvancedConfigWindow(Adw.Window):
         self._show_file_banner("")          # an earlier failure is history
         self._toasts.add_toast(Adw.Toast.new(_("SSH configuration saved")))
         self._update_chrome()
+        self._sync_file_switcher()
+        self._apply_pending_target()         # a place asked for during the save
         self._schedule_evaluation(now=True)  # Match exec commands are saved now
         for listener in [self._on_saved, *self._saved_listeners]:
             if not callable(listener):
@@ -568,6 +588,8 @@ class AdvancedConfigWindow(Adw.Window):
                 logger.debug("on_saved failed", exc_info=True)
 
     def _on_reload(self, *_args) -> None:
+        if self._saving:
+            return                  # the save is of the text on screen
         if self.dirty:
             self._confirm_discard(lambda: self._load())
         else:
@@ -607,6 +629,11 @@ class AdvancedConfigWindow(Adw.Window):
         daemon named it ("" is the root). Unsaved changes are asked about
         first; keeping them leaves the file on screen where it is."""
         if file == self._file:
+            return
+        if self._saving:
+            # Not while a save is under way: it is of the file on screen. A
+            # place asked for (go_to) is gone to when the save is over.
+            self._sync_file_switcher()
             return
 
         def stay() -> None:
@@ -1255,7 +1282,10 @@ class AdvancedConfigWindow(Adw.Window):
             return False
         cache = self._answer_cache()
         text, file = self.editor.text, self._file
-        allowed = tuple(sorted(self._allowed_exec))
+        # Nothing agreed goes along: an agreement to run a Match exec command
+        # was given for the host on screen, and these are other hosts (and
+        # made-up names). A draft that needs one run stops this at once.
+        allowed: tuple = ()
         # The hosts the blocks spell out, and for each pattern block the
         # made-up name it is tried with: what any selection will ask.
         wanted = list(plain_host_names(self.editor.blocks))
@@ -1391,7 +1421,9 @@ class AdvancedConfigWindow(Adw.Window):
         is not one (a command waiting for consent, a rejected draft) is
         returned as it is, to be shown like any other.
         """
-        text, allowed = self.editor.text, tuple(sorted(self._allowed_exec))
+        # Asked without any agreed Match exec command: the agreement was
+        # for one host, and this asks about every host of the configuration.
+        text, allowed = self.editor.text, ()
         file = self._file
         header = self.editor.lines.headers.get(block.uid, 0)
         listed = plain_host_names(self.editor.blocks)
@@ -1442,7 +1474,10 @@ class AdvancedConfigWindow(Adw.Window):
     def _allow_exec(self) -> None:
         """Agree to the commands the banner is about: those, word for word,
         and for this host. Another new command, an edited one, or another
-        host asks again (the daemon checks every command it is sent)."""
+        host asks again (the daemon checks every command it is sent). The
+        agreement goes with questions about the host on screen and no
+        other: not the hosts asked about ahead of time, not a pattern
+        block's hosts, not the save's check."""
         if self._evaluation is not None:
             self._allowed_exec.update(self._evaluation.pending_exec)
         self._schedule_evaluation(now=True)
@@ -1457,7 +1492,11 @@ class AdvancedConfigWindow(Adw.Window):
         if evaluation is None:
             self._show_answer_banner("")
         elif self._evaluated_serial == self.editor.serial:
-            if evaluation.pending_exec:
+            if evaluation.pending_exec and self._pattern_block() is not None:
+                # A pattern block is asked about through many hosts: there
+                # is no one host to agree to run the command for.
+                self._show_answer_banner(messages.pending_exec_many_hosts_text())
+            elif evaluation.pending_exec:
                 self._show_answer_banner(
                     messages.pending_exec_text(evaluation),
                     _("Run and Evaluate"), self._allow_exec,

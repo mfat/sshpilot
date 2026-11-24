@@ -158,6 +158,14 @@ def pending_exec_text(evaluation: SshConfigDraftEvaluation) -> str:
     ).format(count=count)
 
 
+def pending_exec_many_hosts_text() -> str:
+    return _(
+        "This draft adds a Match exec command, which OpenSSH would run for "
+        "every host this block is checked against. Select or type one host "
+        "to allow it for that host."
+    )
+
+
 def default_source() -> str:
     return _("OpenSSH default")
 

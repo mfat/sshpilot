@@ -203,12 +203,18 @@ class OptionRow:
         elif item is None:
             set_pill(self.status, "", "muted")
             unused = False
+        elif item.state is State.INACTIVE:
+            # A line of a block that is not this host's: dimmed with its
+            # block, and no word on it. "Inactive" read as a verdict on the
+            # line, as "Skipped" did on the block.
+            set_pill(self.status, "", "muted")
+            unused = True
         else:
             set_pill(
                 self.status, messages.state_label(item.state),
                 messages.STATE_STYLES[item.state], messages.state_tooltip(item),
             )
-            unused = item.state in (State.SHADOWED, State.FORCED, State.INACTIVE)
+            unused = item.state in (State.SHADOWED, State.FORCED)
         _set_class(self.box, "advcfg-unused", unused)
 
 
