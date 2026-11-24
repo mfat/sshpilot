@@ -35,16 +35,6 @@ template $ConnectionDialog: Adw.Window {
       margin-top: 12;
       margin-bottom: 12;
 
-      Gtk.Button effective_config_button {
-        label: _("Saved Effective Config");
-        tooltip-text: _("Show what SSH uses for this host, as saved");
-      }
-
-      Gtk.Button edit_ssh_config_button {
-        label: _("Edit SSH Config");
-        tooltip-text: _("Open the SSH config editor");
-      }
-
       Gtk.Button advanced_config_button {
         label: _("Advanced Configuration");
         tooltip-text: _("Show this host's block among the blocks that apply to it");

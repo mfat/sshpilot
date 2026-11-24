@@ -210,21 +210,16 @@ def test_dialog_marks_a_field_an_earlier_block_beats(gui):
     assert not dialog._override_banner.get_revealed()
 
 
-def test_config_buttons_open_the_viewer_and_editor_over_the_dialog(gui):
-    """The dialog is modal, so whatever it opens must be modal over it to be
-    usable: the effective-config viewer, and the SSH config editor."""
+def test_the_config_button_opens_advanced_configuration_over_the_dialog(gui):
+    """The dialog is modal, so what it opens must be opened over it to be
+    usable. Its one way into the configuration is Advanced Configuration,
+    at this host's block; the fields are re-marked after a save there."""
     from gi.repository import Gtk
-    from sshpilot.api.models.connections import EffectiveConfigComparison
     from sshpilot.connection_dialog import ConnectionDialog
     from sshpilot.connection_model import Connection
-    from sshpilot.effective_config_dialog import EffectiveConfigDialog
     from sshpilot.plugins.loader import ensure_builtin_protocols
 
     ensure_builtin_protocols()
-    comparison = EffectiveConfigComparison(
-        connection_id="web", host="web", available=True, has_diff=False,
-        own=("user admin",), full=("user admin", "port 22"),
-    )
     snapshot = GlobalSshOverrides(
         revision="r1", connect_timeout=0, strict_host_key_checking="",
         compression="", verbosity=0, debug_enabled=False, forced_options=(),
@@ -233,50 +228,34 @@ def test_config_buttons_open_the_viewer_and_editor_over_the_dialog(gui):
     parent = Gtk.Window()
     parent.connection_manager = _Manager()
     parent._daemon_ready = lambda: True
-    parent.client = types.SimpleNamespace(
-        get_global_ssh_overrides=lambda: snapshot,
-        get_effective_config=lambda _cid: comparison,
-    )
-    parent._open_ssh_config_editor = (
-        lambda parent=None, on_saved=None: opened.append((parent, on_saved))
-    )
+    parent.client = types.SimpleNamespace(get_global_ssh_overrides=lambda: snapshot)
+    parent.open_advanced_config = lambda **target: opened.append(target)
 
     new = ConnectionDialog(parent, connection_manager=parent.connection_manager)
-    assert new.edit_ssh_config_button.get_visible()
-    assert not new.effective_config_button.get_sensitive()  # nothing saved yet
+    assert new.advanced_config_button.get_visible()
+    assert not hasattr(new, "edit_ssh_config_button")       # the two older buttons are gone
+    assert not hasattr(new, "effective_config_button")
+    new.advanced_config_button.emit("clicked")
+    assert opened[-1]["over"] is new and opened[-1]["host"] == ""   # no block yet
     new.close()
 
     connection = Connection({
         "nickname": "web", "host": "web", "hostname": "web.example.com",
-        "username": "admin", "__authored_directives": ("hostname", "user"),
+        "username": "admin", "source": "/home/u/.ssh/conf.d/web.conf",
+        "__authored_directives": ("hostname", "user"),
     })
     dialog = ConnectionDialog(
         parent, connection=connection, connection_manager=parent.connection_manager
     )
-    assert dialog.effective_config_button.get_sensitive()
-
-    dialog.edit_ssh_config_button.emit("clicked")
-    assert opened and opened[-1][0] is dialog
+    dialog.advanced_config_button.emit("clicked")
+    target = opened[-1]
+    assert target["over"] is dialog and target["host"] == "web"
+    assert target["file"] == "/home/u/.ssh/conf.d/web.conf"
     reloads = []
     dialog._load_earlier_directives_async = lambda: reloads.append("earlier")
     dialog._load_inherited_values_async = lambda: reloads.append("inherited")
-    opened[-1][1]()  # the editor saved
+    target["on_saved"]()  # Advanced Configuration saved
     assert reloads == ["earlier", "inherited"]
-
-    dialog.effective_config_button.emit("clicked")
-
-    def viewer():
-        for window in Gtk.Window.list_toplevels():
-            if isinstance(window, EffectiveConfigDialog) and window.get_visible():
-                return window
-        return None
-
-    _pump(lambda: viewer() is not None)
-    window = viewer()
-    assert window.get_transient_for() is dialog and window.get_modal()
-    window._on_edit_clicked(None)
-    assert opened[-1][0] is window
-    window.close()
     dialog.close()
 
 

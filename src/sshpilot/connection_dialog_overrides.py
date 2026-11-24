@@ -776,118 +776,35 @@ class ConnectionDialogOverridesMixin:
     def _overridden_field_count(self) -> int:
         return sum(self._overridden_field_counts())
 
-    # -- the SSH configuration buttons -----------------------------------
+    # -- the SSH configuration button -------------------------------------
+    #
+    # One way from this dialog into the configuration as a whole: Advanced
+    # Configuration, at this host's block. It shows what the two buttons
+    # that stood here did (what SSH uses for the host, and the file's
+    # text), and the blocks that decide it besides.
 
     def _setup_config_buttons(self) -> None:
-        """Wire "Effective Config" and "Edit SSH Config" at the dialog's foot."""
-        effective = getattr(self, "effective_config_button", None)
-        if effective is not None:
-            effective.connect("clicked", self._on_effective_config_clicked)
-        editor = getattr(self, "edit_ssh_config_button", None)
-        if editor is not None:
-            editor.connect("clicked", self._on_edit_ssh_config_clicked)
+        """Wire "Advanced Configuration" at the dialog's foot."""
         advanced = getattr(self, "advanced_config_button", None)
         if advanced is not None:
             advanced.connect("clicked", self._on_advanced_config_clicked)
         self._sync_config_buttons()
 
     def _sync_config_buttons(self) -> None:
-        """Both buttons are about SSH; the viewer also needs a saved host."""
+        """The button is about SSH: a plugin protocol has no SSH configuration."""
         try:
             ssh = self._selected_protocol_id() == "ssh"
         except Exception:
             ssh = True
-        editor = getattr(self, "edit_ssh_config_button", None)
-        if editor is not None:
-            editor.set_visible(ssh)
         advanced = getattr(self, "advanced_config_button", None)
         if advanced is not None:
             advanced.set_visible(ssh)
-        effective = getattr(self, "effective_config_button", None)
-        if effective is None:
-            return
-        effective.set_visible(ssh)
-        saved = bool(getattr(self, "is_editing", False)) and getattr(
-            self, "connection", None
-        ) is not None
-        effective.set_sensitive(saved)
-        effective.set_tooltip_text(
-            _("Show what SSH uses for this host, as saved")
-            if saved
-            else _("Save the connection to see what SSH uses for it")
-        )
-
-    def _on_effective_config_clicked(self, _button) -> None:
-        """Open the effective-config viewer over this dialog.
-
-        It shows the saved host, as ``ssh <alias>`` resolves it; changes not
-        saved yet are not in it.
-        """
-        parent = getattr(self, "parent_window", None)
-        client = getattr(parent, "client", None)
-        connection = getattr(self, "connection", None)
-        if connection is None or not (
-            callable(getattr(parent, "_daemon_ready", None))
-            and parent._daemon_ready()
-            and callable(getattr(client, "get_effective_config", None))
-        ):
-            self._show_effective_config_unavailable()
-            return
-        host = str(getattr(connection, "nickname", "") or "")
-
-        def present(result):
-            if result is None or not getattr(result, "available", False):
-                self._show_effective_config_unavailable()
-                return False
-            try:
-                from .effective_config_dialog import EffectiveConfigDialog
-
-                EffectiveConfigDialog.for_result(
-                    self,
-                    host,
-                    {
-                        "has_diff": result.has_diff,
-                        "changes": list(result.changes),
-                        "own": list(result.own),
-                        "full": list(result.full),
-                    },
-                    on_edit=self._open_ssh_config_editor_over,
-                )
-            except Exception:
-                logger.debug("Could not open the effective-config viewer", exc_info=True)
-            return False
-
-        def worker():
-            result = None
-            try:
-                from .api.connection_identity import connection_id_for
-
-                result = client.get_effective_config(connection_id_for(connection))
-            except Exception:
-                logger.debug("Effective config unavailable", exc_info=True)
-            GLib.idle_add(present, result)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _show_effective_config_unavailable(self) -> None:
-        dialog = Adw.AlertDialog.new(
-            _("Effective configuration unavailable"),
-            _(
-                "The background service could not resolve this connection's "
-                "effective SSH configuration."
-            ),
-        )
-        dialog.add_response("close", _("_Close"))
-        dialog.present(self)
-
-    def _on_edit_ssh_config_clicked(self, _button) -> None:
-        self._open_ssh_config_editor_over(self)
 
     def _on_advanced_config_clicked(self, _button) -> None:
         """Open Advanced Configuration above this dialog, at the host's own
         block when there is one, and re-mark the fields after each save
-        there (as after a save in the SSH config editor: what was typed
-        here stays, and this dialog still saves only what it changed)."""
+        there: what was typed here stays, and this dialog still saves only
+        what it changed."""
         parent = getattr(self, "parent_window", None)
         opener = getattr(parent, "open_advanced_config", None)
         if not callable(opener):
@@ -900,15 +817,6 @@ class ConnectionDialogOverridesMixin:
             over=self,
             on_saved=self._on_ssh_config_saved,
         )
-
-    def _open_ssh_config_editor_over(self, window) -> None:
-        """Open the SSH config editor modal over *window* (this dialog, or
-        the viewer opened from it), and re-mark the fields after each save."""
-        parent = getattr(self, "parent_window", None)
-        opener = getattr(parent, "_open_ssh_config_editor", None)
-        if not callable(opener):
-            return
-        opener(parent=window, on_saved=self._on_ssh_config_saved)
 
     def _on_ssh_config_saved(self) -> None:
         """The file changed under this dialog: ask again what decides each field.

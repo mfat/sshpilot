@@ -65,8 +65,8 @@ it; keeping them cancels the navigation.
 - **Another editor on the same file.** A save in Advanced Configuration does
   not make an open connection editor stale (connection generations are not
   touched by a raw save). Pass `on_saved` to refresh what the caller shows;
-  the connection editor passes the hook it already uses for the SSH config
-  editor, and still saves only the fields changed in it.
+  the connection editor passes the hook that re-marks its fields, and still
+  saves only the fields changed in it.
 - **A configuration OpenSSH rejects** opens like any other: the rejected line
   is marked on its card, and `line=` reaches it.
 
@@ -75,4 +75,6 @@ it; keeping them cancels the navigation.
 - Sidebar, connection context menu: **Advanced Configuration** (`host`,
   `file`).
 - Connection editor, foot of the dialog: **Advanced Configuration** (`host`,
-  `file`, `over`, `on_saved`).
+  `file`, `over`, `on_saved`). It is the dialog's one way into the
+  configuration: the "Saved Effective Config" and "Edit SSH Config" buttons
+  that stood beside it are gone, since it shows both.
