@@ -100,7 +100,8 @@ def status_text(status: SecretStatus, remove_pending: bool, kind: str) -> str:
         return _("The saved password is removed when you save.")
     return {
         SecretStatus.SAVED: _(
-            "A password is saved in secure storage. Type a new one to replace it."
+            "A password is saved. Type over it to replace it, or erase it to "
+            "remove it."
         ),
         SecretStatus.LOCKED: _(
             "Secure storage is locked, so it is not known whether a password "
@@ -110,24 +111,22 @@ def status_text(status: SecretStatus, remove_pending: bool, kind: str) -> str:
     }.get(status, "")
 
 
-def _button_texts(kind: str) -> Tuple[str, str, str]:
+def _button_texts(kind: str) -> Tuple[str, str]:
+    """Tooltips of the Reveal and Undo buttons."""
     if kind == "passphrase":
-        return (
-            _("Show the saved passphrase"),
-            _("Remove the saved passphrase"),
-            _("Keep the saved passphrase"),
-        )
-    return (
-        _("Show the saved password"),
-        _("Remove the saved password"),
-        _("Keep the saved password"),
-    )
+        return _("Show the saved passphrase"), _("Keep the saved passphrase")
+    return _("Show the saved password"), _("Keep the saved password")
 
 
-def show_entry_text(entry) -> None:
-    """Unmask a password entry (neither GTK widget has an API for it)."""
+#: Shown, masked, in the field of a saved secret that was not read: the
+#: field looks filled, as a saved password does, without holding it.
+PLACEHOLDER = "\u2022" * 8
+
+
+def inner_text(entry):
+    """The Gtk.Text inside a password entry or row, or None."""
     if Gtk is None:
-        return
+        return None
     try:
         pending = [entry.get_first_child()]
         while pending:
@@ -135,12 +134,19 @@ def show_entry_text(entry) -> None:
             if widget is None:
                 continue
             if isinstance(widget, Gtk.Text):
-                widget.set_visibility(True)
-                return
+                return widget
             pending.append(widget.get_next_sibling())
             pending.append(widget.get_first_child())
     except Exception:
-        logger.debug("Could not unmask the entry", exc_info=True)
+        logger.debug("Could not find the entry's text", exc_info=True)
+    return None
+
+
+def show_entry_text(entry) -> None:
+    """Unmask a password entry (neither GTK widget has an API for it)."""
+    text = inner_text(entry)
+    if text is not None:
+        text.set_visibility(True)
 
 
 class SavedSecretField:
@@ -176,28 +182,47 @@ class SavedSecretField:
         self._busy = False
         self.reveal_button = None
         self.remove_button = None
+        #: The field holds :data:`PLACEHOLDER`, not a value.
+        self.placeholder_active = False
+        self._setting = False
+        try:
+            entry.connect("changed", self._on_entry_changed)
+        except Exception:
+            logger.debug("Cannot watch the secret entry", exc_info=True)
+        # The entry's own eye, pressed on the dots, asks for the saved
+        # secret: showing the dots themselves would say nothing.
+        text = inner_text(entry)
+        if text is not None:
+            text.connect("notify::visibility", self._on_peek)
+
+    def _on_peek(self, text, _param) -> None:
+        if not self.placeholder_active or not text.get_visibility():
+            return
+        text.set_visibility(False)
+        self.reveal()
 
     # -- widgets -----------------------------------------------------------
 
     def build_buttons(self, *, labels: bool = False) -> Tuple[object, object]:
-        """The Reveal and Remove buttons (hidden until a secret is saved).
+        """The two buttons a field can need; both start hidden.
 
-        ``labels``: worded buttons ("Show saved", "Remove"), for a place
-        with room. The entry has an eye and a pencil of its own, which act
-        on the text typed into it; icons next to those read as more of the
-        same. Without room (a key row) Reveal is a key, not a second eye.
+        A saved secret shows as dots: the entry's own eye reveals it and
+        erasing the dots removes it, so no button is needed for either.
+        What that leaves is **Show saved**, for a locked storage (no dots:
+        it is not known whether anything is saved), and **Undo**, after a
+        removal was asked for. ``labels``: worded buttons, for a place with
+        room; else icons (a key row).
         """
-        show, remove, _keep = _button_texts(self.kind)
-        self._labels = labels
+        show, keep = _button_texts(self.kind)
         if labels:
             self.reveal_button = Gtk.Button(label=_("Show saved"))
-            self.remove_button = Gtk.Button(label=_("Remove"))
+            self.remove_button = Gtk.Button(label=_("Undo"))
         else:
             self.reveal_button = Gtk.Button(icon_name="dialog-password-symbolic")
-            self.remove_button = Gtk.Button(icon_name="edit-clear-symbolic")
+            self.remove_button = Gtk.Button(icon_name="edit-undo-symbolic")
         self.reveal_button.set_tooltip_text(show)
         self.reveal_button.connect("clicked", lambda *_a: self.reveal())
-        self.remove_button.set_tooltip_text(remove)
+        self.remove_button.set_tooltip_text(keep)
         self.remove_button.connect("clicked", lambda *_a: self.toggle_remove())
         for button in (self.reveal_button, self.remove_button):
             if not labels:
@@ -210,28 +235,78 @@ class SavedSecretField:
         """The line to show for this field now."""
         return status_text(self.status, self.remove_pending, self.kind)
 
+    def _set_entry(self, text: str) -> None:
+        self._setting = True
+        try:
+            self.entry.set_text(text)
+        except Exception:
+            logger.debug("Could not set the secret entry", exc_info=True)
+        finally:
+            self._setting = False
+
+    def value(self) -> str:
+        """What the user typed (or revealed); empty for the placeholder."""
+        if self.placeholder_active:
+            return ""
+        try:
+            return self.entry.get_text() or ""
+        except Exception:
+            return ""
+
+    def baseline(self) -> str:
+        """The entry text that means "unchanged"."""
+        return PLACEHOLDER if self.placeholder_active else (self.revealed or "")
+
+    def _sync_placeholder(self) -> None:
+        """Fill an untouched field of a saved secret with dots."""
+        wanted = (
+            self.status == SecretStatus.SAVED
+            and self.revealed is None
+            and not self.remove_pending
+        )
+        if wanted and not self.placeholder_active and not self.value():
+            self.placeholder_active = True
+            self._set_entry(PLACEHOLDER)
+        elif not wanted and self.placeholder_active:
+            self.placeholder_active = False
+            self._set_entry("")
+
+    def _on_entry_changed(self, *_args) -> None:
+        """The user edited the dots: they stand for no text of their own.
+
+        Typing replaces them with what was typed; erasing them asks for
+        the saved secret to be removed, as clearing a filled field does.
+        """
+        if self._setting or not self.placeholder_active:
+            return
+        try:
+            text = self.entry.get_text() or ""
+        except Exception:
+            return
+        if text == PLACEHOLDER:
+            return
+        self.placeholder_active = False
+        typed = text.replace("\u2022", "")
+        self._set_entry(typed)
+        try:
+            self.entry.set_position(-1)
+        except Exception:
+            pass
+        if not typed:
+            self.remove_pending = True
+        self._refresh()
+
     def _refresh(self) -> None:
-        maybe_saved = self.status in (SecretStatus.SAVED, SecretStatus.LOCKED)
+        self._sync_placeholder()
         if self.reveal_button is not None:
             self.reveal_button.set_visible(
-                maybe_saved and self.revealed is None and not self.remove_pending
+                self.status == SecretStatus.LOCKED
+                and self.revealed is None
+                and not self.remove_pending
             )
             self.reveal_button.set_sensitive(not self._busy)
         if self.remove_button is not None:
-            _show, remove, keep = _button_texts(self.kind)
-            self.remove_button.set_visible(
-                self.status == SecretStatus.SAVED or self.remove_pending
-            )
-            if getattr(self, "_labels", False):
-                self.remove_button.set_label(
-                    _("Undo") if self.remove_pending else _("Remove")
-                )
-            else:
-                self.remove_button.set_icon_name(
-                    "edit-undo-symbolic" if self.remove_pending
-                    else "edit-clear-symbolic"
-                )
-            self.remove_button.set_tooltip_text(keep if self.remove_pending else remove)
+            self.remove_button.set_visible(self.remove_pending)
         if callable(self._on_changed):
             try:
                 self._on_changed(self)
@@ -278,8 +353,9 @@ class SavedSecretField:
             if value:
                 self.status = SecretStatus.SAVED
                 try:
-                    if not self.entry.get_text():
-                        self.entry.set_text(value)
+                    if not self.value():
+                        self.placeholder_active = False
+                        self._set_entry(value)
                         self.revealed = value
                         show_entry_text(self.entry)
                 except Exception:
@@ -316,16 +392,10 @@ class SavedSecretField:
         if self.remove_pending:
             # The field holds no value to keep; a revealed one is forgotten.
             self.revealed = None
-            try:
-                self.entry.set_text("")
-            except Exception:
-                pass
+            self.placeholder_active = False
+            self._set_entry("")
         self._refresh()
 
     def operation(self) -> Optional[Tuple[str, str]]:
         """What Save does: see :func:`planned_operation`."""
-        try:
-            text = self.entry.get_text()
-        except Exception:
-            text = ""
-        return planned_operation(text, self.revealed, self.remove_pending)
+        return planned_operation(self.value(), self.revealed, self.remove_pending)

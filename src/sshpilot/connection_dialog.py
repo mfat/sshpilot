@@ -1376,7 +1376,9 @@ class FileListEditor(Adw.PreferencesGroup):
                 secret.clear()
 
         def changed(field):
-            row._pass_initial = field.revealed or ''
+            # While the dots of an unread passphrase are shown, they are
+            # the unchanged text: nothing to verify, store or delete.
+            row._pass_initial = field.baseline()
             row._pass_saved = field.status == SecretStatus.SAVED
             row._pass_remove_pending = field.remove_pending
             try:
@@ -4750,7 +4752,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                         row,
                         lambda f, r=row: r.set_tooltip_text(f.text() or None),
                     )
-                getter = lambda r=row: r.get_text()
+                    # Never the dots shown for a saved, unread password.
+                    getter = self._plugin_password_field.value
+                else:
+                    getter = lambda r=row: r.get_text()
                 setter = lambda v, r=row: r.set_text(str(v or ''))
             elif kind == 'choice':
                 row = Adw.ComboRow(title=spec.label)
@@ -5447,7 +5452,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         secret_plan = {
             'password_changed': bool(password_changed),
-            'password': self.password_row.get_text(),
+            # Never the dots shown for a saved password that was not read.
+            'password': (
+                self._password_field.value()
+                if getattr(self, '_password_field', None) is not None
+                else self.password_row.get_text()
+            ),
             'passphrase_operations': passphrase_ops,
         }
         

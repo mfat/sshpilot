@@ -316,7 +316,11 @@ class ConnectionDialogLoginProfileMixin:
         has_own_password = bool(
             getattr(self, "_password_saved", False)
             or (getattr(self, "password_row", None) is not None
-                and self.password_row.get_text())
+                and (
+                    self._password_field.value()
+                    if getattr(self, "_password_field", None) is not None
+                    else self.password_row.get_text()
+                ))
         )
         if getattr(previous, "has_password", False) and not has_own_password:
             note += " " + _(

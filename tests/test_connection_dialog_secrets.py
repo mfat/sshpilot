@@ -13,6 +13,7 @@ import pytest
 import sshpilot.connection_dialog_secrets as secrets_module
 from sshpilot.connection_dialog import ConnectionDialog, FileListEditor
 from sshpilot.connection_dialog_secrets import (
+    PLACEHOLDER,
     SavedSecretField,
     SecretStatus,
     check_status,
@@ -24,12 +25,21 @@ class Entry:
     def __init__(self, text=""):
         self.text = text
         self.properties = {}
+        self.handlers = []
 
     def get_text(self):
         return self.text
 
     def set_text(self, text):
         self.text = text
+        for handler in self.handlers:
+            handler(self)
+
+    def connect(self, _signal, handler):
+        self.handlers.append(handler)
+
+    def set_position(self, _position):
+        pass
 
     def set_property(self, name, value):
         self.properties[name] = value
@@ -191,7 +201,35 @@ def test_opening_with_saved_credentials_only_asks_whether_they_exist(inline, kin
 
     assert field.status is SecretStatus.SAVED
     assert not any(str(call[0]).startswith("reveal") for call in client.calls[1:])
-    assert entry.get_text() == "" and field.operation() is None
+    # The field looks filled, with dots that are not the secret.
+    assert entry.get_text() == PLACEHOLDER
+    assert field.value() == "" and field.operation() is None
+
+
+def test_typing_over_the_dots_replaces_and_erasing_them_removes(inline):
+    entry = Entry()
+    field = _field(entry, Client(), "password")
+    field.load_status()
+
+    entry.set_text(PLACEHOLDER + "n")        # a key pressed after the dots
+    assert entry.get_text() == "n"
+    assert field.operation() == ("store", "n")
+
+    other = Entry()
+    erased = _field(other, Client(), "password")
+    erased.load_status()
+    other.set_text(PLACEHOLDER[:-1])         # backspace
+    assert other.get_text() == "" and erased.remove_pending
+    assert erased.operation() == ("delete", "")
+    erased.toggle_remove()                   # Undo: the dots are back
+    assert other.get_text() == PLACEHOLDER and erased.operation() is None
+
+
+def test_a_locked_vault_shows_no_dots(inline):
+    entry = Entry()
+    field = _field(entry, Client(locked=True), "password")
+    field.load_status()
+    assert entry.get_text() == ""
 
 
 def test_the_save_gate_asks_for_no_unlock_when_no_secret_changes():
