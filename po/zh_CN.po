@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 00:44+0330\n"
+"POT-Creation-Date: 2026-11-24 07:15+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -113,7 +113,7 @@ msgstr "打开连接？"
 #: src/sshpilot/bitwarden_setup.py:852 src/sshpilot/bitwarden_setup.py:956
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
-#: src/sshpilot/connection_dialog_auth.py:784
+#: src/sshpilot/connection_dialog_auth.py:820
 #: src/sshpilot/connection_dialog_port_forwarding.py:247
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
@@ -1709,7 +1709,7 @@ msgstr "已添加"
 
 #: src/sshpilot/connection_dialog.py:1187
 #: src/sshpilot/connection_dialog.py:1337
-#: src/sshpilot/connection_dialog_auth.py:785
+#: src/sshpilot/connection_dialog_auth.py:821
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:360
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:489
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:207
@@ -2579,7 +2579,69 @@ msgstr "密钥（publickey）"
 msgid "Keyboard-interactive (PAM, one-time codes)"
 msgstr "键盘交互（PAM、一次性验证码）"
 
-#: src/sshpilot/connection_dialog_auth.py:628
+#: src/sshpilot/connection_dialog_auth.py:595
+#: src/sshpilot/connection_dialog_auth.py:747
+#: src/sshpilot/login_profile_dialogs.py:280
+#: src/sshpilot/login_profile_dialogs.py:316 src/sshpilot/preferences.py:2877
+#: src/sshpilot/preferences.py:2908
+msgid "Not set"
+msgstr "未设置"
+
+#: src/sshpilot/connection_dialog_auth.py:598
+msgid "Disabled in this profile, so it is skipped"
+msgstr "已在此配置文件中禁用，因此会跳过"
+
+#: src/sshpilot/connection_dialog_auth.py:599
+msgid "Disabled for this host, so it is skipped"
+msgstr "已为此主机禁用，因此会跳过"
+
+#: src/sshpilot/connection_dialog_auth.py:600
+msgid "Disabled in this profile"
+msgstr "已在此配置文件中禁用"
+
+#: src/sshpilot/connection_dialog_auth.py:601
+msgid "Disabled for this host"
+msgstr "已为此主机禁用"
+
+#. {value} is the authored value, e.g. host-bound.
+#: src/sshpilot/connection_dialog_auth.py:605
+#, python-brace-format
+msgid "Enabled in this profile ({value}), but not tried (unticked)"
+msgstr "已在此配置文件中启用（{value}），但不会尝试（未勾选）"
+
+#: src/sshpilot/connection_dialog_auth.py:607
+#, python-brace-format
+msgid "Enabled for this host ({value}), but not tried (unticked)"
+msgstr "已为此主机启用（{value}），但不会尝试（未勾选）"
+
+#: src/sshpilot/connection_dialog_auth.py:609
+msgid "Enabled in this profile, but not tried (unticked)"
+msgstr "已在此配置文件中启用，但不会尝试（未勾选）"
+
+#: src/sshpilot/connection_dialog_auth.py:610
+msgid "Enabled for this host, but not tried (unticked)"
+msgstr "已为此主机启用，但不会尝试（未勾选）"
+
+#. {value} is the authored value, e.g. host-bound.
+#: src/sshpilot/connection_dialog_auth.py:613
+#, python-brace-format
+msgid "Enabled in this profile ({value})"
+msgstr "已在此配置文件中启用（{value}）"
+
+#: src/sshpilot/connection_dialog_auth.py:614
+#, python-brace-format
+msgid "Enabled for this host ({value})"
+msgstr "已为此主机启用（{value}）"
+
+#: src/sshpilot/connection_dialog_auth.py:615
+msgid "Enabled in this profile"
+msgstr "已在此配置文件中启用"
+
+#: src/sshpilot/connection_dialog_auth.py:616
+msgid "Enabled for this host"
+msgstr "已为此主机启用"
+
+#: src/sshpilot/connection_dialog_auth.py:664
 msgid ""
 "Lines this profile sets replace a linked connection's own; what it leaves "
 "unset stays the connection's. Methods are tried from the top; unchecked "
@@ -2588,127 +2650,94 @@ msgstr ""
 "此配置文件设置的行会替换所关联连接自身的行；未设置的部分仍由连接自己决定。从"
 "上到下依次尝试各方法；未勾选的方法会被略过。"
 
-#: src/sshpilot/connection_dialog_auth.py:632
+#: src/sshpilot/connection_dialog_auth.py:668
 msgid "Methods are tried from the top. Unchecked methods are left out."
 msgstr "从上到下依次尝试各方法。未勾选的方法会被略过。"
 
 #. One row that folds the method list away: most hosts never change
 #. it, so the header says what will be tried and the rows wait inside.
-#: src/sshpilot/connection_dialog_auth.py:637
+#: src/sshpilot/connection_dialog_auth.py:673
 msgid "Authentication methods"
 msgstr "身份验证方法"
 
-#: src/sshpilot/connection_dialog_auth.py:641 src/sshpilot/preferences.py:1738
+#: src/sshpilot/connection_dialog_auth.py:677 src/sshpilot/preferences.py:1738
 #: src/sshpilot/preferences.py:3058 src/sshpilot/preferences.py:6341
 msgid "Reset"
 msgstr "重置"
 
-#: src/sshpilot/connection_dialog_auth.py:645
-#: src/sshpilot/connection_dialog_auth.py:911
+#: src/sshpilot/connection_dialog_auth.py:681
+#: src/sshpilot/connection_dialog_auth.py:947
 msgid "Leave the order to each linked connection"
 msgstr "由每个关联连接自行决定顺序"
 
-#: src/sshpilot/connection_dialog_auth.py:646
-#: src/sshpilot/connection_dialog_auth.py:912
+#: src/sshpilot/connection_dialog_auth.py:682
+#: src/sshpilot/connection_dialog_auth.py:948
 msgid "Use authentication order set by OpenSSH configuration"
 msgstr "使用 OpenSSH 配置设置的身份验证顺序"
 
-#: src/sshpilot/connection_dialog_auth.py:703
+#: src/sshpilot/connection_dialog_auth.py:739
 #: src/sshpilot/advanced_config_rules_view.py:242
 msgid "Move up"
 msgstr "上移"
 
-#: src/sshpilot/connection_dialog_auth.py:704
+#: src/sshpilot/connection_dialog_auth.py:740
 #: src/sshpilot/advanced_config_rules_view.py:243
 msgid "Move down"
 msgstr "下移"
 
-#: src/sshpilot/connection_dialog_auth.py:705
+#: src/sshpilot/connection_dialog_auth.py:741
 msgid "Move to top"
 msgstr "移到最前"
 
-#: src/sshpilot/connection_dialog_auth.py:711
-#: src/sshpilot/login_profile_dialogs.py:280
-#: src/sshpilot/login_profile_dialogs.py:316 src/sshpilot/preferences.py:2877
-#: src/sshpilot/preferences.py:2908
-msgid "Not set"
-msgstr "未设置"
-
-#: src/sshpilot/connection_dialog_auth.py:712
+#: src/sshpilot/connection_dialog_auth.py:748
 msgid "Enable in linked connections"
 msgstr "在关联连接中启用"
 
-#: src/sshpilot/connection_dialog_auth.py:713
+#: src/sshpilot/connection_dialog_auth.py:749
 msgid "Enable for this host"
 msgstr "为此主机启用"
 
-#: src/sshpilot/connection_dialog_auth.py:714
+#: src/sshpilot/connection_dialog_auth.py:750
 msgid "Disable in linked connections"
 msgstr "在关联连接中禁用"
 
-#: src/sshpilot/connection_dialog_auth.py:715
+#: src/sshpilot/connection_dialog_auth.py:751
 msgid "Disable for this host"
 msgstr "为此主机禁用"
 
-#: src/sshpilot/connection_dialog_auth.py:729
+#: src/sshpilot/connection_dialog_auth.py:765
 msgid "Method options"
 msgstr "方法选项"
 
-#: src/sshpilot/connection_dialog_auth.py:777
+#: src/sshpilot/connection_dialog_auth.py:813
 msgid "Remove the custom authentication order?"
 msgstr "移除自定义认证顺序？"
 
-#: src/sshpilot/connection_dialog_auth.py:779
+#: src/sshpilot/connection_dialog_auth.py:815
 msgid ""
 "This will remove your custom authentication order from the SSH configuration "
 "when you save. The host then uses the order it inherits."
 msgstr ""
 "保存时将从 SSH 配置中移除您的自定义认证顺序。之后主机将使用继承的顺序。"
 
-#: src/sshpilot/connection_dialog_auth.py:886
+#: src/sshpilot/connection_dialog_auth.py:922
 msgid "Not known to this dialog; kept as written."
 msgstr "此对话框无法识别；按原样保留。"
 
-#: src/sshpilot/connection_dialog_auth.py:924
-#: src/sshpilot/connection_dialog_auth.py:987
+#: src/sshpilot/connection_dialog_auth.py:960
+#: src/sshpilot/connection_dialog_auth.py:1009
 msgid "Shown once OpenSSH has read the configuration."
 msgstr "OpenSSH 读取配置后显示。"
 
-#: src/sshpilot/connection_dialog_auth.py:927
+#: src/sshpilot/connection_dialog_auth.py:963
 msgid "No method: the login cannot succeed."
 msgstr "没有可用方法：登录无法成功。"
 
-#: src/sshpilot/connection_dialog_auth.py:962
-msgid "Disabled in this profile"
-msgstr "已在此配置文件中禁用"
-
-#: src/sshpilot/connection_dialog_auth.py:963
-msgid "Disabled in this block"
-msgstr "已在此块中禁用"
-
-#: src/sshpilot/connection_dialog_auth.py:968
-#, python-brace-format
-msgid "Enabled in this profile ({value})"
-msgstr "已在此配置文件中启用（{value}）"
-
-#: src/sshpilot/connection_dialog_auth.py:969
-#, python-brace-format
-msgid "Enabled in this block ({value})"
-msgstr "已在此块中启用（{value}）"
-
-#: src/sshpilot/connection_dialog_auth.py:973
-msgid "Enabled in this profile"
-msgstr "已在此配置文件中启用"
-
-#: src/sshpilot/connection_dialog_auth.py:974
-msgid "Enabled in this block"
-msgstr "已在此块中启用"
-
-#: src/sshpilot/connection_dialog_auth.py:991
+#: src/sshpilot/connection_dialog_auth.py:1013
 msgid "At least one method must stay checked."
 msgstr "至少要保留一个已勾选的方法。"
 
-#: src/sshpilot/connection_dialog_auth.py:993
+#: src/sshpilot/connection_dialog_auth.py:1015
 msgid "Not tried. Check it to add it at the end of the login order."
 msgstr "不会尝试。勾选后会添加到登录顺序的末尾。"
 
@@ -5362,7 +5391,8 @@ msgstr "SSH 会话退出，状态码为 {status}"
 msgid "Could not list suggestions: {error}"
 msgstr "无法选择目标：{error}"
 
-#. : Shown while the command is still running, so a slow knock or VPN dial-up is
+#. : Shown while the command is still running, so a slow knock or VPN dial-up
+#. is
 #. : not a silent multi-second hang on connect.
 #: src/sshpilot/gtk/pre_command_messages.py:32
 msgid "Running pre-connect command…"
@@ -13073,12 +13103,14 @@ msgstr "未找到所选的 SSH 密钥。"
 msgid "The public-key deployment request is invalid."
 msgstr "公钥部署请求无效。"
 
-#. : Trailing dropdown entry that opens the file chooser instead of selecting a key.
+#. : Trailing dropdown entry that opens the file chooser instead of selecting a
+#. key.
 #: src/sshpilot/sshcopyid_window.py:78
 msgid "Browse for a key file…"
 msgstr "浏览密钥文件…"
 
-#. Radio option 1: Use existing key (using CheckButton with group for radio behavior)
+#. Radio option 1: Use existing key (using CheckButton with group for radio
+#. behavior)
 #: src/sshpilot/sshcopyid_window.py:166
 msgid "Copy existing key"
 msgstr "复制现有密钥"
@@ -17808,6 +17840,12 @@ msgstr "没有匹配的文件。"
 #: src/sshpilot/advanced_config_results_view.py:593
 msgid "No other file is read for this target."
 msgstr "此目标不读取其他文件。"
+
+#~ msgid "Disabled in this block"
+#~ msgstr "已在此块中禁用"
+
+#~ msgid "Enabled in this block"
+#~ msgstr "已在此块中启用"
 
 #, python-brace-format
 #~ msgid "Read as a connection reads it: {files}"

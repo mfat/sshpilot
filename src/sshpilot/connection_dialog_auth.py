@@ -580,6 +580,42 @@ def switch_choice(value: Optional[bool]) -> str:
     return "inherit" if value is None else ("yes" if value else "no")
 
 
+def switch_caption(
+    own: Optional[bool], value: str, ticked: Optional[bool], profile: bool
+) -> str:
+    """A method row's caption: its own on/off line, read with its tick.
+
+    A method is tried only when it is both in the order (ticked) and not
+    switched off, so an enabled but unticked method says it is not tried and
+    a ticked but disabled one says it is skipped. ``ticked`` is None while the
+    order is unknown; the caption then adds nothing about it. ``value`` is the
+    authored value of a restricted switch (e.g. host-bound), or "".
+    """
+    if own is None:
+        return _("Not set")
+    if not own:
+        if ticked:
+            return (_("Disabled in this profile, so it is skipped") if profile
+                    else _("Disabled for this host, so it is skipped"))
+        return (_("Disabled in this profile") if profile
+                else _("Disabled for this host"))
+    if ticked is False:
+        if value:
+            # {value} is the authored value, e.g. host-bound.
+            return (_("Enabled in this profile ({value}), but not tried (unticked)")
+                    if profile else
+                    _("Enabled for this host ({value}), but not tried (unticked)")
+                    ).format(value=value)
+        return (_("Enabled in this profile, but not tried (unticked)") if profile
+                else _("Enabled for this host, but not tried (unticked)"))
+    if value:
+        # {value} is the authored value, e.g. host-bound.
+        return (_("Enabled in this profile ({value})") if profile
+                else _("Enabled for this host ({value})")).format(value=value)
+    return (_("Enabled in this profile") if profile
+            else _("Enabled for this host"))
+
+
 class AuthPolicyGroup:
     """Draws an :class:`AuthPolicy` as an ``Adw.PreferencesGroup``.
 
@@ -953,26 +989,12 @@ class AuthPolicyGroup:
         switch = actions.lookup_action("switch")
         switch.set_state(GLib.Variant("s", switch_choice(own)))
         switch.set_enabled(self.policy.can_set_switch(method))
-        # The row says what this block (or profile) sets for the method; a
-        # method it disables keeps its place in the order.
-        if own is None:
-            row.set_subtitle(KEYWORD_OF[method])
-        elif not own:
-            row.set_subtitle(
-                _("Disabled in this profile") if self.profile
-                else _("Disabled in this block")
-            )
-        elif self.policy.restriction(method):
-            # {value} is the authored value, e.g. host-bound.
-            row.set_subtitle((
-                _("Enabled in this profile ({value})") if self.profile
-                else _("Enabled in this block ({value})")
-            ).format(value=self.policy.restriction(method)))
-        else:
-            row.set_subtitle(
-                _("Enabled in this profile") if self.profile
-                else _("Enabled in this block")
-            )
+        row.set_subtitle(switch_caption(
+            own,
+            self.policy.restriction(method),
+            self.policy.shown_checked(method),
+            bool(self.profile),
+        ))
 
     def _show_switch(self, row, method: str) -> None:
         check = row._check

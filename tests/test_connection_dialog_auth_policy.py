@@ -19,6 +19,7 @@ from sshpilot.connection_dialog_auth import (
     AuthPolicy,
     join_extra,
     split_policy_lines,
+    switch_caption,
 )
 
 SSH_G = {  # what `ssh -G` prints on Ubuntu with no order configured
@@ -565,3 +566,53 @@ def test_conflicting_duplicate_lines_become_one_setting(tmp_path, choice, expect
     # Changing the setting kept the order.
     assert resolved["preferredauthentications"] == "publickey,password"
     assert reopened.order == ["publickey", "password"]
+
+
+def _caption(lines, method, resolved=None):
+    policy = AuthPolicy.from_lines(lines)
+    policy.set_inherited(resolved or SSH_G)
+    return switch_caption(
+        policy.own_switch(method), policy.restriction(method),
+        policy.shown_checked(method), False,
+    )
+
+
+@pytest.mark.parametrize("lines, method, caption", [
+    # No line of its own.
+    (["PreferredAuthentications publickey,password"], "publickey", "Not set"),
+    # Enabled and listed: it is tried.
+    (["PreferredAuthentications publickey,password", "PubkeyAuthentication yes"],
+     "publickey", "Enabled for this host"),
+    # Enabled but left out of the order: ssh never offers it.
+    (["PreferredAuthentications password", "PubkeyAuthentication yes"],
+     "publickey", "Enabled for this host, but not tried (unticked)"),
+    (["PreferredAuthentications password", "PubkeyAuthentication host-bound"],
+     "publickey", "Enabled for this host (host-bound), but not tried (unticked)"),
+    (["PreferredAuthentications publickey,password", "PubkeyAuthentication host-bound"],
+     "publickey", "Enabled for this host (host-bound)"),
+    # Listed but switched off: it keeps its place and is skipped.
+    (["PreferredAuthentications publickey,password", "PubkeyAuthentication no"],
+     "publickey", "Disabled for this host, so it is skipped"),
+    (["PreferredAuthentications password", "PubkeyAuthentication no"],
+     "publickey", "Disabled for this host"),
+])
+def test_a_method_caption_reads_its_switch_with_its_tick(lines, method, caption):
+    resolved = dict(SSH_G, preferredauthentications=parse_order_line(lines))
+    assert _caption(lines, method, resolved) == caption
+
+
+def parse_order_line(lines):
+    return next(line.split(None, 1)[1] for line in lines
+                if line.startswith("PreferredAuthentications"))
+
+
+def test_a_caption_says_nothing_about_the_tick_while_the_order_is_unknown():
+    assert switch_caption(True, "", None, False) == "Enabled for this host"
+    assert switch_caption(False, "", None, True) == "Disabled in this profile"
+
+
+def test_a_profile_caption_speaks_of_the_profile():
+    assert (switch_caption(True, "", False, True)
+            == "Enabled in this profile, but not tried (unticked)")
+    assert (switch_caption(False, "", True, True)
+            == "Disabled in this profile, so it is skipped")
