@@ -44,10 +44,6 @@ COMMON_OPTIONS = (
     ("ServerAliveInterval", "60"),
 )
 
-#: How much of the list stays in view when it is scrolled to its very end:
-#: enough for the last block's header line and the top of its options.
-_LAST_BLOCK_PEEK = 110
-
 _BLOCK_DRAG = "block"
 _OPTION_DRAG = "option"
 
@@ -606,8 +602,9 @@ class RulesView(Gtk.Box):
                 return
 
     def scroll_to(self, uid: int) -> None:
-        """Bring a block's card to the top of the list, wherever it was:
-        the block gone to is read from its first line down. Focus stays
+        """Bring a block's card to the middle of the list, wherever it was:
+        what comes before it and after it is in view around it. A card
+        taller than the list is shown from its first line. Focus stays
         where it is (the sidebar's list is being walked)."""
         card = self.cards.get(uid)
         if card is None:
@@ -615,15 +612,22 @@ class RulesView(Gtk.Box):
         found, bounds = card.card.compute_bounds(self.box)
         if not found:
             return
-        # The list's own top margin is the gap left above the card.
-        self.scroller.get_vadjustment().set_value(max(0.0, bounds.get_y()))
+        adjustment = self.scroller.get_vadjustment()
+        page, height = adjustment.get_page_size(), bounds.get_height()
+        gap = self.box.get_margin_top()
+        top = bounds.get_y() + gap          # the card's top, as the list scrolls
+        if height + 2 * gap >= page:
+            value = top - gap
+        else:
+            value = top + height / 2 - page / 2
+        adjustment.set_value(max(0.0, value))
 
     def _sync_scroll_room(self, *_args) -> None:
-        """Leave room under the last block for it to reach the top too:
+        """Leave room under the last block for it to reach the middle too:
         without it the list ends where the last card does, and the blocks
         at the end of the file could never be brought up."""
         page = self.scroller.get_vadjustment().get_page_size()
-        room = max(14, int(page) - _LAST_BLOCK_PEEK)
+        room = max(14, int(page) // 2)
         if self.box.get_margin_bottom() != room:
             # Not during the size allocation that told us the page size.
             GLib.idle_add(lambda: (self.box.set_margin_bottom(room), False)[1])
