@@ -44,6 +44,10 @@ COMMON_OPTIONS = (
     ("ServerAliveInterval", "60"),
 )
 
+#: Where a block gone to rests in the list: this far down it, as a part of
+#: its height. Between the top and the middle.
+_CARD_REST = 0.25
+
 _BLOCK_DRAG = "block"
 _OPTION_DRAG = "option"
 
@@ -632,10 +636,11 @@ class RulesView(Gtk.Box):
                 return
 
     def scroll_to(self, uid: int) -> None:
-        """Bring a block's card to the middle of the list, wherever it was:
-        what comes before it and after it is in view around it. A card
-        taller than the list is shown from its first line. Focus stays
-        where it is (the sidebar's list is being walked)."""
+        """Bring a block's card to where the eye rests in the list: a
+        quarter of the way down, with what comes before it in view above
+        and most of the list left for it and what follows. A card too tall
+        for that is shown from the top. Focus stays where it is (the
+        sidebar's list is being walked)."""
         card = self.cards.get(uid)
         if card is None:
             return
@@ -646,11 +651,10 @@ class RulesView(Gtk.Box):
         page, height = adjustment.get_page_size(), bounds.get_height()
         gap = self.box.get_margin_top()
         top = bounds.get_y() + gap          # the card's top, as the list scrolls
-        if height + 2 * gap >= page:
-            value = top - gap
-        else:
-            value = top + height / 2 - page / 2
-        adjustment.set_value(max(0.0, value))
+        rest = page * _CARD_REST
+        if height + gap > page - rest:
+            rest = gap                      # no room for it there: from the top
+        adjustment.set_value(max(0.0, top - rest))
 
     def card_top(self, uid: int) -> Optional[float]:
         """How far under the top edge of the list a block's card starts, as
@@ -681,11 +685,11 @@ class RulesView(Gtk.Box):
         )
 
     def _sync_scroll_room(self, *_args) -> None:
-        """Leave room under the last block for it to reach the middle too:
-        without it the list ends where the last card does, and the blocks
-        at the end of the file could never be brought up."""
+        """Leave room under the last block for it to come up to where the
+        others rest: without it the list ends where the last card does,
+        and the blocks at the end of the file could never be brought up."""
         page = self.scroller.get_vadjustment().get_page_size()
-        room = max(14, int(page) // 2)
+        room = max(14, int(page * (1 - _CARD_REST)) - 60)
         if self.box.get_margin_bottom() != room:
             # Not during the size allocation that told us the page size.
             GLib.idle_add(lambda: (self.box.set_margin_bottom(room), False)[1])
