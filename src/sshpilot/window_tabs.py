@@ -2250,6 +2250,13 @@ class WindowTabsMixin:
 
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""
+        # A tab selected or opened is what the user is after: the Config
+        # Sections view, shown in the tabs' place, gives way.
+        try:
+            from .sidebar_views import leave_sections
+            leave_sections(self)
+        except Exception:
+            logger.debug("Could not leave the Config Sections view", exc_info=True)
         self._update_content_theme_for_selected_tab()
         self._update_layout_toggle_state()
         self._update_command_snippets_button_visibility()

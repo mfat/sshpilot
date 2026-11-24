@@ -356,6 +356,9 @@ class ResultsView(Gtk.Box):
         self.apply_raw_button.connect("clicked", lambda *_a: self.controller.apply_raw())
         top.append(self.apply_raw_button)
         box.append(top)
+        read_only = bool(getattr(self.controller, "read_only", False))
+        # Read only: the text is shown, with nothing to edit or apply.
+        top.set_visible(not read_only)
         frame = Gtk.Frame()
         frame.set_vexpand(True)
         scroller = Gtk.ScrolledWindow()
@@ -366,6 +369,7 @@ class ResultsView(Gtk.Box):
         # Room above the first line and under the last, as much as it takes
         # for any line to stand level with its block's card in the rules.
         scroller.get_vadjustment().connect("notify::page-size", self._sync_raw_room)
+        self.raw_view.set_editable(not read_only)
         buffer = self.raw_view.get_buffer()
         buffer.connect("changed", self._on_raw_changed)
         # The selected block's lines stand out here, and the block the

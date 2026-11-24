@@ -127,11 +127,24 @@ def split_target(text: str) -> tuple:
     return (user or None, host) if separator else (None, text)
 
 
-class AdvancedConfigWindow(Adw.Window):
-    """The Advanced Configuration window.
+class AdvancedConfigBase:
+    """Advanced Configuration, whatever shows it.
+
+    The controller and its widgets, without a place on screen of their own:
+    :class:`AdvancedConfigWindow` is it as a window, and
+    :class:`AdvancedConfigView` as a widget for a tab of the main window,
+    with the list of blocks handed to the main sidebar. The few things that
+    differ between the two are the ``_host_*`` methods and ``embedded``.
 
     *client* is the daemon client; *on_saved* runs after each save.
     """
+
+    #: True when shown inside another window (a tab): no title buttons, and
+    #: the list of blocks is shown by the host, not beside the rules.
+    embedded = False
+    #: True when nothing can be edited: the blocks and what OpenSSH resolves
+    #: are shown, and changes are made in the window (``host_edit``).
+    read_only = False
 
     def __init__(
         self,
@@ -167,10 +180,7 @@ class AdvancedConfigWindow(Adw.Window):
         self._prefetch_source = 0
         #: True while a move of the Raw page's cursor is selecting a block.
         self._selecting_from_raw = False
-        if parent is not None:
-            self.set_transient_for(parent)
-        self.set_default_size(1400, 760)
-        self.set_title(_("Advanced Configuration"))
+        self._host_setup(parent)
 
         self.editor = DraftEditor()
         self._revision = ""
@@ -225,7 +235,6 @@ class AdvancedConfigWindow(Adw.Window):
                 Gtk.CallbackAction.new(lambda *_a, s=step: self._history_key(s)),
             ))
         self.add_controller(history_keys)
-        self.connect("close-request", self._on_close_request)
         self._load()
 
     # ------------------------------------------------------------------
@@ -234,11 +243,15 @@ class AdvancedConfigWindow(Adw.Window):
 
     def _build(self) -> None:
         self._toasts = Adw.ToastOverlay()
-        self.set_content(self._toasts)
+        self._host_set_content(self._toasts)
         view = Adw.ToolbarView()
         self._toasts.set_child(view)
 
         header = Adw.HeaderBar()
+        if self.embedded:
+            # A bar of the tab: the window's buttons are the window's.
+            header.set_show_start_title_buttons(False)
+            header.set_show_end_title_buttons(False)
         self._title = Adw.WindowTitle(title=_("Advanced Configuration"), subtitle="")
         header.set_title_widget(self._title)
         # The keys are named beside the words: the buttons are small, and
@@ -257,6 +270,18 @@ class AdvancedConfigWindow(Adw.Window):
         self.save_button.add_css_class("suggested-action")
         self.save_button.connect("clicked", lambda *_a: self.save())
         header.pack_end(self.save_button)
+        if self.read_only:
+            # Nothing to undo or save here: one button leads to where the
+            # configuration is edited.
+            for button in (self.undo_button, self.redo_button, self.save_button):
+                button.set_visible(False)
+            self.edit_button = Gtk.Button(label=_("Edit"))
+            self.edit_button.add_css_class("suggested-action")
+            self.edit_button.set_tooltip_text(
+                _("Edit the configuration in the Advanced Configuration window")
+            )
+            self.edit_button.connect("clicked", lambda *_a: self._host_edit())
+            header.pack_end(self.edit_button)
         menu = Gio.Menu()
         menu.append(_("Reload from Disk"), "advcfg.reload")
         menu.append(_("Copy Configuration"), "advcfg.copy")
@@ -303,7 +328,8 @@ class AdvancedConfigWindow(Adw.Window):
         paned.set_hexpand(True)
         self.sidebar = self._build_sidebar()
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        content.append(self.sidebar)
+        if not self.embedded:
+            content.append(self.sidebar)
         content.append(paned)
         view.set_content(content)
         self.sidebar_button = Gtk.ToggleButton(
@@ -311,6 +337,8 @@ class AdvancedConfigWindow(Adw.Window):
             tooltip_text=_("Toggle Sidebar"),
         )
         self.sidebar_button.connect("toggled", lambda *_a: self._apply_layout())
+        # Embedded, the list of blocks is in the host's sidebar.
+        self.sidebar_button.set_visible(not self.embedded)
         header.pack_start(self.sidebar_button)
         # Shown when the window is too narrow for the rules and the results
         # side by side: one of them at a time.
@@ -341,7 +369,7 @@ class AdvancedConfigWindow(Adw.Window):
         self._single_pane = "rules"
         #: The sidebar as the user had it while there was room for it.
         self._sidebar_wanted = True
-        self.set_size_request(_MIN_WIDTH, _MIN_HEIGHT)
+        self.set_size_request(*self._host_min_size())
         # The last one that holds is the one applied: the narrowest last.
         for name, condition in (
             ("narrow", f"max-width: {_NARROW_BELOW}px"),
@@ -371,7 +399,8 @@ class AdvancedConfigWindow(Adw.Window):
         self._apply_layout()
 
     def _apply_layout(self) -> None:
-        side = self.sidebar_button.get_active()
+        # Embedded, the list of blocks takes no room here.
+        side = self.sidebar_button.get_active() and not self.embedded
         rules = results = True
         if self._layout == "narrow":
             results = not side              # the sidebar opens in their place
@@ -380,7 +409,8 @@ class AdvancedConfigWindow(Adw.Window):
                 rules, side = False, False
             else:
                 results = False
-        self.sidebar.set_visible(side)
+        if not self.embedded:
+            self.sidebar.set_visible(side)
         self.rules.set_visible(rules)
         self.results.set_visible(results)
         self.pane_switch.set_visible(self._layout == "single")
@@ -449,6 +479,11 @@ class AdvancedConfigWindow(Adw.Window):
         column.append(self.file_switcher)
         column.append(self.target_entry)
         column.append(scroller)
+        #: The list of blocks with its fields, without the separator that
+        #: divides it from the rules: what a host puts in a sidebar of its own.
+        self.sidebar_column = column
+        if self.embedded:
+            return column
         column.set_size_request(210, -1)
         outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         outer.append(column)
@@ -920,24 +955,32 @@ class AdvancedConfigWindow(Adw.Window):
         whoever wants to know that it closed is holding one.)"""
         self._closed_listeners.append(callback)
 
+    def _tell_closed(self) -> None:
+        first = not self._told_closed
+        self._closing = self._told_closed = True
+        if first:
+            for listener in self._closed_listeners:
+                try:
+                    listener()
+                except Exception:
+                    logger.debug("closed listener failed", exc_info=True)
+
     def _on_close_request(self, *_args) -> bool:
+        """Whether closing has to wait: True while unsaved changes are
+        asked about. Discarding closes through :meth:`_host_close`."""
         if self._closing or not self.dirty:
-            first = not self._told_closed
-            self._closing = self._told_closed = True
-            if first:
-                for listener in self._closed_listeners:
-                    try:
-                        listener()
-                    except Exception:
-                        logger.debug("closed listener failed", exc_info=True)
+            self._tell_closed()
             return False
 
         def close():
             self._closing = True
-            self.close()
+            self._host_close()
 
-        self._confirm_discard(close)
+        self._confirm_discard(close, self._host_close_refused)
         return True
+
+    def _host_close_refused(self) -> None:
+        """The user kept the unsaved changes: nothing closes."""
 
     # -- banners ------------------------------------------------------------
 
@@ -1110,6 +1153,8 @@ class AdvancedConfigWindow(Adw.Window):
 
     def move_selected(self, delta: int) -> bool:
         """Alt+Up / Alt+Down: move the selected block one place."""
+        if self.read_only:
+            return True
         if self.selected_uid is not None and not self.results.raw_pending:
             self.move_block_by(self.selected_uid, delta)
         return True
@@ -1690,3 +1735,108 @@ class AdvancedConfigWindow(Adw.Window):
             ),
             matched,
         )
+
+
+class AdvancedConfigWindow(AdvancedConfigBase, Adw.Window):
+    """Advanced Configuration as a window of its own."""
+
+    def _host_setup(self, parent) -> None:
+        if parent is not None:
+            self.set_transient_for(parent)
+        self.set_default_size(1400, 760)
+        self.set_title(_("Advanced Configuration"))
+        self.connect("close-request", self._on_close_request)
+
+    def _host_set_content(self, widget) -> None:
+        self.set_content(widget)
+
+    def _host_min_size(self):
+        return _MIN_WIDTH, _MIN_HEIGHT
+
+    def _host_close(self) -> None:
+        self.close()
+
+
+class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
+    """Advanced Configuration as a widget of the main window, to read.
+
+    It shows the blocks and what OpenSSH resolves, and edits nothing: the
+    window is where the configuration is changed. The host puts
+    :attr:`sidebar_column` (the list of blocks) where it lists things,
+    shows this widget, and sets:
+
+    * ``host_present``: bring the widget to the front (``present``);
+    * ``host_edit``: open the window, called with the saved line of the
+      selected block (0: none) and the file on screen;
+    * ``host_close``: stop showing it.
+
+    :meth:`reload` reads the configuration again: the host calls it when
+    the file may have changed.
+    """
+
+    embedded = True
+    read_only = True
+
+    def _host_setup(self, parent) -> None:
+        self.host_present = None
+        self.host_edit = None
+        self.host_close = None
+        self.host_close_refused = None
+
+    def _host_edit(self) -> None:
+        if not callable(self.host_edit):
+            return
+        self.host_edit(self._block_line(self.selected_uid), self._file)
+
+    def _block_line(self, uid) -> int:
+        """A line of the text that *uid*'s block owns: its header, or its
+        first option for the options above all blocks. 0 when there is none."""
+        block = self.editor.find_block(uid)
+        if block is None:
+            return 0
+        lines = self.editor.lines
+        line = lines.headers.get(block.uid) or 0
+        if not line:
+            line = next(
+                (lines.options[o.uid] for o in block.options if o.uid in lines.options), 0
+            )
+        return int(line or 0)
+
+    def reload(self) -> None:
+        """Read the configuration again and show the block that was
+        selected, if it is still there."""
+        if not self._loaded:
+            return
+        block = self.editor.find_block(self.selected_uid)
+        if block is not None and self._pending_target is None:
+            line = self._block_line(block.uid)
+            if line:
+                self._pending_target = dict(
+                    host="", line=int(line), option="", file=self._file, pin=False,
+                )
+        self._load()
+
+    def _host_set_content(self, widget) -> None:
+        self.set_child(widget)
+
+    def _host_min_size(self):
+        # Far below a window's: the tab is as wide as the main window
+        # leaves it, and one pane at a time fits in little.
+        return 360, 300
+
+    def _host_close(self) -> None:
+        if callable(self.host_close):
+            self.host_close()
+
+    def _host_close_refused(self) -> None:
+        if callable(self.host_close_refused):
+            self.host_close_refused()
+
+    def present(self) -> None:
+        if callable(self.host_present):
+            self.host_present()
+
+    def close(self) -> None:
+        """Ask to close, as closing a window does."""
+        if not self._on_close_request():
+            self._host_close()

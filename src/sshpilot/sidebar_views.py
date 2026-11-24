@@ -1,16 +1,24 @@
-"""The sidebar's views: Connections, and the Rules of the SSH configuration.
+"""The window's two views: Connections, and the sections of the SSH configuration.
 
-A dropdown at the top of the sidebar changes what the list below shows. The
-connection list is as it was. The Rules view lists what the configuration
-holds besides connections (``sidebar_rules``), in file order; a rule opens in
-Advanced Configuration, where rules are edited and ordered. Nothing is
-edited, moved or deleted from this list.
+A dropdown at the top of the sidebar switches the whole window between them.
+
+* **Connections**: the connection list, and the tabs and terminals beside it.
+* **Config Sections**: the sidebar lists every block of the configuration in
+  file order (the options above all blocks, each ``Host`` and ``Match``
+  block), each said to be a connection, a host pattern, a Match rule or
+  options for all hosts; the content area shows the blocks and what OpenSSH
+  resolves, in place of the tabs. It is Advanced Configuration
+  (``AdvancedConfigView``) to read: nothing is edited there. Its Edit button
+  opens the Advanced Configuration window, where the configuration is
+  changed.
+
+The tabs are hidden while the sections are shown, not closed: terminals keep
+running. Selecting or opening a tab brings the Connections view back.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 from gettext import gettext as _
 
 import gi
@@ -19,182 +27,10 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk
 
-from .sidebar_rules import matches, read_rules, summary
-from .ssh_config_blocks import GLOBAL, MATCH
-
 logger = logging.getLogger(__name__)
 
 CONNECTIONS = "connections"
-RULES = "rules"
-
-
-class SidebarRulesView(Gtk.Stack):
-    """The list of rules, or a line saying there are none."""
-
-    def __init__(self, window):
-        super().__init__()
-        self._window = window
-        self._rules = []
-        self._query = ""
-        self._generation = 0
-        self._loaded = False
-
-        self.listbox = Gtk.ListBox()
-        self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.listbox.add_css_class("navigation-sidebar")
-        self.listbox.connect("row-activated", self._on_row_activated)
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_min_content_width(0)
-        scrolled.set_child(self.listbox)
-        self.add_named(scrolled, "list")
-
-        self.empty = Adw.StatusPage()
-        self.empty.add_css_class("compact")
-        self.empty.set_icon_name("document-properties-symbolic")
-        self.add_named(self.empty, "empty")
-        self._show_empty(loading=True)
-
-    # -- reading ----------------------------------------------------------
-
-    def refresh(self) -> None:
-        """Read the configuration again, off the main loop."""
-        client = getattr(self._window, "client", None)
-        if client is None or not hasattr(client, "get_ssh_config_text"):
-            self._set_rules([], failed=True)
-            return
-        self._generation += 1
-        generation = self._generation
-
-        def work():
-            try:
-                root = client.get_ssh_config_text()
-                rules = read_rules(root.text)
-                for ref in tuple(getattr(root, "files", ()) or ())[1:]:
-                    part = client.get_ssh_config_text(ref.file)
-                    rules.extend(read_rules(part.text, ref.file, ref.display_name))
-                failed = False
-            except Exception:
-                logger.debug("Could not read the rules of the configuration", exc_info=True)
-                rules, failed = [], True
-
-            def done():
-                if generation == self._generation:
-                    self._set_rules(rules, failed=failed)
-                return GLib.SOURCE_REMOVE
-
-            GLib.idle_add(done)
-
-        threading.Thread(target=work, name="sidebar-rules", daemon=True).start()
-
-    def set_filter(self, query: str) -> None:
-        query = query or ""
-        if query != self._query:
-            self._query = query
-            if self._loaded:
-                self._fill()
-
-    @property
-    def rules(self):
-        return tuple(self._rules)
-
-    def _set_rules(self, rules, failed: bool = False) -> None:
-        self._rules = list(rules)
-        self._loaded = True
-        self._failed = failed
-        self._fill()
-
-    # -- drawing ----------------------------------------------------------
-
-    def _show_empty(self, loading=False, failed=False, filtered=False) -> None:
-        if loading:
-            self.empty.set_title(_("Reading the Configuration…"))
-            self.empty.set_description("")
-        elif failed:
-            self.empty.set_title(_("Rules Unavailable"))
-            self.empty.set_description(_("The SSH configuration could not be read."))
-        elif filtered:
-            self.empty.set_title(_("No Results"))
-            self.empty.set_description(_("Try a different search."))
-        else:
-            self.empty.set_title(_("No Rules"))
-            self.empty.set_description(_(
-                "A rule sets options for every host it matches, such as "
-                "“Host *.example.com”. Add one from the + menu."
-            ))
-        self.set_visible_child_name("empty")
-
-    def _fill(self) -> None:
-        while (child := self.listbox.get_first_child()) is not None:
-            self.listbox.remove(child)
-        shown = [rule for rule in self._rules if matches(rule, self._query)]
-        if not shown:
-            self._show_empty(
-                failed=getattr(self, "_failed", False),
-                filtered=bool(self._rules),
-            )
-            return
-        for rule in shown:
-            self.listbox.append(self._row(rule))
-        self.set_visible_child_name("list")
-
-    def _row(self, rule):
-        row = Adw.ActionRow()
-        try:
-            row.set_use_markup(False)
-        except Exception:
-            pass
-        if rule.kind == GLOBAL:
-            title = _("Global Options")
-            icon = "preferences-system-symbolic"
-        elif rule.kind == MATCH:
-            # "Match" is the OpenSSH keyword, as written in the file.
-            title = "Match " + rule.patterns
-            icon = "system-search-symbolic"
-        else:
-            title = rule.patterns
-            icon = "document-properties-symbolic"
-        row.set_title(title)
-        row.set_title_lines(1)
-        row.set_subtitle_lines(1)
-        details = summary(rule)
-        if rule.file_label:
-            details = f"{rule.file_label} · {details}" if details else rule.file_label
-        row.set_subtitle(details)
-        row.set_tooltip_text(_("Open in Advanced Configuration"))
-        row.add_prefix(Gtk.Image.new_from_icon_name(icon))
-        row.set_activatable(True)
-        row._rule = rule
-        return row
-
-    def _on_row_activated(self, _listbox, row) -> None:
-        rule = getattr(row, "_rule", None)
-        if rule is not None:
-            self.open_rule(rule)
-
-    def open_rule(self, rule) -> None:
-        opener = getattr(self._window, "open_advanced_config", None)
-        if not callable(opener):
-            return
-        advanced = opener(line=rule.line, file=rule.file)
-        if advanced is None:
-            return
-        watch_saves(self._window, advanced)
-
-
-def watch_saves(window, advanced) -> None:
-    """Read the rules again after each save of *advanced*, once per window."""
-    if advanced is None or getattr(advanced, "_sidebar_rules_watched", False):
-        return
-    advanced._sidebar_rules_watched = True
-    advanced.add_saved_listener(lambda *_a: refresh_rules(window))
-
-
-def refresh_rules(window) -> None:
-    """Read the rules again if the Rules view is the one shown."""
-    view = getattr(window, "_sidebar_rules_view", None)
-    if view is not None and current_view(window) == RULES:
-        view.refresh()
+SECTIONS = "sections"
 
 
 def current_view(window) -> str:
@@ -202,28 +38,115 @@ def current_view(window) -> str:
     return (stack.get_visible_child_name() or CONNECTIONS) if stack else CONNECTIONS
 
 
+def _supported(window) -> bool:
+    from .api.capabilities import Capability
+
+    client = getattr(window, "client", None)
+    try:
+        return bool(
+            client is not None
+            and client.get_capabilities().supports(Capability.CONNECTIONS_CONFIG_READ)
+            and callable(getattr(client, "evaluate_ssh_config_draft", None))
+        )
+    except Exception:
+        return False
+
+
+def _content_slot(window):
+    """Where the tabs are shown: the box the sections view is put in beside
+    them, or None when the window is laid out without one."""
+    overview = getattr(window, "tab_overview", None)
+    parent = overview.get_parent() if overview is not None else None
+    return parent if isinstance(parent, Gtk.Box) else None
+
+
+def _ensure_sections_view(window):
+    """The read-only Advanced Configuration of *window*, made on first use."""
+    view = getattr(window, "_config_sections_view", None)
+    if view is not None:
+        return view
+    slot = _content_slot(window)
+    if slot is None or not _supported(window):
+        return None
+    from .advanced_config_window import AdvancedConfigView
+
+    view = AdvancedConfigView(window, window.client)
+    view.set_vexpand(True)
+    view.set_hexpand(True)
+    view.set_visible(False)
+    view.host_present = lambda: show_view(window, SECTIONS)
+    view.host_close = lambda: show_view(window, CONNECTIONS)
+    view.host_edit = lambda line, file: _edit_in_window(window, line, file)
+    slot.append(view)
+    column = view.sidebar_column
+    column.set_vexpand(True)
+    window._sidebar_sections_holder.append(column)
+    window._config_sections_view = view
+    return view
+
+
+def _edit_in_window(window, line: int, file: str) -> None:
+    opener = getattr(window, "open_advanced_config", None)
+    if callable(opener):
+        opener(line=line, file=file)
+
+
 def show_view(window, name: str) -> None:
-    """Show the Connections or the Rules view of the sidebar."""
+    """Show the Connections or the Config Sections view of the window."""
     stack = getattr(window, "_sidebar_view_stack", None)
-    if stack is None or name not in (CONNECTIONS, RULES):
+    if stack is None or name not in _VIEWS:
         return
+    sections = name == SECTIONS
+    view = _ensure_sections_view(window) if sections else getattr(
+        window, "_config_sections_view", None
+    )
+    if sections and view is None:
+        # No background service to ask, or nowhere to show it: say so and
+        # stay on the connections.
+        toast = getattr(window, "show_toast", None)
+        if callable(toast):
+            toast(_(
+                "SSH config editing requires the background service. "
+                "Start it and try again."
+            ))
+        sections, name = False, CONNECTIONS
+    was = current_view(window)
     stack.set_visible_child_name(name)
     switcher = getattr(window, "_sidebar_view_switcher", None)
     if switcher is not None and switcher.get_selected() != _VIEWS.index(name):
         switcher.set_selected(_VIEWS.index(name))
-    rules = name == RULES
-    # The buttons under the list act on connections.
-    toolbar = getattr(window, "_sidebar_toolbar_clip", None)
-    if toolbar is not None:
-        toolbar.set_visible(not rules)
-    entry = getattr(window, "search_entry", None)
-    if entry is not None:
-        entry.set_placeholder_text(_("Search rules") if rules else _("Search connections"))
-    if rules:
-        window._sidebar_rules_view.refresh()
+    # The search and the buttons under the list are the connections'.
+    for attr in ("_sidebar_toolbar_clip", "search_button"):
+        widget = getattr(window, attr, None)
+        if widget is not None:
+            widget.set_visible(not sections)
+    container = getattr(window, "search_container", None)
+    if container is not None and sections:
+        container.set_visible(False)
+    # The tabs stay as they are, out of sight: terminals keep running.
+    overview = getattr(window, "tab_overview", None)
+    if view is not None:
+        view.set_visible(sections)
+    if overview is not None and view is not None:
+        overview.set_visible(not sections)
+    if sections and was != SECTIONS:
+        view.reload()
 
 
-_VIEWS = (CONNECTIONS, RULES)
+def refresh_sections(window) -> None:
+    """Read the configuration again if its sections are what is shown."""
+    view = getattr(window, "_config_sections_view", None)
+    if view is not None and current_view(window) == SECTIONS:
+        view.reload()
+
+
+def leave_sections(window) -> None:
+    """Back to the connections: a tab was selected or opened."""
+    if current_view(window) == SECTIONS:
+        show_view(window, CONNECTIONS)
+
+
+_VIEWS = (CONNECTIONS, SECTIONS)
 
 #: The dropdown's height until a connection row has been measured.
 _SWITCHER_HEIGHT = 46
@@ -290,7 +213,7 @@ def sync_switcher_height(window) -> None:
 
 
 def build_sidebar_switcher(window, sidebar_box) -> None:
-    """The dropdown at the top of the sidebar that picks what it lists."""
+    """The dropdown at the top of the sidebar that picks the view."""
     _install_switcher_css()
     dropdown = Gtk.DropDown.new_from_strings([_("Connections"), _("Config Sections")])
     # Filled with the accent colour, as a suggested action is.
@@ -300,7 +223,7 @@ def build_sidebar_switcher(window, sidebar_box) -> None:
     dropdown.set_margin_start(6)
     dropdown.set_margin_end(6)
     dropdown.set_margin_bottom(6)
-    dropdown.set_tooltip_text(_("What the sidebar lists"))
+    dropdown.set_tooltip_text(_("What the window shows"))
     dropdown.connect(
         "notify::selected",
         lambda d, _p: show_view(window, _VIEWS[min(d.get_selected(), len(_VIEWS) - 1)]),
@@ -310,23 +233,20 @@ def build_sidebar_switcher(window, sidebar_box) -> None:
 
 
 def build_sidebar_view_stack(window, sidebar_box) -> None:
-    """Put the connection list and the Rules view where the list was."""
+    """Put the connection list and the list of sections where the list was."""
     stack = Gtk.Stack()
     stack.set_vexpand(True)
     stack.set_hexpand(True)
     stack.add_named(window.connection_scrolled, CONNECTIONS)
-    window._sidebar_rules_view = SidebarRulesView(window)
-    stack.add_named(window._sidebar_rules_view, RULES)
+    # Filled with Advanced Configuration's list of blocks on first use.
+    holder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    window._sidebar_sections_holder = holder
+    stack.add_named(holder, SECTIONS)
     window._sidebar_view_stack = stack
+    window._config_sections_view = None
     sidebar_box.append(stack)
     # Once the first rows are on screen; later rebuilds keep it in step.
     GLib.timeout_add(1500, lambda: (sync_switcher_height(window), False)[1])
-    entry = getattr(window, "search_entry", None)
-    if entry is not None:
-        entry.connect(
-            "search-changed",
-            lambda e: window._sidebar_rules_view.set_filter(e.get_text()),
-        )
     if window.lookup_action("new-host-rule") is None:
         action = Gio.SimpleAction.new("new-host-rule", None)
         action.connect("activate", lambda *_a: new_host_rule(window))
@@ -334,9 +254,7 @@ def build_sidebar_view_stack(window, sidebar_box) -> None:
 
 
 def new_host_rule(window) -> None:
-    """Begin a new, unsaved Host block in Advanced Configuration."""
+    """Begin a new, unsaved Host block in the Advanced Configuration window."""
     opener = getattr(window, "open_advanced_config", None)
-    if not callable(opener):
-        return
-    advanced = opener(new_block=("", ()))
-    watch_saves(window, advanced)
+    if callable(opener):
+        opener(new_block=("", ()))

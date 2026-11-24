@@ -4413,11 +4413,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """
         self._cancel_pending_connection_rows()
         self._connection_rows_split = False
-        # The configuration may have changed: the Rules view, if it is the
-        # one shown, reads it again.
+        # The configuration may have changed: the Config Sections view, if
+        # it is the one shown, reads it again.
         try:
-            from .sidebar_views import refresh_rules, sync_switcher_height
-            refresh_rules(self)
+            from .sidebar_views import refresh_sections, sync_switcher_height
+            refresh_sections(self)
             # From the rows about to be replaced: the dropdown is as tall
             # as one of them.
             sync_switcher_height(self)
@@ -6345,6 +6345,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 schedule = getattr(self, '_schedule_config_precedence_check', None)
                 if callable(schedule):
                     schedule()
+                # The read-only sections of the main window show the file.
+                from .sidebar_views import refresh_sections
+                refresh_sections(self)
 
             # Of the main window, as when opened from the menu (which is the
             # case known to maximize): not of the dialog that asked for it.

@@ -5756,7 +5756,8 @@ def build_sidebar(window):
     _attach_connection_list_shortcuts(window)
 
     window.connection_scrolled.set_child(window.connection_list)
-    # The list shares its place with the Rules view (sidebar_views).
+    # The list shares its place with the list of config sections
+    # (sidebar_views).
     build_sidebar_view_stack(window, sidebar_box)
 
     _build_sidebar_toolbar(window, sidebar_box)
