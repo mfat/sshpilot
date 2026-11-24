@@ -5,6 +5,8 @@ name: GUI contracts
 # authored value -> control -> clear. #1389 (the ssh -N switch ignoring
 # "SessionType none") reached users because the only test for it skipped
 # itself in CI; this job runs on every push and fails if anything skips.
+# Beside it: the authentication section and login profile dialogs in real
+# windows, and a real login with a saved authentication order.
 
 on:
   push:
@@ -32,7 +34,7 @@ jobs:
             python3-gi python3-gi-cairo python3-venv \
             gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-vte-3.91 \
             gir1.2-gtksource-5 gir1.2-secret-1 \
-            openssh-client xvfb dbus gnome-keyring
+            openssh-client openssh-server xvfb dbus gnome-keyring
 
       - name: Install Python test dependencies
         # --system-site-packages keeps the distro's PyGObject visible.
@@ -52,6 +54,32 @@ jobs:
                 tests/test_gui_connection_editor_contracts.py
           '
 
+      - name: Run the dialog tests that need no daemon
+        # The authentication section and the login profile dialogs in real
+        # windows: dragging, profile locks, the "OpenSSH will try" line,
+        # the questions asked before a profile replaces settings. Their own
+        # process: they build dialogs directly and boot no application.
+        env:
+          SSHPILOT_GUI_TESTS: "1"
+          GDK_BACKEND: x11
+        run: |
+          xvfb-run -a -s "-screen 0 1400x900x24" \
+            .venv-gui/bin/python -m pytest -ra -o addopts="" -n0 -m gui \
+              --junitxml=dialogs.xml \
+              tests/test_gui_auth_section_widgets.py \
+              tests/test_gui_connection_dialog_auth_section.py \
+              tests/test_gui_connection_dialog_login_profile.py \
+              tests/test_gui_login_profile_auth_section.py \
+              tests/test_gui_login_profile_dialogs.py
+
+      - name: Log in with a saved authentication order (throwaway sshd)
+        # The order saved by the editor's model, launched with the daemon's
+        # own command against a private sshd: what OpenSSH really attempts.
+        run: |
+          PATH="$PATH:/usr/sbin" .venv-gui/bin/python -m pytest -ra -o addopts="" -n0 \
+            --junitxml=real-login.xml \
+            tests/daemon/test_auth_order_real_login.py
+
       - name: Fail on skipped or missing tests
         # A skip here means the real toolkit, a display or OpenSSH was
         # missing -- the suite did not run, so it must not pass.
@@ -60,10 +88,11 @@ jobs:
           python3 - <<'EOF'
           import sys
           import xml.etree.ElementTree as ET
-          suite = ET.parse("contracts.xml").getroot()
-          suite = suite.find("testsuite") if suite.tag == "testsuites" else suite
-          tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))
-          print(f"collected={tests} skipped={skipped}")
-          if tests < 60 or skipped:
-              sys.exit("contract suite did not run in full")
+          for report, least in (("contracts.xml", 60), ("dialogs.xml", 56), ("real-login.xml", 6)):
+              suite = ET.parse(report).getroot()
+              suite = suite.find("testsuite") if suite.tag == "testsuites" else suite
+              tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))
+              print(f"{report}: collected={tests} skipped={skipped}")
+              if tests < least or skipped:
+                  sys.exit(f"{report}: the suite did not run in full")
           EOF
