@@ -1771,6 +1771,10 @@ class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
         self.host_close = None
         self.host_close_refused = None
         self._dirty_told = False
+        #: True from :meth:`reload` until its read has come back, and the
+        #: draft's serial when it was asked for.
+        self._reloading = False
+        self._reload_serial = 0
 
     def _host_dirty_changed(self) -> None:
         dirty = bool(self.dirty)
@@ -1799,6 +1803,13 @@ class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
         lose: a file changed under unsaved changes is said at the save."""
         if not self._loaded or self._saving or self.dirty or self.results.raw_pending:
             return
+        # Until the read is back the view counts as not loaded: a place to
+        # go to or a block to begin, asked for meanwhile, waits for the
+        # text it will be applied to instead of being read away with the
+        # old one.
+        self._reloading = True
+        self._reload_serial = self.editor.serial
+        self._loaded = False
         block = self.editor.find_block(self.selected_uid)
         if block is not None and self._pending_target is None:
             line = self._block_line(block.uid)
@@ -1807,6 +1818,18 @@ class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
                     host="", line=int(line), option="", file=self._file, pin=False,
                 )
         self._load()
+
+    def _on_loaded(self, result, error) -> None:
+        reloading, self._reloading = self._reloading, False
+        if reloading and (error is not None or self.editor.serial != self._reload_serial):
+            # The file could not be read again, or the draft was edited
+            # while it was being read: what is on screen stays, and what
+            # was asked for meanwhile is done on it.
+            self._loaded = True
+            self._apply_pending_target()
+            self._apply_pending_block()
+            return
+        super()._on_loaded(result, error)
 
     def _host_set_content(self, widget) -> None:
         self.set_child(widget)

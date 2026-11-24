@@ -58,6 +58,7 @@ def window(gtk, tmp_path):  # noqa: F811
     sidebar = gtk.Box(orientation=gtk.Orientation.VERTICAL)
     win.search_button = gtk.Button()
     win.search_container = gtk.Box()
+    win.search_container.set_visible(False)       # as in the app, until search is opened
     win.search_entry = gtk.SearchEntry()
     win.search_container.append(win.search_entry)
     win.connection_scrolled = gtk.ScrolledWindow()
@@ -222,7 +223,66 @@ def test_quitting_asks_about_unsaved_changes(window, monkeypatch):
     assert asked and not went
     asked[0]()                                # Discard
     assert went == [1]
-    assert confirm_quit(window, lambda: went.append(2)) is False     # settled: closes
+    # The close that Discard asks for is not questioned again...
+    assert confirm_quit(window, lambda: went.append(2)) is False
+    # ...but that close may still be called off (running sessions): the
+    # window stays, the draft is as unsaved as before and is asked about
+    # at the next quit, and the editor goes on working.
+    assert view.dirty and not view._closing
+    assert confirm_quit(window, lambda: went.append(3)) is True
+    assert len(asked) == 2 and went == [1]
+    view.save()                               # its background work still reports back
+    assert _pump(lambda: "User deploy" in window.config_path.read_text(), seconds=15)
+    assert _pump(lambda: not view.dirty)
+
+
+def test_a_block_begun_while_the_file_is_read_again_is_kept(window):
+    """Coming back to the view reads the file again, off the main loop. A
+    new block asked for before that read is back was added to the old
+    draft and then read away with it."""
+    from sshpilot.sidebar_views import CONNECTIONS, open_sections, show_view
+
+    view = _sections(window)
+    show_view(window, CONNECTIONS)
+    open_sections(window, new_block=("*.lab", [("User", "lab")]))     # shows it: reloads
+    assert view._reloading                    # the read is not back yet
+    assert _pump(lambda: not view._reloading and view._loaded)
+    assert _pump(lambda: _selected_patterns(view) == "*.lab"), _selected_patterns(view)
+    _pump(lambda: False, seconds=0.5)
+    assert [b.patterns for b in view.editor.blocks][-1] == "*.lab"    # still there
+    assert view.dirty and window.config_path.read_text() == CONFIG
+
+
+def test_an_edit_made_while_the_file_is_read_again_is_kept(window):
+    from sshpilot.sidebar_views import CONNECTIONS, show_view
+
+    view = _sections(window)
+    show_view(window, CONNECTIONS)
+    window.config_path.write_text(CONFIG + "\nHost other\n    User x\n")
+    show_view(window, "sections")
+    assert view._reloading
+    _edit_user(view, "typed-meanwhile")
+    assert _pump(lambda: not view._reloading and view._loaded)
+    _pump(lambda: False, seconds=0.5)
+    assert "User typed-meanwhile" in view.editor.text and view.dirty
+
+
+def test_a_search_of_the_connections_is_not_left_filtering_out_of_sight(window):
+    from sshpilot.sidebar_views import CONNECTIONS, show_view
+
+    window.search_container.set_visible(True)
+    window.search_entry.set_text("web")
+    _sections(window)
+    assert not window.search_container.get_visible()
+    show_view(window, CONNECTIONS)
+    assert window.search_container.get_visible()         # the query is in sight again
+    assert window.search_entry.get_text() == "web"
+
+    window.search_entry.set_text("")
+    window.search_container.set_visible(False)           # search closed
+    _sections(window)
+    show_view(window, CONNECTIONS)
+    assert not window.search_container.get_visible()     # and stays closed
 
 
 def test_a_tab_selected_brings_the_connections_back(window):

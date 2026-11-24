@@ -140,12 +140,18 @@ def confirm_quit(window, proceed) -> bool:
     changes are discarded. False when there is nothing to ask.
     """
     view = getattr(window, "_config_sections_view", None)
-    if view is None or not view.dirty or getattr(view, "_closing", False):
+    # Discarding closes again: that one request is not asked a second time.
+    # Only that one: the close may still be called off (the question about
+    # running sessions), and the draft is then as unsaved as before. The
+    # view goes on working meanwhile, so nothing of it is switched off here.
+    answered = bool(getattr(window, "_config_discard_answered", False))
+    window._config_discard_answered = False
+    if view is None or not view.dirty or answered:
         return False
     show_view(window, SECTIONS)
 
     def discard():
-        view._closing = True
+        window._config_discard_answered = True
         proceed()
 
     view._confirm_discard(discard)
@@ -181,9 +187,17 @@ def show_view(window, name: str) -> None:
         widget = getattr(window, attr, None)
         if widget is not None:
             widget.set_visible(not sections)
+    # The search field goes too, and comes back as it was: a query left in
+    # it still filters the connections, and must not do so out of sight.
     container = getattr(window, "search_container", None)
-    if container is not None and sections:
-        container.set_visible(False)
+    if container is not None:
+        if sections and was != SECTIONS:
+            window._search_shown_before_sections = container.get_visible()
+            container.set_visible(False)
+        elif not sections and was == SECTIONS:
+            container.set_visible(
+                bool(getattr(window, "_search_shown_before_sections", False))
+            )
     # The tabs stay as they are, out of sight: terminals keep running.
     overview = getattr(window, "tab_overview", None)
     if view is not None:
