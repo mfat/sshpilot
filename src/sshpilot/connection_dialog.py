@@ -77,6 +77,7 @@ from .connection_dialog_validation import ConnectionDialogValidationMixin
 from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
 from .connection_dialog_effective import ConnectionDialogEffectiveMixin
+from .connection_dialog_search import ConnectionDialogSearchMixin
 from .connection_dialog_overrides import (
     ConnectionDialogOverridesMixin,
     inherited_note_text,
@@ -619,8 +620,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
 
         # Header
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        title = Gtk.Label(label=_("Advanced SSH Configuration"))
-        title.set_markup(_("<b>Advanced SSH Configuration</b>"))
+        # The page is "Extra Options" in the sidebar; "Advanced Configuration"
+        # is the window that shows the whole SSH configuration.
+        title = Gtk.Label(label=_("Extra SSH options"))
+        title.add_css_class("heading")
         title.set_halign(Gtk.Align.START)
 
         subtitle = Gtk.Label(label=_("Add custom SSH configuration options"))
@@ -1619,6 +1622,7 @@ class ConnectionDialog(
     ConnectionDialogPortForwardingMixin,
     ConnectionDialogOverridesMixin,
     ConnectionDialogEffectiveMixin,
+    ConnectionDialogSearchMixin,
 ):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
 
@@ -1671,6 +1675,11 @@ class ConnectionDialog(
     split_view = Gtk.Template.Child()
     sidebar_page = Gtk.Template.Child()
     sidebar_list = Gtk.Template.Child()
+    sidebar_stack = Gtk.Template.Child()
+    search_button = Gtk.Template.Child()
+    search_bar = Gtk.Template.Child()
+    search_entry = Gtk.Template.Child()
+    search_results = Gtk.Template.Child()
     content_page = Gtk.Template.Child()
     content_title = Gtk.Template.Child()
     content_stack = Gtk.Template.Child()
@@ -1839,7 +1848,7 @@ class ConnectionDialog(
             ("authentication", _("Authentication"), authentication_page),
             ("forwarding", _("Port Forwarding"), forwarding_page),
             ("commands", _("Commands"), commands_page),
-            ("advanced", _("Advanced"), advanced_page),
+            ("advanced", _("Extra Options"), advanced_page),
             ("wol", _("Wake on LAN"), wol_page),
         ]
 
@@ -1971,6 +1980,14 @@ class ConnectionDialog(
         scrolled.set_child(clamp)
         return scrolled
 
+    def _sidebar_page_icon(self, name):
+        """A new image of the page's sidebar icon."""
+        try:
+            from . import icon_utils
+            return icon_utils.new_image_from_icon_name(self._PAGE_ICONS.get(name, ""))
+        except Exception:
+            return Gtk.Image.new_from_icon_name(self._PAGE_ICONS.get(name, ""))
+
     def _build_sidebar_row(self, name, title):
         """One sidebar entry, built like a Settings sidebar row.
 
@@ -1985,12 +2002,7 @@ class ConnectionDialog(
             pass
         row.set_title(title)
         row.set_name(name)
-        try:
-            from . import icon_utils
-            icon = icon_utils.new_image_from_icon_name(self._PAGE_ICONS.get(name, ""))
-        except Exception:
-            icon = Gtk.Image.new_from_icon_name(self._PAGE_ICONS.get(name, ""))
-        row.add_prefix(icon)
+        row.add_prefix(self._sidebar_page_icon(name))
         mark = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
         mark.add_css_class("warning")
         mark.set_tooltip_text(_("A setting on this page is overridden"))
@@ -2033,6 +2045,7 @@ class ConnectionDialog(
             self.narrow_breakpoint.connect("unapply", self._on_narrow_breakpoint, False)
         except Exception:
             logger.debug("Could not watch the narrow-layout breakpoint", exc_info=True)
+        self._setup_sidebar_search()
         if pages:
             self.select_page(pages[0][0])
         return stack
@@ -2222,7 +2235,17 @@ class ConnectionDialog(
             lambda widget, args: self.on_cancel_clicked(None)
         ))
         shortcut_controller.add_shortcut(cancel_shortcut)
-        
+
+        # Ctrl/Command+F to search the fields
+        search_shortcut = Gtk.Shortcut()
+        search_shortcut.set_trigger(Gtk.ShortcutTrigger.parse_string(
+            "<Meta>f" if is_macos() else "<Primary>f"
+        ))
+        search_shortcut.set_action(Gtk.CallbackAction.new(
+            lambda widget, args: self.start_search()
+        ))
+        shortcut_controller.add_shortcut(search_shortcut)
+
         self.add_controller(shortcut_controller)
     
     def _combined_extra_ssh_config(self) -> str:
@@ -5602,7 +5625,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if callable(has_invalid) and has_invalid():
             self.select_page("advanced")
             self.show_error(
-                _("An SSH option on the Advanced tab is not valid. Fix or remove it, then save again.")
+                _("An SSH option on the Extra Options page is not valid. Fix or remove it, then save again.")
             )
             return
         # Block save and focus the first invalid field if any inline validation fails

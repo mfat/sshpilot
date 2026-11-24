@@ -32,24 +32,79 @@ template $ConnectionDialog: Adw.Window {
       tag: "connection-sidebar";
 
       child: Adw.ToolbarView {
-        // Just the dialog's title, centred, as in the Settings window: the
-        // sidebar is too narrow to share its header with a button.
+        // The dialog's title and the search button, as in the Settings
+        // window: the sidebar is too narrow for a text button besides.
         [top]
         Adw.HeaderBar {
           show-end-title-buttons: false;
+
+          [end]
+          Gtk.ToggleButton search_button {
+            icon-name: "system-search-symbolic";
+            tooltip-text: _("Search");
+          }
         }
 
-        content: Gtk.ScrolledWindow {
-          hscrollbar-policy: never;
-          vscrollbar-policy: automatic;
+        // Search matches the fields on every page; results replace the
+        // section list (connection_dialog_search.py).
+        [top]
+        Gtk.SearchBar search_bar {
+          search-mode-enabled: bind search_button.active bidirectional;
 
-          Gtk.ListBox sidebar_list {
-            selection-mode: single;
-            activate-on-single-click: true;
+          child: Gtk.SearchEntry search_entry {
+            placeholder-text: _("Search");
+            hexpand: true;
+          };
+        }
 
-            styles [
-              "navigation-sidebar",
-            ]
+        content: Gtk.Stack sidebar_stack {
+          Gtk.StackPage {
+            name: "pages";
+
+            child: Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+              vscrollbar-policy: automatic;
+
+              Gtk.ListBox sidebar_list {
+                selection-mode: single;
+                activate-on-single-click: true;
+
+                styles [
+                  "navigation-sidebar",
+                ]
+              }
+            };
+          }
+
+          Gtk.StackPage {
+            name: "results";
+
+            child: Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+              vscrollbar-policy: automatic;
+
+              Gtk.ListBox search_results {
+                selection-mode: single;
+                activate-on-single-click: true;
+
+                styles [
+                  "navigation-sidebar",
+                ]
+              }
+            };
+          }
+
+          Gtk.StackPage {
+            name: "empty";
+
+            child: Adw.StatusPage {
+              icon-name: "system-search-symbolic";
+              title: _("No Results");
+
+              styles [
+                "compact",
+              ]
+            };
           }
         };
 
