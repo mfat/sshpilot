@@ -143,11 +143,11 @@ def block_list_title(kind: str, patterns: str) -> str:
 def block_category_label(category: str, names: int = 1) -> str:
     """What a block is for, as the caption of its row."""
     if category == "connection":
+        # The file's own word: a "connection" is the app's name for a host
+        # it lists, and this is a view of the file.
         if names <= 1:
-            return _("Connection")
-        return ngettext(
-            "{count} connection", "{count} connections", names
-        ).format(count=names)
+            return _("Host")
+        return ngettext("{count} host", "{count} hosts", names).format(count=names)
     if category == "pattern":
         return _("Host pattern")
     if category == "match_rule":

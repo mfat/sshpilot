@@ -120,7 +120,7 @@ def test_the_dropdown_switches_the_whole_window(window):
     assert view.sidebar_column.get_parent() is window._sidebar_sections_holder
     assert [(r.title.get_label(), r.caption.get_label()) for r in _rows(view)] == [
         ("Global Options", "All hosts"),
-        ("web1", "Connection"),
+        ("web1", "Host"),
         ("*.prod", "Host pattern"),
         ("Match host *.corp", "Match rule"),
         ("Host *", "All hosts"),

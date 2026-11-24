@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 22:15+0330\n"
+"POT-Creation-Date: 2026-11-24 22:18+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -56,7 +56,6 @@ msgstr "Кнопка локального терминала"
 
 #: src/sshpilot/actions.py:181 src/sshpilot/gtk/asbru_import_messages.py:69
 #: src/sshpilot/sidebar.py:1442 src/sshpilot/sidebar.py:2485
-#: src/sshpilot/gtk/advanced_config_messages.py:149
 #, python-brace-format
 msgid "{count} connection"
 msgid_plural "{count} connections"
@@ -1828,7 +1827,6 @@ msgstr "Новое подключение"
 #: src/sshpilot/resources/ui/connection_dialog.ui:27
 #: src/sshpilot/resources/ui/connection_dialog.ui:138
 #: src/sshpilot/resources/ui/connection_dialog.ui:148
-#: src/sshpilot/gtk/advanced_config_messages.py:147
 #: src/sshpilot/advanced_config_results_view.py:237
 msgid "Connection"
 msgstr "Подключение"
@@ -2088,6 +2086,7 @@ msgstr "Выберите библиотеку поставщика ключа б
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:46
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:312
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:39
+#: src/sshpilot/gtk/advanced_config_messages.py:149
 msgid "Host"
 msgstr "Host"
 
@@ -18458,6 +18457,14 @@ msgstr "Глобальные параметры"
 #: src/sshpilot/gtk/advanced_config_messages.py:140
 msgid "New Host Block"
 msgstr "Новый блок Host"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:150
+#, python-brace-format
+msgid "{count} host"
+msgid_plural "{count} hosts"
+msgstr[0] "{count} хост"
+msgstr[1] "{count} хоста"
+msgstr[2] "{count} хостов"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:152
 msgid "Host pattern"

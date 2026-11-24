@@ -38,8 +38,8 @@ def test_a_list_names_a_block_by_what_follows_its_keyword():
 
 
 def test_the_caption_says_what_the_block_is_for():
-    assert block_category_label(CONNECTION) == "Connection"
-    assert block_category_label(CONNECTION, 3) == "3 connections"
+    assert block_category_label(CONNECTION) == "Host"
+    assert block_category_label(CONNECTION, 3) == "3 hosts"
     assert block_category_label(PATTERN) == "Host pattern"
     assert block_category_label(MATCH_RULE) == "Match rule"
     assert block_category_label(ALL_HOSTS) == "All hosts"

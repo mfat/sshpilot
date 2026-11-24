@@ -1,8 +1,8 @@
 """A block of the SSH configuration as a row of a list.
 
 Laid out like a connection row of the main sidebar: an icon, a name, and a
-dimmed caption under it that says what the block is: a connection, a host
-pattern, a Match rule, or options for all hosts.
+dimmed caption under it that says what the block is: a host, a host pattern,
+a Match rule, or options for all hosts.
 """
 from __future__ import annotations
 

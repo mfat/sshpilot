@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 22:15+0330\n"
+"POT-Creation-Date: 2026-11-24 22:18+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -54,7 +54,6 @@ msgstr "Schaltfläche für lokales Terminal"
 
 #: src/sshpilot/actions.py:181 src/sshpilot/gtk/asbru_import_messages.py:69
 #: src/sshpilot/sidebar.py:1442 src/sshpilot/sidebar.py:2485
-#: src/sshpilot/gtk/advanced_config_messages.py:149
 #, python-brace-format
 msgid "{count} connection"
 msgid_plural "{count} connections"
@@ -1833,7 +1832,6 @@ msgstr "Neue Verbindung"
 #: src/sshpilot/resources/ui/connection_dialog.ui:27
 #: src/sshpilot/resources/ui/connection_dialog.ui:138
 #: src/sshpilot/resources/ui/connection_dialog.ui:148
-#: src/sshpilot/gtk/advanced_config_messages.py:147
 #: src/sshpilot/advanced_config_results_view.py:237
 msgid "Connection"
 msgstr "Verbindung"
@@ -2093,6 +2091,7 @@ msgstr "Anbieterbibliothek für FIDO-Sicherheitsschlüssel auswählen"
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:46
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:312
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:39
+#: src/sshpilot/gtk/advanced_config_messages.py:149
 msgid "Host"
 msgstr "Host"
 
@@ -18562,6 +18561,13 @@ msgstr "Globale Optionen"
 #: src/sshpilot/gtk/advanced_config_messages.py:140
 msgid "New Host Block"
 msgstr "Neuer Host-Block"
+
+#: src/sshpilot/gtk/advanced_config_messages.py:150
+#, python-brace-format
+msgid "{count} host"
+msgid_plural "{count} hosts"
+msgstr[0] "{count} Host"
+msgstr[1] "{count} Hosts"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:152
 msgid "Host pattern"
