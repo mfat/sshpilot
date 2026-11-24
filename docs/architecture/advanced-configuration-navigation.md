@@ -91,10 +91,10 @@ it; keeping them cancels the navigation.
   that stood beside it are gone, since it shows both, and with them the
   effective-config viewer, which only the first of them opened.
 
-## In the main window: Config Sections
+## In the main window: Configuration
 
 The dropdown at the top of the main sidebar switches the window between
-Connections and Config Sections (`sidebar_views`). Config Sections is
+Connections and Configuration (`sidebar_views`). Configuration is
 Advanced Configuration in the main window: `AdvancedConfigView`, the same
 controller and widgets as the window (`AdvancedConfigBase`) with `embedded`
 set. Its list of blocks is shown in the main sidebar and its rules and results

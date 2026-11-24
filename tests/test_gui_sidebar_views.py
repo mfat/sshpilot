@@ -1,4 +1,4 @@
-"""The window's Connections / Config Sections dropdown, with real widgets.
+"""The window's Connections / Configuration dropdown, with real widgets.
 
 Built directly, without the application: a plain window stands in for the
 main window, laid out as it is (a sidebar box, and a content box holding the
@@ -157,18 +157,18 @@ def test_the_sections_are_edited_and_saved_there(window):
     assert view.embedded
     assert view.save_button.get_visible() and not view.save_button.get_sensitive()
     assert not view.sidebar_button.get_visible()         # the list is the main sidebar's
-    assert _labels(window) == ["Connections", "Config Sections"]
+    assert _labels(window) == ["Connections", "Configuration"]
 
     _edit_user(view, "deploy")
     assert view.save_button.get_sensitive()
-    assert _labels(window) == ["Connections", "Config Sections •"]   # unsaved, said
+    assert _labels(window) == ["Connections", "Configuration •"]   # unsaved, said
     assert window._sidebar_view_switcher.get_selected() == 1          # still this view
     assert window.config_path.read_text() == CONFIG                   # not yet written
 
     view.save()
     assert _pump(lambda: "User deploy" in window.config_path.read_text(), seconds=15)
     assert _pump(lambda: not view.dirty)
-    assert _labels(window) == ["Connections", "Config Sections"]
+    assert _labels(window) == ["Connections", "Configuration"]
 
 
 def test_a_draft_is_kept_when_the_view_is_left(window):
@@ -178,7 +178,7 @@ def test_a_draft_is_kept_when_the_view_is_left(window):
     _edit_user(view, "deploy")
     leave_sections(window)                    # a tab was selected
     assert window._sidebar_view_stack.get_visible_child_name() == "connections"
-    assert _labels(window)[1] == "Config Sections •"     # said from the other view too
+    assert _labels(window)[1] == "Configuration •"     # said from the other view too
     # Nothing reads the file over the draft: not a rebuild of the list...
     refresh_sections(window)
     # ...and not coming back.

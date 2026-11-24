@@ -2256,7 +2256,7 @@ class WindowTabsMixin:
             from .sidebar_views import leave_sections
             leave_sections(self)
         except Exception:
-            logger.debug("Could not leave the Config Sections view", exc_info=True)
+            logger.debug("Could not leave the Configuration view", exc_info=True)
         self._update_content_theme_for_selected_tab()
         self._update_layout_toggle_state()
         self._update_command_snippets_button_visibility()

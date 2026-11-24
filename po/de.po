@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 21:47+0330\n"
+"POT-Creation-Date: 2026-11-24 21:55+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -175,7 +175,7 @@ msgstr "Verbindungen öffnen?"
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:21
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
 #: src/sshpilot/advanced_config_window.py:630
-#: src/sshpilot/advanced_config_window.py:926
+#: src/sshpilot/advanced_config_window.py:928
 msgid "Cancel"
 msgstr "Abbrechen"
 
@@ -883,7 +883,7 @@ msgid "Discard changes to authorized_keys?"
 msgstr "Änderungen an authorized_keys verwerfen?"
 
 #: src/sshpilot/authorized_keys_window.py:798
-#: src/sshpilot/advanced_config_window.py:927
+#: src/sshpilot/advanced_config_window.py:929
 #: src/sshpilot/advanced_config_results_view.py:347
 msgid "Discard"
 msgstr "Verwerfen"
@@ -8272,8 +8272,8 @@ msgstr "SSH-Konfigurationseditor"
 #: src/sshpilot/sidebar.py:5161 src/sshpilot/window.py:4280
 #: src/sshpilot/resources/ui/connection_dialog.ui:120
 #: src/sshpilot/advanced_config_window.py:252
-#: src/sshpilot/advanced_config_window.py:1025
-#: src/sshpilot/advanced_config_window.py:1734
+#: src/sshpilot/advanced_config_window.py:1027
+#: src/sshpilot/advanced_config_window.py:1736
 msgid "Advanced Configuration"
 msgstr "Erweiterte Konfiguration"
 
@@ -18413,21 +18413,21 @@ msgstr "SSH-Konfiguration gespeichert"
 msgid "No Host block names “{host}” in this file."
 msgstr "Kein Host-Block in dieser Datei nennt „{host}“."
 
-#: src/sshpilot/advanced_config_window.py:917
+#: src/sshpilot/advanced_config_window.py:919
 msgid "Configuration copied"
 msgstr "Konfiguration kopiert"
 
-#: src/sshpilot/advanced_config_window.py:923
+#: src/sshpilot/advanced_config_window.py:925
 msgid "Discard unsaved changes?"
 msgstr "Nicht gespeicherte Änderungen verwerfen?"
 
-#: src/sshpilot/advanced_config_window.py:924
+#: src/sshpilot/advanced_config_window.py:926
 msgid "The changes made here have not been saved to the SSH configuration."
 msgstr ""
 "Die hier vorgenommenen Änderungen wurden nicht in der SSH-Konfiguration "
 "gespeichert."
 
-#: src/sshpilot/advanced_config_window.py:1100
+#: src/sshpilot/advanced_config_window.py:1102
 msgid ""
 "Global options must stay above every Host and Match block: OpenSSH reads an "
 "option below a Host line as that host's."
@@ -18435,11 +18435,11 @@ msgstr ""
 "Globale Optionen müssen oberhalb aller Host- und Match-Blöcke bleiben: "
 "OpenSSH liest eine Option unter einer Host-Zeile als Option dieses Hosts."
 
-#: src/sshpilot/advanced_config_window.py:1577
+#: src/sshpilot/advanced_config_window.py:1579
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "OpenSSH konnte zu dieser Konfiguration nicht befragt werden."
 
-#: src/sshpilot/advanced_config_window.py:1707
+#: src/sshpilot/advanced_config_window.py:1709
 msgid "Run and Evaluate"
 msgstr "Ausführen und auswerten"
 
@@ -18844,8 +18844,8 @@ msgid "No other file is read for this target."
 msgstr "Für dieses Ziel wird keine weitere Datei gelesen."
 
 #: src/sshpilot/sidebar_views.py:96
-msgid "Config Sections"
-msgstr "Konfigurationsabschnitte"
+msgid "Configuration"
+msgstr "Konfiguration"
 
 #: src/sshpilot/sidebar_views.py:287
 msgid "What the window shows"
@@ -18856,6 +18856,9 @@ msgstr "Was das Fenster anzeigt"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · aus"
+
+#~ msgid "Config Sections"
+#~ msgstr "Konfigurationsabschnitte"
 
 #~ msgid "Edit the configuration in the Advanced Configuration window"
 #~ msgstr "Konfiguration im Fenster „Erweiterte Konfiguration“ bearbeiten"

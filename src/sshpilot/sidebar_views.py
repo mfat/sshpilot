@@ -3,7 +3,7 @@
 A dropdown at the top of the sidebar switches the whole window between them.
 
 * **Connections**: the connection list, and the tabs and terminals beside it.
-* **Config Sections**: the sidebar lists every block of the configuration in
+* **Configuration**: the sidebar lists every block of the configuration in
   file order (the options above all blocks, each ``Host`` and ``Match``
   block), each said to be a connection, a host pattern, a Match rule or
   options for all hosts; the content area shows the blocks and what OpenSSH
@@ -93,7 +93,7 @@ def _ensure_sections_view(window):
 
 
 def _labels(unsaved: bool = False):
-    sections = _("Config Sections")
+    sections = _("Configuration")
     # The dot Advanced Configuration's own title carries for unsaved changes.
     return [_("Connections"), sections + " •" if unsaved else sections]
 
@@ -119,7 +119,7 @@ def _mark_unsaved(window, unsaved: bool) -> None:
 
 def open_sections(window, *, host="", line=0, option="", file="", pin=False,
                   new_block=None):
-    """Show the Config Sections view at a place of the configuration, as
+    """Show the Configuration view at a place of the configuration, as
     ``MainWindow.open_advanced_config`` takes it. Returns the view, or None
     when it cannot be shown here (the caller then opens the window)."""
     view = _ensure_sections_view(window)
@@ -153,7 +153,7 @@ def confirm_quit(window, proceed) -> bool:
 
 
 def show_view(window, name: str) -> None:
-    """Show the Connections or the Config Sections view of the window."""
+    """Show the Connections or the Configuration view of the window."""
     stack = getattr(window, "_sidebar_view_stack", None)
     if stack is None or name not in _VIEWS:
         return

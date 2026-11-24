@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 21:47+0330\n"
+"POT-Creation-Date: 2026-11-24 21:55+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -170,7 +170,7 @@ msgstr "打开连接？"
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:21
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
 #: src/sshpilot/advanced_config_window.py:630
-#: src/sshpilot/advanced_config_window.py:926
+#: src/sshpilot/advanced_config_window.py:928
 msgid "Cancel"
 msgstr "取消"
 
@@ -843,7 +843,7 @@ msgid "Discard changes to authorized_keys?"
 msgstr "放弃对 authorized_keys 的更改？"
 
 #: src/sshpilot/authorized_keys_window.py:798
-#: src/sshpilot/advanced_config_window.py:927
+#: src/sshpilot/advanced_config_window.py:929
 #: src/sshpilot/advanced_config_results_view.py:347
 msgid "Discard"
 msgstr "放弃"
@@ -7851,8 +7851,8 @@ msgstr "SSH 配置编辑器"
 #: src/sshpilot/sidebar.py:5161 src/sshpilot/window.py:4280
 #: src/sshpilot/resources/ui/connection_dialog.ui:120
 #: src/sshpilot/advanced_config_window.py:252
-#: src/sshpilot/advanced_config_window.py:1025
-#: src/sshpilot/advanced_config_window.py:1734
+#: src/sshpilot/advanced_config_window.py:1027
+#: src/sshpilot/advanced_config_window.py:1736
 msgid "Advanced Configuration"
 msgstr "高级配置"
 
@@ -17472,19 +17472,19 @@ msgstr "SSH 配置已保存"
 msgid "No Host block names “{host}” in this file."
 msgstr "此文件中没有 Host 块指明“{host}”。"
 
-#: src/sshpilot/advanced_config_window.py:917
+#: src/sshpilot/advanced_config_window.py:919
 msgid "Configuration copied"
 msgstr "配置已复制"
 
-#: src/sshpilot/advanced_config_window.py:923
+#: src/sshpilot/advanced_config_window.py:925
 msgid "Discard unsaved changes?"
 msgstr "放弃未保存的更改？"
 
-#: src/sshpilot/advanced_config_window.py:924
+#: src/sshpilot/advanced_config_window.py:926
 msgid "The changes made here have not been saved to the SSH configuration."
 msgstr "此处所做的更改尚未保存到 SSH 配置。"
 
-#: src/sshpilot/advanced_config_window.py:1100
+#: src/sshpilot/advanced_config_window.py:1102
 msgid ""
 "Global options must stay above every Host and Match block: OpenSSH reads an "
 "option below a Host line as that host's."
@@ -17492,11 +17492,11 @@ msgstr ""
 "全局选项必须位于所有 Host 和 Match 块之上：OpenSSH 会把 Host 行下方的选项当作"
 "该主机的选项。"
 
-#: src/sshpilot/advanced_config_window.py:1577
+#: src/sshpilot/advanced_config_window.py:1579
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "无法就此配置询问 OpenSSH。"
 
-#: src/sshpilot/advanced_config_window.py:1707
+#: src/sshpilot/advanced_config_window.py:1709
 msgid "Run and Evaluate"
 msgstr "运行并求值"
 
@@ -17883,8 +17883,8 @@ msgid "No other file is read for this target."
 msgstr "此目标不读取其他文件。"
 
 #: src/sshpilot/sidebar_views.py:96
-msgid "Config Sections"
-msgstr "配置区段"
+msgid "Configuration"
+msgstr "配置"
 
 #: src/sshpilot/sidebar_views.py:287
 msgid "What the window shows"
@@ -17895,6 +17895,9 @@ msgstr "窗口显示的内容"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · 已关闭"
+
+#~ msgid "Config Sections"
+#~ msgstr "配置区段"
 
 #~ msgid "Edit the configuration in the Advanced Configuration window"
 #~ msgstr "在高级配置窗口中编辑配置"

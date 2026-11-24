@@ -4413,7 +4413,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """
         self._cancel_pending_connection_rows()
         self._connection_rows_split = False
-        # The configuration may have changed: the Config Sections view, if
+        # The configuration may have changed: the Configuration view, if
         # it is the one shown, reads it again.
         try:
             from .sidebar_views import refresh_sections, sync_switcher_height
@@ -6295,7 +6295,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         connection editor passes a pattern, or several names, typed where a
         connection's name goes.
 
-        It is shown in the main window, as the Config Sections view
+        It is shown in the main window, as the Configuration view
         (``sidebar_views``), unless the call comes from a dialog that stays
         up over it (*over* without *new_block*: the connection editor's
         dialog closes once it has handed a new block over).
@@ -6311,7 +6311,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     pin=pin, new_block=new_block,
                 )
             except Exception:
-                logger.debug("Could not show the Config Sections view", exc_info=True)
+                logger.debug("Could not show the Configuration view", exc_info=True)
                 view = None
             if view is not None:
                 if callable(on_saved):
@@ -7902,7 +7902,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_close_request(self, window):
         """Handle window close request - MAIN ENTRY POINT"""
         if not self._is_quitting:
-            # Unsaved changes of the SSH configuration (the Config Sections
+            # Unsaved changes of the SSH configuration (the Configuration
             # view) are asked about first; discarding closes again.
             try:
                 from .sidebar_views import confirm_quit
