@@ -652,6 +652,34 @@ class RulesView(Gtk.Box):
             value = top + height / 2 - page / 2
         adjustment.set_value(max(0.0, value))
 
+    def card_top(self, uid: int) -> Optional[float]:
+        """How far under the top edge of the list a block's card starts, as
+        scrolled now (negative: above it). None: no such card, or no layout
+        yet."""
+        card = self.cards.get(uid)
+        if card is None:
+            return None
+        found, bounds = card.card.compute_bounds(self.box)
+        if not found:
+            return None
+        return (
+            bounds.get_y() + self.box.get_margin_top()
+            - self.scroller.get_vadjustment().get_value()
+        )
+
+    def put_card_at(self, uid: int, offset: float) -> None:
+        """Scroll the list so that a block's card starts *offset* under its
+        top edge (as near as the list allows)."""
+        card = self.cards.get(uid)
+        if card is None:
+            return
+        found, bounds = card.card.compute_bounds(self.box)
+        if not found:
+            return
+        self.scroller.get_vadjustment().set_value(
+            max(0.0, bounds.get_y() + self.box.get_margin_top() - offset)
+        )
+
     def _sync_scroll_room(self, *_args) -> None:
         """Leave room under the last block for it to reach the middle too:
         without it the list ends where the last card does, and the blocks

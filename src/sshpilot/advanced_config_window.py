@@ -678,6 +678,7 @@ class AdvancedConfigWindow(Adw.Window):
             # Once laid out: a window just opened has no sizes yet.
             self.rules.scroll_to(block.uid)
             self.rules.reveal(uid)
+            self._level_raw_with_rules()
             return False
 
         GLib.timeout_add(150, show)
@@ -840,6 +841,7 @@ class AdvancedConfigWindow(Adw.Window):
         self.select_block(row._uid)
         if row._uid is not None:
             self.rules.scroll_to(row._uid)
+            self._level_raw_with_rules()    # the card has moved
 
     def _set_typed(self, text: str) -> None:
         """Put *text* in the field as the window's own doing."""
@@ -984,28 +986,62 @@ class AdvancedConfigWindow(Adw.Window):
 
     # -- the Raw page and the rules are one place ---------------------------
 
-    def _mark_selection_in_raw(self, *, scroll: bool = True) -> None:
-        """Make the selected block's lines stand out on the Raw page (and,
-        when the selection moved, bring them into view there)."""
+    def _selected_lines(self) -> tuple:
+        """The first and last line the selected block has in the text."""
         block = self.editor.find_block(self.selected_uid)
         if block is None:
-            self.results.mark_block(0, 0)
-            return
+            return (0, 0)
         lines = self.editor.lines
         owned = [lines.headers.get(block.uid, 0)] + [
             lines.options.get(option.uid, 0) for option in block.options
         ]
         owned = [line for line in owned if line]
-        if not owned:
-            self.results.mark_block(0, 0)
+        return (min(owned), max(owned)) if owned else (0, 0)
+
+    def _mark_selection_in_raw(self, *, scroll: bool = True) -> None:
+        """Make the selected block's lines stand out on the Raw page and,
+        when the selection moved, stand level with the block's card."""
+        self.results.mark_block(*self._selected_lines())
+        if scroll and not self._selecting_from_raw:
+            self._level_raw_with_rules()
+
+    def _edge(self, widget) -> Optional[float]:
+        """The top edge of *widget*, in the window."""
+        found, bounds = widget.compute_bounds(self)
+        return bounds.get_y() if found else None
+
+    def _level_raw_with_rules(self) -> bool:
+        """Scroll the Raw page so that the selected block's first line is
+        at the height of its card's top in the rules: the two show the
+        same thing, and the eye crosses over on a level."""
+        first, _last = self._selected_lines()
+        if not first or not self.results.raw_shown():
+            return False
+        top = self.rules.card_top(self.selected_uid)
+        rules_edge, raw_edge = self._edge(self.rules.scroller), self._edge(self.results.raw_scroller)
+        if None in (top, rules_edge, raw_edge):
+            return False
+        self.results.put_raw_line_at(first, top + rules_edge - raw_edge)
+        return False
+
+    def _level_rules_with_raw(self) -> None:
+        """The other way round: the card comes level with its first line
+        in the text, which is where the cursor (and the eye) is."""
+        first, _last = self._selected_lines()
+        top = self.results.raw_line_top(first) if first else None
+        rules_edge, raw_edge = self._edge(self.rules.scroller), self._edge(self.results.raw_scroller)
+        if None in (top, rules_edge, raw_edge):
             return
-        self.results.mark_block(
-            min(owned), max(owned), scroll=scroll and not self._selecting_from_raw
-        )
+        self.rules.put_card_at(self.selected_uid, top + raw_edge - rules_edge)
+
+    def results_page_shown(self, name: str) -> None:
+        if name == "raw":
+            # Once the page has its size.
+            GLib.idle_add(self._level_raw_with_rules)
 
     def raw_cursor_moved(self, line: int) -> None:
         """The cursor is on *line* of the Raw page: the block that line
-        belongs to is the selected one, and is brought up in the rules."""
+        belongs to is the selected one, and its card comes level with it."""
         uid = self.editor.owner_of_line(line)
         if uid is None:
             return
@@ -1018,7 +1054,7 @@ class AdvancedConfigWindow(Adw.Window):
             self.select_block(block_uid)
         finally:
             self._selecting_from_raw = False
-        self.rules.scroll_to(block_uid)
+        self._level_rules_with_raw()
 
     def apply_raw(self) -> None:
         text = self.results.raw_text()

@@ -37,6 +37,9 @@ from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap  # noqa: E402
 
 _PAGES = ("effective", "trace", "raw", "includes")
 
+#: The Raw page's own margin around the text.
+_RAW_MARGIN = 10
+
 
 @dataclass
 class Answer:
@@ -197,7 +200,7 @@ class ResultsView(Gtk.Box):
                 "Files OpenSSH reads for this target besides this one. They are "
                 "read where their Include line stands, and are not edited here."
             )), "includes", _("Includes"), "folder-documents-symbolic")
-        self.stack.connect("notify::visible-child-name", lambda *_a: self._fill_visible())
+        self.stack.connect("notify::visible-child-name", self._on_page_shown)
 
     # -- construction --------------------------------------------------------
 
@@ -341,9 +344,13 @@ class ResultsView(Gtk.Box):
         frame = Gtk.Frame()
         frame.set_vexpand(True)
         scroller = Gtk.ScrolledWindow()
+        self.raw_scroller = scroller
         self.raw_view = Gtk.TextView(monospace=True)
         for side in ("top", "bottom", "left", "right"):
-            getattr(self.raw_view, f"set_{side}_margin")(10)
+            getattr(self.raw_view, f"set_{side}_margin")(_RAW_MARGIN)
+        # Room above the first line and under the last, as much as it takes
+        # for any line to stand level with its block's card in the rules.
+        scroller.get_vadjustment().connect("notify::page-size", self._sync_raw_room)
         buffer = self.raw_view.get_buffer()
         buffer.connect("changed", self._on_raw_changed)
         # The selected block's lines stand out here, and the block the
@@ -402,9 +409,10 @@ class ResultsView(Gtk.Box):
             self._raw_syncing = False
         self._paint_raw_block()
 
-    def mark_block(self, first: int, last: int, *, scroll: bool = True) -> None:
+    def mark_block(self, first: int, last: int) -> None:
         """Make lines *first* to *last* (1-based) of the text stand out as
-        the selected block's, and bring them into view. ``(0, 0)``: none.
+        the selected block's. ``(0, 0)``: none. (Where they stand is the
+        window's doing: level with the block's card.)
 
         While text typed here waits to be applied the lines are not the
         rules': nothing is marked until it is applied or dropped.
@@ -413,10 +421,47 @@ class ResultsView(Gtk.Box):
         if self.raw_pending:
             return
         self._paint_raw_block()
-        if scroll and first and self.stack.get_visible_child_name() == "raw":
-            found, start = self.raw_view.get_buffer().get_iter_at_line(first - 1)
-            if found:
-                self.raw_view.scroll_to_iter(start, 0.0, True, 0.0, 0.1)
+
+    def _sync_raw_room(self, *_args) -> None:
+        page = int(self.raw_scroller.get_vadjustment().get_page_size())
+        if page > 0 and self.raw_view.get_bottom_margin() != page:
+            GLib.idle_add(lambda: (self.raw_view.set_bottom_margin(page), False)[1])
+
+    def raw_shown(self) -> bool:
+        """The Raw page is on screen and shows the rules' own text."""
+        return self.stack.get_visible_child_name() == "raw" and not self.raw_pending
+
+    def raw_line_top(self, line: int) -> Optional[float]:
+        """How far under the top edge of the Raw page's text area *line*
+        (1-based) starts, as scrolled now. None: no such line."""
+        found, start = self.raw_view.get_buffer().get_iter_at_line(max(0, line - 1))
+        if not found:
+            return None
+        y, _height = self.raw_view.get_line_yrange(start)
+        adjustment = self.raw_scroller.get_vadjustment()
+        return y + self.raw_view.get_top_margin() - adjustment.get_value()
+
+    def put_raw_line_at(self, line: int, offset: float) -> None:
+        """Scroll the text so that *line* starts *offset* under the top
+        edge of the text area. A line too near the start of the text to be
+        that low gets the room it needs above the first line."""
+        found, start = self.raw_view.get_buffer().get_iter_at_line(max(0, line - 1))
+        if not found:
+            return
+        y, _height = self.raw_view.get_line_yrange(start)
+        margin = max(_RAW_MARGIN, int(round(offset - y)))
+        if self.raw_view.get_top_margin() != margin:
+            self.raw_view.set_top_margin(margin)
+        value = max(0.0, y + margin - offset)
+        adjustment = self.raw_scroller.get_vadjustment()
+
+        def scroll() -> bool:
+            # After the margin has been laid out: the range is new.
+            adjustment.set_value(value)
+            return False
+
+        adjustment.set_value(value)
+        GLib.idle_add(scroll)
 
     def _paint_raw_block(self) -> None:
         buffer = self.raw_view.get_buffer()
@@ -440,6 +485,10 @@ class ResultsView(Gtk.Box):
             return
         position = buffer.get_iter_at_mark(buffer.get_insert())
         self.controller.raw_cursor_moved(position.get_line() + 1)
+
+    def _on_page_shown(self, *_args) -> None:
+        self._fill_visible()
+        self.controller.results_page_shown(self.stack.get_visible_child_name())
 
     def show_text_line(self, line: int) -> None:
         """Open the Text page at *line* (1-based) of the text."""
