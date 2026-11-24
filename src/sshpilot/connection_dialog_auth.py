@@ -537,6 +537,42 @@ class AuthPolicy:
             if m not in KEYWORD_OF or self.effective_switch(m) is not False
         ]
 
+    def header_order(self) -> Optional[List[str]]:
+        """The order the section's header states: what is set here, as the
+        checked rows show it. ``None`` while the order is not known."""
+        if not self.order_known():
+            return None
+        checked = set(self.checked())
+        return [m for m in self._first_listed() if m not in METHODS or m in checked]
+
+    def preview_wanted(self) -> Optional[bool]:
+        """Whether the "OpenSSH will try" line has something to say.
+
+        It repeats the header for most hosts, so it is shown only when it
+        differs from it, or when the answer is a failure, empty or unsure.
+        ``None``: an edit is waiting for OpenSSH's answer and the line stays
+        as it is, so it does not come and go on an estimate.
+        """
+        if self.standalone:
+            return False
+        will_try = self.will_try()
+        if will_try is None:
+            # Not read yet says nothing; a failed lookup does.
+            return bool(self.lookup_failed)
+        if not will_try or self.unconfirmed_tried():
+            return True
+        if self.draft is not None and not self._draft_current():
+            return None
+        seen: set = set()
+        tried: List[str] = []
+        for m in will_try:
+            if m in METHODS:
+                if m in seen:
+                    continue
+                seen.add(m)
+            tried.append(m)
+        return tried != self.header_order()
+
     def unconfirmed_tried(self) -> List[str]:
         """Methods of :meth:`will_try` whose switch is not known: the order
         lists them, but whether they are turned on has not been answered."""
@@ -1016,7 +1052,8 @@ class AuthPolicyGroup:
     ``order_row``  the "Authentication methods" expander: its subtitle is
                    the order set here, and it is marked when an earlier
                    block decides the order;
-    ``effective_row`` the "OpenSSH will try" preview below the list.
+    ``effective_row`` the "OpenSSH will try" preview below the list;
+    ``preview``    its list, visible only when it differs from the header.
     """
 
     @classmethod
@@ -1113,8 +1150,11 @@ class AuthPolicyGroup:
         preview.set_selection_mode(Gtk.SelectionMode.NONE)
         preview.set_margin_top(6)
         preview.append(self.effective_row)
-        # A profile is not one host: there is no single order in force.
-        preview.set_visible(not self.profile)
+        # Hidden until it differs from the header (see ``sync``); a profile
+        # is not one host, so it has no single order in force and never
+        # shows it.
+        preview.set_visible(False)
+        self.preview = preview
         self.group.add(preview)
 
     def _make_row(self, method: str):
@@ -1467,15 +1507,18 @@ class AuthPolicyGroup:
             # The header: the order this block (or profile) sets, as the
             # checked rows show it. The preview below: what OpenSSH will
             # try, earlier blocks and Settings counted.
-            checked = set(policy.checked())
-            if not policy.order_known():
+            header = policy.header_order()
+            if header is None:
                 self.order_row.set_subtitle(
                     _("Shown once OpenSSH has read the configuration.")
                 )
             else:
-                self.order_row.set_subtitle(", ".join(
-                    m for m in policy._first_listed() if m not in METHODS or m in checked
-                ))
+                self.order_row.set_subtitle(", ".join(header))
+            # The preview repeats the header for most hosts: it shows only
+            # when it says something else.
+            wanted_preview = policy.preview_wanted()
+            if wanted_preview is not None:
+                self.preview.set_visible(wanted_preview)
             will_try = policy.will_try()
             if will_try is None and policy.lookup_failed:
                 self.effective_row.set_subtitle(

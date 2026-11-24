@@ -422,6 +422,56 @@ def test_a_host_not_saved_yet_shows_what_a_new_block_inherits():
     assert policy.will_try() == ["keyboard-interactive", "password"]
 
 
+def test_the_will_try_line_is_hidden_while_it_repeats_the_header():
+    policy = _policy()
+    assert policy.header_order() == policy.will_try()
+    assert policy.preview_wanted() is False
+    # Still so after an edit of the block's own order.
+    assert policy.set_tried("password", False)
+    assert policy.header_order() == policy.will_try()
+    assert policy.preview_wanted() is False
+
+
+def test_the_will_try_line_shows_when_something_else_decides():
+    policy = _policy("PreferredAuthentications publickey,password")
+    policy.earlier = {"preferredauthentications": "publickey"}
+    assert policy.header_order() == ["publickey", "password"]
+    assert policy.will_try() == ["publickey"]
+    assert policy.preview_wanted() is True
+
+
+def test_the_will_try_line_shows_a_failure_but_not_a_wait():
+    waiting = AuthPolicy.from_lines([])                      # nothing answered yet
+    if waiting.will_try() is None:
+        assert waiting.preview_wanted() is False
+    failed = AuthPolicy.from_lines([])
+    failed.set_lookup_failed()
+    assert failed.will_try() is None
+    assert failed.preview_wanted() is True
+    # No method at all is a warning, never hidden.
+    none = _policy("PreferredAuthentications password")
+    none.earlier = {"passwordauthentication": "no"}
+    assert none.will_try() == []
+    assert none.preview_wanted() is True
+
+
+def test_the_will_try_line_stays_as_it_is_until_openssh_answers_an_edit():
+    policy = _policy()
+    answer = {"preferredauthentications": "publickey,password"}
+    policy.set_draft(answer, {}, policy.to_lines())
+    assert policy.preview_wanted() is not None
+    assert policy.set_tried("password", False)               # the answer is stale
+    assert policy.preview_wanted() is None
+    policy.set_draft({"preferredauthentications": "publickey"}, {}, policy.to_lines())
+    assert policy.preview_wanted() is not None
+
+
+def test_a_profile_never_shows_the_will_try_line():
+    policy = AuthPolicy.from_lines(["PreferredAuthentications password"])
+    policy.standalone = True
+    assert policy.preview_wanted() is False
+
+
 @pytest.mark.parametrize("value, expected", [
     ("yes", True), ("true", True), ("host-bound", True), ("no", False), ("false", False),
 ])
