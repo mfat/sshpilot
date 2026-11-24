@@ -140,18 +140,14 @@ def _filter_by(win, host):
     ))
 
 
-def _folded(win):
-    """Blocks folded to their faded header, as skipped for the host. Every
-    block stays on screen: none is ever hidden."""
+def _dimmed(win):
+    """Blocks dimmed as not applying to the host. Every block stays on
+    screen, whole: none is hidden or collapsed."""
     assert all(win.rules.cards[b.uid].card.get_visible() for b in win.draft.blocks)
-    folded = []
-    for block in win.draft.blocks:
-        card = win.rules.cards[block.uid]
-        closed = not card.revealer.get_reveal_child()
-        assert closed == card.card.has_css_class("skipped")
-        if closed:
-            folded.append(block.patterns or block.kind)
-    return folded
+    return [
+        block.patterns or block.kind for block in win.draft.blocks
+        if win.rules.cards[block.uid].card.has_css_class("skipped")
+    ]
 
 
 def _block_rows(win):
@@ -216,7 +212,7 @@ def test_it_opens_showing_every_block_and_asks_nothing(gtk, tmp_path):
     assert _pump(lambda: len(win.draft.blocks) == 3)
     assert win.target_entry.get_text() == "" and win._evaluation is None
     assert win._block_list.get_selected_row() is win._all_row
-    assert _folded(win) == []
+    assert _dimmed(win) == []
     assert not any(
         win.rules.cards[b.uid].status.get_visible() for b in win.draft.blocks
     )
@@ -243,29 +239,29 @@ def test_another_target_is_asked_again(window):
     window.target_entry.set_text("db1")
     assert _pump(lambda: _effective(window, "user") == "fallback")
     # The block OpenSSH skips for the host folds, where it is.
-    assert _pump(lambda: _folded(window) == ["web1 web2"])
+    assert _pump(lambda: _dimmed(window) == ["web1 web2"])
     web = window.draft.blocks[1]
     assert [_status(window, o) for o in web.options] == ["Inactive"] * 3
     window.target_entry.set_text("web1")
-    assert _pump(lambda: _folded(window) == [] and _effective(window, "user") == "deploy")
+    assert _pump(lambda: _dimmed(window) == [] and _effective(window, "user") == "deploy")
     window.target_entry.set_text("")           # no host: every block open
     assert _pump(lambda: window._evaluation is None)
-    assert _folded(window) == []
+    assert _dimmed(window) == []
     assert window._block_list.get_selected_row() is window._all_row
 
 
 def test_a_block_being_worked_on_stays_open(window):
-    """Adding or editing a block must not fold it under the hands."""
+    """Adding or editing a block must not dim it under the hands."""
     window.add_block("host")
     block = window.draft.blocks[-1]
     window.rules.cards[block.uid].patterns.set_text("elsewhere")
     assert _settled(window)
-    assert window.rules.cards[block.uid].status.get_label() == "Skipped"
-    assert _folded(window) == []
+    assert window.rules.cards[block.uid].status.get_label() == ""
+    assert _dimmed(window) == []
     window.target_entry.set_text("db1")        # another host starts afresh
-    assert _pump(lambda: _folded(window) == ["web1 web2"])
+    assert _pump(lambda: _dimmed(window) == ["web1 web2"])
     window.select_block(None)                  # and it folds once it is left
-    assert _folded(window) == ["web1 web2", "elsewhere"]
+    assert _dimmed(window) == ["web1 web2", "elsewhere"]
 
 
 def test_moving_a_block_changes_what_wins_and_undo_restores_it(window):
@@ -329,7 +325,7 @@ def test_disabling_a_block_writes_comments_and_openssh_skips_it(window):
     assert "# [disabled] Host web1 web2\n" in window.editor.text
     web = window.draft.blocks[1]
     assert window.rules.cards[web.uid].status.get_label() == "Disabled"
-    assert "web1 web2" not in _folded(window)   # just switched off: still open
+    assert "web1 web2" not in _dimmed(window)   # just switched off: still open
 
 
 def test_options_move_between_blocks(window):
@@ -395,22 +391,22 @@ def test_the_sidebar_lists_the_blocks_and_a_typed_host_stays(window):
     assert window._request_serial == asked            # nothing new was asked
     assert window.target_entry.get_text() == "web1" and window.target_text() == "web1"
     assert window.results.summary_rows["command"].get_subtitle() == "ssh web1"
-    assert window.rules.cards[db.uid].status.get_label() == "Skipped"
-    assert _folded(window) == []                      # just worked on: left open
+    assert window.rules.cards[db.uid].status.get_label() == ""
+    assert _dimmed(window) == []                      # just worked on: left open
 
     window.target_entry.set_text("")                  # unpinned: the selection says
-    assert _pump(lambda: _folded(window) == ["db1 *.internal"])
+    assert _pump(lambda: _dimmed(window) == ["db1 *.internal"])
     assert window.target_text() == "web1"             # web's block is selected
     rows = window._block_rows
     assert rows[db.uid].get_child().get_opacity() < 1 == rows[web.uid].get_child().get_opacity()
     _pick(window, "Host db1 *.internal")
     assert window.target_text() == "db1"              # the first plain name
     assert _pump(lambda: _effective(window, "user") == "fallback")
-    assert _folded(window) == ["web1 web2"]
+    assert _dimmed(window) == ["web1 web2"]
 
     _pick(window, "")                                 # All Blocks: no block, no host
     assert window.selected_uid is None
-    assert _pump(lambda: window._evaluation is None and _folded(window) == [])
+    assert _pump(lambda: window._evaluation is None and _dimmed(window) == [])
     _pick(window, "Host web1 web2")
     window.delete_block(web.uid)                      # a selected block that goes
     assert _block_rows(window) == ["", "Global", "Host *", "Host db1 *.internal"]
@@ -515,13 +511,13 @@ def test_selecting_a_card_is_selecting_its_row_in_the_sidebar(gtk, tmp_path):
     assert win._block_list.get_selected_row()._uid == web.uid
     assert _pump(lambda: command.get_subtitle() == "ssh web1")
     assert _effective(win, "user") == "deploy"
-    assert win.rules.cards[db.uid].status.get_label() == "Skipped"
-    assert _folded(win) == ["db1"]
+    assert win.rules.cards[db.uid].status.get_label() == ""
+    assert _dimmed(win) == ["db1"]
 
-    win.select_block(db.uid)                              # a folded block opens at once
-    assert "db1" not in _folded(win)
+    win.select_block(db.uid)                              # a dimmed block is at full strength at once
+    assert "db1" not in _dimmed(win)
     assert _pump(lambda: command.get_subtitle() == "ssh db1")
-    assert _folded(win) == ["web1 web2"]
+    assert _dimmed(win) == ["web1 web2"]
 
     _pick(win, "Host web1 web2")                          # the same, from the sidebar
     assert win.selected_uid == web.uid
@@ -529,7 +525,7 @@ def test_selecting_a_card_is_selecting_its_row_in_the_sidebar(gtk, tmp_path):
     assert _pump(lambda: command.get_subtitle() == "ssh web1")
 
     win.select_block(glob.uid)                            # names no host: nothing asked
-    assert _pump(lambda: win._evaluation is None and _folded(win) == [])
+    assert _pump(lambda: win._evaluation is None and _dimmed(win) == [])
     win.select_block(None)
     assert win._block_list.get_selected_row() is win._all_row
     win._closing = True
@@ -576,8 +572,8 @@ def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
 
     _pick(win, "Host *.prod")
     assert _pump(lambda: pills()[0] == "Matched")
-    assert pills() == ["Matched", "Matched", "Skipped", "Matched", "Skipped", "Skipped", "Matched"]
-    assert _folded(win) == ["d.test", "host *.test", "*.lab"]
+    assert pills() == ["Matched", "Matched", "", "Matched", "", "", "Matched"]
+    assert _dimmed(win) == ["d.test", "host *.test", "*.lab"]
     assert win._evaluation is None and not win.results.summary.get_visible()
     assert "a.prod, b.prod" in win.results.note.get_label()
     assert _status(win, a.options[0]) is None             # lines are told per host
@@ -585,20 +581,20 @@ def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
 
     _pick(win, "Match host *.test")                       # a rule, as a pattern
     assert _pump(lambda: pills()[2] == "Matched")
-    assert pills() == ["Skipped", "Matched", "Matched", "Skipped", "Matched", "Skipped", "Matched"]
+    assert pills() == ["", "Matched", "Matched", "", "Matched", "", "Matched"]
     assert "c.test, d.test" in win.results.note.get_label()
 
     _pick(win, "Host *.lab")                              # no listed host fits it:
     assert _pump(lambda: pills()[5] == "Matched")         # a made-up one is asked about
-    assert pills() == ["Skipped"] * 5 + ["Matched", "Matched"]
+    assert pills() == [""] * 5 + ["Matched", "Matched"]
     assert "none of the hosts" in win.results.note.get_label()
 
     _pick(win, "Host a.prod")                             # a host: the usual answer
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh a.prod")
-    assert pills() == ["Matched", "Skipped", "Skipped", "Matched", "Skipped", "Skipped", "Matched"]
+    assert pills() == ["Matched", "", "", "Matched", "", "", "Matched"]
     assert _status(win, a.options[0]) == "Applied"
     _pick(win, "")
-    assert _pump(lambda: pills() == [""] * 7 and _folded(win) == [])
+    assert _pump(lambda: pills() == [""] * 7 and _dimmed(win) == [])
     win._closing = True
     win.destroy()
 
@@ -868,7 +864,7 @@ def test_an_included_file_is_shown_evaluated_and_saved(gtk, tmp_path):
     assert win.file_switcher.get_selected() == 1
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh inc1")
     assert [win.rules.cards[b.uid].status.get_label() for b in win.draft.blocks] == [
-        "Matched", "Skipped",
+        "Matched", "",
     ]
     assert _effective(win, "port") == "2200"                # the root's line counts too
 

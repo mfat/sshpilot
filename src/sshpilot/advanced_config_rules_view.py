@@ -16,7 +16,6 @@ Menus are built when they are first opened, for the same reason.
 """
 from __future__ import annotations
 
-import time
 from gettext import gettext as _
 from typing import Dict, List, Optional, Set
 
@@ -182,8 +181,9 @@ class BlockCard:
         self.uid = block.uid
         self.kind = block.kind
         self.rows: Dict[int, OptionRow] = {}
-        #: The last answer skips this block: it is folded while not selected.
-        self.folds = False
+        #: The last answer does not apply this block: it is dimmed while it
+        #: is not selected.
+        self.dims = False
         controller = view.controller
         movable = block.kind != GLOBAL
 
@@ -199,9 +199,7 @@ class BlockCard:
         self.card.add_controller(click)
         self.click = click
         focus = Gtk.EventControllerFocus()
-        # Not held in place: the list scrolls to a field the keyboard
-        # reaches, and holding the card would undo that.
-        focus.connect("enter", lambda *_a: controller.select_block(self.uid, anchor=False))
+        focus.connect("enter", lambda *_a: controller.select_block(self.uid))
         self.card.add_controller(focus)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -282,16 +280,7 @@ class BlockCard:
         presets.set_create_popup_func(self._build_preset_menu)
         self.footer.append(presets)
         self.rows_box.append(self.footer)
-        # A block that does not apply to the host in question folds to its
-        # header (and fades): the blocks that apply end up close together
-        # without leaving the file's order, which is OpenSSH's order.
-        self.revealer = Gtk.Revealer(
-            transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN,
-            transition_duration=200,
-            reveal_child=True,
-        )
-        self.revealer.set_child(body)
-        self.card.append(self.revealer)
+        self.card.append(body)
 
         if movable:
             source = Gtk.DragSource()
@@ -425,8 +414,6 @@ class RulesView(Gtk.Box):
         self.syncing = False
         self.cards: Dict[int, BlockCard] = {}
         self.selected_uid: Optional[int] = None
-        #: While a card is being held in place: see :meth:`hold`.
-        self._held: Optional[list] = None
         self.set_size_request(420, -1)
         self.preset_menu = Gio.Menu()
         for number, (key, _value) in enumerate(COMMON_OPTIONS):
@@ -527,17 +514,16 @@ class RulesView(Gtk.Box):
         self.selected_uid = uid if uid in self.cards else None
         current = self.cards.get(self.selected_uid)
         if previous is not None and previous is not current:
-            self.fold(previous, previous.folds)     # left: skipped folds again
+            self.dim(previous, previous.dims)       # left: dimmed again
         if current is not None:
             current.card.add_css_class("selected")
-            self.fold(current, False)       # the block in hand opens at once
+            self.dim(current, False)        # the block in hand is at full strength
 
     @staticmethod
-    def fold(card: "BlockCard", folded: bool) -> None:
-        """Fold a skipped block to its faded header, or open it again."""
-        _set_class(card.card, "skipped", folded)
-        if card.revealer.get_reveal_child() == folded:
-            card.revealer.set_reveal_child(not folded)
+    def dim(card: "BlockCard", dimmed: bool) -> None:
+        """Dim a block that does not apply, or bring it back. It stays as
+        it is otherwise: whole, in its place, and editable."""
+        _set_class(card.card, "skipped", dimmed)
 
     def show_answer(
         self,
@@ -550,9 +536,9 @@ class RulesView(Gtk.Box):
     ) -> int:
         """Put OpenSSH's answer on the cards. Returns how many blocks apply.
 
-        Every block stays on screen, in the file's order. One that does not
-        apply to the host in question folds to its faded header, unless it
-        is selected or in *keep_open* (being worked on).
+        Every block stays on screen, whole, in the file's order. One that
+        does not apply to the host in question is dimmed, unless it is
+        selected or in *keep_open* (being worked on).
 
         *related* stands in for an evaluation while the block picked names
         no host of its own: the header lines of the blocks that apply to a
@@ -581,8 +567,8 @@ class RulesView(Gtk.Box):
             label, style, tooltip = status(block.disabled, applies, block.kind == GLOBAL)
             set_pill(card.status, label, style, tooltip)
             count += bool(applies)
-            card.folds = applies is False and block.uid not in keep_open
-            self.fold(card, card.folds and block.uid != self.selected_uid)
+            card.dims = applies is False and block.uid not in keep_open
+            self.dim(card, card.dims and block.uid != self.selected_uid)
             error = errors.get(header_line) if header_line else None
             if card.warning.get_visible() != (error is not None):
                 card.warning.set_visible(error is not None)
@@ -631,46 +617,6 @@ class RulesView(Gtk.Box):
             adjustment.set_value(top)
         elif bottom > value + page:
             adjustment.set_value(bottom - page)
-
-    def hold(self, uid: int) -> None:
-        """Keep a block's card where it is on screen while cards above it
-        fold or open: the list is scrolled by as much as they give or
-        take, frame by frame, until the folding has come to rest."""
-        card = self.cards.get(uid)
-        if card is None:
-            return
-        found, bounds = card.card.compute_bounds(self.box)
-        if not found:
-            return
-        offset = bounds.get_y() - self.scroller.get_vadjustment().get_value()
-        now = time.monotonic()
-        ticking = self._held is not None
-        # At least a moment (folding may be about to start), at most a few
-        # seconds (whatever happens, the list is given back).
-        self._held = [card.card, offset, now + 0.15, now + 3.0, 0]
-        if not ticking:
-            self.scroller.add_tick_callback(self._keep_held)
-
-    def _keep_held(self, _widget, _clock) -> bool:
-        widget, offset, earliest, latest, rested = self._held
-        found, bounds = widget.compute_bounds(self.box)
-        if found and widget.get_parent() is self.box:
-            adjustment = self.scroller.get_vadjustment()
-            value = bounds.get_y() - offset
-            if abs(adjustment.get_value() - value) >= 0.5:
-                adjustment.set_value(value)
-        now = time.monotonic()
-        folding = any(
-            card.revealer.get_reveal_child() != card.revealer.get_child_revealed()
-            for card in self.cards.values()
-        )
-        # Two frames at rest: the last step of the folding is laid out
-        # after the frame that ends it.
-        self._held[4] = rested = 0 if folding or now < earliest else rested + 1
-        if rested < 3 and now < latest:
-            return True
-        self._held = None
-        return False
 
     def reveal(self, uid: int) -> None:
         """Scroll to and flash the option or block with *uid*."""

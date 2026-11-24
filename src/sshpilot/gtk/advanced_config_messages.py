@@ -87,7 +87,9 @@ def block_status(disabled: bool, matched: Optional[bool], is_global: bool) -> tu
                 _("Options above every Host and Match line apply to every target."))
     if matched:
         return (_("Matched"), "success", _("OpenSSH applies this block to the target."))
-    return (_("Skipped"), "muted", _("OpenSSH does not apply this block to the target."))
+    # A block that does not apply is dimmed and carries no word: "skipped"
+    # read as a verdict on the block, when it is only not this host's.
+    return ("", "muted", "")
 
 
 def related_status(disabled: bool, related: Optional[bool], is_global: bool) -> tuple:
@@ -98,7 +100,7 @@ def related_status(disabled: bool, related: Optional[bool], is_global: bool) -> 
     if related:
         return (_("Matched"), "success",
                 _("Applies to a host the picked block applies to."))
-    return (_("Skipped"), "muted", _("Applies to no host the picked block applies to."))
+    return ("", "muted", "")
 
 
 def related_note(hosts) -> str:

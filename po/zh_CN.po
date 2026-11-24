@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 12:23+0330\n"
+"POT-Creation-Date: 2026-11-24 12:29+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -168,8 +168,8 @@ msgstr "打开连接？"
 #: src/sshpilot/resources/ui/scp_download_window.ui:25
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:21
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
-#: src/sshpilot/advanced_config_window.py:465
-#: src/sshpilot/advanced_config_window.py:693
+#: src/sshpilot/advanced_config_window.py:461
+#: src/sshpilot/advanced_config_window.py:689
 msgid "Cancel"
 msgstr "取消"
 
@@ -372,7 +372,7 @@ msgstr "会话名称"
 #: src/sshpilot/resources/ui/command_edit_dialog.ui:25
 #: src/sshpilot/resources/ui/connection_dialog.ui:71
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:31
-#: src/sshpilot/advanced_config_window.py:209
+#: src/sshpilot/advanced_config_window.py:208
 msgid "Save"
 msgstr "保存"
 
@@ -842,7 +842,7 @@ msgid "Discard changes to authorized_keys?"
 msgstr "放弃对 authorized_keys 的更改？"
 
 #: src/sshpilot/authorized_keys_window.py:798
-#: src/sshpilot/advanced_config_window.py:694
+#: src/sshpilot/advanced_config_window.py:690
 #: src/sshpilot/advanced_config_results_view.py:323
 msgid "Discard"
 msgstr "放弃"
@@ -2657,12 +2657,12 @@ msgid "OpenSSH will try:"
 msgstr "OpenSSH 将尝试："
 
 #: src/sshpilot/connection_dialog_auth.py:1222
-#: src/sshpilot/advanced_config_rules_view.py:247
+#: src/sshpilot/advanced_config_rules_view.py:245
 msgid "Move up"
 msgstr "上移"
 
 #: src/sshpilot/connection_dialog_auth.py:1223
-#: src/sshpilot/advanced_config_rules_view.py:248
+#: src/sshpilot/advanced_config_rules_view.py:246
 msgid "Move down"
 msgstr "下移"
 
@@ -2742,7 +2742,7 @@ msgid "Set on this host"
 msgstr "在此主机上设置"
 
 #: src/sshpilot/connection_dialog_effective.py:67
-#: src/sshpilot/gtk/advanced_config_messages.py:160
+#: src/sshpilot/gtk/advanced_config_messages.py:162
 msgid "OpenSSH default"
 msgstr "OpenSSH 默认值"
 
@@ -7893,18 +7893,18 @@ msgid "Restore…"
 msgstr "恢复"
 
 #: src/sshpilot/macos_menubar.py:67 src/sshpilot/text_editor.py:412
-#: src/sshpilot/window.py:3668 src/sshpilot/advanced_config_window.py:203
+#: src/sshpilot/window.py:3668 src/sshpilot/advanced_config_window.py:202
 msgid "Undo"
 msgstr "撤销"
 
 #: src/sshpilot/macos_menubar.py:68 src/sshpilot/text_editor.py:418
-#: src/sshpilot/advanced_config_window.py:205
+#: src/sshpilot/advanced_config_window.py:204
 msgid "Redo"
 msgstr "重做"
 
 #: src/sshpilot/macos_menubar.py:79 src/sshpilot/omni_search.py:183
 #: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window.py:2411
-#: src/sshpilot/window_help.py:52 src/sshpilot/advanced_config_window.py:253
+#: src/sshpilot/window_help.py:52 src/sshpilot/advanced_config_window.py:252
 msgid "Toggle Sidebar"
 msgstr "切换侧边栏"
 
@@ -7945,9 +7945,9 @@ msgstr "SSH 配置编辑器"
 #: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
 #: src/sshpilot/sidebar.py:5156 src/sshpilot/window.py:4279
 #: src/sshpilot/resources/ui/connection_dialog.ui:55
-#: src/sshpilot/advanced_config_window.py:151
-#: src/sshpilot/advanced_config_window.py:201
-#: src/sshpilot/advanced_config_window.py:767
+#: src/sshpilot/advanced_config_window.py:150
+#: src/sshpilot/advanced_config_window.py:200
+#: src/sshpilot/advanced_config_window.py:763
 msgid "Advanced Configuration"
 msgstr "高级配置"
 
@@ -13165,13 +13165,13 @@ msgid "Choose a keyword"
 msgstr "选择关键字"
 
 #: src/sshpilot/ssh_option_list.py:159 src/sshpilot/ssh_option_list.py:161
-#: src/sshpilot/advanced_config_rules_view.py:119
+#: src/sshpilot/advanced_config_rules_view.py:118
 msgid "Value"
 msgstr "值"
 
 #. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
 #: src/sshpilot/ssh_option_list.py:273 src/sshpilot/ssh_option_list.py:277
-#: src/sshpilot/advanced_config_rules_view.py:278
+#: src/sshpilot/advanced_config_rules_view.py:276
 msgid "Add Option"
 msgstr "添加选项"
 
@@ -13416,7 +13416,7 @@ msgstr "会话已结束。"
 #. Dismiss button to hide the banner manually
 #: src/sshpilot/terminal.py:623 src/sshpilot/terminal.py:697
 #: src/sshpilot/window.py:2217 src/sshpilot/window.py:2243
-#: src/sshpilot/advanced_config_window.py:509
+#: src/sshpilot/advanced_config_window.py:505
 msgid "Dismiss"
 msgstr "忽略"
 
@@ -14063,7 +14063,7 @@ msgstr "放弃更改"
 msgid "Follow System Style"
 msgstr "跟随系统样式"
 
-#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:499
+#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:495
 msgid "Reload"
 msgstr "重新载入"
 
@@ -17502,85 +17502,85 @@ msgstr "直通"
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
 
-#: src/sshpilot/advanced_config_window.py:214
+#: src/sshpilot/advanced_config_window.py:213
 msgid "Reload from Disk"
 msgstr "从磁盘重新加载"
 
-#: src/sshpilot/advanced_config_window.py:215
+#: src/sshpilot/advanced_config_window.py:214
 msgid "Copy Configuration"
 msgstr "复制配置"
 
-#: src/sshpilot/advanced_config_window.py:269
+#: src/sshpilot/advanced_config_window.py:268
 msgid "Type a host to check"
 msgstr "输入要检查的主机"
 
-#: src/sshpilot/advanced_config_window.py:271
+#: src/sshpilot/advanced_config_window.py:270
 msgid "A host typed here is the one checked, whichever block is selected."
 msgstr "无论选择哪个块，都会检查此处输入的主机。"
 
-#: src/sshpilot/advanced_config_window.py:281
+#: src/sshpilot/advanced_config_window.py:280
 msgid "All Blocks"
 msgstr "所有块"
 
-#: src/sshpilot/advanced_config_window.py:303
+#: src/sshpilot/advanced_config_window.py:299
 msgid "The file of the configuration shown here"
 msgstr "此处显示的配置文件"
 
-#: src/sshpilot/advanced_config_window.py:377
+#: src/sshpilot/advanced_config_window.py:373
 msgid "The SSH configuration could not be read."
 msgstr "无法读取 SSH 配置。"
 
-#: src/sshpilot/advanced_config_window.py:397
-#: src/sshpilot/advanced_config_window.py:504
+#: src/sshpilot/advanced_config_window.py:393
+#: src/sshpilot/advanced_config_window.py:500
 msgid "This SSH configuration is read-only: changes cannot be saved."
 msgstr "此 SSH 配置为只读：无法保存更改。"
 
-#: src/sshpilot/advanced_config_window.py:459
+#: src/sshpilot/advanced_config_window.py:455
 msgid "Save a configuration OpenSSH rejects?"
 msgstr "要保存 OpenSSH 拒绝的配置吗？"
 
-#: src/sshpilot/advanced_config_window.py:461
+#: src/sshpilot/advanced_config_window.py:457
 msgid ""
 "OpenSSH refuses the whole configuration over one such line, so no SSH "
 "connection starts until it is corrected."
 msgstr ""
 "只要有这样一行，OpenSSH 就会拒绝整个配置，在更正之前任何 SSH 连接都无法启动。"
 
-#: src/sshpilot/advanced_config_window.py:466
+#: src/sshpilot/advanced_config_window.py:462
 msgid "Save Anyway"
 msgstr "仍然保存"
 
-#: src/sshpilot/advanced_config_window.py:498
+#: src/sshpilot/advanced_config_window.py:494
 msgid "The SSH configuration changed on disk since it was opened."
 msgstr "SSH 配置自打开以来已在磁盘上发生更改。"
 
-#: src/sshpilot/advanced_config_window.py:509
+#: src/sshpilot/advanced_config_window.py:505
 msgid "The SSH configuration could not be saved."
 msgstr "无法保存 SSH 配置。"
 
 #. an earlier failure is history
-#: src/sshpilot/advanced_config_window.py:516
+#: src/sshpilot/advanced_config_window.py:512
 msgid "SSH configuration saved"
 msgstr "SSH 配置已保存"
 
-#: src/sshpilot/advanced_config_window.py:651
+#: src/sshpilot/advanced_config_window.py:647
 #, python-brace-format
 msgid "No Host block names “{host}” in this file."
 msgstr "此文件中没有 Host 块指明“{host}”。"
 
-#: src/sshpilot/advanced_config_window.py:684
+#: src/sshpilot/advanced_config_window.py:680
 msgid "Configuration copied"
 msgstr "配置已复制"
 
-#: src/sshpilot/advanced_config_window.py:690
+#: src/sshpilot/advanced_config_window.py:686
 msgid "Discard unsaved changes?"
 msgstr "放弃未保存的更改？"
 
-#: src/sshpilot/advanced_config_window.py:691
+#: src/sshpilot/advanced_config_window.py:687
 msgid "The changes made here have not been saved to the SSH configuration."
 msgstr "此处所做的更改尚未保存到 SSH 配置。"
 
-#: src/sshpilot/advanced_config_window.py:850
+#: src/sshpilot/advanced_config_window.py:844
 msgid ""
 "Global options must stay above every Host and Match block: OpenSSH reads an "
 "option below a Host line as that host's."
@@ -17588,11 +17588,11 @@ msgstr ""
 "全局选项必须位于所有 Host 和 Match 块之上：OpenSSH 会把 Host 行下方的选项当作"
 "该主机的选项。"
 
-#: src/sshpilot/advanced_config_window.py:1112
+#: src/sshpilot/advanced_config_window.py:1099
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "无法就此配置询问 OpenSSH。"
 
-#: src/sshpilot/advanced_config_window.py:1207
+#: src/sshpilot/advanced_config_window.py:1194
 msgid "Run and Evaluate"
 msgstr "运行并求值"
 
@@ -17667,7 +17667,7 @@ msgid "Options above every Host and Match line apply to every target."
 msgstr "位于所有 Host 和 Match 行之上的选项适用于所有目标。"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:89
-#: src/sshpilot/gtk/advanced_config_messages.py:99
+#: src/sshpilot/gtk/advanced_config_messages.py:101
 msgid "Matched"
 msgstr "已匹配"
 
@@ -17675,24 +17675,11 @@ msgstr "已匹配"
 msgid "OpenSSH applies this block to the target."
 msgstr "OpenSSH 将此块应用于该目标。"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:90
-#: src/sshpilot/gtk/advanced_config_messages.py:101
-msgid "Skipped"
-msgstr "已跳过"
-
-#: src/sshpilot/gtk/advanced_config_messages.py:90
-msgid "OpenSSH does not apply this block to the target."
-msgstr "OpenSSH 不会将此块应用于该目标。"
-
-#: src/sshpilot/gtk/advanced_config_messages.py:100
+#: src/sshpilot/gtk/advanced_config_messages.py:102
 msgid "Applies to a host the picked block applies to."
 msgstr "适用于所选块也适用的某个主机。"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:101
-msgid "Applies to no host the picked block applies to."
-msgstr "不适用于所选块适用的任何主机。"
-
-#: src/sshpilot/gtk/advanced_config_messages.py:108
+#: src/sshpilot/gtk/advanced_config_messages.py:110
 msgid ""
 "The picked block applies to none of the hosts this configuration names. Type "
 "a host in the sidebar to see what OpenSSH would use for it."
@@ -17700,7 +17687,7 @@ msgstr ""
 "所选块不适用于此配置中指明的任何主机。在侧边栏中输入主机，以查看 OpenSSH 会为"
 "它使用什么。"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:113
+#: src/sshpilot/gtk/advanced_config_messages.py:115
 #, python-brace-format
 msgid ""
 "The picked block applies to: {hosts}. Blocks that apply to any of them are "
@@ -17710,40 +17697,40 @@ msgstr ""
 "查看 OpenSSH 会为它使用什么。"
 
 #. Host and Match are OpenSSH's keywords: not translated.
-#: src/sshpilot/gtk/advanced_config_messages.py:122
-#: src/sshpilot/advanced_config_rules_view.py:222
-#: src/sshpilot/advanced_config_rules_view.py:448
+#: src/sshpilot/gtk/advanced_config_messages.py:124
+#: src/sshpilot/advanced_config_rules_view.py:220
+#: src/sshpilot/advanced_config_rules_view.py:435
 #: src/sshpilot/advanced_config_results_view.py:563
 msgid "Global"
 msgstr "全局"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:128
+#: src/sshpilot/gtk/advanced_config_messages.py:130
 #, python-brace-format
 msgid "{count} matched"
 msgid_plural "{count} matched"
 msgstr[0] "{count} 个匹配"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:132
+#: src/sshpilot/gtk/advanced_config_messages.py:134
 #, python-brace-format
 msgid "{count} block"
 msgid_plural "{count} blocks"
 msgstr[0] "{count} 个块"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:138
+#: src/sshpilot/gtk/advanced_config_messages.py:140
 #, python-brace-format
 msgid "OpenSSH rejects {file}, line {line}"
 msgstr "OpenSSH 拒绝 {file} 的第 {line} 行"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:142
+#: src/sshpilot/gtk/advanced_config_messages.py:144
 #, python-brace-format
 msgid "OpenSSH rejects line {line}"
 msgstr "OpenSSH 拒绝第 {line} 行"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:144
+#: src/sshpilot/gtk/advanced_config_messages.py:146
 msgid "OpenSSH rejects this configuration"
 msgstr "OpenSSH 拒绝此配置"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:151
+#: src/sshpilot/gtk/advanced_config_messages.py:153
 #, python-brace-format
 msgid ""
 "This draft adds a Match exec command. OpenSSH runs it to evaluate the block, "
@@ -17755,102 +17742,102 @@ msgstr[0] ""
 "此草稿新增了 {count} 条 Match exec 命令。OpenSSH 需要运行它们来对相应的块求"
 "值，因此在您允许之前不会进行任何求值。"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:164
+#: src/sshpilot/gtk/advanced_config_messages.py:166
 msgid "Settings ▸ SSH Options"
 msgstr "设置 ▸ SSH 选项"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:169
+#: src/sshpilot/gtk/advanced_config_messages.py:171
 msgid "Set by the configuration"
 msgstr "由配置设置"
 
-#: src/sshpilot/gtk/advanced_config_messages.py:174
+#: src/sshpilot/gtk/advanced_config_messages.py:176
 #, python-brace-format
 msgid "{count} line not used"
 msgid_plural "{count} lines not used"
 msgstr[0] "{count} 行未使用"
 
-#: src/sshpilot/advanced_config_rules_view.py:108
+#: src/sshpilot/advanced_config_rules_view.py:107
 msgid "Drag to reorder or to another block"
 msgstr "拖动以重新排序或移到另一个块"
 
-#: src/sshpilot/advanced_config_rules_view.py:113
+#: src/sshpilot/advanced_config_rules_view.py:112
 msgid "Option"
 msgstr "选项"
 
-#: src/sshpilot/advanced_config_rules_view.py:124
+#: src/sshpilot/advanced_config_rules_view.py:123
 msgid "Remove option"
 msgstr "移除选项"
 
-#: src/sshpilot/advanced_config_rules_view.py:163
+#: src/sshpilot/advanced_config_rules_view.py:162
 msgid "Rejected"
 msgstr "被拒绝"
 
-#: src/sshpilot/advanced_config_rules_view.py:212
+#: src/sshpilot/advanced_config_rules_view.py:210
 msgid "Drag to reorder"
 msgstr "拖动以重新排序"
 
-#: src/sshpilot/advanced_config_rules_view.py:226
+#: src/sshpilot/advanced_config_rules_view.py:224
 msgid "Options for every target"
 msgstr "适用于所有目标的选项"
 
-#: src/sshpilot/advanced_config_rules_view.py:239
+#: src/sshpilot/advanced_config_rules_view.py:237
 msgid "Host patterns"
 msgstr "主机模式"
 
-#: src/sshpilot/advanced_config_rules_view.py:239
+#: src/sshpilot/advanced_config_rules_view.py:237
 msgid "Match criteria"
 msgstr "Match 条件"
 
-#: src/sshpilot/advanced_config_rules_view.py:257
+#: src/sshpilot/advanced_config_rules_view.py:255
 msgid "Block options"
 msgstr "块选项"
 
-#: src/sshpilot/advanced_config_rules_view.py:281
+#: src/sshpilot/advanced_config_rules_view.py:279
 msgid "Common Option"
 msgstr "常用选项"
 
-#: src/sshpilot/advanced_config_rules_view.py:331
+#: src/sshpilot/advanced_config_rules_view.py:320
 msgid "Enable Block"
 msgstr "启用块"
 
-#: src/sshpilot/advanced_config_rules_view.py:331
+#: src/sshpilot/advanced_config_rules_view.py:320
 msgid "Disable Block"
 msgstr "禁用块"
 
 #. (Global options have no header line to put a note above.)
-#: src/sshpilot/advanced_config_rules_view.py:334
+#: src/sshpilot/advanced_config_rules_view.py:323
 msgid "Add or Edit Note"
 msgstr "添加或编辑备注"
 
-#: src/sshpilot/advanced_config_rules_view.py:335
+#: src/sshpilot/advanced_config_rules_view.py:324
 msgid "Duplicate Block"
 msgstr "复制块"
 
-#: src/sshpilot/advanced_config_rules_view.py:336
+#: src/sshpilot/advanced_config_rules_view.py:325
 msgid "Delete Block"
 msgstr "删除块"
 
-#: src/sshpilot/advanced_config_rules_view.py:385
+#: src/sshpilot/advanced_config_rules_view.py:374
 msgid "Note (written as a comment above the block)"
 msgstr "备注（作为注释写在块的上方）"
 
-#: src/sshpilot/advanced_config_rules_view.py:440
+#: src/sshpilot/advanced_config_rules_view.py:427
 msgid "Configuration rules"
 msgstr "配置规则"
 
-#: src/sshpilot/advanced_config_rules_view.py:449
+#: src/sshpilot/advanced_config_rules_view.py:436
 msgid "Add options above every Host and Match line"
 msgstr "在所有 Host 和 Match 行之上添加选项"
 
-#: src/sshpilot/advanced_config_rules_view.py:454
+#: src/sshpilot/advanced_config_rules_view.py:441
 msgid "Add a block at the end"
 msgstr "在末尾添加一个块"
 
-#: src/sshpilot/advanced_config_rules_view.py:467
+#: src/sshpilot/advanced_config_rules_view.py:454
 msgid "No Configuration Rules"
 msgstr "没有配置规则"
 
-#: src/sshpilot/advanced_config_rules_view.py:468
+#: src/sshpilot/advanced_config_rules_view.py:455
 msgid "Add a Host or Match block to start."
 msgstr "添加一个 Host 或 Match 块以开始。"
 
@@ -17947,6 +17934,15 @@ msgstr "没有匹配的文件。"
 #: src/sshpilot/advanced_config_results_view.py:610
 msgid "No other file is read for this target."
 msgstr "此目标不读取其他文件。"
+
+#~ msgid "Skipped"
+#~ msgstr "已跳过"
+
+#~ msgid "OpenSSH does not apply this block to the target."
+#~ msgstr "OpenSSH 不会将此块应用于该目标。"
+
+#~ msgid "Applies to no host the picked block applies to."
+#~ msgstr "不适用于所选块适用的任何主机。"
 
 #, python-brace-format
 #~ msgid ""

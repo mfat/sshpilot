@@ -4,7 +4,7 @@ Sidebar: the blocks as a list (the same selection as the cards), and a field
 for a host. Middle: the configuration as ordered blocks (the global options,
 then every ``Host`` and ``Match`` block), editable and reorderable. The
 selected block says which host OpenSSH is asked about, unless one is typed
-in the field; the blocks that do not apply fold to their header, in place. Right: what
+in the field; the blocks that do not apply are dimmed, in place. Right: what
 OpenSSH resolves for the host, which line supplies each value, the order the
 blocks are read in, the text itself, and the files ``Include`` lines read.
 
@@ -87,7 +87,6 @@ _CSS = """
 .advcfg-block.disabled { opacity: 0.6; }
 .advcfg-block { transition: opacity 200ms ease-out; }
 .advcfg-block.skipped { opacity: 0.45; }
-.advcfg-block.skipped > .advcfg-header { border-radius: 12px; border-bottom-color: transparent; }
 .advcfg-drop-before { box-shadow: 0 -3px 0 0 @accent_color; }
 .advcfg-drop-after { box-shadow: 0 3px 0 0 @accent_color; }
 .advcfg-unused entry { opacity: 0.6; }
@@ -289,9 +288,6 @@ class AdvancedConfigWindow(Adw.Window):
         #: moment after the text changes, so text the window put there
         #: itself is told apart by this, not by a flag.
         self._typed_seen = ""
-        #: The block just selected, until the answer it asked for is shown:
-        #: it is held where it is while the others fold around it.
-        self._hold_for_answer: Optional[int] = None
         self._block_list.select_row(self._all_row)
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -661,7 +657,7 @@ class AdvancedConfigWindow(Adw.Window):
                 (item.uid for item in block.options if item.key.strip().lower() == wanted_key),
                 uid,
             )
-        self.select_block(block.uid, anchor=False)
+        self.select_block(block.uid)
 
         def show() -> bool:
             # Once laid out: a window just opened has no sizes yet.
@@ -825,11 +821,9 @@ class AdvancedConfigWindow(Adw.Window):
     def _on_block_picked(self, _listbox, row) -> None:
         if self._target_syncing or row is None:
             return
-        self.select_block(row._uid, anchor=False)
+        self.select_block(row._uid)
         if row._uid is not None:
-            # Gone to, then held there while the others fold around it.
             self.rules.scroll_to(row._uid)
-            self.rules.hold(row._uid)
 
     def _set_typed(self, text: str) -> None:
         """Put *text* in the field as the window's own doing."""
@@ -1015,24 +1009,17 @@ class AdvancedConfigWindow(Adw.Window):
     # selection
     # ------------------------------------------------------------------
 
-    def select_block(self, uid: Optional[int], *, anchor: bool = True) -> None:
+    def select_block(self, uid: Optional[int]) -> None:
         """Select a block, from its card or from the sidebar: the one
         Alt+arrows move, and, unless a host is typed in the sidebar, the
-        one that says which host OpenSSH is asked about.
-
-        *anchor*: hold the block where it is on screen while others fold
-        (it was clicked: it must not slide from under the pointer).
-        """
+        one that says which host OpenSSH is asked about."""
         if uid == self.selected_uid:
             return
         before = self._question()
-        if anchor and uid is not None:
-            self.rules.hold(uid)        # the block left may fold at once
         self.selected_uid = uid if self.editor.find_block(uid) is not None else None
         self.rules.select(self.selected_uid)
         self._mirror_selection()
         if self._question() != before:
-            self._hold_for_answer = self.selected_uid
             # Asked from the idle loop, so the highlight is painted first.
             self._target_changed(idle=True)
 
@@ -1210,18 +1197,13 @@ class AdvancedConfigWindow(Adw.Window):
                 self._show_answer_banner(messages.error_text(evaluation.errors[0]))
             else:
                 self._show_answer_banner("")
-        if self._hold_for_answer is not None:
-            # Once, for the selection that asked: later answers follow
-            # edits, and the view is then left alone.
-            uid, self._hold_for_answer = self._hold_for_answer, None
-            self.rules.hold(uid)
         matched = self.rules.show_answer(
             self.editor.blocks, evaluation, lines, keep_open=self._kept_visible,
             related=related[0] if related is not None else None,
         )
         for uid, row in self._block_rows.items():
             card = self.rules.cards.get(uid)
-            row.get_child().set_opacity(0.45 if card is not None and card.folds else 1.0)
+            row.get_child().set_opacity(0.45 if card is not None and card.dims else 1.0)
         user, host = split_target(self.target_text())
         self.results.show(
             Answer(
