@@ -5732,21 +5732,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
 
-        if connection is not None and not as_new and not skip_group_warning:
-            block_info = None
-            inspect_host_block = getattr(
-                self.connection_manager, 'get_host_block_details', None
-            )
-            if callable(inspect_host_block):
-                try:
-                    source_path = split_group_source or getattr(connection, 'source', None)
-                    block_info = inspect_host_block(connection.nickname, source_path)
-                except Exception as e:
-                    logger.debug(f"Failed to inspect host block for {connection.nickname}: {e}")
-            if block_info and len(block_info.get('hosts') or []) > 1:
-                self._prompt_group_edit_options(connection, block_info)
-                return
-
         split_source_for_dialog = split_group_source or (getattr(connection, 'source', None) if connection else None)
         original_token = split_original_nickname or (connection.nickname if connection else None)
 
@@ -6208,49 +6193,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             _failed(error)
             return False
         return True
-
-    def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):
-        """Present options when editing a grouped host"""
-        try:
-            host_label = getattr(connection, 'nickname', '')
-            other_hosts = max(0, len(block_info.get('hosts') or []) - 1)
-            message = ngettext(
-                '"{host}" is part of a configuration block with [{count}] other host. '
-                "How would you like to apply your changes?",
-                '"{host}" is part of a configuration block with [{count}] other hosts. '
-                "How would you like to apply your changes?",
-                other_hosts,
-            ).format(host=host_label, count=other_hosts)
-
-            dialog = Adw.MessageDialog.new(self, _("Warning"), message)
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('manual', _('Manually Edit SSH Configuration'))
-            dialog.add_response('split', _('Edit as Separate Connection'))
-            dialog.set_response_appearance('manual', Adw.ResponseAppearance.SUGGESTED)
-            dialog.set_default_response('manual')
-            dialog.set_close_response('cancel')
-
-            source_path = block_info.get('source') or getattr(connection, 'source', None)
-            original_name = getattr(connection, 'nickname', None)
-
-            def on_response(dlg, response):
-                dlg.destroy()
-                if response == 'manual':
-                    self._open_ssh_config_editor()
-                elif response == 'split':
-                    self.show_connection_dialog(
-                        connection,
-                        skip_group_warning=True,
-                        force_split_from_group=True,
-                        split_group_source=source_path,
-                        split_original_nickname=original_name,
-                    )
-
-            dialog.connect('response', on_response)
-            dialog.present()
-        except Exception as e:
-            logger.error(f"Failed to present group edit options: {e}")
-            self.show_connection_dialog(connection, skip_group_warning=True)
 
     def _open_ssh_config_editor(self, parent=None, on_saved=None):
         """Open the SSH config text editor backed by the daemon.
@@ -9171,6 +9113,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     split_from_group = connection_data.pop('__split_from_group', None)
                     split_source = connection_data.pop('__split_source', None)
                     split_original = connection_data.pop('__split_original_nickname', None)
+                    # The editor's word that this save is for every host of a
+                    # Host line the connection shares.
+                    shared_block = bool(connection_data.pop('__shared_block', False))
 
                     if split_from_group:
                         from .api.models.connections import SplitConnectionRequest
@@ -9205,6 +9150,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                                           else UNSET),
                             config_patch=config_patch,
                             expected_generation=current_generation,
+                            shared_block=shared_block,
                         )
                         operation = lambda: self.client.update_connection(
                             connection_id,

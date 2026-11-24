@@ -268,6 +268,7 @@ def _editor_details_to_connection(details):
         remote_command=getattr(details, 'remote_command', '') or '',
         forwarding_rules=forwarding_rules,
         aliases=getattr(details, 'aliases', None) or (),
+        shared_host_tokens=tuple(getattr(details, 'shared_host_tokens', None) or ()),
         source=getattr(details, 'source', '') or '',
         generation=getattr(details, 'generation', 0) or 0,
         data=data,
@@ -3271,6 +3272,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.load_connection_data()
         finally:
             self._refresh_save_sensitivity()
+        self._sync_shared_block_ui()
         # The lines as loaded: what differs from them later is unsaved.
         try:
             self._capture_effective_baseline()
@@ -4478,6 +4480,70 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 logger.debug("Could not mount the read-only banner", exc_info=True)
         self._sync_config_read_only_ui()
 
+    # -- a Host line that is more than this host's --------------------------
+
+    def _shared_host_tokens(self):
+        """The other tokens on the Host line of the connection being edited
+        (more names, patterns): its block is theirs too. Empty otherwise."""
+        if not self.is_editing:
+            return ()
+        return tuple(getattr(self.connection, 'shared_host_tokens', None) or ())
+
+    def _sync_shared_block_ui(self):
+        """Say that the block is shared, and which of the two edits this is:
+        of the block, for every host of its line (the line is kept, so the
+        name is too), or of this host alone, in a block of its own."""
+        tokens = self._shared_host_tokens()
+        banner = getattr(self, '_shared_block_banner', None)
+        if not tokens:
+            if banner is not None:
+                banner.set_revealed(False)
+            return
+        if banner is None:
+            banner = Adw.Banner()
+            try:
+                banner.set_use_markup(False)
+            except Exception:
+                pass
+            banner.connect('button-clicked', self._on_shared_block_mode_toggled)
+            self._shared_block_banner = banner
+            try:
+                self.content_mount.prepend(banner)
+            except Exception:
+                logger.debug("Could not mount the shared-block banner", exc_info=True)
+        name = getattr(self.connection, 'nickname', '') or ''
+        others = ' '.join(tokens)
+        separate = bool(getattr(self, 'force_split_from_group', False))
+        if separate:
+            banner.set_title(_(
+                "“{name}” will get a Host block of its own, at the end of the "
+                "file. The block it leaves stays for: {others}"
+            ).format(name=name, others=others))
+            banner.set_button_label(_("Edit for All"))
+        else:
+            banner.set_title(_(
+                "“{name}” shares its Host block with: {others}. Changes "
+                "apply to all of them."
+            ).format(name=name, others=others))
+            banner.set_button_label(_("Edit Separately"))
+        banner.set_revealed(True)
+        nickname_row = getattr(self, 'nickname_row', None)
+        if nickname_row is not None:
+            # The shared line is kept as written: a new name needs a block
+            # of its own.
+            nickname_row.set_sensitive(separate)
+            nickname_row.set_tooltip_text(
+                None if separate else _("To rename this host, edit it separately.")
+            )
+
+    def _on_shared_block_mode_toggled(self, *_args):
+        self.force_split_from_group = not getattr(self, 'force_split_from_group', False)
+        if not self.force_split_from_group:
+            nickname_row = getattr(self, 'nickname_row', None)
+            if nickname_row is not None:
+                nickname_row.set_text(getattr(self.connection, 'nickname', '') or '')
+        self._sync_shared_block_ui()
+
     def _config_read_only_active(self):
         if not getattr(self, '_config_read_only', False):
             return False
@@ -5541,6 +5607,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             orig_nick = orig_nick or getattr(self, 'split_original_nickname', None)
             if orig_nick:
                 connection_data['__split_original_nickname'] = orig_nick
+        elif self._shared_host_tokens():
+            # The banner said so: this save is for every host of the line.
+            connection_data['__shared_block'] = True
 
         # Wake-on-LAN and tags metadata ride the payload; the window persists
         # them only after the config write succeeds.
