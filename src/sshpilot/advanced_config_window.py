@@ -1,9 +1,11 @@
 """Advanced Configuration: the SSH configuration as OpenSSH reads it.
 
-Left: the configuration as ordered blocks (the global options, then every
-``Host`` and ``Match`` block), editable and reorderable. Right: what OpenSSH
-resolves for a host, which line supplies each value, the order the blocks
-are read in, the text itself, and the files ``Include`` lines read.
+Sidebar: the host OpenSSH is asked about (a listed one, a typed one, or
+none). Middle: the configuration as ordered blocks (the global options, then
+every ``Host`` and ``Match`` block), editable and reorderable; the blocks
+that do not apply to the host fold to their header, in place. Right: what
+OpenSSH resolves for the host, which line supplies each value, the order the
+blocks are read in, the text itself, and the files ``Include`` lines read.
 
 Nothing here decides what applies. Every answer comes from the daemon, which
 asks OpenSSH (``ssh -G``) about the draft in the context a connection would
@@ -34,13 +36,12 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from .advanced_config_model import (  # noqa: E402
     DraftEditor,
     Refusal,
     can_place,  # noqa: F401 - re-exported for callers and tests
-    first_host_name,
 )
 from .advanced_config_results_view import Answer, ResultsView  # noqa: E402
 from .advanced_config_rules_view import RulesView  # noqa: E402
@@ -114,7 +115,7 @@ class AdvancedConfigWindow(Adw.Window):
     """The Advanced Configuration window.
 
     *client* is the daemon client. *hosts* supplies saved host names for the
-    filter's drop-down; *on_saved* runs after each save.
+    sidebar; *on_saved* runs after each save.
     """
 
     def __init__(
@@ -132,7 +133,7 @@ class AdvancedConfigWindow(Adw.Window):
         self._on_saved = on_saved
         if parent is not None:
             self.set_transient_for(parent)
-        self.set_default_size(1180, 760)
+        self.set_default_size(1400, 760)
         self.set_title(_("Advanced Configuration"))
 
         self.editor = DraftEditor()
@@ -149,8 +150,8 @@ class AdvancedConfigWindow(Adw.Window):
         self._history_source = 0
         self._allowed_exec: set = set()
         self._notes_open: set = set()
-        #: Blocks added or edited under the current filter: they stay on
-        #: screen even when they do not apply to the host filtered by.
+        #: Blocks added or edited for the host in question: they stay open
+        #: even when they do not apply to it.
         self._kept_visible: set = set()
         self.selected_uid: Optional[int] = None
         self._saving = False
@@ -214,7 +215,6 @@ class AdvancedConfigWindow(Adw.Window):
         self.banner.connect("button-clicked", self._on_answer_banner_button)
         self._answer_banner_action: Optional[Callable[[], None]] = None
         view.add_top_bar(self.banner)
-        view.add_top_bar(self._build_filter_bar())
 
         self.rules = RulesView(self)
         self.results = ResultsView(self)
@@ -224,45 +224,63 @@ class AdvancedConfigWindow(Adw.Window):
         paned.set_position(620)
         paned.set_start_child(self.rules)
         paned.set_end_child(self.results)
-        view.set_content(paned)
-
-    def _build_filter_bar(self) -> Gtk.Widget:
-        # One filter, no separate "target" field: a host typed here (or
-        # picked from the drop-down) narrows the rules to the blocks OpenSSH
-        # applies to it and shows what it resolves. Empty: every block.
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        row.add_css_class("linked")
-        for side in ("top", "bottom"):
-            getattr(row, f"set_margin_{side}")(8)
-        row.set_margin_start(16)
-        row.set_margin_end(16)
-        self.target_entry = Gtk.SearchEntry()
-        self.target_entry.set_placeholder_text(
-            _("Filter by host: type a name to see what applies to it")
+        paned.set_hexpand(True)
+        self.sidebar = self._build_sidebar()
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        content.append(self.sidebar)
+        content.append(paned)
+        view.set_content(content)
+        self.sidebar_button = Gtk.ToggleButton(
+            icon_name="sidebar-show-symbolic", active=True,
+            tooltip_text=_("Toggle Sidebar"),
         )
-        self.target_entry.set_hexpand(True)
-        self.target_entry.connect("search-changed", self._on_filter_changed)
-        row.append(self.target_entry)
+        self.sidebar_button.bind_property(
+            "active", self.sidebar, "visible", GObject.BindingFlags.SYNC_CREATE
+        )
+        header.pack_start(self.sidebar_button)
+
+    def _build_sidebar(self) -> Gtk.Widget:
+        # The host OpenSSH is asked about is chosen here and nowhere else:
+        # a row of the list, or a name typed in the field (one no block
+        # names plainly can still match a pattern). "All Hosts": no host,
+        # every block shown as it is. Selecting a block in the rules never
+        # changes the host.
+        self.target_entry = Gtk.SearchEntry()
+        self.target_entry.set_placeholder_text(_("Search or type a host"))
+        for side in ("top", "bottom", "start", "end"):
+            getattr(self.target_entry, f"set_margin_{side}")(8)
+        self.target_entry.connect("search-changed", self._on_target_typed)
         self._host_list = Gtk.ListBox()
-        self._host_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._host_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._host_list.add_css_class("navigation-sidebar")
-        self._host_list.connect("row-activated", self._on_host_chosen)
+        self._host_list.set_filter_func(self._host_row_shown)
+        self._host_list.connect("row-selected", self._on_host_picked)
+        self._all_hosts_row = Gtk.ListBoxRow()
+        self._all_hosts_row.set_child(Gtk.Label(label=_("All Hosts"), xalign=0))
+        self._all_hosts_row._host = ""
+        self._host_list.append(self._all_hosts_row)
+        #: The row chosen in the list ("" for All Hosts). A typed name
+        #: takes its place: there is one host in question, shown one way.
+        self._picked_host = ""
+        #: True while the window itself moves the list's selection.
+        self._target_syncing = False
+        #: The field's text as last acted on. "search-changed" arrives a
+        #: moment after the text changes, so text the window put there
+        #: itself is told apart by this, not by a flag.
+        self._typed_seen = ""
+        self._host_names_shown: Optional[List[str]] = None
+        self._host_list.select_row(self._all_hosts_row)
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_propagate_natural_height(True)
-        scroller.set_max_content_height(360)
-        scroller.set_min_content_width(260)
+        scroller.set_vexpand(True)
         scroller.set_child(self._host_list)
-        self._host_popover = Gtk.Popover()
-        self._host_popover.set_child(scroller)
-        self.target_button = Gtk.MenuButton(icon_name="pan-down-symbolic")
-        self.target_button.set_popover(self._host_popover)
-        self.target_button.set_tooltip_text(_("Choose a host"))
-        row.append(self.target_button)
-        self._host_names_shown: Optional[List[str]] = None
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        outer.append(row)
-        outer.append(Gtk.Separator())
+        column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        column.append(self.target_entry)
+        column.append(scroller)
+        column.set_size_request(210, -1)
+        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        outer.append(column)
+        outer.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
         return outer
 
     # ------------------------------------------------------------------
@@ -281,19 +299,10 @@ class AdvancedConfigWindow(Adw.Window):
     def dirty(self) -> bool:
         return self.editor.dirty or self.results.raw_pending
 
-    @property
-    def filtering(self) -> bool:
-        """A host is typed in the filter: the rules are narrowed to it."""
-        return bool(self.target_entry.get_text().strip())
-
-    def selected_host(self) -> str:
-        return first_host_name(self.editor.find_block(self.selected_uid))
-
     def target_text(self) -> str:
-        """The host OpenSSH is asked about: the filter's, else the selected
-        block's. Selecting a block loads it on the right without narrowing
-        the rules; only the filter narrows them."""
-        return self.target_entry.get_text().strip() or self.selected_host()
+        """The host OpenSSH is asked about: the one typed in the sidebar,
+        else the one picked in its list. Empty: none."""
+        return self.target_entry.get_text().strip() or self._picked_host
 
     def host_names(self) -> List[str]:
         return self.editor.host_names(self._hosts)
@@ -557,20 +566,76 @@ class AdvancedConfigWindow(Adw.Window):
         if names == self._host_names_shown:
             return
         self._host_names_shown = names
-        while (child := self._host_list.get_first_child()) is not None:
-            self._host_list.remove(child)
-        for name in names:
-            label = Gtk.Label(label=name, xalign=0)
-            label.add_css_class("monospace")
-            row = Gtk.ListBoxRow()
-            row.set_child(label)
-            row._host = name
-            self._host_list.append(row)
-        self.target_button.set_sensitive(bool(names))
+        self._target_syncing = True
+        try:
+            row = self._all_hosts_row.get_next_sibling()
+            while row is not None:
+                following = row.get_next_sibling()
+                self._host_list.remove(row)
+                row = following
+            chosen = self._all_hosts_row if not self.target_text() else None
+            for name in names:
+                label = Gtk.Label(label=name, xalign=0)
+                label.add_css_class("monospace")
+                label.set_ellipsize(Pango.EllipsizeMode.END)
+                row = Gtk.ListBoxRow()
+                row.set_child(label)
+                row.set_tooltip_text(name)
+                row._host = name
+                self._host_list.append(row)
+                if name == self._picked_host:
+                    chosen = row
+            vanished = self._picked_host if self._picked_host not in names else ""
+            self._host_list.select_row(chosen)
+        finally:
+            self._target_syncing = False
+        if vanished:
+            # The picked name left the configuration (its Host line is
+            # being retyped): it stays the host in question, now as a
+            # typed one, so nothing changes under the hands.
+            self._picked_host = ""
+            self._set_typed(vanished)
 
-    def _on_host_chosen(self, _listbox, row) -> None:
-        self._host_popover.popdown()
-        self.target_entry.set_text(row._host)
+    def _host_row_shown(self, row) -> bool:
+        typed = self.target_entry.get_text().strip().lower()
+        return not typed or not row._host or typed in row._host.lower()
+
+    def _target_changed(self, *, idle: bool = False) -> None:
+        # A command can depend on the host (%h, %r): agreement to run it
+        # was for the host in question at the time. Blocks kept open were
+        # worked on for that host too.
+        self._allowed_exec.clear()
+        self._kept_visible.clear()
+        self._schedule_evaluation(idle=idle)
+
+    def _on_host_picked(self, _listbox, row) -> None:
+        if self._target_syncing or row is None:
+            return
+        self._picked_host = row._host
+        self._set_typed("")
+        # Asked from the idle loop, so the highlight is painted first.
+        self._target_changed(idle=True)
+
+    def _set_typed(self, text: str) -> None:
+        """Put *text* in the field as the window's own doing."""
+        self._typed_seen = text
+        if self.target_entry.get_text() != text:
+            self.target_entry.set_text(text)
+            self._host_list.invalidate_filter()
+
+    def _on_target_typed(self, *_args) -> None:
+        typed = self.target_entry.get_text().strip()
+        if typed == self._typed_seen:
+            return
+        self._typed_seen = typed
+        self._picked_host = ""
+        self._target_syncing = True
+        try:
+            self._host_list.select_row(None if typed else self._all_hosts_row)
+        finally:
+            self._target_syncing = False
+        self._host_list.invalidate_filter()
+        self._target_changed()
 
     def _toast_refusal(self, refusal) -> None:
         if refusal is Refusal.GLOBAL_ORDER:
@@ -740,30 +805,16 @@ class AdvancedConfigWindow(Adw.Window):
             self._show_draft(evaluate_now=True)
 
     # ------------------------------------------------------------------
-    # selection and the filter
+    # selection
     # ------------------------------------------------------------------
 
     def select_block(self, uid: Optional[int]) -> None:
-        """Select a block. The highlight is immediate; what the block's host
-        resolves to follows once OpenSSH has answered."""
+        """Select a block: the one Alt+arrows move. The host in question is
+        the sidebar's and does not follow."""
         if uid == self.selected_uid:
             return
-        before = self.target_text()
         self.selected_uid = uid if self.editor.find_block(uid) is not None else None
         self.rules.select(self.selected_uid)
-        if self.target_text() != before:
-            # Another host is in question: agreements to run a Match exec
-            # command were for the one before. The question is asked from
-            # the idle loop, so the highlight is painted first.
-            self._allowed_exec.clear()
-            self._schedule_evaluation(idle=True)
-
-    def _on_filter_changed(self, *_args) -> None:
-        # A command can depend on the host (%h, %r): agreement to run it
-        # was for the host on screen at the time.
-        self._allowed_exec.clear()
-        self._kept_visible.clear()
-        self._schedule_evaluation()
 
     def reveal_line(self, line: int) -> None:
         """Show the option or block the draft has at *line* (from a source
@@ -862,8 +913,7 @@ class AdvancedConfigWindow(Adw.Window):
             else:
                 self._show_answer_banner("")
         matched = self.rules.show_answer(
-            self.editor.blocks, evaluation, lines,
-            narrow=self.filtering, keep_visible=self._kept_visible,
+            self.editor.blocks, evaluation, lines, keep_open=self._kept_visible,
         )
         user, host = split_target(self.target_text())
         self.results.show(

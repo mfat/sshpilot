@@ -181,6 +181,8 @@ class BlockCard:
         self.uid = block.uid
         self.kind = block.kind
         self.rows: Dict[int, OptionRow] = {}
+        #: The last answer skips this block: it is folded while not selected.
+        self.folds = False
         controller = view.controller
         movable = block.kind != GLOBAL
 
@@ -519,6 +521,8 @@ class RulesView(Gtk.Box):
             previous.card.remove_css_class("selected")
         self.selected_uid = uid if uid in self.cards else None
         current = self.cards.get(self.selected_uid)
+        if previous is not None and previous is not current:
+            self.fold(previous, previous.folds)     # left: skipped folds again
         if current is not None:
             current.card.add_css_class("selected")
             self.fold(current, False)       # the block in hand opens at once
@@ -536,15 +540,13 @@ class RulesView(Gtk.Box):
         evaluation: Optional[SshConfigDraftEvaluation],
         lines: LineMap,
         *,
-        narrow: bool,
-        keep_visible,
+        keep_open,
     ) -> int:
         """Put OpenSSH's answer on the cards. Returns how many blocks apply.
 
-        *narrow*: a host is being filtered by, so only the blocks that apply
-        to it (and any in *keep_visible*) stay on screen. Otherwise a block
-        that does not apply folds to its faded header, unless it is selected
-        or in *keep_visible*.
+        Every block stays on screen, in the file's order. One that does not
+        apply to the host in question folds to its faded header, unless it
+        is selected or in *keep_open* (being worked on).
         """
         answered = bool(evaluation and evaluation.evaluated)
         matched = set(evaluation.matched_blocks) if answered else set()
@@ -567,9 +569,8 @@ class RulesView(Gtk.Box):
             )
             set_pill(card.status, label, style, tooltip)
             count += bool(applies)
-            kept = block.uid in keep_visible or block.uid == self.selected_uid
-            card.card.set_visible(not (answered and narrow) or bool(applies) or kept)
-            self.fold(card, applies is False and not kept)
+            card.folds = applies is False and block.uid not in keep_open
+            self.fold(card, card.folds and block.uid != self.selected_uid)
             error = errors.get(header_line) if header_line else None
             if card.warning.get_visible() != (error is not None):
                 card.warning.set_visible(error is not None)

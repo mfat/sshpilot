@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 10:16+0330\n"
+"POT-Creation-Date: 2026-11-24 10:43+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -116,7 +116,7 @@ msgstr "Ouvrir les connexions ?"
 #: src/sshpilot/bitwarden_setup.py:852 src/sshpilot/bitwarden_setup.py:956
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
-#: src/sshpilot/connection_dialog_auth.py:1340
+#: src/sshpilot/connection_dialog_auth.py:1380
 #: src/sshpilot/connection_dialog_port_forwarding.py:247
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
@@ -172,8 +172,8 @@ msgstr "Ouvrir les connexions ?"
 #: src/sshpilot/resources/ui/scp_download_window.ui:25
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:21
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
-#: src/sshpilot/advanced_config_window.py:402
-#: src/sshpilot/advanced_config_window.py:475
+#: src/sshpilot/advanced_config_window.py:414
+#: src/sshpilot/advanced_config_window.py:487
 msgid "Cancel"
 msgstr "Annuler"
 
@@ -385,7 +385,7 @@ msgstr "Nom de la session"
 #: src/sshpilot/resources/ui/command_edit_dialog.ui:25
 #: src/sshpilot/resources/ui/connection_dialog.ui:65
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:31
-#: src/sshpilot/advanced_config_window.py:187
+#: src/sshpilot/advanced_config_window.py:191
 msgid "Save"
 msgstr "Enregistrer"
 
@@ -870,7 +870,7 @@ msgid "Discard changes to authorized_keys?"
 msgstr "Abandonner les modifications du fichier authorized_keys ?"
 
 #: src/sshpilot/authorized_keys_window.py:798
-#: src/sshpilot/advanced_config_window.py:476
+#: src/sshpilot/advanced_config_window.py:488
 #: src/sshpilot/advanced_config_results_view.py:321
 msgid "Discard"
 msgstr "Abandonner"
@@ -1775,7 +1775,7 @@ msgstr "Ajoutée"
 
 #: src/sshpilot/connection_dialog.py:1188
 #: src/sshpilot/connection_dialog.py:1338
-#: src/sshpilot/connection_dialog_auth.py:1341
+#: src/sshpilot/connection_dialog_auth.py:1381
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:360
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:489
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:207
@@ -2674,30 +2674,30 @@ msgstr "Clés (publickey)"
 msgid "Keyboard-interactive (PAM, one-time codes)"
 msgstr "Clavier interactif (PAM, codes à usage unique)"
 
-#: src/sshpilot/connection_dialog_auth.py:935
+#: src/sshpilot/connection_dialog_auth.py:971
 msgid "Checked, but not tried: an earlier setting leaves it out of the order"
 msgstr "Cochée, mais pas essayée : un réglage antérieur l’exclut de l’ordre"
 
-#: src/sshpilot/connection_dialog_auth.py:937
+#: src/sshpilot/connection_dialog_auth.py:973
 msgid "Checked, but not tried: an earlier setting turns it off"
 msgstr "Cochée, mais pas essayée : un réglage antérieur la désactive"
 
-#: src/sshpilot/connection_dialog_auth.py:939
+#: src/sshpilot/connection_dialog_auth.py:975
 msgid "Unchecked, but tried: an earlier setting decides"
 msgstr "Non cochée, mais essayée : un réglage antérieur décide"
 
 #. {value} is the authored value, e.g. host-bound.
-#: src/sshpilot/connection_dialog_auth.py:943
+#: src/sshpilot/connection_dialog_auth.py:979
 #, python-brace-format
 msgid "Enabled in this profile ({value})"
 msgstr "Activé dans ce profil ({value})"
 
-#: src/sshpilot/connection_dialog_auth.py:944
+#: src/sshpilot/connection_dialog_auth.py:980
 #, python-brace-format
 msgid "Enabled for this host ({value})"
 msgstr "Activé pour cet hôte ({value})"
 
-#: src/sshpilot/connection_dialog_auth.py:1053
+#: src/sshpilot/connection_dialog_auth.py:1090
 msgid ""
 "Lines this profile sets replace a linked connection's own; what it leaves "
 "unset stays the connection's. Methods are tried from the top; unchecked "
@@ -2707,7 +2707,7 @@ msgstr ""
 "ce qu’il laisse non défini reste celui de la connexion. Les méthodes sont "
 "essayées de haut en bas ; les méthodes non cochées sont omises."
 
-#: src/sshpilot/connection_dialog_auth.py:1057
+#: src/sshpilot/connection_dialog_auth.py:1094
 msgid "Methods are tried from the top. Unchecked methods are left out."
 msgstr ""
 "Les méthodes sont essayées de haut en bas. Les méthodes non cochées sont "
@@ -2715,53 +2715,53 @@ msgstr ""
 
 #. One row that folds the method list away: most hosts never change
 #. it, so the header says what will be tried and the rows wait inside.
-#: src/sshpilot/connection_dialog_auth.py:1062
+#: src/sshpilot/connection_dialog_auth.py:1099
 msgid "Authentication methods"
 msgstr "Méthodes d’authentification"
 
-#: src/sshpilot/connection_dialog_auth.py:1067 src/sshpilot/preferences.py:1738
+#: src/sshpilot/connection_dialog_auth.py:1104 src/sshpilot/preferences.py:1738
 #: src/sshpilot/preferences.py:3058 src/sshpilot/preferences.py:6341
 msgid "Reset"
 msgstr "Réinitialiser"
 
-#: src/sshpilot/connection_dialog_auth.py:1071
-#: src/sshpilot/connection_dialog_auth.py:1463
+#: src/sshpilot/connection_dialog_auth.py:1108
+#: src/sshpilot/connection_dialog_auth.py:1503
 msgid "Leave the order to each linked connection"
 msgstr "Laisser l’ordre à chaque connexion liée"
 
-#: src/sshpilot/connection_dialog_auth.py:1072
-#: src/sshpilot/connection_dialog_auth.py:1464
+#: src/sshpilot/connection_dialog_auth.py:1109
+#: src/sshpilot/connection_dialog_auth.py:1504
 msgid "Use authentication order set by OpenSSH configuration"
 msgstr ""
 "Utiliser l’ordre d’authentification défini par la configuration OpenSSH"
 
-#: src/sshpilot/connection_dialog_auth.py:1106
+#: src/sshpilot/connection_dialog_auth.py:1143
 msgid "OpenSSH will try:"
 msgstr "OpenSSH essaiera :"
 
-#: src/sshpilot/connection_dialog_auth.py:1155
-#: src/sshpilot/advanced_config_rules_view.py:242
+#: src/sshpilot/connection_dialog_auth.py:1195
+#: src/sshpilot/advanced_config_rules_view.py:244
 msgid "Move up"
 msgstr "Monter"
 
-#: src/sshpilot/connection_dialog_auth.py:1156
-#: src/sshpilot/advanced_config_rules_view.py:243
+#: src/sshpilot/connection_dialog_auth.py:1196
+#: src/sshpilot/advanced_config_rules_view.py:245
 msgid "Move down"
 msgstr "Descendre"
 
-#: src/sshpilot/connection_dialog_auth.py:1157
+#: src/sshpilot/connection_dialog_auth.py:1197
 msgid "Move to top"
 msgstr "Placer en tête"
 
-#: src/sshpilot/connection_dialog_auth.py:1161
+#: src/sshpilot/connection_dialog_auth.py:1201
 msgid "Method options"
 msgstr "Options de la méthode"
 
-#: src/sshpilot/connection_dialog_auth.py:1333
+#: src/sshpilot/connection_dialog_auth.py:1373
 msgid "Remove the custom authentication order?"
 msgstr "Supprimer l’ordre d’authentification personnalisé ?"
 
-#: src/sshpilot/connection_dialog_auth.py:1335
+#: src/sshpilot/connection_dialog_auth.py:1375
 msgid ""
 "This will remove your custom authentication order from the SSH configuration "
 "when you save. The host then uses the order it inherits."
@@ -2769,43 +2769,43 @@ msgstr ""
 "Votre ordre d’authentification personnalisé sera supprimé de la "
 "configuration SSH à l’enregistrement. L’hôte utilisera alors l’ordre hérité."
 
-#: src/sshpilot/connection_dialog_auth.py:1438
+#: src/sshpilot/connection_dialog_auth.py:1478
 msgid "Not known to this dialog; kept as written."
 msgstr "Inconnu de cette boîte de dialogue ; conservé tel quel."
 
-#: src/sshpilot/connection_dialog_auth.py:1473
-#: src/sshpilot/connection_dialog_auth.py:1486
-#: src/sshpilot/connection_dialog_auth.py:1548
+#: src/sshpilot/connection_dialog_auth.py:1513
+#: src/sshpilot/connection_dialog_auth.py:1529
+#: src/sshpilot/connection_dialog_auth.py:1591
 #: src/sshpilot/connection_dialog_effective.py:59
 msgid "Shown once OpenSSH has read the configuration."
 msgstr "Affiché une fois qu’OpenSSH a lu la configuration."
 
-#: src/sshpilot/connection_dialog_auth.py:1482
-#: src/sshpilot/connection_dialog_auth.py:1546
+#: src/sshpilot/connection_dialog_auth.py:1525
+#: src/sshpilot/connection_dialog_auth.py:1589
 #: src/sshpilot/connection_dialog_effective.py:52
 msgid "Unknown: OpenSSH could not read the configuration."
 msgstr "Inconnu : OpenSSH n’a pas pu lire la configuration."
 
-#: src/sshpilot/connection_dialog_auth.py:1490
+#: src/sshpilot/connection_dialog_auth.py:1533
 msgid "No method: the login cannot succeed."
 msgstr "Aucune méthode : la connexion ne peut pas réussir."
 
 #. {method} is an OpenSSH method name, e.g. gssapi-with-mic.
-#: src/sshpilot/connection_dialog_auth.py:1498
+#: src/sshpilot/connection_dialog_auth.py:1541
 #, python-brace-format
 msgid "{method} (unknown if enabled)"
 msgstr "{method} (activation inconnue)"
 
-#: src/sshpilot/connection_dialog_auth.py:1552
+#: src/sshpilot/connection_dialog_auth.py:1595
 msgid "At least one method must stay checked."
 msgstr "Au moins une méthode doit rester cochée."
 
 #. Listed in the order, but its switch is off.
-#: src/sshpilot/connection_dialog_auth.py:1555
+#: src/sshpilot/connection_dialog_auth.py:1598
 msgid "Not tried: it is turned off. Check it to turn it on."
 msgstr "Pas essayé : cette méthode est désactivée. Cochez-la pour l’activer."
 
-#: src/sshpilot/connection_dialog_auth.py:1557
+#: src/sshpilot/connection_dialog_auth.py:1600
 msgid "Not tried. Check it to add it to the login order at this place."
 msgstr ""
 "Pas essayée. Cochez-la pour l’ajouter à l’ordre de connexion à cet endroit."
@@ -8198,18 +8198,18 @@ msgid "Restore…"
 msgstr "Restaurer…"
 
 #: src/sshpilot/macos_menubar.py:67 src/sshpilot/text_editor.py:412
-#: src/sshpilot/window.py:3668 src/sshpilot/advanced_config_window.py:181
+#: src/sshpilot/window.py:3668 src/sshpilot/advanced_config_window.py:185
 msgid "Undo"
 msgstr "Annuler"
 
 #: src/sshpilot/macos_menubar.py:68 src/sshpilot/text_editor.py:418
-#: src/sshpilot/advanced_config_window.py:183
+#: src/sshpilot/advanced_config_window.py:187
 msgid "Redo"
 msgstr "Rétablir"
 
 #: src/sshpilot/macos_menubar.py:79 src/sshpilot/omni_search.py:183
 #: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window.py:2411
-#: src/sshpilot/window_help.py:52
+#: src/sshpilot/window_help.py:52 src/sshpilot/advanced_config_window.py:235
 msgid "Toggle Sidebar"
 msgstr "Afficher ou masquer la barre latérale"
 
@@ -8247,9 +8247,9 @@ msgid "SSH Config Editor"
 msgstr "Éditeur de configuration SSH"
 
 #: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
-#: src/sshpilot/window.py:4279 src/sshpilot/advanced_config_window.py:133
-#: src/sshpilot/advanced_config_window.py:179
-#: src/sshpilot/advanced_config_window.py:546
+#: src/sshpilot/window.py:4279 src/sshpilot/advanced_config_window.py:137
+#: src/sshpilot/advanced_config_window.py:183
+#: src/sshpilot/advanced_config_window.py:558
 msgid "Advanced Configuration"
 msgstr "Configuration avancée"
 
@@ -13674,7 +13674,7 @@ msgstr "Valeur"
 
 #. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
 #: src/sshpilot/ssh_option_list.py:273 src/sshpilot/ssh_option_list.py:277
-#: src/sshpilot/advanced_config_rules_view.py:273
+#: src/sshpilot/advanced_config_rules_view.py:275
 msgid "Add Option"
 msgstr "Ajouter une option"
 
@@ -13926,7 +13926,7 @@ msgstr "Session terminée."
 #. Dismiss button to hide the banner manually
 #: src/sshpilot/terminal.py:623 src/sshpilot/terminal.py:697
 #: src/sshpilot/window.py:2217 src/sshpilot/window.py:2243
-#: src/sshpilot/advanced_config_window.py:444
+#: src/sshpilot/advanced_config_window.py:456
 msgid "Dismiss"
 msgstr "Fermer"
 
@@ -14599,7 +14599,7 @@ msgstr "Abandonner les modifications"
 msgid "Follow System Style"
 msgstr "Style du système"
 
-#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:434
+#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:446
 msgid "Reload"
 msgstr "Recharger"
 
@@ -18359,38 +18359,38 @@ msgstr "Transmission directe"
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
 
-#: src/sshpilot/advanced_config_window.py:192
+#: src/sshpilot/advanced_config_window.py:196
 msgid "Reload from Disk"
 msgstr "Recharger depuis le disque"
 
-#: src/sshpilot/advanced_config_window.py:193
+#: src/sshpilot/advanced_config_window.py:197
 msgid "Copy Configuration"
 msgstr "Copier la configuration"
 
-#: src/sshpilot/advanced_config_window.py:238
-msgid "Filter by host: type a name to see what applies to it"
-msgstr "Filtrer par hôte : saisissez un nom pour voir ce qui s’y applique"
+#: src/sshpilot/advanced_config_window.py:249
+msgid "Search or type a host"
+msgstr "Rechercher ou saisir un hôte"
 
-#: src/sshpilot/advanced_config_window.py:257
-msgid "Choose a host"
-msgstr "Choisir un hôte"
+#: src/sshpilot/advanced_config_window.py:259
+msgid "All Hosts"
+msgstr "Tous les hôtes"
 
-#: src/sshpilot/advanced_config_window.py:324
+#: src/sshpilot/advanced_config_window.py:336
 msgid "The SSH configuration could not be read."
 msgstr "Impossible de lire la configuration SSH."
 
-#: src/sshpilot/advanced_config_window.py:338
-#: src/sshpilot/advanced_config_window.py:439
+#: src/sshpilot/advanced_config_window.py:350
+#: src/sshpilot/advanced_config_window.py:451
 msgid "This SSH configuration is read-only: changes cannot be saved."
 msgstr ""
 "Cette configuration SSH est en lecture seule : les modifications ne peuvent "
 "pas être enregistrées."
 
-#: src/sshpilot/advanced_config_window.py:396
+#: src/sshpilot/advanced_config_window.py:408
 msgid "Save a configuration OpenSSH rejects?"
 msgstr "Enregistrer une configuration qu’OpenSSH rejette ?"
 
-#: src/sshpilot/advanced_config_window.py:398
+#: src/sshpilot/advanced_config_window.py:410
 msgid ""
 "OpenSSH refuses the whole configuration over one such line, so no SSH "
 "connection starts until it is corrected."
@@ -18398,38 +18398,38 @@ msgstr ""
 "OpenSSH refuse toute la configuration à cause d’une seule ligne de ce type ; "
 "aucune connexion SSH ne démarre tant qu’elle n’est pas corrigée."
 
-#: src/sshpilot/advanced_config_window.py:403
+#: src/sshpilot/advanced_config_window.py:415
 msgid "Save Anyway"
 msgstr "Enregistrer quand même"
 
-#: src/sshpilot/advanced_config_window.py:433
+#: src/sshpilot/advanced_config_window.py:445
 msgid "The SSH configuration changed on disk since it was opened."
 msgstr "La configuration SSH a changé sur le disque depuis son ouverture."
 
-#: src/sshpilot/advanced_config_window.py:444
+#: src/sshpilot/advanced_config_window.py:456
 msgid "The SSH configuration could not be saved."
 msgstr "Impossible d’enregistrer la configuration SSH."
 
 #. an earlier failure is history
-#: src/sshpilot/advanced_config_window.py:451
+#: src/sshpilot/advanced_config_window.py:463
 msgid "SSH configuration saved"
 msgstr "Configuration SSH enregistrée"
 
-#: src/sshpilot/advanced_config_window.py:468
+#: src/sshpilot/advanced_config_window.py:480
 msgid "Configuration copied"
 msgstr "Configuration copiée"
 
-#: src/sshpilot/advanced_config_window.py:472
+#: src/sshpilot/advanced_config_window.py:484
 msgid "Discard unsaved changes?"
 msgstr "Abandonner les modifications non enregistrées ?"
 
-#: src/sshpilot/advanced_config_window.py:473
+#: src/sshpilot/advanced_config_window.py:485
 msgid "The changes made here have not been saved to the SSH configuration."
 msgstr ""
 "Les modifications faites ici n’ont pas été enregistrées dans la "
 "configuration SSH."
 
-#: src/sshpilot/advanced_config_window.py:575
+#: src/sshpilot/advanced_config_window.py:643
 msgid ""
 "Global options must stay above every Host and Match block: OpenSSH reads an "
 "option below a Host line as that host's."
@@ -18438,11 +18438,11 @@ msgstr ""
 "Match : OpenSSH lit une option placée sous une ligne Host comme appartenant "
 "à cet hôte."
 
-#: src/sshpilot/advanced_config_window.py:826
+#: src/sshpilot/advanced_config_window.py:880
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "Impossible d’interroger OpenSSH sur cette configuration."
 
-#: src/sshpilot/advanced_config_window.py:855
+#: src/sshpilot/advanced_config_window.py:909
 msgid "Run and Evaluate"
 msgstr "Exécuter et évaluer"
 
@@ -18611,79 +18611,79 @@ msgstr "Retirer l’option"
 msgid "Rejected"
 msgstr "Rejetée"
 
-#: src/sshpilot/advanced_config_rules_view.py:207
+#: src/sshpilot/advanced_config_rules_view.py:209
 msgid "Drag to reorder"
 msgstr "Faites glisser pour réordonner"
 
 #. Host and Match are OpenSSH's keywords: not translated.
-#: src/sshpilot/advanced_config_rules_view.py:217
-#: src/sshpilot/advanced_config_rules_view.py:432
+#: src/sshpilot/advanced_config_rules_view.py:219
+#: src/sshpilot/advanced_config_rules_view.py:443
 #: src/sshpilot/advanced_config_results_view.py:546
 msgid "Global"
 msgstr "Global"
 
-#: src/sshpilot/advanced_config_rules_view.py:221
+#: src/sshpilot/advanced_config_rules_view.py:223
 msgid "Options for every target"
 msgstr "Options pour toutes les cibles"
 
-#: src/sshpilot/advanced_config_rules_view.py:234
+#: src/sshpilot/advanced_config_rules_view.py:236
 msgid "Host patterns"
 msgstr "Motifs d’hôte"
 
-#: src/sshpilot/advanced_config_rules_view.py:234
+#: src/sshpilot/advanced_config_rules_view.py:236
 msgid "Match criteria"
 msgstr "Critères Match"
 
-#: src/sshpilot/advanced_config_rules_view.py:252
+#: src/sshpilot/advanced_config_rules_view.py:254
 msgid "Block options"
 msgstr "Options du bloc"
 
-#: src/sshpilot/advanced_config_rules_view.py:276
+#: src/sshpilot/advanced_config_rules_view.py:278
 msgid "Common Option"
 msgstr "Option courante"
 
-#: src/sshpilot/advanced_config_rules_view.py:317
+#: src/sshpilot/advanced_config_rules_view.py:328
 msgid "Enable Block"
 msgstr "Activer le bloc"
 
-#: src/sshpilot/advanced_config_rules_view.py:317
+#: src/sshpilot/advanced_config_rules_view.py:328
 msgid "Disable Block"
 msgstr "Désactiver le bloc"
 
 #. (Global options have no header line to put a note above.)
-#: src/sshpilot/advanced_config_rules_view.py:320
+#: src/sshpilot/advanced_config_rules_view.py:331
 msgid "Add or Edit Note"
 msgstr "Ajouter ou modifier la note"
 
-#: src/sshpilot/advanced_config_rules_view.py:321
+#: src/sshpilot/advanced_config_rules_view.py:332
 msgid "Duplicate Block"
 msgstr "Dupliquer le bloc"
 
-#: src/sshpilot/advanced_config_rules_view.py:322
+#: src/sshpilot/advanced_config_rules_view.py:333
 msgid "Delete Block"
 msgstr "Supprimer le bloc"
 
-#: src/sshpilot/advanced_config_rules_view.py:371
+#: src/sshpilot/advanced_config_rules_view.py:382
 msgid "Note (written as a comment above the block)"
 msgstr "Note (écrite en commentaire au-dessus du bloc)"
 
-#: src/sshpilot/advanced_config_rules_view.py:424
+#: src/sshpilot/advanced_config_rules_view.py:435
 msgid "Configuration rules"
 msgstr "Règles de configuration"
 
-#: src/sshpilot/advanced_config_rules_view.py:433
+#: src/sshpilot/advanced_config_rules_view.py:444
 msgid "Add options above every Host and Match line"
 msgstr "Ajouter des options au-dessus de toutes les lignes Host et Match"
 
-#: src/sshpilot/advanced_config_rules_view.py:438
+#: src/sshpilot/advanced_config_rules_view.py:449
 msgid "Add a block at the end"
 msgstr "Ajouter un bloc à la fin"
 
-#: src/sshpilot/advanced_config_rules_view.py:451
+#: src/sshpilot/advanced_config_rules_view.py:462
 msgid "No Configuration Rules"
 msgstr "Aucune règle de configuration"
 
-#: src/sshpilot/advanced_config_rules_view.py:452
+#: src/sshpilot/advanced_config_rules_view.py:463
 msgid "Add a Host or Match block to start."
 msgstr "Ajoutez un bloc Host ou Match pour commencer."
 
@@ -18757,10 +18757,10 @@ msgstr "Abandonner le texte saisi ici"
 
 #: src/sshpilot/advanced_config_results_view.py:420
 msgid ""
-"Select a block that names a host, or filter by a host, to see what OpenSSH "
-"would use for it."
+"Choose a host in the sidebar, or type one there, to see what OpenSSH would "
+"use for it."
 msgstr ""
-"Sélectionnez un bloc qui nomme un hôte, ou filtrez par hôte, pour voir ce "
+"Choisissez un hôte dans la barre latérale, ou saisissez-en un, pour voir ce "
 "qu’OpenSSH utiliserait pour lui."
 
 #: src/sshpilot/advanced_config_results_view.py:536
@@ -18783,6 +18783,19 @@ msgstr "Aucun fichier ne correspond."
 #: src/sshpilot/advanced_config_results_view.py:593
 msgid "No other file is read for this target."
 msgstr "Aucun autre fichier n’est lu pour cette cible."
+
+#~ msgid "Filter by host: type a name to see what applies to it"
+#~ msgstr "Filtrer par hôte : saisissez un nom pour voir ce qui s’y applique"
+
+#~ msgid "Choose a host"
+#~ msgstr "Choisir un hôte"
+
+#~ msgid ""
+#~ "Select a block that names a host, or filter by a host, to see what "
+#~ "OpenSSH would use for it."
+#~ msgstr ""
+#~ "Sélectionnez un bloc qui nomme un hôte, ou filtrez par hôte, pour voir ce "
+#~ "qu’OpenSSH utiliserait pour lui."
 
 #~ msgid "Removed on save"
 #~ msgstr "Supprimée à l’enregistrement"
@@ -18912,10 +18925,6 @@ msgstr "Aucun autre fichier n’est lu pour cette cible."
 #~ msgid "A port given on the command line, as ssh -p. Empty: none."
 #~ msgstr ""
 #~ "Un port indiqué sur la ligne de commande, comme ssh -p. Vide : aucun."
-
-#~ msgid "Enter a target host to see what OpenSSH would use for it."
-#~ msgstr ""
-#~ "Saisissez un hôte cible pour voir ce qu’OpenSSH utiliserait pour lui."
 
 #~ msgid "Inherit"
 #~ msgstr "Hériter"

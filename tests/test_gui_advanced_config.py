@@ -102,7 +102,7 @@ def window(gtk, tmp_path):
 
 
 def _filter_by(win, host):
-    """Type a host into the filter and wait for OpenSSH's answer on it."""
+    """Type a host in the sidebar and wait for OpenSSH's answer on it."""
     assert _pump(lambda: bool(win.draft.blocks))
     win.target_entry.set_text(host)
     assert _pump(lambda: (
@@ -112,11 +112,28 @@ def _filter_by(win, host):
     ))
 
 
-def _shown(win):
-    return [
-        block.patterns or block.kind for block in win.draft.blocks
-        if win.rules.cards[block.uid].card.get_visible()
-    ]
+def _folded(win):
+    """Blocks folded to their faded header, as skipped for the host. Every
+    block stays on screen: none is ever hidden."""
+    assert all(win.rules.cards[b.uid].card.get_visible() for b in win.draft.blocks)
+    folded = []
+    for block in win.draft.blocks:
+        card = win.rules.cards[block.uid]
+        closed = not card.revealer.get_reveal_child()
+        assert closed == card.card.has_css_class("skipped")
+        if closed:
+            folded.append(block.patterns or block.kind)
+    return folded
+
+
+def _host_rows(win):
+    return [row._host for row in _children(win._host_list)]
+
+
+def _pick(win, host):
+    """Choose a row of the sidebar ("" is All Hosts), as a click does."""
+    row = next(row for row in _children(win._host_list) if row._host == host)
+    win._host_list.select_row(row)
 
 
 def _settled(win):
@@ -169,7 +186,8 @@ def test_it_opens_showing_every_block_and_asks_nothing(gtk, tmp_path):
     win = AdvancedConfigWindow(None, _Client(path))
     assert _pump(lambda: len(win.draft.blocks) == 3)
     assert win.target_entry.get_text() == "" and win._evaluation is None
-    assert _shown(win) == ["global", "web1 web2", "*"]
+    assert win._host_list.get_selected_row() is win._all_hosts_row
+    assert _folded(win) == []
     assert not any(
         win.rules.cards[b.uid].status.get_visible() for b in win.draft.blocks
     )
@@ -178,9 +196,7 @@ def test_it_opens_showing_every_block_and_asks_nothing(gtk, tmp_path):
 
 
 def test_filtering_by_a_host_shows_openssh_s_answer(window):
-    assert [row._host for row in _children(window._host_list)] == [
-        "web1", "web2", "db1",
-    ]
+    assert _host_rows(window) == ["", "web1", "web2", "db1"]     # "": All Hosts
     assert not window.dirty and not window.save_button.get_sensitive()
     glob, web, star = window.draft.blocks
     assert [window.rules.cards[b.uid].status.get_label() for b in (glob, web, star)] == [
@@ -197,27 +213,28 @@ def test_filtering_by_a_host_shows_openssh_s_answer(window):
 def test_another_target_is_asked_again(window):
     window.target_entry.set_text("db1")
     assert _pump(lambda: _effective(window, "user") == "fallback")
-    # The filter leaves the blocks OpenSSH applies to the host.
-    assert _pump(lambda: _shown(window) == ["global", "*"])
+    # The block OpenSSH skips for the host folds, where it is.
+    assert _pump(lambda: _folded(window) == ["web1 web2"])
     web = window.draft.blocks[1]
     assert [_status(window, o) for o in web.options] == ["Inactive"] * 3
     window.target_entry.set_text("web1")
-    assert _pump(lambda: _shown(window) == ["global", "web1 web2", "*"])
-    window.target_entry.set_text("")           # no filter: every block
+    assert _pump(lambda: _folded(window) == [] and _effective(window, "user") == "deploy")
+    window.target_entry.set_text("")           # no host: every block open
     assert _pump(lambda: window._evaluation is None)
-    assert _shown(window) == ["global", "web1 web2", "*"]
+    assert _folded(window) == []
+    assert window._host_list.get_selected_row() is window._all_hosts_row
 
 
-def test_a_block_being_worked_on_stays_while_filtering(window):
-    """Adding or editing a block must not make it vanish under the filter."""
+def test_a_block_being_worked_on_stays_open(window):
+    """Adding or editing a block must not fold it under the hands."""
     window.add_block("host")
     block = window.draft.blocks[-1]
     window.rules.cards[block.uid].patterns.set_text("elsewhere")
     assert _settled(window)
     assert window.rules.cards[block.uid].status.get_label() == "Skipped"
-    assert "elsewhere" in _shown(window)
-    window.target_entry.set_text("db1")        # a new filter starts afresh
-    assert _pump(lambda: _shown(window) == ["global", "*"])
+    assert _folded(window) == []
+    window.target_entry.set_text("db1")        # another host starts afresh
+    assert _pump(lambda: _folded(window) == ["web1 web2", "elsewhere"])
 
 
 def test_moving_a_block_changes_what_wins_and_undo_restores_it(window):
@@ -281,7 +298,7 @@ def test_disabling_a_block_writes_comments_and_openssh_skips_it(window):
     assert "# [disabled] Host web1 web2\n" in window.editor.text
     web = window.draft.blocks[1]
     assert window.rules.cards[web.uid].status.get_label() == "Disabled"
-    assert "web1 web2" in _shown(window)        # just switched off: still here
+    assert "web1 web2" not in _folded(window)   # just switched off: still open
 
 
 def test_options_move_between_blocks(window):
@@ -325,18 +342,32 @@ def test_a_file_changed_on_disk_is_not_overwritten(window):
     assert client.saves == 0 and "edited elsewhere" in client.path.read_text()
 
 
-def test_the_target_dropdown_lists_hosts_and_sets_the_target(window):
-    rows = _children(window._host_list)
-    window._host_list.emit("row-activated", rows[2])
-    assert window.target_entry.get_text() == "db1"
+def test_the_sidebar_lists_hosts_and_sets_the_target(window):
+    assert window.target_text() == "web1"             # typed (by the fixture)
+    assert window._host_list.get_selected_row() is None
+    _pick(window, "db1")
+    assert window.target_entry.get_text() == ""       # one host in question
+    assert window.target_text() == "db1"
+    assert _pump(lambda: _effective(window, "user") == "fallback")
+    assert _folded(window) == ["web1 web2"]
+    _pump(lambda: False, seconds=0.4)                 # the field's late signal
+    assert window.target_text() == "db1"
+    window.target_entry.set_text("web")               # typing takes its place
+    assert _pump(lambda: window._host_list.get_selected_row() is None)
+    assert window.target_text() == "web"
+    shown = [r._host for r in _children(window._host_list) if r.get_child_visible()]
+    assert shown == ["", "web1", "web2"]              # and searches the list
+    _pick(window, "")                                 # All Hosts: no host
+    assert _pump(lambda: window._evaluation is None and _folded(window) == [])
+    _pick(window, "db1")
     assert _pump(lambda: _effective(window, "user") == "fallback")
     # A host named by a new block is offered too.
     window.add_block("host")
     block = window.draft.blocks[-1]
     window.rules.cards[block.uid].patterns.set_text("cache1 *.internal")
-    assert [row._host for row in _children(window._host_list)] == [
-        "web1", "web2", "cache1", "db1",
-    ]
+    assert _host_rows(window) == ["", "web1", "web2", "cache1", "db1"]
+    assert window.target_text() == "db1"
+    assert window._host_list.get_selected_row()._host == "db1"
 
 
 def test_agreeing_to_a_command_does_not_cover_an_edited_one(window, tmp_path):
@@ -422,19 +453,9 @@ def test_a_real_click_on_a_card_selects_it(window):
     assert window.selected_uid == web.uid
 
 
-def _folded(win):
-    """Blocks folded to their faded header, as skipped for the host."""
-    return [
-        block.patterns or block.kind for block in win.draft.blocks
-        if not win.rules.cards[block.uid].revealer.get_reveal_child()
-        and win.rules.cards[block.uid].card.has_css_class("skipped")
-    ]
-
-
-def test_selecting_a_host_s_block_loads_it_without_narrowing_the_rules(gtk, tmp_path):
-    """With no filter, clicking a block asks OpenSSH about the host it names
-    and shows the answer on the right; every block stays on screen, and
-    those that do not apply fold to their header, in place."""
+def test_selecting_a_block_does_not_change_the_host_in_question(gtk, tmp_path):
+    """The sidebar alone says which host OpenSSH is asked about. Clicking a
+    block selects it, and opens it when it was folded; nothing is asked."""
     from sshpilot.advanced_config_window import AdvancedConfigWindow
 
     path = tmp_path / "config"
@@ -442,36 +463,34 @@ def test_selecting_a_host_s_block_loads_it_without_narrowing_the_rules(gtk, tmp_
     win = AdvancedConfigWindow(None, _Client(path))
     assert _pump(lambda: len(win.draft.blocks) == 4)
     _glob, web, star, db = win.draft.blocks
-    everything = ["global", "web1 web2", "*", "db1"]
 
-    win.select_block(web.uid)
+    win.select_block(web.uid)                             # no host chosen
+    _pump(lambda: False, seconds=0.5)
+    assert win._evaluation is None and not win.results.summary.get_visible()
+    assert _folded(win) == []
+    win.select_block(None)
+
+    _pick(win, "web1")
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh web1")
     assert _effective(win, "user") == "deploy"
-    assert _shown(win) == everything                      # nothing is hidden
-    assert win.target_entry.get_text() == ""              # the filter is untouched
     assert win.rules.cards[db.uid].status.get_label() == "Skipped"
     assert _folded(win) == ["db1"]
 
+    asked = win._request_serial
     win.select_block(db.uid)                              # a folded block opens at once
-    assert "db1" not in _folded(win)
-    assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh db1")
-    assert _effective(win, "user") == "fallback"          # Host * comes first
-    assert _shown(win) == everything
-    assert _folded(win) == ["web1 web2"]
-
-    win.select_block(star.uid)                            # a pattern names no host
-    assert _pump(lambda: win._evaluation is None)
-    assert not win.results.summary.get_visible() and _shown(win) == everything
-    assert _folded(win) == []                             # no host: nothing folds
-
-    win.target_entry.set_text("web2")                     # the filter wins, and narrows
-    assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh web2")
-    assert _pump(lambda: _shown(win) == ["global", "web1 web2", "*"])
+    assert _folded(win) == []
+    win.select_block(star.uid)                            # and folds when left
+    assert _folded(win) == ["db1"]
+    _pump(lambda: False, seconds=0.5)
+    assert win._request_serial == asked                   # nothing was asked
+    assert win.results.summary_rows["command"].get_subtitle() == "ssh web1"
     win._closing = True
     win.destroy()
 
 
-def test_renaming_the_selected_block_s_host_follows_it(gtk, tmp_path):
+def test_retyping_the_picked_host_s_name_keeps_it_in_question(gtk, tmp_path):
+    """The picked name leaves the list while its Host line is retyped: it
+    stays the host asked about, as a typed one, so nothing jumps."""
     from sshpilot.advanced_config_window import AdvancedConfigWindow
 
     path = tmp_path / "config"
@@ -479,35 +498,19 @@ def test_renaming_the_selected_block_s_host_follows_it(gtk, tmp_path):
     win = AdvancedConfigWindow(None, _Client(path))
     assert _pump(lambda: len(win.draft.blocks) == 3)
     web = win.draft.blocks[1]
-    win.select_block(web.uid)
+    _pick(win, "web1")
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh web1")
+    win.select_block(web.uid)
     win.rules.cards[web.uid].patterns.set_text("edge9 web2")
-    assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh edge9")
+    assert _host_rows(win) == ["", "edge9", "web2"]
+    assert win.target_entry.get_text() == "web1" and win.target_text() == "web1"
+    assert win._host_list.get_selected_row() is None
+    assert _settled(win)
+    assert win.results.summary_rows["command"].get_subtitle() == "ssh web1"
+    assert win.rules.cards[web.uid].status.get_label() == "Skipped"
+    assert _folded(win) == []                             # in hand: stays open
     win._closing = True
     win.destroy()
-
-
-# -- review findings -----------------------------------------------------------
-
-def _open_on(gtk, tmp_path, text, *, writable=True, client_class=_Client):
-    from sshpilot.advanced_config_window import AdvancedConfigWindow
-
-    path = tmp_path / "config"
-    path.write_text(text)
-    client = client_class(path)
-    client.writable = writable
-    win = AdvancedConfigWindow(None, client)
-    win._test_client = client
-    assert _pump(lambda: win._loaded)
-    return win
-
-
-class _ReadOnlyClient(_Client):
-    def get_ssh_config_text(self):
-        from sshpilot.api.models.connections import SshConfigText
-
-        text = self.path.read_text()
-        return SshConfigText(text, self._revision(text), "config", False)
 
 
 def test_a_file_notice_does_not_hide_what_openssh_says(gtk, tmp_path):
