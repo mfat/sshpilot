@@ -143,11 +143,6 @@ def test_lines_follow_the_text(editor):
     assert editor.owner_of_line(2) is None
 
 
-def test_hosts_offered_are_plain_names_then_saved_connections(editor):
-    assert editor.host_names(lambda: ["db1", "web2"]) == ["web1", "web2", "db1"]
-    assert editor.host_names(lambda: 1 / 0) == ["web1", "web2"]     # a failing source
-
-
 def test_the_host_a_block_is_about(editor):
     _glob, web, star = editor.blocks
     assert first_host_name(web) == "web1"

@@ -93,7 +93,7 @@ def window(gtk, tmp_path):
     path = tmp_path / "config"
     path.write_text(CONFIG)
     client = _Client(path)
-    win = AdvancedConfigWindow(None, client, hosts=lambda: ["db1"])
+    win = AdvancedConfigWindow(None, client)
     win._test_client = client
     _filter_by(win, "web1")
     yield win
@@ -126,14 +126,15 @@ def _folded(win):
     return folded
 
 
-def _host_rows(win):
-    return [row._host for row in _children(win._host_list)]
+def _block_rows(win):
+    """The sidebar's rows, as they read ("" is All Blocks)."""
+    return [row._text for row in _children(win._block_list)]
 
 
-def _pick(win, host):
-    """Choose a row of the sidebar ("" is All Hosts), as a click does."""
-    row = next(row for row in _children(win._host_list) if row._host == host)
-    win._host_list.select_row(row)
+def _pick(win, text):
+    """Choose a row of the sidebar ("" is All Blocks), as a click does."""
+    row = next(row for row in _children(win._block_list) if row._text == text)
+    win._block_list.select_row(row)
 
 
 def _settled(win):
@@ -186,7 +187,7 @@ def test_it_opens_showing_every_block_and_asks_nothing(gtk, tmp_path):
     win = AdvancedConfigWindow(None, _Client(path))
     assert _pump(lambda: len(win.draft.blocks) == 3)
     assert win.target_entry.get_text() == "" and win._evaluation is None
-    assert win._host_list.get_selected_row() is win._all_hosts_row
+    assert win._block_list.get_selected_row() is win._all_row
     assert _folded(win) == []
     assert not any(
         win.rules.cards[b.uid].status.get_visible() for b in win.draft.blocks
@@ -196,7 +197,7 @@ def test_it_opens_showing_every_block_and_asks_nothing(gtk, tmp_path):
 
 
 def test_filtering_by_a_host_shows_openssh_s_answer(window):
-    assert _host_rows(window) == ["", "web1", "web2", "db1"]     # "": All Hosts
+    assert _block_rows(window) == ["", "Global", "Host web1 web2", "Host *"]
     assert not window.dirty and not window.save_button.get_sensitive()
     glob, web, star = window.draft.blocks
     assert [window.rules.cards[b.uid].status.get_label() for b in (glob, web, star)] == [
@@ -222,7 +223,7 @@ def test_another_target_is_asked_again(window):
     window.target_entry.set_text("")           # no host: every block open
     assert _pump(lambda: window._evaluation is None)
     assert _folded(window) == []
-    assert window._host_list.get_selected_row() is window._all_hosts_row
+    assert window._block_list.get_selected_row() is window._all_row
 
 
 def test_a_block_being_worked_on_stays_open(window):
@@ -342,32 +343,48 @@ def test_a_file_changed_on_disk_is_not_overwritten(window):
     assert client.saves == 0 and "edited elsewhere" in client.path.read_text()
 
 
-def test_the_sidebar_lists_hosts_and_sets_the_target(window):
+def test_the_sidebar_lists_blocks_and_picking_one_sets_the_target(window):
+    glob, web, star = window.draft.blocks
+    window.add_block("host")
+    db = window.draft.blocks[-1]
+    window.rules.cards[db.uid].patterns.set_text("db1 *.internal")
+    assert _block_rows(window) == [
+        "", "Global", "Host web1 web2", "Host *", "Host db1 *.internal",
+    ]
     assert window.target_text() == "web1"             # typed (by the fixture)
-    assert window._host_list.get_selected_row() is None
-    _pick(window, "db1")
+    assert window._block_list.get_selected_row() is None
+
+    _pick(window, "Host db1 *.internal")
     assert window.target_entry.get_text() == ""       # one host in question
-    assert window.target_text() == "db1"
+    assert window.target_text() == "db1"              # the first plain name
+    assert window.selected_uid == db.uid              # and the block is gone to
     assert _pump(lambda: _effective(window, "user") == "fallback")
     assert _folded(window) == ["web1 web2"]
+    rows = window._block_rows
+    assert rows[web.uid].get_child().get_opacity() < 1 == rows[db.uid].get_child().get_opacity()
     _pump(lambda: False, seconds=0.4)                 # the field's late signal
     assert window.target_text() == "db1"
-    window.target_entry.set_text("web")               # typing takes its place
-    assert _pump(lambda: window._host_list.get_selected_row() is None)
-    assert window.target_text() == "web"
-    shown = [r._host for r in _children(window._host_list) if r.get_child_visible()]
-    assert shown == ["", "web1", "web2"]              # and searches the list
-    _pick(window, "")                                 # All Hosts: no host
+
+    _pick(window, "Host *")                           # a pattern names no host
+    assert window.selected_uid == star.uid
     assert _pump(lambda: window._evaluation is None and _folded(window) == [])
-    _pick(window, "db1")
-    assert _pump(lambda: _effective(window, "user") == "fallback")
-    # A host named by a new block is offered too.
-    window.add_block("host")
-    block = window.draft.blocks[-1]
-    window.rules.cards[block.uid].patterns.set_text("cache1 *.internal")
-    assert _host_rows(window) == ["", "web1", "web2", "cache1", "db1"]
-    assert window.target_text() == "db1"
-    assert window._host_list.get_selected_row()._host == "db1"
+    assert not window.results.summary.get_visible()
+
+    window.target_entry.set_text("web")               # typing takes the list's place
+    assert _pump(lambda: window._block_list.get_selected_row() is None)
+    assert window.target_text() == "web"
+    shown = [r._text for r in _children(window._block_list) if r.get_child_visible()]
+    assert shown == ["", "Host web1 web2"]            # and searches it
+    _pick(window, "")                                 # All Blocks: no host
+    assert _pump(lambda: window._evaluation is None and _folded(window) == [])
+    assert window.target_entry.get_text() == ""
+
+    window.delete_block(db.uid)                       # a picked block that goes
+    _pick(window, "Host web1 web2")
+    window.delete_block(web.uid)
+    assert _block_rows(window) == ["", "Global", "Host *"]
+    assert window._block_list.get_selected_row() is window._all_row
+    assert window.target_text() == ""
 
 
 def test_agreeing_to_a_command_does_not_cover_an_edited_one(window, tmp_path):
@@ -470,7 +487,7 @@ def test_selecting_a_block_does_not_change_the_host_in_question(gtk, tmp_path):
     assert _folded(win) == []
     win.select_block(None)
 
-    _pick(win, "web1")
+    _pick(win, "Host web1 web2")
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh web1")
     assert _effective(win, "user") == "deploy"
     assert win.rules.cards[db.uid].status.get_label() == "Skipped"
@@ -483,14 +500,13 @@ def test_selecting_a_block_does_not_change_the_host_in_question(gtk, tmp_path):
     assert _folded(win) == ["db1"]
     _pump(lambda: False, seconds=0.5)
     assert win._request_serial == asked                   # nothing was asked
+    assert win._block_list.get_selected_row()._uid == web.uid   # the sidebar stays
     assert win.results.summary_rows["command"].get_subtitle() == "ssh web1"
     win._closing = True
     win.destroy()
 
 
-def test_retyping_the_picked_host_s_name_keeps_it_in_question(gtk, tmp_path):
-    """The picked name leaves the list while its Host line is retyped: it
-    stays the host asked about, as a typed one, so nothing jumps."""
+def test_retyping_the_picked_block_s_host_follows_it(gtk, tmp_path):
     from sshpilot.advanced_config_window import AdvancedConfigWindow
 
     path = tmp_path / "config"
@@ -498,17 +514,13 @@ def test_retyping_the_picked_host_s_name_keeps_it_in_question(gtk, tmp_path):
     win = AdvancedConfigWindow(None, _Client(path))
     assert _pump(lambda: len(win.draft.blocks) == 3)
     web = win.draft.blocks[1]
-    _pick(win, "web1")
+    _pick(win, "Host web1 web2")
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh web1")
-    win.select_block(web.uid)
     win.rules.cards[web.uid].patterns.set_text("edge9 web2")
-    assert _host_rows(win) == ["", "edge9", "web2"]
-    assert win.target_entry.get_text() == "web1" and win.target_text() == "web1"
-    assert win._host_list.get_selected_row() is None
-    assert _settled(win)
-    assert win.results.summary_rows["command"].get_subtitle() == "ssh web1"
-    assert win.rules.cards[web.uid].status.get_label() == "Skipped"
-    assert _folded(win) == []                             # in hand: stays open
+    assert _block_rows(win) == ["", "Global", "Host edge9 web2", "Host *"]
+    assert win._block_list.get_selected_row()._uid == web.uid
+    assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh edge9")
+    assert win.target_entry.get_text() == ""
     win._closing = True
     win.destroy()
 

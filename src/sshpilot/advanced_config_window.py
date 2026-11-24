@@ -1,7 +1,7 @@
 """Advanced Configuration: the SSH configuration as OpenSSH reads it.
 
-Sidebar: the host OpenSSH is asked about (a listed one, a typed one, or
-none). Middle: the configuration as ordered blocks (the global options, then
+Sidebar: the blocks, to go to one and to choose the host OpenSSH is asked
+about (the one the picked block names, or a typed one, or none). Middle: the configuration as ordered blocks (the global options, then
 every ``Host`` and ``Match`` block), editable and reorderable; the blocks
 that do not apply to the host fold to their header, in place. Right: what
 OpenSSH resolves for the host, which line supplies each value, the order the
@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import threading
 from gettext import gettext as _
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 import gi
 
@@ -39,6 +39,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from .advanced_config_model import (  # noqa: E402
+    first_host_name,
     DraftEditor,
     Refusal,
     can_place,  # noqa: F401 - re-exported for callers and tests
@@ -114,8 +115,7 @@ def split_target(text: str) -> tuple:
 class AdvancedConfigWindow(Adw.Window):
     """The Advanced Configuration window.
 
-    *client* is the daemon client. *hosts* supplies saved host names for the
-    sidebar; *on_saved* runs after each save.
+    *client* is the daemon client; *on_saved* runs after each save.
     """
 
     def __init__(
@@ -123,13 +123,11 @@ class AdvancedConfigWindow(Adw.Window):
         parent: Optional[Gtk.Window],
         client,
         *,
-        hosts: Optional[Callable[[], List[str]]] = None,
         on_saved: Optional[Callable[[], None]] = None,
     ) -> None:
         super().__init__()
         _ensure_css()
         self._client = client
-        self._hosts = hosts
         self._on_saved = on_saved
         if parent is not None:
             self.set_transient_for(parent)
@@ -240,40 +238,44 @@ class AdvancedConfigWindow(Adw.Window):
         header.pack_start(self.sidebar_button)
 
     def _build_sidebar(self) -> Gtk.Widget:
-        # The host OpenSSH is asked about is chosen here and nowhere else:
-        # a row of the list, or a name typed in the field (one no block
-        # names plainly can still match a pattern). "All Hosts": no host,
-        # every block shown as it is. Selecting a block in the rules never
-        # changes the host.
+        # The blocks, in the file's order. Picking one goes to it, and the
+        # host it names (the first plain name on its Host line) becomes the
+        # host OpenSSH is asked about; a Match, global or pattern-only block
+        # names none, so nothing is asked. A name typed in the field takes
+        # the list's place (one no block spells out can still match a
+        # pattern) and searches the list. Selecting a block in the rules
+        # themselves never changes the host.
         self.target_entry = Gtk.SearchEntry()
         self.target_entry.set_placeholder_text(_("Search or type a host"))
         for side in ("top", "bottom", "start", "end"):
             getattr(self.target_entry, f"set_margin_{side}")(8)
         self.target_entry.connect("search-changed", self._on_target_typed)
-        self._host_list = Gtk.ListBox()
-        self._host_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self._host_list.add_css_class("navigation-sidebar")
-        self._host_list.set_filter_func(self._host_row_shown)
-        self._host_list.connect("row-selected", self._on_host_picked)
-        self._all_hosts_row = Gtk.ListBoxRow()
-        self._all_hosts_row.set_child(Gtk.Label(label=_("All Hosts"), xalign=0))
-        self._all_hosts_row._host = ""
-        self._host_list.append(self._all_hosts_row)
-        #: The row chosen in the list ("" for All Hosts). A typed name
+        self._block_list = Gtk.ListBox()
+        self._block_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self._block_list.add_css_class("navigation-sidebar")
+        self._block_list.set_filter_func(self._block_row_shown)
+        self._block_list.connect("row-selected", self._on_block_picked)
+        self._all_row = Gtk.ListBoxRow()
+        self._all_row.set_child(Gtk.Label(label=_("All Blocks"), xalign=0))
+        self._all_row._uid = None
+        self._all_row._text = ""
+        self._block_list.append(self._all_row)
+        self._block_rows: dict = {}
+        #: The block picked in the list (None: All Blocks). A typed name
         #: takes its place: there is one host in question, shown one way.
-        self._picked_host = ""
+        self._picked_uid: Optional[int] = None
         #: True while the window itself moves the list's selection.
         self._target_syncing = False
         #: The field's text as last acted on. "search-changed" arrives a
         #: moment after the text changes, so text the window put there
         #: itself is told apart by this, not by a flag.
         self._typed_seen = ""
-        self._host_names_shown: Optional[List[str]] = None
-        self._host_list.select_row(self._all_hosts_row)
+        self._scroll_after_answer: Optional[int] = None
+        self._block_list.select_row(self._all_row)
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.set_vexpand(True)
-        scroller.set_child(self._host_list)
+        scroller.set_child(self._block_list)
         column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         column.append(self.target_entry)
         column.append(scroller)
@@ -301,11 +303,10 @@ class AdvancedConfigWindow(Adw.Window):
 
     def target_text(self) -> str:
         """The host OpenSSH is asked about: the one typed in the sidebar,
-        else the one picked in its list. Empty: none."""
-        return self.target_entry.get_text().strip() or self._picked_host
-
-    def host_names(self) -> List[str]:
-        return self.editor.host_names(self._hosts)
+        else the one the block picked there names. Empty: none."""
+        return self.target_entry.get_text().strip() or first_host_name(
+            self.editor.find_block(self._picked_uid)
+        )
 
     # ------------------------------------------------------------------
     # background work
@@ -545,7 +546,7 @@ class AdvancedConfigWindow(Adw.Window):
         self.rules.sync(self.editor.blocks, self._notes_open, self.editor.has_global)
         self.rules.select(self.selected_uid)
         self.results.set_text(self.editor.text)
-        self._sync_host_list()
+        self._sync_block_list()
         self._update_chrome()
         self._show_answer()                     # the last answer, until the new one
         self._schedule_evaluation(now=evaluate_now)
@@ -561,44 +562,49 @@ class AdvancedConfigWindow(Adw.Window):
         # overwrite each other).
         self.rules.set_sensitive(not self.results.raw_pending)
 
-    def _sync_host_list(self) -> None:
-        names = self.host_names()
-        if names == self._host_names_shown:
-            return
-        self._host_names_shown = names
+    def _sync_block_list(self) -> None:
+        """Make the sidebar's rows match the blocks, in place: a row is
+        kept for as long as its block exists, and only relabelled."""
+        blocks = self.editor.blocks
+        rows = self._block_rows
+        wanted = {block.uid for block in blocks}
         self._target_syncing = True
         try:
-            row = self._all_hosts_row.get_next_sibling()
-            while row is not None:
-                following = row.get_next_sibling()
-                self._host_list.remove(row)
-                row = following
-            chosen = self._all_hosts_row if not self.target_text() else None
-            for name in names:
-                label = Gtk.Label(label=name, xalign=0)
-                label.add_css_class("monospace")
-                label.set_ellipsize(Pango.EllipsizeMode.END)
-                row = Gtk.ListBoxRow()
-                row.set_child(label)
-                row.set_tooltip_text(name)
-                row._host = name
-                self._host_list.append(row)
-                if name == self._picked_host:
-                    chosen = row
-            vanished = self._picked_host if self._picked_host not in names else ""
-            self._host_list.select_row(chosen)
+            for uid in [uid for uid in rows if uid not in wanted]:
+                self._block_list.remove(rows.pop(uid))
+            for index, block in enumerate(blocks):
+                row = rows.get(block.uid)
+                if row is None:
+                    label = Gtk.Label(xalign=0)
+                    label.add_css_class("monospace")
+                    label.set_ellipsize(Pango.EllipsizeMode.END)
+                    row = rows[block.uid] = Gtk.ListBoxRow()
+                    row.set_child(label)
+                    row._uid = block.uid
+                    row._text = None
+                    self._block_list.insert(row, index + 1)
+                elif row.get_index() != index + 1:
+                    self._block_list.remove(row)
+                    self._block_list.insert(row, index + 1)
+                text = messages.block_title(block.kind, block.patterns)
+                if row._text != text:
+                    row._text = text
+                    row.get_child().set_label(text)
+                    row.set_tooltip_text(text)
+            if self._picked_uid not in wanted:
+                self._picked_uid = None
+            typed = bool(self.target_entry.get_text().strip())
+            chosen = None if typed else rows.get(self._picked_uid, self._all_row)
+            if self._block_list.get_selected_row() is not chosen:
+                self._block_list.select_row(chosen)
         finally:
             self._target_syncing = False
-        if vanished:
-            # The picked name left the configuration (its Host line is
-            # being retyped): it stays the host in question, now as a
-            # typed one, so nothing changes under the hands.
-            self._picked_host = ""
-            self._set_typed(vanished)
+        if self.target_entry.get_text().strip():
+            self._block_list.invalidate_filter()
 
-    def _host_row_shown(self, row) -> bool:
+    def _block_row_shown(self, row) -> bool:
         typed = self.target_entry.get_text().strip().lower()
-        return not typed or not row._host or typed in row._host.lower()
+        return not typed or row._uid is None or typed in (row._text or "").lower()
 
     def _target_changed(self, *, idle: bool = False) -> None:
         # A command can depend on the host (%h, %r): agreement to run it
@@ -608,33 +614,39 @@ class AdvancedConfigWindow(Adw.Window):
         self._kept_visible.clear()
         self._schedule_evaluation(idle=idle)
 
-    def _on_host_picked(self, _listbox, row) -> None:
+    def _on_block_picked(self, _listbox, row) -> None:
         if self._target_syncing or row is None:
             return
-        self._picked_host = row._host
+        before = self.target_text()
+        self._picked_uid = row._uid
         self._set_typed("")
-        # Asked from the idle loop, so the highlight is painted first.
-        self._target_changed(idle=True)
+        if row._uid is not None:
+            self.select_block(row._uid)
+            self.rules.scroll_to(row._uid)
+        self._scroll_after_answer = row._uid
+        if self.target_text() != before:
+            # Asked from the idle loop, so the highlight is painted first.
+            self._target_changed(idle=True)
 
     def _set_typed(self, text: str) -> None:
         """Put *text* in the field as the window's own doing."""
         self._typed_seen = text
         if self.target_entry.get_text() != text:
             self.target_entry.set_text(text)
-            self._host_list.invalidate_filter()
+            self._block_list.invalidate_filter()
 
     def _on_target_typed(self, *_args) -> None:
         typed = self.target_entry.get_text().strip()
         if typed == self._typed_seen:
             return
         self._typed_seen = typed
-        self._picked_host = ""
+        self._picked_uid = None
         self._target_syncing = True
         try:
-            self._host_list.select_row(None if typed else self._all_hosts_row)
+            self._block_list.select_row(None if typed else self._all_row)
         finally:
             self._target_syncing = False
-        self._host_list.invalidate_filter()
+        self._block_list.invalidate_filter()
         self._target_changed()
 
     def _toast_refusal(self, refusal) -> None:
@@ -726,7 +738,7 @@ class AdvancedConfigWindow(Adw.Window):
         changed = self.editor.set_patterns(uid, text)
         self._after_typing(changed)
         if changed:
-            self._sync_host_list()
+            self._sync_block_list()
 
     def note_typed(self, uid: int, text: str) -> None:
         self._kept_visible.add(uid)
@@ -810,7 +822,7 @@ class AdvancedConfigWindow(Adw.Window):
 
     def select_block(self, uid: Optional[int]) -> None:
         """Select a block: the one Alt+arrows move. The host in question is
-        the sidebar's and does not follow."""
+        the one chosen in the sidebar and does not follow."""
         if uid == self.selected_uid:
             return
         self.selected_uid = uid if self.editor.find_block(uid) is not None else None
@@ -915,6 +927,15 @@ class AdvancedConfigWindow(Adw.Window):
         matched = self.rules.show_answer(
             self.editor.blocks, evaluation, lines, keep_open=self._kept_visible,
         )
+        for uid, row in self._block_rows.items():
+            card = self.rules.cards.get(uid)
+            row.get_child().set_opacity(0.45 if card is not None and card.folds else 1.0)
+        if self._scroll_after_answer is not None and evaluation is not None:
+            # The block just picked has moved: blocks above it folded.
+            # Once, for that pick: later answers follow edits, and must not
+            # pull the view away from what is being edited.
+            uid, self._scroll_after_answer = self._scroll_after_answer, None
+            GLib.timeout_add(260, lambda: (self.rules.scroll_to(uid), False)[1])
         user, host = split_target(self.target_text())
         self.results.show(
             Answer(evaluation, list(self.editor.blocks), lines, user, host), matched

@@ -9,7 +9,7 @@ an edit may do lives in one place and is tested without a display.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Callable, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 from .ssh_config_blocks import (
     GLOBAL,
@@ -333,22 +333,3 @@ class DraftEditor:
             if number and number == line:
                 return uid
         return None
-
-    def host_names(self, saved: Optional[Callable[[], Sequence[str]]] = None) -> List[str]:
-        """Hosts to offer: those the configuration names plainly, then the
-        saved connections."""
-        names: List[str] = []
-        for block in self.draft.blocks:
-            if block.kind != HOST or block.disabled:
-                continue
-            for token in block.patterns.split():
-                if token and not any(char in token for char in '*?!"') and token not in names:
-                    names.append(token)
-        if saved is not None:
-            try:
-                for name in saved() or ():
-                    if name and name not in names:
-                        names.append(name)
-            except Exception:
-                pass
-        return names

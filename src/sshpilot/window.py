@@ -6349,21 +6349,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 ))
                 return None
 
-            def hosts():
-                names = []
-                for connection in self.connection_manager.get_connections():
-                    protocol = str(getattr(connection, 'protocol', '') or 'ssh')
-                    name = str(getattr(connection, 'nickname', '') or '')
-                    if protocol == 'ssh' and name:
-                        names.append(name)
-                return names
-
             def saved():
                 schedule = getattr(self, '_schedule_config_precedence_check', None)
                 if callable(schedule):
                     schedule()
 
-            window = AdvancedConfigWindow(self, client, hosts=hosts, on_saved=saved)
+            window = AdvancedConfigWindow(self, client, on_saved=saved)
             self._advanced_config_window = window
             window.connect(
                 'destroy', lambda *_a: setattr(self, '_advanced_config_window', None)

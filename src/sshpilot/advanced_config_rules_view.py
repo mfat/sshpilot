@@ -602,6 +602,24 @@ class RulesView(Gtk.Box):
                 (row.value if value else row.key).grab_focus()
                 return
 
+    def scroll_to(self, uid: int) -> None:
+        """Bring a block's card into view, moving as little as that takes.
+        Focus stays where it is (the sidebar's list is being walked)."""
+        card = self.cards.get(uid)
+        if card is None:
+            return
+        found, bounds = card.card.compute_bounds(self.box)
+        if not found:
+            return
+        adjustment = self.scroller.get_vadjustment()
+        top = bounds.get_y() - 14
+        bottom = bounds.get_y() + bounds.get_height() + 14
+        value, page = adjustment.get_value(), adjustment.get_page_size()
+        if top < value or bottom - top > page:
+            adjustment.set_value(top)
+        elif bottom > value + page:
+            adjustment.set_value(bottom - page)
+
     def reveal(self, uid: int) -> None:
         """Scroll to and flash the option or block with *uid*."""
         widget = None

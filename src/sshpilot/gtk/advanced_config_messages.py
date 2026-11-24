@@ -90,6 +90,14 @@ def block_status(disabled: bool, matched: Optional[bool], is_global: bool) -> tu
     return (_("Skipped"), "muted", _("OpenSSH does not apply this block to the target."))
 
 
+def block_title(kind: str, patterns: str) -> str:
+    """A block as the sidebar names it: its own first line."""
+    if kind == "global":
+        return _("Global")
+    # Host and Match are OpenSSH's keywords: not translated.
+    return ("Host " if kind == "host" else "Match ") + patterns.strip()
+
+
 def matched_count(count: int) -> str:
     return ngettext("{count} matched", "{count} matched", count).format(count=count)
 

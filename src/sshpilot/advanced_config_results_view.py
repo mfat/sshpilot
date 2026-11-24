@@ -417,8 +417,8 @@ class ResultsView(Gtk.Box):
         if not answer.answered:
             if evaluation is None:
                 note = _(
-                    "Choose a host in the sidebar, or type one there, to see "
-                    "what OpenSSH would use for it."
+                    "Choose a block that names a host in the sidebar, or type "
+                    "a host there, to see what OpenSSH would use for it."
                 )
             elif evaluation.pending_exec:
                 note = messages.pending_exec_text(evaluation)
