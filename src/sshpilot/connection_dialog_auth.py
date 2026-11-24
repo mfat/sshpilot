@@ -563,6 +563,12 @@ class AuthPolicy:
             return True
         if self.draft is not None and not self._draft_current():
             return None
+        return self._tried_once(will_try) != self.header_order()
+
+    @staticmethod
+    def _tried_once(will_try: List[str]) -> List[str]:
+        """*will_try* with a repeated known method kept at its first place,
+        as the header lists it."""
         seen: set = set()
         tried: List[str] = []
         for m in will_try:
@@ -571,7 +577,21 @@ class AuthPolicy:
                     continue
                 seen.add(m)
             tried.append(m)
-        return tried != self.header_order()
+        return tried
+
+    def preview_conflict(self) -> bool:
+        """OpenSSH will not try what is set here: another setting changes
+        the order or leaves a method out, or no method is left at all. An
+        error, drawn as one (an unknown answer is not)."""
+        if self.standalone:
+            return False
+        will_try = self.will_try()
+        if will_try is None:
+            return False
+        if not will_try:
+            return True
+        header = self.header_order()
+        return header is not None and self._tried_once(will_try) != header
 
     def unconfirmed_tried(self) -> List[str]:
         """Methods of :meth:`will_try` whose switch is not known: the order
@@ -1007,6 +1027,10 @@ row.auth-order-preview > box.header {
   padding-left: 0; padding-right: 0; margin-left: 0; margin-right: 0;
 }
 row.auth-order-preview .subtitle { font-family: monospace; }
+/* What is set here is not what will be tried: an error, as on a field
+   whose value is not used. */
+row.auth-order-preview.error .title,
+row.auth-order-preview.error .subtitle { color: @error_color; opacity: 1; }
 /* A method row being dragged: a solid copy follows the pointer, and the
    empty space in the list says where it lands. No drop outline besides. */
 row.auth-method-list:drop(active),
@@ -1084,6 +1108,9 @@ class AuthPolicyGroup:
         self._order_locked = False
         self._locked_methods: set = set()
         self._lock_note = ""
+        # Why the order set here is not the one tried (the notes of the
+        # rows an earlier block or Settings overrule), from the dialog.
+        self._preview_note = ""
 
         self.group = Adw.PreferencesGroup()
         self.group.set_description(
@@ -1519,6 +1546,7 @@ class AuthPolicyGroup:
             wanted_preview = policy.preview_wanted()
             if wanted_preview is not None:
                 self.preview.set_visible(wanted_preview)
+            self._style_preview()
             will_try = policy.will_try()
             if will_try is None and policy.lookup_failed:
                 self.effective_row.set_subtitle(
@@ -1544,6 +1572,21 @@ class AuthPolicyGroup:
                 ))
         finally:
             self._syncing = False
+
+    def set_preview_note(self, note: str) -> None:
+        """Why OpenSSH tries something else: the tooltip of the preview."""
+        self._preview_note = str(note or "")
+        self._style_preview()
+
+    def _style_preview(self) -> None:
+        conflict = self.policy.preview_conflict()
+        if conflict:
+            self.effective_row.add_css_class("error")
+        else:
+            self.effective_row.remove_css_class("error")
+        self.effective_row.set_tooltip_text(
+            (self._preview_note or None) if conflict else None
+        )
 
     @staticmethod
     def _holds_focus(row) -> bool:

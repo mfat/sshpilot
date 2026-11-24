@@ -575,6 +575,7 @@ class ConnectionDialogOverridesMixin:
                 self._mark_row_override(row_name, row, state, note)
             except Exception:
                 logger.debug("Could not mark %s as overridden", row_name, exc_info=True)
+        self._note_auth_preview()
         option_list = getattr(getattr(self, "advanced_tab", None), "option_list", None)
         refresh = getattr(option_list, "refresh_notes", None)
         if callable(refresh):
@@ -583,6 +584,32 @@ class ConnectionDialogOverridesMixin:
             except Exception:
                 logger.debug("Could not refresh option notes", exc_info=True)
         self._sync_override_banner()
+
+    def _note_auth_preview(self) -> None:
+        """Give the "OpenSSH will try" line the reasons it differs.
+
+        The method rows carry their marks inside a folded list; the line
+        below it is what shows while the list is closed, so it repeats the
+        notes of the authentication rows that are set here and not used.
+        """
+        section = getattr(self, "auth_policy", None)
+        set_note = getattr(section, "set_preview_note", None)
+        if not callable(set_note):
+            return
+        notes = []
+        for row_name, _keyword in OVERRIDABLE_ROWS:
+            if row_name not in AUTH_ROWS:
+                continue
+            row = getattr(self, row_name, None)
+            if getattr(row, "_sshpilot_override_state", None) != OVERRIDDEN:
+                continue
+            note = getattr(row, "_sshpilot_override_note", "") or ""
+            if note and note not in notes:
+                notes.append(note)
+        try:
+            set_note("\n\n".join(notes))
+        except Exception:
+            logger.debug("Could not note the authentication preview", exc_info=True)
 
     def _watch_rows_for_overrides(self) -> None:
         """Re-mark as the user edits: the state depends on what a row holds."""

@@ -16,6 +16,7 @@ Menus are built when they are first opened, for the same reason.
 """
 from __future__ import annotations
 
+import time
 from gettext import gettext as _
 from typing import Dict, List, Optional, Set
 
@@ -198,7 +199,9 @@ class BlockCard:
         self.card.add_controller(click)
         self.click = click
         focus = Gtk.EventControllerFocus()
-        focus.connect("enter", lambda *_a: controller.select_block(self.uid))
+        # Not held in place: the list scrolls to a field the keyboard
+        # reaches, and holding the card would undo that.
+        focus.connect("enter", lambda *_a: controller.select_block(self.uid, anchor=False))
         self.card.add_controller(focus)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -422,6 +425,8 @@ class RulesView(Gtk.Box):
         self.syncing = False
         self.cards: Dict[int, BlockCard] = {}
         self.selected_uid: Optional[int] = None
+        #: While a card is being held in place: see :meth:`hold`.
+        self._held: Optional[list] = None
         self.set_size_request(420, -1)
         self.preset_menu = Gio.Menu()
         for number, (key, _value) in enumerate(COMMON_OPTIONS):
@@ -626,6 +631,46 @@ class RulesView(Gtk.Box):
             adjustment.set_value(top)
         elif bottom > value + page:
             adjustment.set_value(bottom - page)
+
+    def hold(self, uid: int) -> None:
+        """Keep a block's card where it is on screen while cards above it
+        fold or open: the list is scrolled by as much as they give or
+        take, frame by frame, until the folding has come to rest."""
+        card = self.cards.get(uid)
+        if card is None:
+            return
+        found, bounds = card.card.compute_bounds(self.box)
+        if not found:
+            return
+        offset = bounds.get_y() - self.scroller.get_vadjustment().get_value()
+        now = time.monotonic()
+        ticking = self._held is not None
+        # At least a moment (folding may be about to start), at most a few
+        # seconds (whatever happens, the list is given back).
+        self._held = [card.card, offset, now + 0.15, now + 3.0, 0]
+        if not ticking:
+            self.scroller.add_tick_callback(self._keep_held)
+
+    def _keep_held(self, _widget, _clock) -> bool:
+        widget, offset, earliest, latest, rested = self._held
+        found, bounds = widget.compute_bounds(self.box)
+        if found and widget.get_parent() is self.box:
+            adjustment = self.scroller.get_vadjustment()
+            value = bounds.get_y() - offset
+            if abs(adjustment.get_value() - value) >= 0.5:
+                adjustment.set_value(value)
+        now = time.monotonic()
+        folding = any(
+            card.revealer.get_reveal_child() != card.revealer.get_child_revealed()
+            for card in self.cards.values()
+        )
+        # Two frames at rest: the last step of the folding is laid out
+        # after the frame that ends it.
+        self._held[4] = rested = 0 if folding or now < earliest else rested + 1
+        if rested < 3 and now < latest:
+            return True
+        self._held = None
+        return False
 
     def reveal(self, uid: int) -> None:
         """Scroll to and flash the option or block with *uid*."""

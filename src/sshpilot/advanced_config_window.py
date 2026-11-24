@@ -1,9 +1,10 @@
 """Advanced Configuration: the SSH configuration as OpenSSH reads it.
 
-Sidebar: the blocks, to go to one and to choose the host OpenSSH is asked
-about (the one the picked block names, or a typed one, or none). Middle: the configuration as ordered blocks (the global options, then
-every ``Host`` and ``Match`` block), editable and reorderable; the blocks
-that do not apply to the host fold to their header, in place. Right: what
+Sidebar: the blocks as a list (the same selection as the cards), and a field
+for a host. Middle: the configuration as ordered blocks (the global options,
+then every ``Host`` and ``Match`` block), editable and reorderable. The
+selected block says which host OpenSSH is asked about, unless one is typed
+in the field; the blocks that do not apply fold to their header, in place. Right: what
 OpenSSH resolves for the host, which line supplies each value, the order the
 blocks are read in, the text itself, and the files ``Include`` lines read.
 
@@ -244,22 +245,24 @@ class AdvancedConfigWindow(Adw.Window):
         header.pack_start(self.sidebar_button)
 
     def _build_sidebar(self) -> Gtk.Widget:
-        # The blocks, in the file's order. Picking one goes to it, and the
-        # host it names (the first plain name on its Host line) becomes the
-        # host OpenSSH is asked about; a Match, global or pattern-only block
-        # names none, so nothing is asked. A name typed in the field takes
-        # the list's place (one no block spells out can still match a
-        # pattern) and searches the list. Selecting a block in the rules
-        # themselves never changes the host.
+        # The blocks, in the file's order: the same selection as the cards
+        # of the rules, seen as a list. The selected block says which host
+        # OpenSSH is asked about: the one it names (the first plain name on
+        # its Host line), or, for a pattern or a Match rule, the hosts it
+        # applies to. A host typed in the field takes its place and stays:
+        # blocks can then be selected and edited while that one host is
+        # watched.
         self.target_entry = Gtk.SearchEntry()
-        self.target_entry.set_placeholder_text(_("Search or type a host"))
+        self.target_entry.set_placeholder_text(_("Type a host to check"))
+        self.target_entry.set_tooltip_text(
+            _("A host typed here is the one checked, whichever block is selected.")
+        )
         for side in ("top", "bottom", "start", "end"):
             getattr(self.target_entry, f"set_margin_{side}")(8)
         self.target_entry.connect("search-changed", self._on_target_typed)
         self._block_list = Gtk.ListBox()
         self._block_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._block_list.add_css_class("navigation-sidebar")
-        self._block_list.set_filter_func(self._block_row_shown)
         self._block_list.connect("row-selected", self._on_block_picked)
         self._all_row = Gtk.ListBoxRow()
         self._all_row.set_child(Gtk.Label(label=_("All Blocks"), xalign=0))
@@ -267,16 +270,15 @@ class AdvancedConfigWindow(Adw.Window):
         self._all_row._text = ""
         self._block_list.append(self._all_row)
         self._block_rows: dict = {}
-        #: The block picked in the list (None: All Blocks). A typed name
-        #: takes its place: there is one host in question, shown one way.
-        self._picked_uid: Optional[int] = None
         #: True while the window itself moves the list's selection.
         self._target_syncing = False
         #: The field's text as last acted on. "search-changed" arrives a
         #: moment after the text changes, so text the window put there
         #: itself is told apart by this, not by a flag.
         self._typed_seen = ""
-        self._scroll_after_answer: Optional[int] = None
+        #: The block just selected, until the answer it asked for is shown:
+        #: it is held where it is while the others fold around it.
+        self._hold_for_answer: Optional[int] = None
         self._block_list.select_row(self._all_row)
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -309,9 +311,9 @@ class AdvancedConfigWindow(Adw.Window):
 
     def target_text(self) -> str:
         """The host OpenSSH is asked about: the one typed in the sidebar,
-        else the one the block picked there names. Empty: none."""
+        else the one the selected block names. Empty: none."""
         return self.target_entry.get_text().strip() or first_host_name(
-            self.editor.find_block(self._picked_uid)
+            self.editor.find_block(self.selected_uid)
         )
 
     # ------------------------------------------------------------------
@@ -597,20 +599,20 @@ class AdvancedConfigWindow(Adw.Window):
                     row._text = text
                     row.get_child().set_label(text)
                     row.set_tooltip_text(text)
-            if self._picked_uid not in wanted:
-                self._picked_uid = None
-            typed = bool(self.target_entry.get_text().strip())
-            chosen = None if typed else rows.get(self._picked_uid, self._all_row)
-            if self._block_list.get_selected_row() is not chosen:
-                self._block_list.select_row(chosen)
         finally:
             self._target_syncing = False
-        if self.target_entry.get_text().strip():
-            self._block_list.invalidate_filter()
+        self._mirror_selection()
 
-    def _block_row_shown(self, row) -> bool:
-        typed = self.target_entry.get_text().strip().lower()
-        return not typed or row._uid is None or typed in (row._text or "").lower()
+    def _mirror_selection(self) -> None:
+        """Show the selected block as the sidebar's selected row."""
+        chosen = self._block_rows.get(self.selected_uid, self._all_row)
+        if self._block_list.get_selected_row() is chosen:
+            return
+        self._target_syncing = True
+        try:
+            self._block_list.select_row(chosen)
+        finally:
+            self._target_syncing = False
 
     def _target_changed(self, *, idle: bool = False) -> None:
         # A command can depend on the host (%h, %r): agreement to run it
@@ -623,36 +625,23 @@ class AdvancedConfigWindow(Adw.Window):
     def _on_block_picked(self, _listbox, row) -> None:
         if self._target_syncing or row is None:
             return
-        before = self._question()
-        self._picked_uid = row._uid
-        self._set_typed("")
+        self.select_block(row._uid, anchor=False)
         if row._uid is not None:
-            self.select_block(row._uid)
+            # Gone to, then held there while the others fold around it.
             self.rules.scroll_to(row._uid)
-        self._scroll_after_answer = row._uid
-        if self._question() != before:
-            # Asked from the idle loop, so the highlight is painted first.
-            self._target_changed(idle=True)
+            self.rules.hold(row._uid)
 
     def _set_typed(self, text: str) -> None:
         """Put *text* in the field as the window's own doing."""
         self._typed_seen = text
         if self.target_entry.get_text() != text:
             self.target_entry.set_text(text)
-            self._block_list.invalidate_filter()
 
     def _on_target_typed(self, *_args) -> None:
         typed = self.target_entry.get_text().strip()
         if typed == self._typed_seen:
             return
         self._typed_seen = typed
-        self._picked_uid = None
-        self._target_syncing = True
-        try:
-            self._block_list.select_row(None if typed else self._all_row)
-        finally:
-            self._target_syncing = False
-        self._block_list.invalidate_filter()
         self._target_changed()
 
     def _toast_refusal(self, refusal) -> None:
@@ -826,13 +815,26 @@ class AdvancedConfigWindow(Adw.Window):
     # selection
     # ------------------------------------------------------------------
 
-    def select_block(self, uid: Optional[int]) -> None:
-        """Select a block: the one Alt+arrows move. The host in question is
-        the one chosen in the sidebar and does not follow."""
+    def select_block(self, uid: Optional[int], *, anchor: bool = True) -> None:
+        """Select a block, from its card or from the sidebar: the one
+        Alt+arrows move, and, unless a host is typed in the sidebar, the
+        one that says which host OpenSSH is asked about.
+
+        *anchor*: hold the block where it is on screen while others fold
+        (it was clicked: it must not slide from under the pointer).
+        """
         if uid == self.selected_uid:
             return
+        before = self._question()
+        if anchor and uid is not None:
+            self.rules.hold(uid)        # the block left may fold at once
         self.selected_uid = uid if self.editor.find_block(uid) is not None else None
         self.rules.select(self.selected_uid)
+        self._mirror_selection()
+        if self._question() != before:
+            self._hold_for_answer = self.selected_uid
+            # Asked from the idle loop, so the highlight is painted first.
+            self._target_changed(idle=True)
 
     def reveal_line(self, line: int) -> None:
         """Show the option or block the draft has at *line* (from a source
@@ -841,6 +843,11 @@ class AdvancedConfigWindow(Adw.Window):
         if uid is None:
             return
         owner, _option = self.editor.find_option(uid)
+        # The line belongs to the answer on screen: the host it is about
+        # stays the one in question, as a typed one, whichever block the
+        # line turns out to be in.
+        if not self.target_entry.get_text().strip():
+            self._set_typed(self.target_text())
         self.select_block(owner.uid if owner is not None else uid)
         self.rules.reveal(uid)
 
@@ -924,14 +931,16 @@ class AdvancedConfigWindow(Adw.Window):
         return (self.target_text(), block.uid if block is not None else None)
 
     def _pattern_block(self):
-        """The block picked in the sidebar when it names no host of its own
-        (a pattern, a Match rule) and no host is typed."""
+        """The selected block when it names no host of its own (a pattern,
+        a Match rule) and no host is typed."""
         if self.target_entry.get_text().strip():
             return None
-        block = self.editor.find_block(self._picked_uid)
+        block = self.editor.find_block(self.selected_uid)
         if block is None or block.disabled or block.kind == GLOBAL:
             return None
-        return None if first_host_name(block) else block
+        if not block.patterns.strip() or first_host_name(block):
+            return None
+        return block
 
     def _related_work(self, block, serial: int) -> Callable[[], object]:
         """The question a pattern block stands for: which blocks apply to a
@@ -1000,6 +1009,11 @@ class AdvancedConfigWindow(Adw.Window):
                 self._show_answer_banner(messages.error_text(evaluation.errors[0]))
             else:
                 self._show_answer_banner("")
+        if self._hold_for_answer is not None:
+            # Once, for the selection that asked: later answers follow
+            # edits, and the view is then left alone.
+            uid, self._hold_for_answer = self._hold_for_answer, None
+            self.rules.hold(uid)
         matched = self.rules.show_answer(
             self.editor.blocks, evaluation, lines, keep_open=self._kept_visible,
             related=related[0] if related is not None else None,
@@ -1007,14 +1021,6 @@ class AdvancedConfigWindow(Adw.Window):
         for uid, row in self._block_rows.items():
             card = self.rules.cards.get(uid)
             row.get_child().set_opacity(0.45 if card is not None and card.folds else 1.0)
-        if self._scroll_after_answer is not None and (
-            evaluation is not None or related is not None
-        ):
-            # The block just picked has moved: blocks above it folded.
-            # Once, for that pick: later answers follow edits, and must not
-            # pull the view away from what is being edited.
-            uid, self._scroll_after_answer = self._scroll_after_answer, None
-            GLib.timeout_add(260, lambda: (self.rules.scroll_to(uid), False)[1])
         user, host = split_target(self.target_text())
         self.results.show(
             Answer(

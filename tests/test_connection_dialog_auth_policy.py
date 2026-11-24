@@ -466,6 +466,25 @@ def test_the_will_try_line_stays_as_it_is_until_openssh_answers_an_edit():
     assert policy.preview_wanted() is not None
 
 
+def test_a_sequence_that_is_not_the_one_tried_is_an_error():
+    # The header lists password; an earlier block turns it off.
+    policy = _policy("PreferredAuthentications password,publickey",
+                     "PasswordAuthentication yes")
+    policy.earlier = {"passwordauthentication": "no"}
+    assert policy.header_order() == ["password", "publickey"]
+    assert policy.will_try() == ["publickey"]
+    assert policy.preview_conflict() is True
+    # Nothing overruled: no error. Neither is an answer that never came.
+    assert _policy().preview_conflict() is False
+    failed = AuthPolicy.from_lines([])
+    failed.set_lookup_failed()
+    assert failed.preview_conflict() is False
+    # No method left is one.
+    none = _policy("PreferredAuthentications password")
+    none.earlier = {"passwordauthentication": "no"}
+    assert none.preview_conflict() is True
+
+
 def test_a_profile_never_shows_the_will_try_line():
     policy = AuthPolicy.from_lines(["PreferredAuthentications password"])
     policy.standalone = True
