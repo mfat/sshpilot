@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 12:09+0330\n"
+"POT-Creation-Date: 2026-11-24 12:23+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -3039,7 +3039,7 @@ msgid "Save the connection to see what SSH uses for it"
 msgstr "Salve a conexão para ver o que o SSH usa para ela"
 
 #: src/sshpilot/connection_dialog_overrides.py:874 src/sshpilot/window.py:8667
-#: src/sshpilot/window.py:8677 src/sshpilot/window.py:9668
+#: src/sshpilot/window.py:8677 src/sshpilot/window.py:9674
 msgid "Effective configuration unavailable"
 msgstr "Configuração efetiva indisponível"
 
@@ -6407,6 +6407,57 @@ msgstr "_Detalhes"
 #: src/sshpilot/gtk/ssh_config_access_messages.py:226
 msgid "_Copy Command"
 msgstr "_Copiar comando"
+
+#: src/sshpilot/gtk/connection_save_messages.py:18
+msgid ""
+"This connection can't be edited here for now. Hosts were removed from the "
+"SSH config while others with the same address and user were added, so SSH "
+"Pilot can't tell which of them this connection is. You can still connect to "
+"it, and change it in the SSH config editor or in Advanced Configuration."
+msgstr ""
+"Por enquanto, esta conexão não pode ser editada aqui. Hosts foram removidos "
+"da configuração SSH enquanto outros, com o mesmo endereço e usuário, foram "
+"adicionados, então o SSH Pilot não consegue saber qual deles é esta conexão. "
+"Você ainda pode se conectar a ela e alterá-la no editor de configuração SSH "
+"ou na Configuração avançada."
+
+#: src/sshpilot/gtk/connection_save_messages.py:25
+msgid ""
+"This host now shares its Host block with other hosts. Close this dialog and "
+"open the connection again to choose how to edit it."
+msgstr ""
+"Este host agora compartilha seu bloco Host com outros hosts. Feche esta "
+"janela e abra a conexão novamente para escolher como editá-la."
+
+#: src/sshpilot/gtk/connection_save_messages.py:29
+msgid ""
+"More than one Host block in the SSH config names this host, so SSH Pilot "
+"can't tell which one to change. Change it in the SSH config editor or in "
+"Advanced Configuration."
+msgstr ""
+"Mais de um bloco Host da configuração SSH nomeia este host, então o SSH "
+"Pilot não consegue saber qual alterar. Altere-o no editor de configuração "
+"SSH ou na Configuração avançada."
+
+#: src/sshpilot/gtk/connection_save_messages.py:34
+msgid ""
+"This host's block in the SSH config changed after this dialog was opened. "
+"Close the dialog and open the connection again."
+msgstr ""
+"O bloco deste host na configuração SSH mudou depois que esta janela foi "
+"aberta. Feche a janela e abra a conexão novamente."
+
+#: src/sshpilot/gtk/connection_save_messages.py:41
+msgid ""
+"This connection was changed after this dialog was opened. Close the dialog "
+"and open the connection again."
+msgstr ""
+"Esta conexão foi alterada depois que esta janela foi aberta. Feche a janela "
+"e abra a conexão novamente."
+
+#: src/sshpilot/gtk/connection_save_messages.py:45
+msgid "A connection with this name already exists. Choose another name."
+msgstr "Já existe uma conexão com este nome. Escolha outro nome."
 
 #: src/sshpilot/gtk/secret_status_messages.py:20
 #, python-brace-format
@@ -15207,7 +15258,7 @@ msgid "Saved, but tags/Wake-on-LAN settings could not be stored."
 msgstr ""
 "Salvo, mas as configurações de tags/Wake-on-LAN não puderam ser armazenadas."
 
-#: src/sshpilot/window.py:8959 src/sshpilot/window.py:9636
+#: src/sshpilot/window.py:8959 src/sshpilot/window.py:9642
 msgid "Failed to save connection"
 msgstr "Falha ao salvar conexão"
 
@@ -15215,7 +15266,7 @@ msgstr "Falha ao salvar conexão"
 msgid "Saved, but the login profile could not be applied."
 msgstr "Não foi possível substituir o arquivo remoto."
 
-#: src/sshpilot/window.py:9669
+#: src/sshpilot/window.py:9675
 msgid ""
 "The daemon could not resolve or compare this connection's effective SSH "
 "configuration."

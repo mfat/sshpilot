@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 12:09+0330\n"
+"POT-Creation-Date: 2026-11-24 12:23+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -3065,7 +3065,7 @@ msgid "Save the connection to see what SSH uses for it"
 msgstr "Сохраните подключение, чтобы увидеть, что SSH для него использует"
 
 #: src/sshpilot/connection_dialog_overrides.py:874 src/sshpilot/window.py:8667
-#: src/sshpilot/window.py:8677 src/sshpilot/window.py:9668
+#: src/sshpilot/window.py:8677 src/sshpilot/window.py:9674
 msgid "Effective configuration unavailable"
 msgstr "Действующая конфигурация недоступна"
 
@@ -6476,6 +6476,57 @@ msgstr "_Подробности"
 #: src/sshpilot/gtk/ssh_config_access_messages.py:226
 msgid "_Copy Command"
 msgstr "_Копировать команду"
+
+#: src/sshpilot/gtk/connection_save_messages.py:18
+msgid ""
+"This connection can't be edited here for now. Hosts were removed from the "
+"SSH config while others with the same address and user were added, so SSH "
+"Pilot can't tell which of them this connection is. You can still connect to "
+"it, and change it in the SSH config editor or in Advanced Configuration."
+msgstr ""
+"Это подключение пока нельзя изменить здесь. Из конфигурации SSH были удалены "
+"хосты, и одновременно добавлены другие с тем же адресом и пользователем, "
+"поэтому SSH Pilot не может определить, какой из них является этим "
+"подключением. Вы по-прежнему можете подключаться к нему и изменить его в "
+"редакторе конфигурации SSH или в расширенной конфигурации."
+
+#: src/sshpilot/gtk/connection_save_messages.py:25
+msgid ""
+"This host now shares its Host block with other hosts. Close this dialog and "
+"open the connection again to choose how to edit it."
+msgstr ""
+"Этот хост теперь делит свой блок Host с другими хостами. Закройте это окно и "
+"откройте подключение снова, чтобы выбрать способ изменения."
+
+#: src/sshpilot/gtk/connection_save_messages.py:29
+msgid ""
+"More than one Host block in the SSH config names this host, so SSH Pilot "
+"can't tell which one to change. Change it in the SSH config editor or in "
+"Advanced Configuration."
+msgstr ""
+"Этот хост назван более чем в одном блоке Host конфигурации SSH, поэтому SSH "
+"Pilot не может определить, какой из них изменять. Измените его в редакторе "
+"конфигурации SSH или в расширенной конфигурации."
+
+#: src/sshpilot/gtk/connection_save_messages.py:34
+msgid ""
+"This host's block in the SSH config changed after this dialog was opened. "
+"Close the dialog and open the connection again."
+msgstr ""
+"Блок этого хоста в конфигурации SSH изменился после открытия этого окна. "
+"Закройте окно и откройте подключение снова."
+
+#: src/sshpilot/gtk/connection_save_messages.py:41
+msgid ""
+"This connection was changed after this dialog was opened. Close the dialog "
+"and open the connection again."
+msgstr ""
+"Это подключение было изменено после открытия этого окна. Закройте окно и "
+"откройте подключение снова."
+
+#: src/sshpilot/gtk/connection_save_messages.py:45
+msgid "A connection with this name already exists. Choose another name."
+msgstr "Подключение с таким именем уже существует. Выберите другое имя."
 
 #: src/sshpilot/gtk/secret_status_messages.py:20
 #, python-brace-format
@@ -15296,7 +15347,7 @@ msgstr "• Убедитесь в наличии необходимых прав
 msgid "Saved, but tags/Wake-on-LAN settings could not be stored."
 msgstr "Сохранено, но не удалось сохранить параметры тегов и Wake-on-LAN."
 
-#: src/sshpilot/window.py:8959 src/sshpilot/window.py:9636
+#: src/sshpilot/window.py:8959 src/sshpilot/window.py:9642
 msgid "Failed to save connection"
 msgstr "Не удалось сохранить подключение"
 
@@ -15304,7 +15355,7 @@ msgstr "Не удалось сохранить подключение"
 msgid "Saved, but the login profile could not be applied."
 msgstr "Сохранено, но профиль входа не удалось применить."
 
-#: src/sshpilot/window.py:9669
+#: src/sshpilot/window.py:9675
 msgid ""
 "The daemon could not resolve or compare this connection's effective SSH "
 "configuration."

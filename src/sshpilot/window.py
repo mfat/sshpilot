@@ -9408,6 +9408,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     ),
                 )
                 return
+            # A refusal the daemon named: say which, not "could not be saved".
+            from .gtk.connection_save_messages import save_failure_text
+            reason = save_failure_text(error)
+            if reason:
+                complete_save(False, None, meta_error=reason)
+                return
             complete_save(False)
 
         if checkpoint is not None:

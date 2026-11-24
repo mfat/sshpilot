@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 12:09+0330\n"
+"POT-Creation-Date: 2026-11-24 12:23+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -3083,7 +3083,7 @@ msgid "Save the connection to see what SSH uses for it"
 msgstr "Speichern Sie die Verbindung, um zu sehen, was SSH dafür verwendet"
 
 #: src/sshpilot/connection_dialog_overrides.py:874 src/sshpilot/window.py:8667
-#: src/sshpilot/window.py:8677 src/sshpilot/window.py:9668
+#: src/sshpilot/window.py:8677 src/sshpilot/window.py:9674
 msgid "Effective configuration unavailable"
 msgstr "Effektive Konfiguration nicht verfügbar"
 
@@ -6493,6 +6493,61 @@ msgstr "_Details"
 #: src/sshpilot/gtk/ssh_config_access_messages.py:226
 msgid "_Copy Command"
 msgstr "Befehl _kopieren"
+
+#: src/sshpilot/gtk/connection_save_messages.py:18
+msgid ""
+"This connection can't be edited here for now. Hosts were removed from the "
+"SSH config while others with the same address and user were added, so SSH "
+"Pilot can't tell which of them this connection is. You can still connect to "
+"it, and change it in the SSH config editor or in Advanced Configuration."
+msgstr ""
+"Diese Verbindung kann hier vorerst nicht bearbeitet werden. Aus der SSH-"
+"Konfiguration wurden Hosts entfernt, während andere mit derselben Adresse "
+"und demselben Benutzer hinzukamen. SSH Pilot kann deshalb nicht erkennen, "
+"welcher davon diese Verbindung ist. Sie können sich weiterhin verbinden und "
+"sie im SSH-Konfigurationseditor oder in der Erweiterten Konfiguration ändern."
+
+#: src/sshpilot/gtk/connection_save_messages.py:25
+msgid ""
+"This host now shares its Host block with other hosts. Close this dialog and "
+"open the connection again to choose how to edit it."
+msgstr ""
+"Dieser Host teilt seinen Host-Block jetzt mit anderen Hosts. Schließen Sie "
+"diesen Dialog und öffnen Sie die Verbindung erneut, um zu wählen, wie sie "
+"bearbeitet wird."
+
+#: src/sshpilot/gtk/connection_save_messages.py:29
+msgid ""
+"More than one Host block in the SSH config names this host, so SSH Pilot "
+"can't tell which one to change. Change it in the SSH config editor or in "
+"Advanced Configuration."
+msgstr ""
+"Mehr als ein Host-Block in der SSH-Konfiguration nennt diesen Host. SSH "
+"Pilot kann deshalb nicht erkennen, welcher geändert werden soll. Ändern Sie "
+"ihn im SSH-Konfigurationseditor oder in der Erweiterten Konfiguration."
+
+#: src/sshpilot/gtk/connection_save_messages.py:34
+msgid ""
+"This host's block in the SSH config changed after this dialog was opened. "
+"Close the dialog and open the connection again."
+msgstr ""
+"Der Block dieses Hosts in der SSH-Konfiguration wurde geändert, nachdem "
+"dieser Dialog geöffnet wurde. Schließen Sie den Dialog und öffnen Sie die "
+"Verbindung erneut."
+
+#: src/sshpilot/gtk/connection_save_messages.py:41
+msgid ""
+"This connection was changed after this dialog was opened. Close the dialog "
+"and open the connection again."
+msgstr ""
+"Diese Verbindung wurde geändert, nachdem dieser Dialog geöffnet wurde. "
+"Schließen Sie den Dialog und öffnen Sie die Verbindung erneut."
+
+#: src/sshpilot/gtk/connection_save_messages.py:45
+msgid "A connection with this name already exists. Choose another name."
+msgstr ""
+"Eine Verbindung mit diesem Namen existiert bereits. Wählen Sie einen anderen "
+"Namen."
 
 #: src/sshpilot/gtk/secret_status_messages.py:20
 #, python-brace-format
@@ -15366,7 +15421,7 @@ msgstr ""
 "Gespeichert, aber Tags und Wake-on-LAN-Einstellungen konnten nicht "
 "gespeichert werden."
 
-#: src/sshpilot/window.py:8959 src/sshpilot/window.py:9636
+#: src/sshpilot/window.py:8959 src/sshpilot/window.py:9642
 msgid "Failed to save connection"
 msgstr "Speichern der Verbindung fehlgeschlagen"
 
@@ -15374,7 +15429,7 @@ msgstr "Speichern der Verbindung fehlgeschlagen"
 msgid "Saved, but the login profile could not be applied."
 msgstr "Gespeichert, aber das Anmeldeprofil konnte nicht angewendet werden."
 
-#: src/sshpilot/window.py:9669
+#: src/sshpilot/window.py:9675
 msgid ""
 "The daemon could not resolve or compare this connection's effective SSH "
 "configuration."

@@ -1057,6 +1057,7 @@ class SshConfigStore:
             raise CoreError(
                 ErrorCode.MUTATION_AMBIGUOUS,
                 "The connection declaration changed before it could be edited",
+                details={"refusal": "declaration_changed"},
             )
         doc.nodes = nodes
         return self._prepare_document_replacement(
@@ -1259,11 +1260,13 @@ class SshConfigStore:
                 raise CoreError(
                     ErrorCode.MUTATION_AMBIGUOUS,
                     "The connection is defined by multiple Host declarations",
+                    details={"refusal": "multiple_declarations"},
                 )
             if blocks and not allow_shared and len(blocks[0].tokens) > 1:
                 raise CoreError(
                     ErrorCode.MUTATION_AMBIGUOUS,
                     "The connection shares a Host declaration with other aliases",
+                    details={"refusal": "shared_declaration"},
                 )
 
     def _concrete_host_blocks_for_alias(self, alias: str) -> List[HostBlock]:
@@ -1423,6 +1426,7 @@ class SshConfigStore:
             raise CoreError(
                 ErrorCode.MUTATION_AMBIGUOUS,
                 "The connection declaration changed before it could be edited",
+                details={"refusal": "declaration_changed"},
             )
         doc.nodes = new_nodes
 

@@ -1549,6 +1549,7 @@ class ConnectionRepository:
             raise CoreError(
                 ErrorCode.MUTATION_AMBIGUOUS,
                 "Connection identity is unresolved for the current SSH configuration",
+                details={"refusal": "identity_unresolved"},
             )
 
     def public_id_for(self, connection_id: str) -> str:

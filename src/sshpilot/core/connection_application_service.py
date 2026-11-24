@@ -30,7 +30,7 @@ import threading
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from ..api.capabilities import Capabilities, Capability
-from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
+from ..api.errors import ErrorCode, MutationRefusal, SshPilotError, unsupported_capability
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
 from ..api.models.pre_command import (
@@ -2827,6 +2827,20 @@ def _map_core_error(error: Any) -> SshPilotError:
             error.message or "The SSH configuration is invalid",
         )
     if code is CoreErrorCode.MUTATION_AMBIGUOUS:
+        # A refusal the core named was made before anything was written:
+        # the frontend is told which, as a code, and words it. Without one
+        # the outcome of a write is what is not known.
+        refusal = (getattr(error, "details", None) or {}).get("refusal")
+        try:
+            refusal = MutationRefusal(refusal).value
+        except ValueError:
+            refusal = None
+        if refusal is not None:
+            return SshPilotError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "The connection-store change was refused",
+                details={"refusal": refusal},
+            )
         return SshPilotError(
             ErrorCode.MUTATION_AMBIGUOUS,
             "The connection-store change may have completed",

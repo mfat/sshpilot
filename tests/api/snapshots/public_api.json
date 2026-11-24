@@ -7,13 +7,14 @@
     "DaemonClient",
     "ErrorCode",
     "EventType",
+    "MutationRefusal",
     "PROTOCOL_VERSION",
     "SshPilotClient",
     "SshPilotError",
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.114",
+  "api_implementation_version": "0.115",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",

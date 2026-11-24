@@ -5,6 +5,20 @@ notes remain separate.
 
 ## Unreleased
 
+- A connection change refused before anything was written says which
+  refusal it is. `MUTATION_AMBIGUOUS` covered two different things: a write
+  whose outcome the daemon could not determine, and a change it would not
+  start. The second now carries `details["refusal"]`, a `MutationRefusal`:
+  `identity_unresolved` (hosts left the SSH configuration while others with
+  the same destination arrived, so the daemon cannot tell which of them the
+  connections it knew are), `shared_declaration` (the `Host` line names
+  other hosts and the update did not set `shared_block`),
+  `multiple_declarations` (more than one `Host` line declares the
+  connection) and `declaration_changed` (the declaring line is gone). The
+  message is `The connection-store change was refused`; without a refusal it
+  stays `... may have completed`. The frontend owns the wording. Additive: a
+  client that does not read `details` behaves as before. The API
+  implementation version is 0.115; Protocol remains 1.0.
 - The files an SSH configuration reads through `Include` can be read,
   evaluated and saved, not only the root. `SshConfigText.files` lists every
   file of the configuration as `SshConfigFileRef(file, display_name,

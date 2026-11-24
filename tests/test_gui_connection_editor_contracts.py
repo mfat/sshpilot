@@ -838,3 +838,26 @@ def test_a_name_beside_a_pattern_is_listed_and_says_what_it_shares(gui, root):
     expected = [f"HostName {address}", "User deploy"]
     _save_and_wait(dialog, root, f"*.prod {name}", expected)
     assert _canon(_block(root, f"*.prod {name}")) == _canon(expected)   # line kept
+
+
+def test_a_save_refused_over_unresolved_hosts_says_why(gui, root):
+    """Hosts go while others with the same destination come: the daemon
+    cannot tell which is which and refuses to change them. The editor says
+    that, and what still works, not just "could not be saved"."""
+    n = next(_names)
+    address = f"192.0.2.{100 + n}"
+    old = _shared_hosts(root, gui, f"gone{n}a gone{n}b", address)
+    new = _shared_hosts(root, gui, f"came{n}a came{n}b", address)
+    assert _pump(lambda: _find(gui.window, old) is None)
+    before = root.read_text()
+
+    dialog = _open(gui, new)
+    said = []
+    dialog.show_error = lambda message, *args, **kwargs: said.append(message)
+    dialog.username_row.set_text("bob")
+    dialog.on_save_clicked()
+    assert _pump(lambda: bool(said), seconds=8), "the editor said nothing"
+    assert "can't tell which of them" in said[0]
+    assert "Advanced Configuration" in said[0]
+    assert dialog.get_visible()                 # still open: nothing was saved
+    assert root.read_text() == before

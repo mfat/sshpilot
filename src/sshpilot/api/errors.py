@@ -109,6 +109,28 @@ class ErrorCode(str, Enum):
     DAEMON_RESTART_REQUIRED = "daemon_restart_required"
 
 
+class MutationRefusal(str, Enum):
+    """Why a connection change was refused before anything was written.
+
+    Sent as ``details["refusal"]`` of a ``MUTATION_AMBIGUOUS`` error. Such an
+    error without it is the other kind: a write whose outcome the daemon
+    could not determine. The frontend owns the wording for each.
+    """
+
+    #: The SSH configuration changed so that the daemon cannot tell which
+    #: of its hosts are the connections it knew: hosts went and others with
+    #: the same destination came. Nothing about them is changed until the
+    #: configuration tells them apart.
+    IDENTITY_UNRESOLVED = "identity_unresolved"
+    #: The connection's ``Host`` line names other hosts too, and the request
+    #: did not say it meant all of them (``UpdateConnectionRequest.shared_block``).
+    SHARED_DECLARATION = "shared_declaration"
+    #: More than one ``Host`` line declares the connection.
+    MULTIPLE_DECLARATIONS = "multiple_declarations"
+    #: The ``Host`` line that declared the connection is no longer there.
+    DECLARATION_CHANGED = "declaration_changed"
+
+
 class SshPilotError(Exception):
     """Base exception carrying stable, frontend-safe error metadata."""
 

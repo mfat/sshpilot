@@ -1349,3 +1349,38 @@ def test_an_included_config_file_is_read_and_saved_by_the_name_the_daemon_gave(t
         application.save_ssh_config_text(
             SaveSshConfigTextRequest("Host inc\n", part.revision, file=str(included))
         )
+
+
+def test_a_refused_change_says_which_refusal_it_is(tmp_path):
+    """The API carries a code for a change refused before any write; one
+    whose outcome is unknown carries none."""
+    from sshpilot.api.errors import ErrorCode as ApiCode, MutationRefusal, SshPilotError
+    from sshpilot.core.connection_application_service import _map_core_error
+
+    text = "Host web1 web2\n    User deploy\n\nHost twice\n    User a\n\nHost twice\n    Port 2\n"
+    repo, root, _ = _repo(tmp_path, text)
+    application = ConnectionApplicationService(repo, client_name="test")
+
+    def refusal(connection_id):
+        with pytest.raises(SshPilotError) as caught:
+            application.update_connection(connection_id, UpdateConnectionRequest(username="x"))
+        assert caught.value.code is ApiCode.MUTATION_AMBIGUOUS
+        return caught.value.details.get("refusal")
+
+    assert refusal("web1") == MutationRefusal.SHARED_DECLARATION.value
+    assert refusal("twice") == MutationRefusal.MULTIPLE_DECLARATIONS.value
+    assert root.read_text() == text
+
+    for message, expected in (
+        ("Connection identity is unresolved", MutationRefusal.IDENTITY_UNRESOLVED.value),
+    ):
+        mapped = _map_core_error(CoreError(
+            ErrorCode.MUTATION_AMBIGUOUS, message, details={"refusal": expected}
+        ))
+        assert mapped.details == {"refusal": expected}
+    unknown = _map_core_error(CoreError(ErrorCode.MUTATION_AMBIGUOUS, "outcome unknown"))
+    assert unknown.details == {} and "may have completed" in unknown.message
+    made_up = _map_core_error(CoreError(
+        ErrorCode.MUTATION_AMBIGUOUS, "x", details={"refusal": "not a code"}
+    ))
+    assert made_up.details == {}

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 12:09+0330\n"
+"POT-Creation-Date: 2026-11-24 12:23+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -2928,7 +2928,7 @@ msgid "Save the connection to see what SSH uses for it"
 msgstr "保存连接后即可查看 SSH 对其实际使用的配置"
 
 #: src/sshpilot/connection_dialog_overrides.py:874 src/sshpilot/window.py:8667
-#: src/sshpilot/window.py:8677 src/sshpilot/window.py:9668
+#: src/sshpilot/window.py:8677 src/sshpilot/window.py:9674
 msgid "Effective configuration unavailable"
 msgstr "生效配置不可用"
 
@@ -6165,6 +6165,52 @@ msgstr "详细信息(_D)"
 #: src/sshpilot/gtk/ssh_config_access_messages.py:226
 msgid "_Copy Command"
 msgstr "复制命令(_C)"
+
+#: src/sshpilot/gtk/connection_save_messages.py:18
+msgid ""
+"This connection can't be edited here for now. Hosts were removed from the "
+"SSH config while others with the same address and user were added, so SSH "
+"Pilot can't tell which of them this connection is. You can still connect to "
+"it, and change it in the SSH config editor or in Advanced Configuration."
+msgstr ""
+"此连接暂时无法在这里编辑。SSH 配置中移除了一些主机，同时又添加了地址和用户相"
+"同的其他主机，因此 SSH Pilot 无法判断其中哪一个是此连接。您仍然可以连接它，并"
+"在 SSH 配置编辑器或高级配置中更改它。"
+
+#: src/sshpilot/gtk/connection_save_messages.py:25
+msgid ""
+"This host now shares its Host block with other hosts. Close this dialog and "
+"open the connection again to choose how to edit it."
+msgstr ""
+"此主机现在与其他主机共用其 Host 块。请关闭此对话框并重新打开该连接，以选择编"
+"辑方式。"
+
+#: src/sshpilot/gtk/connection_save_messages.py:29
+msgid ""
+"More than one Host block in the SSH config names this host, so SSH Pilot "
+"can't tell which one to change. Change it in the SSH config editor or in "
+"Advanced Configuration."
+msgstr ""
+"SSH 配置中有多个 Host 块指明了此主机，因此 SSH Pilot 无法判断要更改哪一个。请"
+"在 SSH 配置编辑器或高级配置中更改它。"
+
+#: src/sshpilot/gtk/connection_save_messages.py:34
+msgid ""
+"This host's block in the SSH config changed after this dialog was opened. "
+"Close the dialog and open the connection again."
+msgstr ""
+"此对话框打开后，此主机在 SSH 配置中的块发生了变化。请关闭对话框并重新打开该连"
+"接。"
+
+#: src/sshpilot/gtk/connection_save_messages.py:41
+msgid ""
+"This connection was changed after this dialog was opened. Close the dialog "
+"and open the connection again."
+msgstr "此对话框打开后，此连接已被更改。请关闭对话框并重新打开该连接。"
+
+#: src/sshpilot/gtk/connection_save_messages.py:45
+msgid "A connection with this name already exists. Choose another name."
+msgstr "已存在同名连接。请选择其他名称。"
 
 #: src/sshpilot/gtk/secret_status_messages.py:20
 #, python-brace-format
@@ -14663,7 +14709,7 @@ msgstr "• 确保您拥有适当的权限"
 msgid "Saved, but tags/Wake-on-LAN settings could not be stored."
 msgstr "已保存，但无法存储标签/局域网唤醒 (Wake-on-LAN) 设置。"
 
-#: src/sshpilot/window.py:8959 src/sshpilot/window.py:9636
+#: src/sshpilot/window.py:8959 src/sshpilot/window.py:9642
 msgid "Failed to save connection"
 msgstr "保存连接失败"
 
@@ -14671,7 +14717,7 @@ msgstr "保存连接失败"
 msgid "Saved, but the login profile could not be applied."
 msgstr "无法替换远程文件。"
 
-#: src/sshpilot/window.py:9669
+#: src/sshpilot/window.py:9675
 msgid ""
 "The daemon could not resolve or compare this connection's effective SSH "
 "configuration."
