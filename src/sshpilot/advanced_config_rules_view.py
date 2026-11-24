@@ -158,11 +158,17 @@ class OptionRow:
         source.connect("prepare", lambda *_a: Gdk.ContentProvider.new_for_value(
             DragItem(_OPTION_DRAG, self.uid)
         ))
-        source.connect("drag-begin", lambda src, _drag: view.drag_icon(src, self.box))
+
+        def begun(src, _drag) -> None:
+            view.drag_icon(src, self.box)
+            view.begin_option_drag()
+
+        source.connect("drag-begin", begun)
+        source.connect("drag-end", lambda *_a: view.end_option_drag())
+        source.connect("drag-cancel", lambda *_a: (view.end_option_drag(), False)[1])
         grip.add_controller(source)
         target = Gtk.DropTarget.new(DragItem, Gdk.DragAction.MOVE)
-        target.connect("motion", view.on_drop_motion, self.box)
-        target.connect("leave", lambda *_a: view.clear_drop(self.box))
+        target.connect("motion", view.on_row_motion, self)
         target.connect("drop", self._on_drop)
         self.box.add_controller(target)
 
@@ -171,7 +177,7 @@ class OptionRow:
             self.view.controller.option_typed(self.uid, field, entry.get_text())
 
     def _on_drop(self, _target, value, _x, y) -> bool:
-        self.view.clear_drop(self.box)
+        self.view.hide_drop_marks()
         kind, uid = _drag_payload(value)
         if kind != _OPTION_DRAG or uid == self.uid:
             return False
@@ -349,8 +355,7 @@ class BlockCard:
             source.connect("drag-cancel", lambda *_a: (view.end_block_drag(), False)[1])
             header.add_controller(source)       # the whole band, not only the grip
         target = Gtk.DropTarget.new(DragItem, Gdk.DragAction.MOVE)
-        target.connect("motion", view.on_drop_motion, self.card)
-        target.connect("leave", lambda *_a: view.clear_drop(self.card))
+        target.connect("motion", view.on_card_motion, self)
         target.connect("drop", self._on_drop)
         self.card.add_controller(target)
 
@@ -412,7 +417,7 @@ class BlockCard:
             self.view.controller.note_typed(self.uid, entry.get_text())
 
     def _on_drop(self, _target, value, _x, y) -> bool:
-        self.view.clear_drop(self.card)
+        self.view.hide_drop_marks()
         kind, uid = _drag_payload(value)
         if kind == _OPTION_DRAG:
             return self.view.controller.drop_option_on_block(uid, self.uid)
@@ -482,8 +487,12 @@ class RulesView(Gtk.Box):
         self.syncing = False
         self.cards: Dict[int, BlockCard] = {}
         self.selected_uid: Optional[int] = None
-        #: The block being dragged, while one is.
+        #: The block being dragged, while one is; and what kind of thing is
+        #: being dragged at all (a block, an option, nothing).
         self._dragging: Optional[int] = None
+        self._drag_kind = ""
+        #: The drop bars, one per list they have been shown in.
+        self._drop_marks: Dict[Gtk.Box, Gtk.Widget] = {}
         self.set_size_request(420, -1)
         self.preset_menu = Gio.Menu()
         for number, (key, _value) in enumerate(COMMON_OPTIONS):
@@ -539,17 +548,61 @@ class RulesView(Gtk.Box):
         except Exception:
             pass
 
-    @staticmethod
-    def clear_drop(widget) -> None:
-        widget.remove_css_class("advcfg-drop-before")
-        widget.remove_css_class("advcfg-drop-after")
+    # Where a dragged block or option would land is shown the way the
+    # connection list shows it: its accent bar in a gap of its own, with the
+    # blocks (or the options) parted around it. A bar is made the first time
+    # its list is dragged over and is then only ever shown, moved and
+    # hidden: taking a widget out from under a drag's pointer is what
+    # crashed the connection list (#1334), so nothing is hidden when the
+    # pointer leaves either, only when the drag is over.
 
-    def on_drop_motion(self, _target, _x, y, widget):
-        self.clear_drop(widget)
-        widget.add_css_class(
-            "advcfg-drop-before" if y < widget.get_height() / 2 else "advcfg-drop-after"
-        )
+    def _place_drop_mark(self, container: Gtk.Box, after) -> None:
+        mark = self._drop_marks.get(container)
+        if mark is None:
+            from .sidebar import DragIndicator      # the connection list's own
+
+            mark = self._drop_marks[container] = DragIndicator()
+            container.append(mark)
+        if after is mark:
+            after = mark.get_prev_sibling()
+        if mark.get_prev_sibling() is not after:
+            container.reorder_child_after(mark, after)
+        for other in self._drop_marks.values():
+            if other is not mark and other.get_visible():
+                other.set_visible(False)
+        if not mark.get_visible():
+            mark.set_visible(True)
+
+    def hide_drop_marks(self) -> None:
+        for mark in self._drop_marks.values():
+            mark.set_visible(False)
+
+    def on_card_motion(self, _target, _x, y, card: "BlockCard"):
+        if self._drag_kind == _OPTION_DRAG:
+            # Onto the block as a whole: it becomes its last option.
+            last = card.footer.get_prev_sibling()
+            self._place_drop_mark(card.rows_box, last)
+        else:
+            before = y < card.card.get_height() / 2
+            self._place_drop_mark(
+                self.box, card.card.get_prev_sibling() if before else card.card
+            )
         return Gdk.DragAction.MOVE
+
+    def on_row_motion(self, _target, _x, y, row: "OptionRow"):
+        if self._drag_kind == _OPTION_DRAG:
+            before = y < row.box.get_height() / 2
+            self._place_drop_mark(
+                row.box.get_parent(), row.box.get_prev_sibling() if before else row.box
+            )
+        return Gdk.DragAction.MOVE
+
+    def begin_option_drag(self) -> None:
+        self._drag_kind = _OPTION_DRAG
+
+    def end_option_drag(self) -> None:
+        self._drag_kind = ""
+        self.hide_drop_marks()
 
     # -- the draft on screen -------------------------------------------------
 
@@ -559,7 +612,9 @@ class RulesView(Gtk.Box):
         try:
             wanted = {block.uid for block in blocks}
             for uid in [uid for uid in self.cards if uid not in wanted]:
-                self.box.remove(self.cards.pop(uid).card)
+                gone = self.cards.pop(uid)
+                self._drop_marks.pop(gone.rows_box, None)
+                self.box.remove(gone.card)
             previous = self.empty
             for index, block in enumerate(blocks):
                 card = self.cards.get(block.uid)
@@ -611,6 +666,7 @@ class RulesView(Gtk.Box):
         if self._dragging is not None:
             return
         self._dragging = uid
+        self._drag_kind = _BLOCK_DRAG
         top = self.card_top(uid)
         for other, card in self.cards.items():
             if other != uid:
@@ -621,6 +677,8 @@ class RulesView(Gtk.Box):
     def end_block_drag(self) -> None:
         """The drag is over, dropped or not: the blocks are as they were."""
         uid, self._dragging = self._dragging, None
+        self._drag_kind = ""
+        self.hide_drop_marks()
         if uid is None:
             return
         for card in self.cards.values():

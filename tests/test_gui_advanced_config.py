@@ -1019,3 +1019,42 @@ def test_dragging_a_block_folds_the_others_while_it_lasts(window):
     assert _open_blocks(window) == ["web1 web2", "*"]             # as they were
     window.rules.end_block_drag()                                 # a second end is nothing
     assert _open_blocks(window) == ["web1 web2", "*"]
+
+
+def test_where_a_drop_lands_is_shown_as_the_connection_list_shows_it(window):
+    """The accent bar of the connection list, in a gap of its own: between
+    the blocks for a block, between the options for an option. It is hidden
+    when the drag is over and never taken out of the list during one."""
+    from sshpilot.sidebar import DragIndicator
+
+    rules = window.rules
+    glob, web, star = window.draft.blocks
+    cards = {block.uid: rules.cards[block.uid] for block in window.draft.blocks}
+
+    def shown():
+        return [mark for mark in rules._drop_marks.values() if mark.get_visible()]
+
+    rules.begin_block_drag(star.uid)
+    # (A window that is not on screen has no heights: "above the middle" is -1.)
+    rules.on_card_motion(None, 0, -1, cards[web.uid])             # upper half: before it
+    (bar,) = shown()
+    assert isinstance(bar, DragIndicator) and bar.get_parent() is rules.box
+    assert bar.get_next_sibling() is cards[web.uid].card
+    rules.on_card_motion(None, 0, 10_000, cards[web.uid])         # lower half: after it
+    assert shown() == [bar] and bar.get_prev_sibling() is cards[web.uid].card
+    rules.end_block_drag()
+    assert shown() == [] and bar.get_parent() is rules.box        # hidden, not removed
+
+    rules.begin_option_drag()
+    row = cards[web.uid].rows[web.options[1].uid]
+    rules.on_row_motion(None, 0, -1, row)                         # between two options
+    (option_bar,) = shown()
+    assert option_bar.get_parent() is cards[web.uid].rows_box
+    assert option_bar.get_next_sibling() is row.box
+    rules.on_card_motion(None, 0, 5, cards[star.uid])             # onto a block: its last
+    (option_bar,) = shown()
+    assert option_bar.get_parent() is cards[star.uid].rows_box
+    assert option_bar.get_next_sibling() is cards[star.uid].footer
+    rules.end_option_drag()
+    assert shown() == []
+    assert window.editor.text == CONFIG                           # showing moved nothing
