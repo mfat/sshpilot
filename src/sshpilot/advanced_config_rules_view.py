@@ -277,7 +277,16 @@ class BlockCard:
         presets.set_create_popup_func(self._build_preset_menu)
         self.footer.append(presets)
         self.rows_box.append(self.footer)
-        self.card.append(body)
+        # A block that does not apply to the host in question folds to its
+        # header (and fades): the blocks that apply end up close together
+        # without leaving the file's order, which is OpenSSH's order.
+        self.revealer = Gtk.Revealer(
+            transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN,
+            transition_duration=200,
+            reveal_child=True,
+        )
+        self.revealer.set_child(body)
+        self.card.append(self.revealer)
 
         if movable:
             source = Gtk.DragSource()
@@ -512,6 +521,14 @@ class RulesView(Gtk.Box):
         current = self.cards.get(self.selected_uid)
         if current is not None:
             current.card.add_css_class("selected")
+            self.fold(current, False)       # the block in hand opens at once
+
+    @staticmethod
+    def fold(card: "BlockCard", folded: bool) -> None:
+        """Fold a skipped block to its faded header, or open it again."""
+        _set_class(card.card, "skipped", folded)
+        if card.revealer.get_reveal_child() == folded:
+            card.revealer.set_reveal_child(not folded)
 
     def show_answer(
         self,
@@ -525,7 +542,9 @@ class RulesView(Gtk.Box):
         """Put OpenSSH's answer on the cards. Returns how many blocks apply.
 
         *narrow*: a host is being filtered by, so only the blocks that apply
-        to it (and any in *keep_visible*) stay on screen.
+        to it (and any in *keep_visible*) stay on screen. Otherwise a block
+        that does not apply folds to its faded header, unless it is selected
+        or in *keep_visible*.
         """
         answered = bool(evaluation and evaluation.evaluated)
         matched = set(evaluation.matched_blocks) if answered else set()
@@ -548,9 +567,9 @@ class RulesView(Gtk.Box):
             )
             set_pill(card.status, label, style, tooltip)
             count += bool(applies)
-            card.card.set_visible(
-                not (answered and narrow) or bool(applies) or block.uid in keep_visible
-            )
+            kept = block.uid in keep_visible or block.uid == self.selected_uid
+            card.card.set_visible(not (answered and narrow) or bool(applies) or kept)
+            self.fold(card, applies is False and not kept)
             error = errors.get(header_line) if header_line else None
             if card.warning.get_visible() != (error is not None):
                 card.warning.set_visible(error is not None)

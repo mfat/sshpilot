@@ -79,6 +79,9 @@ _CSS = """
 .advcfg-block.selected { outline: 2px solid @accent_color; outline-offset: -1px; }
 .advcfg-block.selected > .advcfg-header { background-color: alpha(@accent_color, 0.16); }
 .advcfg-block.disabled { opacity: 0.6; }
+.advcfg-block { transition: opacity 200ms ease-out; }
+.advcfg-block.skipped { opacity: 0.45; }
+.advcfg-block.skipped > .advcfg-header { border-radius: 12px; border-bottom-color: transparent; }
 .advcfg-drop-before { box-shadow: 0 -3px 0 0 @accent_color; }
 .advcfg-drop-after { box-shadow: 0 3px 0 0 @accent_color; }
 .advcfg-unused entry { opacity: 0.6; }

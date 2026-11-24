@@ -422,9 +422,19 @@ def test_a_real_click_on_a_card_selects_it(window):
     assert window.selected_uid == web.uid
 
 
+def _folded(win):
+    """Blocks folded to their faded header, as skipped for the host."""
+    return [
+        block.patterns or block.kind for block in win.draft.blocks
+        if not win.rules.cards[block.uid].revealer.get_reveal_child()
+        and win.rules.cards[block.uid].card.has_css_class("skipped")
+    ]
+
+
 def test_selecting_a_host_s_block_loads_it_without_narrowing_the_rules(gtk, tmp_path):
     """With no filter, clicking a block asks OpenSSH about the host it names
-    and shows the answer on the right; every block stays on screen."""
+    and shows the answer on the right; every block stays on screen, and
+    those that do not apply fold to their header, in place."""
     from sshpilot.advanced_config_window import AdvancedConfigWindow
 
     path = tmp_path / "config"
@@ -440,15 +450,19 @@ def test_selecting_a_host_s_block_loads_it_without_narrowing_the_rules(gtk, tmp_
     assert _shown(win) == everything                      # nothing is hidden
     assert win.target_entry.get_text() == ""              # the filter is untouched
     assert win.rules.cards[db.uid].status.get_label() == "Skipped"
+    assert _folded(win) == ["db1"]
 
-    win.select_block(db.uid)
+    win.select_block(db.uid)                              # a folded block opens at once
+    assert "db1" not in _folded(win)
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh db1")
     assert _effective(win, "user") == "fallback"          # Host * comes first
     assert _shown(win) == everything
+    assert _folded(win) == ["web1 web2"]
 
     win.select_block(star.uid)                            # a pattern names no host
     assert _pump(lambda: win._evaluation is None)
     assert not win.results.summary.get_visible() and _shown(win) == everything
+    assert _folded(win) == []                             # no host: nothing folds
 
     win.target_entry.set_text("web2")                     # the filter wins, and narrows
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh web2")
