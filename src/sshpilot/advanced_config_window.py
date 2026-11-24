@@ -157,6 +157,7 @@ class AdvancedConfigWindow(Adw.Window):
         self._loaded_lines = LineMap({}, {})
         #: Where :meth:`go_to` was asked to go, until the file is on screen.
         self._pending_target: Optional[dict] = None
+        self._pending_block = None
         #: Answers had for the draft as it is: see :meth:`_answer_cache`.
         self._answers: dict = {}
         self._answers_key: Optional[tuple] = None
@@ -536,6 +537,7 @@ class AdvancedConfigWindow(Adw.Window):
         self._show_draft(evaluate_now=True)
         self._check_at_open()
         self._apply_pending_target()
+        self._apply_pending_block()
 
     def _check_at_open(self) -> None:
         """Ask OpenSSH about the file as it is, before any host is looked at.
@@ -788,6 +790,44 @@ class AdvancedConfigWindow(Adw.Window):
         )
         if self._loaded:
             self._apply_pending_target()
+
+    def start_block(self, patterns: str, options=()) -> None:
+        """Begin a new Host block with this Host line and these options.
+
+        What the connection editor hands over when a pattern is typed where
+        a connection's name goes: the block is added to the draft, selected
+        and left unsaved, for the user to place and complete. *options* is
+        ``(keyword, value)`` pairs. May be called before the window has
+        loaded: the block is added once the file is on screen.
+        """
+        self._pending_block = (
+            str(patterns or "").strip(),
+            tuple((str(key), str(value)) for key, value in options),
+        )
+        if self._loaded:
+            self._apply_pending_block()
+
+    def _apply_pending_block(self) -> None:
+        pending = getattr(self, "_pending_block", None)
+        if pending is None:
+            return
+        self._pending_block = None
+        patterns, options = pending
+        block = self.editor.add_block(HOST)
+        if block is None:
+            return
+        self.editor.set_patterns(block.uid, patterns)
+        # A new block starts with one empty option: the first one fills it.
+        for index, (key, value) in enumerate(options):
+            if index == 0 and block.options:
+                self.editor.set_option(block.options[0].uid, "key", key)
+                self.editor.set_option(block.options[0].uid, "value", value)
+            else:
+                self.editor.add_option(block.uid, key, value)
+        self._kept_visible.add(block.uid)
+        self.selected_uid = block.uid
+        self._after_structure()
+        GLib.idle_add(lambda: (self.rules.focus_block(block.uid), False)[1])
 
     def _apply_pending_target(self) -> None:
         target = self._pending_target

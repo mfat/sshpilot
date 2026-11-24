@@ -78,6 +78,7 @@ from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
 from .connection_dialog_effective import ConnectionDialogEffectiveMixin
 from .connection_dialog_search import ConnectionDialogSearchMixin
+from .connection_dialog_host_names import ConnectionDialogHostNamesMixin
 from .connection_dialog_overrides import (
     ConnectionDialogOverridesMixin,
     inherited_note_text,
@@ -1623,6 +1624,7 @@ class ConnectionDialog(
     ConnectionDialogOverridesMixin,
     ConnectionDialogEffectiveMixin,
     ConnectionDialogSearchMixin,
+    ConnectionDialogHostNamesMixin,
 ):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
 
@@ -3804,10 +3806,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         basic_group.add(self.display_name_row)
 
         # SSH alias / Host token
-        self.nickname_row = Adw.EntryRow(
-            title=_("SSH Alias (no whitespace allowed)")
-        )
+        self.nickname_row = Adw.EntryRow(title=self._alias_row_title())
         basic_group.add(self.nickname_row)
+        # Shown when what is typed there is a Host line this dialog does
+        # not save (connection_dialog_host_names.py).
+        basic_group.add(self._build_host_line_offer_row())
         
         # Hostname
         self.hostname_row = Adw.EntryRow(title=_("Hostname / IP address"))
@@ -4866,6 +4869,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     _("Shown in the connection list. Leave empty to name it "
                       "after what it connects to.")
                 )
+            # The alias is a Host line for SSH only.
+            self._sync_host_line_ui()
         except Exception:
             logger.debug("Could not relabel the identity rows", exc_info=True)
 
@@ -5695,8 +5700,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 or ''
             ).strip()
         connection_data = {
-            'display_name': display_name,
-            'nickname': self.nickname_row.get_text().strip(),
+            # Several names typed for a new connection share its block; the
+            # name shown in the list is each one's own to give.
+            'display_name': '' if self._typed_shared_names() else display_name,
+            'nickname': (
+                self._typed_primary_alias() or self.nickname_row.get_text().strip()
+            ),
+            'shared_nicknames': self._typed_shared_names(),
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
             # "" means inherit: the block authors no Port and OpenSSH resolves

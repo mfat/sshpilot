@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.115",
+  "api_implementation_version": "0.116",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -3904,6 +3904,13 @@
           "required": false,
           "sensitive": false,
           "type": "Mapping[str, Any]"
+        },
+        {
+          "default": [],
+          "name": "shared_nicknames",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
         }
       ],
       "status": "Implemented"

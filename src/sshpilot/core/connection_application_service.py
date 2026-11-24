@@ -30,7 +30,13 @@ import threading
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from ..api.capabilities import Capabilities, Capability
-from ..api.errors import ErrorCode, MutationRefusal, SshPilotError, unsupported_capability
+from ..api.errors import (
+    ErrorCode,
+    MutationRefusal,
+    SshPilotError,
+    ValidationReason,
+    unsupported_capability,
+)
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
 from ..api.models.pre_command import (
@@ -2156,6 +2162,8 @@ class ConnectionApplicationService:
             "protocol": request.protocol,
             "display_name": request.display_name,
         }
+        if request.shared_nicknames:
+            data["shared_nicknames"] = list(request.shared_nicknames)
         if request.config_patch:
             self._apply_config_patch(data, request.config_patch)
         if request.plugin_data:
@@ -2817,9 +2825,16 @@ def _map_core_error(error: Any) -> SshPilotError:
             "The connection has been modified since it was last read",
         )
     if code is CoreErrorCode.VALIDATION_ERROR:
+        # A rule the core named is passed on as a code the frontend words.
+        reason = (getattr(error, "details", None) or {}).get("reason")
+        try:
+            reason = ValidationReason(reason).value
+        except ValueError:
+            reason = None
         return SshPilotError(
             ErrorCode.VALIDATION_FAILED,
             "The requested connection-store change is invalid",
+            **({"details": {"reason": reason}} if reason is not None else {}),
         )
     if code is CoreErrorCode.CONFIG_PARSE_ERROR:
         return SshPilotError(

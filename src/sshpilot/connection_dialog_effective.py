@@ -206,8 +206,13 @@ class ConnectionDialogEffectiveMixin:
         if editing:
             host = str(getattr(connection, "nickname", "") or "").strip()
         else:
-            row = getattr(self, "nickname_row", None)
-            host = row.get_text().strip() if row is not None else ""
+            # One host is asked about: the first of several names typed.
+            typed = getattr(self, "_typed_primary_alias", None)
+            if callable(typed):
+                host = typed()
+            else:
+                row = getattr(self, "nickname_row", None)
+                host = row.get_text().strip() if row is not None else ""
         if not host:
             self._show_effective_identities(WAITING, (), False)
             return False

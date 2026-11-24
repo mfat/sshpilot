@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ...api.models.connections import SshConfigFileRef, SshConfigText
 from ...ssh_config_document import (
+    is_literal_host_token,
     HostBlock,
     RawSpan,
     SSHConfigDocument,
@@ -89,6 +90,44 @@ def _already_exists_error() -> CoreError:
         ErrorCode.CONNECTION_ALREADY_EXISTS,
         "A connection with this name already exists",
     )
+
+
+def _refuse_host_pattern(name: str) -> None:
+    """A connection is one host: a pattern as its name would be written as a
+    rule for every host it matches, and show up as no connection at all."""
+    if not is_literal_host_token(name):
+        raise CoreError(
+            ErrorCode.VALIDATION_ERROR,
+            "A connection name cannot be a Host pattern",
+            details={"reason": "host_pattern"},
+        )
+
+
+def _shared_nicknames(payload: Mapping[str, Any], nickname: str) -> List[str]:
+    """The other names a new block is to declare, checked.
+
+    Plain names only, each once and none the connection's own: every one of
+    them becomes a connection that shares the block.
+    """
+    raw = payload.get("shared_nicknames") or ()
+    if isinstance(raw, str):
+        raise CoreError(ErrorCode.VALIDATION_ERROR, "Shared names must be a list")
+    names: List[str] = []
+    for item in raw:
+        name = str(item or "").strip()
+        if not name or any(char.isspace() for char in name):
+            raise CoreError(
+                ErrorCode.VALIDATION_ERROR,
+                "A shared connection name must be one word",
+            )
+        _refuse_host_pattern(name)
+        if name == nickname or name in names:
+            raise CoreError(
+                ErrorCode.VALIDATION_ERROR,
+                "A name is given more than once",
+            )
+        names.append(name)
+    return names
 
 
 # ---------------------------------------------------------------------------
@@ -974,9 +1013,12 @@ class SshConfigStore:
         nickname = str(payload.get("nickname") or "").strip()
         if not nickname:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "A nickname is required")
-        if any(record.id == nickname for record in config.connections):
-            raise _already_exists_error()
-        self._ensure_authored_alias_available(nickname)
+        _refuse_host_pattern(nickname)
+        payload["shared_nicknames"] = _shared_nicknames(payload, nickname)
+        for name in [nickname, *payload["shared_nicknames"]]:
+            if any(record.id == name for record in config.connections):
+                raise _already_exists_error()
+            self._ensure_authored_alias_available(name)
         expected = self._root_path.read_bytes() if self._root_path.exists() else None
         if self._root_path.exists():
             doc = SSHConfigDocument.parse_file(str(self._root_path))
@@ -1027,6 +1069,7 @@ class SshConfigStore:
         if new_name != connection_id and any(item.id == new_name for item in config.connections):
             raise _already_exists_error()
         if new_name != connection_id:
+            _refuse_host_pattern(new_name)
             self._ensure_authored_alias_available(new_name)
         expected = target.read_bytes()
         doc = SSHConfigDocument.parse_file(str(target))
@@ -1173,6 +1216,7 @@ class SshConfigStore:
         new_name = str(payload.get("nickname") or "").strip()
         if not original_host_token or not new_name:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "A split host token and destination name are required")
+        _refuse_host_pattern(new_name)
         if new_name != connection_id and any(item.id == new_name for item in config.connections):
             raise _already_exists_error()
         self._ensure_split_destination_available(new_name, original_host_token)
@@ -1355,9 +1399,12 @@ class SshConfigStore:
                 ErrorCode.VALIDATION_ERROR,
                 "A nickname is required",
             )
-        if any(record.id == nickname for record in config.connections):
-            raise _already_exists_error()
-        self._ensure_authored_alias_available(nickname)
+        _refuse_host_pattern(nickname)
+        payload["shared_nicknames"] = _shared_nicknames(payload, nickname)
+        for name in [nickname, *payload["shared_nicknames"]]:
+            if any(record.id == name for record in config.connections):
+                raise _already_exists_error()
+            self._ensure_authored_alias_available(name)
 
         expected_revision = config.root_revision
         expected_bytes = (
@@ -1399,6 +1446,7 @@ class SshConfigStore:
         target = Path(source)
         new_name = str(payload.get("nickname") or "").strip() or connection_id
         if new_name != connection_id:
+            _refuse_host_pattern(new_name)
             self._ensure_authored_alias_available(new_name)
 
         expected_revision = config.root_revision
@@ -1558,6 +1606,7 @@ class SshConfigStore:
                 ErrorCode.VALIDATION_ERROR,
                 "A split host token and destination name are required",
             )
+        _refuse_host_pattern(new_name)
         if new_name != connection_id and any(
             item.id == new_name for item in config.connections
         ):

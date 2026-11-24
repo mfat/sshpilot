@@ -467,3 +467,85 @@ def test_a_chosen_file_can_be_cleared():
     assert clear is not None and clear.get_visible()
     clear.emit("clicked")
     assert getter() == "" and not clear.get_visible()
+
+
+# -- the alias read as a Host line --------------------------------------------
+
+def _pump_events(count=30):
+    from gi.repository import GLib
+    context = GLib.MainContext.default()
+    for _ in range(count):
+        while context.iteration(False):
+            pass
+
+
+@pytest.mark.integration
+def test_several_names_say_how_many_connections_they_create():
+    _require_gtk()
+    dlg = _dialog()
+    row = dlg.host_line_offer_row
+    assert not row.get_visible()
+    dlg.nickname_row.set_text("web1 web2 web3")
+    _pump_events()
+    assert row.get_visible() and not dlg.host_line_offer_button.get_visible()
+    assert "3" in row.get_title() and "web1, web2, web3" in row.get_title()
+    assert "space" in row.get_subtitle().lower()
+    assert not dlg.display_name_row.get_sensitive()
+    assert dlg._typed_primary_alias() == "web1"
+    assert dlg._typed_shared_names() == ["web2", "web3"]
+    dlg.nickname_row.set_text("web1")
+    _pump_events()
+    assert not row.get_visible() and dlg.display_name_row.get_sensitive()
+
+
+@pytest.mark.integration
+def test_a_pattern_is_handed_to_advanced_configuration_and_the_new_dialog_closes():
+    _require_gtk()
+    dlg = _dialog()
+    opened = []
+    dlg.parent_window.open_advanced_config = lambda **kw: opened.append(kw) or object()
+    closed = []
+    dlg.connect("close-request", lambda *_a: closed.append(True) and False)
+    dlg.nickname_row.set_text("*.prod")
+    dlg.hostname_row.set_text("%h.example.com")
+    dlg.username_row.set_text("deploy")
+    _pump_events()
+    assert dlg.host_line_offer_row.get_visible()
+    assert dlg.host_line_offer_button.get_visible()
+    assert dlg._validate_all_required_for_save() is dlg.nickname_row
+    dlg.host_line_offer_button.emit("clicked")
+    assert opened and opened[0]["new_block"] == (
+        "*.prod", [("HostName", "%h.example.com"), ("User", "deploy")],
+    )
+    assert closed
+
+
+@pytest.mark.integration
+def test_a_saved_connection_keeps_one_name_and_is_sent_to_its_block():
+    _require_gtk()
+    connection = SimpleNamespace(
+        nickname="web1", hostname="10.0.0.1", username="", port=22, protocol="ssh",
+        source="", data={},
+    )
+    dlg = _dialog(connection=connection)
+    opened = []
+    dlg.parent_window.open_advanced_config = lambda **kw: opened.append(kw) or object()
+    dlg.nickname_row.set_text("web1 web2")
+    _pump_events()
+    assert dlg.host_line_offer_row.get_visible()
+    assert dlg.host_line_offer_button.get_visible()
+    assert dlg._typed_shared_names() == []
+    dlg.host_line_offer_button.emit("clicked")
+    assert opened and opened[0]["host"] == "web1" and "new_block" not in opened[0]
+
+
+@pytest.mark.integration
+def test_the_host_line_row_is_about_ssh_only():
+    _require_gtk()
+    dlg = _dialog()
+    dlg.nickname_row.set_text("*.prod")
+    _pump_events()
+    assert dlg.host_line_offer_row.get_visible()
+    _select(dlg, "telnet")
+    _pump_events()
+    assert not dlg.host_line_offer_row.get_visible()

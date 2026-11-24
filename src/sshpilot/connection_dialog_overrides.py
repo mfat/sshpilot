@@ -445,8 +445,13 @@ class ConnectionDialogOverridesMixin:
                 builtin_fallback()
                 return
             self._watch_alias_for_earlier_directives()
-            row = getattr(self, "nickname_row", None)
-            alias = row.get_text().strip() if row is not None else ""
+            # One host is asked about: the first of several names typed.
+            typed = getattr(self, "_typed_primary_alias", None)
+            if callable(typed):
+                alias = typed()
+            else:
+                row = getattr(self, "nickname_row", None)
+                alias = row.get_text().strip() if row is not None else ""
         self._earlier_fetch_serial = serial = (
             getattr(self, "_earlier_fetch_serial", 0) + 1
         )

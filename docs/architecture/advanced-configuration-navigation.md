@@ -17,8 +17,16 @@ window.open_advanced_config(
     pin=False,                    # make `host` the host OpenSSH is asked about
     over=None,                    # the modal dialog calling, if any
     on_saved=None,                # called after each save made there
+    new_block=None,               # or: (Host line, [(keyword, value), ...])
 )
 ```
+
+`new_block` begins a block instead of showing a place: a new `Host` block with
+that line and those options is added to the draft, selected and left unsaved
+(`AdvancedConfigWindow.start_block`). The connection editor passes the pattern
+typed where a connection's name goes, with the host, user and port typed
+beside it: a pattern is a rule for several hosts and is authored here, not
+saved as a connection.
 
 `MainWindow.open_advanced_config` returns the window, or `None` when it could
 not be opened (no daemon, or one without draft evaluation: a toast says so).

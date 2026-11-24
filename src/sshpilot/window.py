@@ -6263,7 +6263,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return None
 
     def open_advanced_config(self, *, host='', line=0, option='', file='',
-                             pin=False, over=None, on_saved=None):
+                             pin=False, over=None, on_saved=None,
+                             new_block=None):
         """Open Advanced Configuration at a place of the SSH configuration.
 
         The one way in for the rest of the app (and, through the
@@ -6278,6 +6279,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         own, so it can be used while that dialog is up, and is not a child
         of it (a modal child cannot be maximized).
 
+        *new_block* is ``(Host line, [(keyword, value), ...])``: a block to
+        begin there, unsaved (``AdvancedConfigWindow.start_block``). The
+        connection editor passes the pattern typed where a connection's
+        name goes.
+
         Returns the window, or None when it could not be opened.
         """
         window = self._open_advanced_config()
@@ -6287,6 +6293,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             window.add_saved_listener(on_saved)
         if host or line or file:
             window.go_to(host=host, line=line, option=option, file=file, pin=pin)
+        if new_block:
+            window.start_block(new_block[0], new_block[1])
         return window
 
     def _open_advanced_config(self):
@@ -9188,6 +9196,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 config_patch = _build_config_patch()
                 request = CreateConnectionRequest(
                     nickname=connection_data.get('nickname', ''),
+                    # More names typed as the alias: one block for all.
+                    shared_nicknames=tuple(
+                        connection_data.get('shared_nicknames') or ()
+                    ),
                     hostname=connection_data.get('hostname', ''),
                     username=connection_data.get('username', ''),
                     # A new connection needs a concrete port; an empty field
@@ -9351,9 +9363,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         False, _details,
                         meta_error=_("Saved, but tags/Wake-on-LAN settings could not be stored."),
                     )
+                # The other names typed for a new block are connections too:
+                # they get its tags. Wake on LAN and the pre-connection
+                # command are one machine's and stay with the first.
+                shared_names = () if was_editing else tuple(
+                    connection_data.get('shared_nicknames') or ()
+                )
+
+                def _store_metadata():
+                    stored = self.client.update_connection_metadata(
+                        new_conn_id, pending_meta_local
+                    )
+                    if stored is True and 'tags' in pending_meta_local:
+                        tags = {'tags': list(pending_meta_local.get('tags') or [])}
+                        for name in shared_names:
+                            if self.client.update_connection_metadata(name, tags) is not True:
+                                return False
+                    return stored
+
                 try:
                     bridge.submit(
-                        lambda: self.client.update_connection_metadata(new_conn_id, pending_meta_local),
+                        _store_metadata,
                         on_success=_meta_success,
                         on_error=_meta_failure,
                     )
@@ -9636,6 +9666,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # A resumed save completes again; move only once.
         dialog._initial_group_id = target
         self.move_connection_to_group(nickname, target or None)
+        # The other names typed for a new block go to the same group.
+        for name in connection_data.get('shared_nicknames') or ():
+            self.move_connection_to_group(name, target or None)
 
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""

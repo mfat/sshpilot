@@ -1404,6 +1404,7 @@ Synthetic representation:
 | `display_name` | `str` | No | `` | No |
 | `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
 | `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
+| `shared_nicknames` | `tuple[str, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -1416,6 +1417,7 @@ Synthetic representation:
   "plugin_data": {},
   "port": 22,
   "protocol": "ssh",
+  "shared_nicknames": [],
   "username": ""
 }
 ```

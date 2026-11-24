@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from gettext import gettext as _
 
-from ..api.errors import ErrorCode, MutationRefusal
+from ..api.errors import ErrorCode, MutationRefusal, ValidationReason
 from ..i18n import N_
 
 _REFUSALS = {
@@ -47,6 +47,14 @@ _CODES = {
 }
 
 
+_REASONS = {
+    ValidationReason.HOST_PATTERN: N_(
+        "A pattern is not a connection: it sets options for every host it "
+        "matches. Create it as a block in Advanced Configuration."
+    ),
+}
+
+
 def save_refusal(error: object):
     """The ``MutationRefusal`` a failed save carries, or None."""
     if getattr(error, "code", None) is not ErrorCode.MUTATION_AMBIGUOUS:
@@ -64,5 +72,11 @@ def save_failure_text(error: object) -> str:
     refusal = save_refusal(error)
     if refusal is not None:
         return _(_REFUSALS[refusal])
+    if getattr(error, "code", None) is ErrorCode.VALIDATION_FAILED:
+        details = getattr(error, "details", None) or {}
+        try:
+            return _(_REASONS[ValidationReason(details.get("reason"))])
+        except (ValueError, KeyError, AttributeError):
+            return ""
     text = _CODES.get(getattr(error, "code", None))
     return _(text) if text else ""

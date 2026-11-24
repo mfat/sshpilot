@@ -8,6 +8,8 @@ validation rules through a lightweight fake row — they never open an SSH
 connection and don't need real GTK (the suite stubs gi).
 """
 
+import pytest
+
 from sshpilot.connection_dialog import ConnectionDialog
 from sshpilot.connection_dialog_validation import ConnectionDialogValidationMixin
 from sshpilot.ssh_connection_validator import SSHConnectionValidator
@@ -95,8 +97,27 @@ class TestValidateFieldRow:
         assert result.is_valid is True
         assert d.validation_results["name"] is result
 
-    def test_invalid_name_marks_error(self):
-        d, row = _dialog(), FakeRow("bad name")  # whitespace not allowed
+    def test_a_saved_connection_keeps_one_name(self):
+        d, row = _dialog(), FakeRow("bad name")  # no second name when editing
+        d.is_editing = True
+        result = d._validate_field_row("name", row)
+        assert result.is_valid is False
+        assert "error" in row.css
+
+    def test_several_names_are_several_new_connections(self):
+        d, row = _dialog(), FakeRow("web1 web2")
+        result = d._validate_field_row("name", row)
+        assert result.is_valid is True
+        assert "2" in result.message
+        assert "error" not in row.css
+
+    def test_a_name_given_twice_marks_error(self):
+        d, row = _dialog(), FakeRow("web1 web1")
+        assert d._validate_field_row("name", row).is_valid is False
+
+    @pytest.mark.parametrize("text", ["*", "*.prod", "web?", "!bad", "*.prod edge"])
+    def test_a_pattern_marks_error(self, text):
+        d, row = _dialog(), FakeRow(text)
         result = d._validate_field_row("name", row)
         assert result.is_valid is False
         assert "error" in row.css

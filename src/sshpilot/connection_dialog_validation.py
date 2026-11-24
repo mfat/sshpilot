@@ -130,7 +130,14 @@ class ConnectionDialogValidationMixin:
         text = (row.get_text() if hasattr(row, 'get_text') else "")
         if field_name == 'name':
             self._update_existing_names_in_validator()
-            result = self.validator.validate_connection_name(text)
+            # Several names or a pattern: read as a Host line first.
+            as_host_line = getattr(self, '_validate_host_names', None)
+            result = as_host_line(text) if callable(as_host_line) else None
+            if result is None:
+                result = self.validator.validate_connection_name(text)
+            sync = getattr(self, '_sync_host_line_ui', None)
+            if callable(sync):
+                sync()
         elif field_name == 'hostname':
             result = self.validator.validate_hostname(text, allow_empty=True)
         elif field_name == 'port':

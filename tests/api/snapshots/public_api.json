@@ -12,9 +12,10 @@
     "SshPilotClient",
     "SshPilotError",
     "Subscription",
-    "TerminalSubscription"
+    "TerminalSubscription",
+    "ValidationReason"
   ],
-  "api_implementation_version": "0.115",
+  "api_implementation_version": "0.116",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -4306,7 +4307,8 @@
       "protocol",
       "display_name",
       "config_patch",
-      "plugin_data"
+      "plugin_data",
+      "shared_nicknames"
     ],
     "CreateGroupRequest": [
       "name",

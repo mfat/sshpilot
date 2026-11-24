@@ -131,6 +131,20 @@ class MutationRefusal(str, Enum):
     DECLARATION_CHANGED = "declaration_changed"
 
 
+class ValidationReason(str, Enum):
+    """Which rule a connection change broke, where the frontend can say so.
+
+    Sent as ``details["reason"]`` of a ``VALIDATION_FAILED`` error. Such an
+    error without it says no more than that the change is invalid. The
+    frontend owns the wording.
+    """
+
+    #: The connection's name is a ``Host`` pattern (a wildcard or a
+    #: negation). A connection is one host; a pattern is a rule for several
+    #: and is authored as SSH configuration text.
+    HOST_PATTERN = "host_pattern"
+
+
 class SshPilotError(Exception):
     """Base exception carrying stable, frontend-safe error metadata."""
 

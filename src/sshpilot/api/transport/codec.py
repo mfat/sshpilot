@@ -2685,6 +2685,8 @@ def create_connection_request_to_wire(
         result["config_patch"] = dict(request.config_patch)
     if request.plugin_data:
         result["plugin_data"] = dict(request.plugin_data)
+    if request.shared_nicknames:
+        result["shared_nicknames"] = list(request.shared_nicknames)
     return result
 
 
@@ -2692,7 +2694,7 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
     data = _strict_fields(
         value,
         required={"nickname", "hostname", "username", "port", "protocol"},
-        optional={"config_patch", "plugin_data", "display_name"},
+        optional={"config_patch", "plugin_data", "display_name", "shared_nicknames"},
         context="create connection request",
     )
     raw_patch = data.get("config_patch")
@@ -2721,7 +2723,19 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
         display_name=_text(data.get("display_name", ""), "connection display name", allow_empty=True),
         config_patch=config_patch,
         plugin_data=dict(raw_plugin_data),
+        shared_nicknames=tuple(
+            _identifier(name, "shared connection nickname")
+            for name in _shared_nicknames_from_wire(data.get("shared_nicknames"))
+        ),
     )
+
+
+def _shared_nicknames_from_wire(value: Any) -> list:
+    if value is None:
+        return []
+    if type(value) is not list:
+        raise ValueError("shared_nicknames must be a list")
+    return value
 
 
 def asbru_import_request_to_wire(request: AsbruImportRequest) -> Dict[str, Any]:

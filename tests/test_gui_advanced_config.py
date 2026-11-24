@@ -1303,3 +1303,36 @@ def test_the_window_says_when_it_closes(window):
     assert closed == [1]
     assert window._on_close_request() is False    # a second close says nothing more
     assert closed == [1]
+
+
+# -- a block begun from the connection editor --------------------------------
+
+def test_a_block_handed_over_is_added_unsaved_with_its_host_line_and_options(window):
+    win = window
+    before = len(win.draft.blocks)
+    win.start_block("*.prod !bastion", [("HostName", "%h.example.com"), ("User", "deploy")])
+    assert _pump(lambda: len(win.draft.blocks) == before + 1)
+    block = win.draft.blocks[-1]
+    assert block.patterns == "*.prod !bastion"
+    assert [(o.key, o.value) for o in block.options] == [
+        ("HostName", "%h.example.com"), ("User", "deploy"),
+    ]
+    assert win.selected_uid == block.uid
+    assert win._test_client.saves == 0
+    assert "Host *.prod !bastion\n" in win.editor.text
+
+
+def test_a_block_handed_over_before_the_file_is_read_waits_for_it(gtk, tmp_path):
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    path = tmp_path / "config"
+    path.write_text(CONFIG)
+    win = AdvancedConfigWindow(None, _Client(path))
+    try:
+        win.start_block("*.lab", [])
+        assert _pump(lambda: bool(win.draft.blocks) and win.draft.blocks[-1].patterns == "*.lab")
+        # Nothing typed beside the pattern: the block keeps its one empty option.
+        assert [(o.key, o.value) for o in win.draft.blocks[-1].options] == [("", "")]
+    finally:
+        win._closing = True
+        win.destroy()

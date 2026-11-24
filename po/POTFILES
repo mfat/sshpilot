@@ -12,6 +12,7 @@ src/sshpilot/connection_dialog.py
 src/sshpilot/connection_dialog_auth.py
 src/sshpilot/connection_dialog_effective.py
 src/sshpilot/connection_dialog_field_helpers.py
+src/sshpilot/connection_dialog_host_names.py
 src/sshpilot/connection_dialog_login_profile.py
 src/sshpilot/connection_dialog_overrides.py
 src/sshpilot/connection_dialog_port_forwarding.py
