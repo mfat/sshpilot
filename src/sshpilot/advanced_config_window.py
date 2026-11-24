@@ -39,6 +39,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
+from .advanced_config_block_row import BlockRow  # noqa: E402
 from .advanced_config_model import (  # noqa: E402
     first_host_name,
     plain_host_names,
@@ -417,10 +418,9 @@ class AdvancedConfigWindow(Adw.Window):
         self._block_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._block_list.add_css_class("navigation-sidebar")
         self._block_list.connect("row-selected", self._on_block_picked)
-        self._all_row = Gtk.ListBoxRow()
-        self._all_row.set_child(Gtk.Label(label=_("All Blocks"), xalign=0))
+        self._all_row = BlockRow()
+        self._all_row.set_plain(_("All Blocks"), "view-list-symbolic")
         self._all_row._uid = None
-        self._all_row._text = ""
         self._block_list.append(self._all_row)
         self._block_rows: dict = {}
         #: True while the window itself moves the list's selection.
@@ -1010,22 +1010,14 @@ class AdvancedConfigWindow(Adw.Window):
             for index, block in enumerate(blocks):
                 row = rows.get(block.uid)
                 if row is None:
-                    label = Gtk.Label(xalign=0)
-                    label.add_css_class("monospace")
-                    label.set_ellipsize(Pango.EllipsizeMode.END)
-                    row = rows[block.uid] = Gtk.ListBoxRow()
-                    row.set_child(label)
+                    row = rows[block.uid] = BlockRow()
                     row._uid = block.uid
-                    row._text = None
                     self._block_list.insert(row, index + 1)
                 elif row.get_index() != index + 1:
                     self._block_list.remove(row)
                     self._block_list.insert(row, index + 1)
-                text = messages.block_title(block.kind, block.patterns)
-                if row._text != text:
-                    row._text = text
-                    row.get_child().set_label(text)
-                    row.set_tooltip_text(text)
+                # An icon, the name, and what the block is for.
+                row.update(block.kind, block.patterns, block.disabled)
         finally:
             self._target_syncing = False
         self._mirror_selection()

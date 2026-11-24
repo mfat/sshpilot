@@ -155,3 +155,4 @@ src/sshpilot/gtk/advanced_config_messages.py
 src/sshpilot/advanced_config_rules_view.py
 src/sshpilot/advanced_config_results_view.py
 src/sshpilot/sidebar_views.py
+src/sshpilot/advanced_config_block_row.py

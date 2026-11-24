@@ -126,6 +126,35 @@ def block_title(kind: str, patterns: str) -> str:
     return ("Host " if kind == "host" else "Match ") + patterns.strip()
 
 
+def block_list_title(kind: str, patterns: str) -> str:
+    """A block's name in a list of blocks: what follows its keyword. The
+    row's caption says what kind of block it is."""
+    if kind == "global":
+        return _("Options Above All Blocks")
+    if kind == "match":
+        # Match is OpenSSH's keyword: not translated.
+        return "Match " + patterns.strip()
+    if patterns.split() == ["*"]:
+        # A star alone says little: with its keyword, as it is written.
+        return "Host *"
+    return patterns.strip() or _("New Host Block")
+
+
+def block_category_label(category: str, names: int = 1) -> str:
+    """What a block is for, as the caption of its row."""
+    if category == "connection":
+        if names <= 1:
+            return _("Connection")
+        return ngettext(
+            "{count} connection", "{count} connections", names
+        ).format(count=names)
+    if category == "pattern":
+        return _("Host pattern")
+    if category == "match_rule":
+        return _("Match rule")
+    return _("All hosts")
+
+
 def matched_count(count: int) -> str:
     return ngettext("{count} matched", "{count} matched", count).format(count=count)
 

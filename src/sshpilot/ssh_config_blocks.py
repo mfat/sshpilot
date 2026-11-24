@@ -379,6 +379,39 @@ def serialize(draft: ConfigDraft) -> Tuple[str, LineMap]:
     return (_BOM if draft.bom else "") + "".join(lines), LineMap(headers, options)
 
 
+# -- what a block is for --------------------------------------------------------
+
+#: A ``Host`` block of plain names: each one is a host to connect to.
+CONNECTION = "connection"
+#: A ``Host`` block with a wildcard or a negation: options for what it matches.
+PATTERN = "pattern"
+#: A ``Match`` block.
+MATCH_RULE = "match_rule"
+#: Options for every host: those above all blocks, ``Host *``, ``Match all``.
+ALL_HOSTS = "all_hosts"
+
+
+def block_category(kind: str, patterns: str) -> str:
+    """Which of the four a block is, from its kind and what follows it.
+
+    A line that names a host beside a pattern (``Host edge *.edge``) is a
+    pattern: its options reach more than the host it names. ``Host *`` with
+    anything else on the line (``Host * !bastion``) is a pattern too.
+    """
+    from .ssh_config_document import is_literal_host_token
+
+    if kind == GLOBAL:
+        return ALL_HOSTS
+    tokens = (patterns or "").split()
+    if kind == MATCH:
+        return ALL_HOSTS if [t.lower() for t in tokens] == ["all"] else MATCH_RULE
+    if tokens == ["*"]:
+        return ALL_HOSTS
+    if tokens and all(is_literal_host_token(token) for token in tokens):
+        return CONNECTION
+    return PATTERN
+
+
 # -- the daemon's view ---------------------------------------------------------
 
 @dataclass(frozen=True)

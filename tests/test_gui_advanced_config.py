@@ -1336,3 +1336,42 @@ def test_a_block_handed_over_before_the_file_is_read_waits_for_it(gtk, tmp_path)
     finally:
         win._closing = True
         win.destroy()
+
+
+def test_the_block_list_names_each_block_and_says_what_it_is(gtk, tmp_path):
+    """Rows like the main sidebar's: an icon, the name, and a caption with
+    the kind of block."""
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Compression yes\n\nHost web1\n    User a\n\nHost db1 db2\n    User b\n\n"
+        "Match host *.corp\n    ProxyJump gate\n\nHost edge *.edge\n    Port 2222\n\n"
+        "# [disabled] Host *.old\n# [disabled]     User gone\n\nHost *\n    User z\n"
+    )
+    win = AdvancedConfigWindow(None, _Client(path))
+    try:
+        assert _pump(lambda: len(win._block_rows) == 7)
+        rows = [win._block_rows[block.uid] for block in win.editor.blocks]
+        assert [(r.title.get_label(), r.caption.get_label()) for r in rows] == [
+            ("Options Above All Blocks", "All hosts"),
+            ("web1", "Connection"),
+            ("db1 db2", "2 connections"),
+            ("Match host *.corp", "Match rule"),
+            ("edge *.edge", "Host pattern"),
+            ("*.old", "Host pattern · off"),
+            ("Host *", "All hosts"),
+        ]
+        icons = [r.icon.get_icon_name() for r in rows]
+        assert icons[1] == icons[2] and len(set(icons)) == 4     # one per kind
+        assert win._all_row.title.get_label() == "All Blocks"
+        assert not win._all_row.caption.get_visible()
+        # Relabelled in place when the line changes.
+        web1 = win.editor.blocks[1]
+        win.editor.set_patterns(web1.uid, "web*")
+        win._sync_block_list()
+        assert rows[1].caption.get_label() == "Host pattern"
+        assert win._block_rows[web1.uid] is rows[1]
+    finally:
+        win._closing = True
+        win.destroy()

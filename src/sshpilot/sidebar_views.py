@@ -292,7 +292,7 @@ def sync_switcher_height(window) -> None:
 def build_sidebar_switcher(window, sidebar_box) -> None:
     """The dropdown at the top of the sidebar that picks what it lists."""
     _install_switcher_css()
-    dropdown = Gtk.DropDown.new_from_strings([_("Connections"), _("Rules")])
+    dropdown = Gtk.DropDown.new_from_strings([_("Connections"), _("Config Sections")])
     # Filled with the accent colour, as a suggested action is.
     dropdown.add_css_class("sidebar-view-switcher")
     dropdown.set_size_request(-1, _SWITCHER_HEIGHT)
