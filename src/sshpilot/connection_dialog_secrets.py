@@ -179,17 +179,29 @@ class SavedSecretField:
 
     # -- widgets -----------------------------------------------------------
 
-    def build_buttons(self) -> Tuple[object, object]:
-        """The Reveal and Remove buttons (hidden until a secret is saved)."""
+    def build_buttons(self, *, labels: bool = False) -> Tuple[object, object]:
+        """The Reveal and Remove buttons (hidden until a secret is saved).
+
+        ``labels``: worded buttons ("Show saved", "Remove"), for a place
+        with room. The entry has an eye and a pencil of its own, which act
+        on the text typed into it; icons next to those read as more of the
+        same. Without room (a key row) Reveal is a key, not a second eye.
+        """
         show, remove, _keep = _button_texts(self.kind)
-        self.reveal_button = Gtk.Button(icon_name="view-reveal-symbolic")
+        self._labels = labels
+        if labels:
+            self.reveal_button = Gtk.Button(label=_("Show saved"))
+            self.remove_button = Gtk.Button(label=_("Remove"))
+        else:
+            self.reveal_button = Gtk.Button(icon_name="dialog-password-symbolic")
+            self.remove_button = Gtk.Button(icon_name="edit-clear-symbolic")
         self.reveal_button.set_tooltip_text(show)
         self.reveal_button.connect("clicked", lambda *_a: self.reveal())
-        self.remove_button = Gtk.Button(icon_name="edit-clear-symbolic")
         self.remove_button.set_tooltip_text(remove)
         self.remove_button.connect("clicked", lambda *_a: self.toggle_remove())
         for button in (self.reveal_button, self.remove_button):
-            button.add_css_class("flat")
+            if not labels:
+                button.add_css_class("flat")
             button.set_valign(Gtk.Align.CENTER)
             button.set_visible(False)
         return self.reveal_button, self.remove_button
@@ -210,9 +222,15 @@ class SavedSecretField:
             self.remove_button.set_visible(
                 self.status == SecretStatus.SAVED or self.remove_pending
             )
-            self.remove_button.set_icon_name(
-                "edit-undo-symbolic" if self.remove_pending else "edit-clear-symbolic"
-            )
+            if getattr(self, "_labels", False):
+                self.remove_button.set_label(
+                    _("Undo") if self.remove_pending else _("Remove")
+                )
+            else:
+                self.remove_button.set_icon_name(
+                    "edit-undo-symbolic" if self.remove_pending
+                    else "edit-clear-symbolic"
+                )
             self.remove_button.set_tooltip_text(keep if self.remove_pending else remove)
         if callable(self._on_changed):
             try:

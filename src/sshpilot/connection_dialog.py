@@ -2681,8 +2681,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             secret[:] = b'\0' * len(secret)
             secret.clear()
 
-    def _make_password_field(self, row, on_changed):
-        """Status, Reveal and Remove for a saved login password row."""
+    def _make_password_field(self, row, on_changed, group=None):
+        """Status, Reveal and Remove for a saved login password row.
+
+        The two buttons go in *group*'s header when given, else at the end
+        of the row.
+        """
         field = SavedSecretField(
             row,
             kind="password",
@@ -2695,8 +2699,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             on_changed=on_changed,
         )
         try:
-            for button in field.build_buttons():
-                row.add_suffix(button)
+            buttons = field.build_buttons(labels=True)
+            if group is not None:
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                box.set_valign(Gtk.Align.CENTER)
+                for button in buttons:
+                    box.append(button)
+                group.set_header_suffix(box)
+            else:
+                for button in buttons:
+                    row.add_suffix(button)
         except Exception:
             logger.debug("Could not add the saved-password buttons", exc_info=True)
         return field
@@ -3350,7 +3362,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # itself is read only by the Reveal button.
         self._password_group = password_group
         self._password_field = self._make_password_field(
-            self.password_row, self._on_password_field_changed
+            self.password_row, self._on_password_field_changed,
+            group=password_group,
         )
         password_group.add(self.password_row)
 
