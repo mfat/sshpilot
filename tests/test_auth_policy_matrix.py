@@ -92,6 +92,8 @@ for _method in METHODS:
         EDITS[f"move-{_method}-to-{_index}"] = (
             lambda p, m=_method, i=_index: p.move(m, i)
         )
+    # "Move to top": also past switched-off methods listed ahead of it.
+    EDITS[f"move-{_method}-to-top"] = lambda p, m=_method: p.move_to_top(m)
     for _value in (True, False):
         EDITS[f"{'check' if _value else 'uncheck'}-{_method}"] = (
             lambda p, m=_method, v=_value: p.set_tried(m, v)
@@ -266,10 +268,6 @@ def test_undoing_an_order_edit_writes_the_authored_lines(start):
         policy = _loaded(start)
         before = policy.checked()
         if method not in before or not policy.move(method, index):
-            continue
-        if policy.checked() == before:
-            # Only passed switched-off methods (Move to top): nothing to undo
-            # among the tried ones.
             continue
         assert policy.move(method, before.index(method))
         assert sorted(policy.to_lines()) == sorted(STARTS[start]), (method, index)

@@ -587,6 +587,14 @@ def _launched_with_token(pid: int, token: str) -> bool:
     import hmac
 
     value = _environment_value(pid, ASKPASS_TOKEN_VARIABLE)
+    if value is None:
+        # Not a mismatch: the proof itself is unavailable (a platform or a
+        # sandbox that hides a child's environment). Say so, or a Cancel
+        # that leaves the connection running has no trace of why.
+        logger.warning(
+            "Cannot read the askpass token of owned child %s; "
+            "leaving it to end by itself", pid,
+        )
     return value is not None and hmac.compare_digest(
         value.encode("utf-8", "surrogateescape"),
         token.encode("utf-8", "surrogateescape"),

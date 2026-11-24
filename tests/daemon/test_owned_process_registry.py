@@ -444,12 +444,17 @@ def test_an_owned_ancestor_launched_for_another_prompt_is_not_ended(family):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
-def test_an_owned_ancestor_whose_token_cannot_be_read_is_not_ended(family, monkeypatch):
+def test_an_owned_ancestor_whose_token_cannot_be_read_is_not_ended(
+    family, monkeypatch, caplog
+):
     from sshpilot.daemon import process_registry
     from sshpilot.daemon.process_registry import terminate_owned_ancestor
 
     registry, parent, child_pid = family
     registry.register(parent.pid, kind=KIND_SESSION)
     monkeypatch.setattr(process_registry, "_environment_value", lambda _pid, _name: None)
-    assert terminate_owned_ancestor(child_pid, token=TOKEN) is None
+    with caplog.at_level("WARNING", logger=process_registry.logger.name):
+        assert terminate_owned_ancestor(child_pid, token=TOKEN) is None
     assert parent.poll() is None
+    # The reason is on record: a Cancel that ends nothing is otherwise silent.
+    assert "Cannot read the askpass token" in caplog.text

@@ -71,8 +71,8 @@ def test_a_listed_method_the_block_switches_off_keeps_its_place():
     policy = _policy("PreferredAuthentications password,publickey", "PubkeyAuthentication no")
     assert policy.checked() == ["password"]
     assert policy.order == ["password", "publickey"]
-    assert policy.disabled_here("publickey")
-    assert not policy.disabled_here("password")
+    assert policy.own_switch("publickey") is False
+    assert policy.own_switch("password") is None
     assert policy.will_try() == ["password"]
 
 
@@ -93,7 +93,7 @@ def test_a_profile_has_no_host_and_is_always_known():
 def test_the_older_keyword_spelling_is_read_and_kept():
     policy = _policy("ChallengeResponseAuthentication no")
     assert policy.own_switch("keyboard-interactive") is False
-    assert policy.disabled_here("keyboard-interactive")
+    assert policy.own_switch("keyboard-interactive") is False
     assert policy.to_lines() == ["ChallengeResponseAuthentication no"]
 
 
@@ -246,7 +246,7 @@ def test_moving_a_method_keeps_the_other_methods_settings():
         "PreferredAuthentications keyboard-interactive,publickey,password",
         "PubkeyAuthentication no", "PasswordAuthentication yes",
     ]
-    assert policy.disabled_here("publickey")
+    assert policy.own_switch("publickey") is False
 
 
 def test_unchecking_never_touches_a_per_method_line():
@@ -563,7 +563,7 @@ def test_password_is_enabled_over_a_later_wildcard_and_moved_first(tmp_path):
         policy.set_fallback({"passwordauthentication": "no"})
         assert policy.shown_checked("password") is False
         assert policy.set_tried("password", True)
-        assert policy.move("password", 0)
+        assert policy.move_to_top("password")
 
     resolved, reopened, _text = _saved(
         tmp_path,
@@ -700,7 +700,7 @@ def test_only_a_restricted_switch_gets_a_caption():
 def test_move_to_top_puts_the_method_ahead_of_switched_off_ones():
     policy = _host([], dict(SSH_G, gssapiauthentication="no"))
     assert policy.checked()[0] == "publickey"   # Kerberos, host-based: off
-    assert policy.move("password", 0)
+    assert policy.move_to_top("password")
     assert policy.to_lines() == [
         "PreferredAuthentications "
         "password,gssapi-with-mic,hostbased,publickey,keyboard-interactive",
@@ -741,9 +741,104 @@ def test_a_row_says_when_an_earlier_setting_overrules_its_checkbox():
 def test_move_to_top_passes_switched_off_methods_when_already_first_tried():
     policy = _host([], dict(SSH_G, gssapiauthentication="no"))
     assert policy.checked()[0] == "publickey"
-    assert policy.move("publickey", 0)
+    assert policy.move_to_top("publickey")
     assert policy.to_lines() == [
         "PreferredAuthentications "
         "publickey,gssapi-with-mic,hostbased,keyboard-interactive,password",
     ]
-    assert not policy.move("publickey", 0)   # already first in the line
+    assert not policy.move_to_top("publickey")   # already first in the line
+
+
+# -- review: reset, undo and round trips ----------------------------------------
+
+def test_unchecking_after_a_reset_does_not_fail():
+    # Checking listed password and turned it on; Reset discards the order,
+    # and the uncheck that follows only puts the switch line back.
+    policy = AuthPolicy.from_lines(["PreferredAuthentications publickey",
+                                    "PasswordAuthentication no"])
+    policy.set_inherited(dict(SSH_G, preferredauthentications="publickey"))
+    policy.set_fallback({"preferredauthentications": "publickey,password"})
+    assert policy.set_tried("password", True)
+    assert policy.reset_order()
+    assert policy.shown_checked("password") is True
+    assert policy.set_tried("password", False)
+    assert policy.to_lines() == ["PasswordAuthentication no"]
+
+
+def test_move_to_top_past_a_switched_off_method_survives_other_edits():
+    policy = _host(["PreferredAuthentications password,publickey,keyboard-interactive",
+                    "PasswordAuthentication no"])
+    assert policy.move_to_top("publickey")
+    moved = "PreferredAuthentications publickey,password,keyboard-interactive"
+    assert moved in policy.to_lines()
+    assert policy.set_tried("keyboard-interactive", False)
+    assert policy.set_tried("keyboard-interactive", True)
+    assert moved in policy.to_lines()
+    assert policy.move_by("keyboard-interactive", -1)
+    assert policy.move_by("keyboard-interactive", 1)
+    assert moved in policy.to_lines()
+
+
+def test_only_move_to_top_passes_switched_off_methods():
+    policy = _host(["PreferredAuthentications publickey,gssapi-with-mic,password,"
+                    "keyboard-interactive", "GSSAPIAuthentication no"])
+    assert policy.move_by("keyboard-interactive", -1)
+    assert policy.order == ["publickey", "gssapi-with-mic", "keyboard-interactive", "password"]
+    # Moving it back is an exact undo, also into the first place.
+    assert policy.move_by("keyboard-interactive", 1)
+    assert not policy.edited
+    policy = _host([], dict(SSH_G, gssapiauthentication="no"))
+    assert policy.move("password", 0) and policy.move("password", 2)
+    assert policy.to_lines() == []
+
+
+def test_edits_that_cancel_out_write_nothing():
+    policy = _host([], dict(SSH_G, gssapiauthentication="no"))
+    policy.set_fallback(dict(SSH_G, gssapiauthentication="no"))
+    assert policy.set_tried("password", False)
+    assert policy.set_tried("gssapi-with-mic", True)
+    assert policy.set_tried("password", True)
+    assert policy.set_tried("gssapi-with-mic", False)
+    assert policy.to_lines() == [] and not policy.edited
+
+
+def test_check_then_uncheck_leaves_the_blocks_own_yes_line():
+    policy = _host(["PreferredAuthentications publickey", "PasswordAuthentication yes"])
+    policy.set_fallback(dict(SSH_G, passwordauthentication="no"))
+    assert policy.set_tried("password", True)
+    assert policy.set_tried("password", False)
+    assert policy.to_lines() == ["PreferredAuthentications publickey",
+                                 "PasswordAuthentication yes"]
+
+
+def test_uncheck_then_check_restores_a_restricted_switch_as_written():
+    policy = _host(["PubkeyAuthentication host-bound"])
+    policy.set_fallback(dict(SSH_G, pubkeyauthentication="no"))
+    assert policy.set_tried("publickey", False)
+    assert policy.to_lines() == []
+    assert policy.set_tried("publickey", True)
+    assert policy.to_lines() == ["PubkeyAuthentication host-bound"]
+    assert policy.restriction("publickey") == "host-bound"
+
+
+def test_a_switch_openssh_does_not_report_is_at_its_default():
+    # An OpenSSH built without GSSAPI prints no gssapiauthentication line.
+    resolved = {k: v for k, v in SSH_G.items() if k != "gssapiauthentication"}
+    policy = AuthPolicy.from_lines([])
+    policy.set_inherited(resolved)
+    assert policy.shown_checked("gssapi-with-mic") is False
+    assert "gssapi-with-mic" not in policy.checked()
+
+
+def test_the_overruled_caption_names_the_order_when_the_order_is_the_cause():
+    policy = _host(["PreferredAuthentications publickey,password"])
+    policy.earlier = {"preferredauthentications": "publickey"}
+    assert policy.overruled("password") is True
+    assert policy.overruled_by_order("password")
+    assert method_caption("", False, True, True) == (
+        "Checked, but not tried: an earlier setting leaves it out of the order"
+    )
+    policy = _host(["PasswordAuthentication yes"])
+    policy.earlier = {"passwordauthentication": "no"}
+    assert policy.overruled("password") is True
+    assert not policy.overruled_by_order("password")
