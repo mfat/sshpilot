@@ -1708,15 +1708,26 @@ class ConnectionApplicationService:
             evaluate_draft,
         )
 
+        target_path = None
+        if request.file:
+            # A name the daemon gave out, checked against its own reading
+            # of the configuration: never a path of the client's.
+            try:
+                target_path = str(self._repository.ssh_config_file_path(request.file))
+            except CoreError as error:
+                raise _map_core_error(error) from error
         try:
-            saved_text = self._repository.get_ssh_config_text().text
+            saved_text = self._repository.get_ssh_config_text(
+                *([request.file] if request.file else [])
+            ).text
         except Exception:
-            # No readable root yet: every Match exec in the draft is new.
+            # No readable file yet: every Match exec in the draft is new.
             saved_text = ""
         context = DraftContext(
             root_path=str(self._repository.root_config_path),
             isolated=bool(self._repository.ssh_config_isolated),
             overrides=tuple(self._forced_ssh_option_args()),
+            target_path=target_path,
         )
         try:
             return evaluate_draft(request, context, saved_text, cancelled)
@@ -1726,13 +1737,20 @@ class ConnectionApplicationService:
                 "The SSH config draft evaluation was superseded",
             ) from None
 
-    def get_ssh_config_text(self) -> SshConfigText:
-        """Return the daemon-selected active SSH config text for the raw editor."""
+    def get_ssh_config_text(self, file: str = "") -> SshConfigText:
+        """Return the text of the daemon-selected SSH config for the raw
+        editor, or (*file*) of a file it reads through ``Include``, named as
+        ``SshConfigText.files`` listed it."""
 
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        if type(file) is not str:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST, "An SSH config file name must be text"
+            )
         try:
-            return self._repository.get_ssh_config_text()
+            # Passed only when asked for: the root needs no name.
+            return self._repository.get_ssh_config_text(*([file] if file else []))
         except CoreError as error:
             raise _map_core_error(error) from error
 

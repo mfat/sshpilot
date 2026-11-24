@@ -188,3 +188,50 @@ def test_update_shared_block_is_on_the_wire_only_when_set():
         update_connection_request_from_wire({"username": "alice", "shared_block": "yes"})
     with pytest.raises(TypeError):
         UpdateConnectionRequest(username="alice", shared_block=1)
+
+
+def test_ssh_config_text_names_its_file_and_lists_the_configuration_s_files():
+    from sshpilot.api.models.connections import (
+        EvaluateSshConfigDraftRequest,
+        SaveSshConfigTextRequest,
+        SshConfigFileRef,
+        SshConfigText,
+    )
+    from sshpilot.api.transport.codec import (
+        save_ssh_config_text_request_from_wire,
+        ssh_config_text_from_wire,
+        ssh_config_text_to_wire,
+    )
+    from sshpilot.api.transport.config_draft_codec import (
+        evaluate_ssh_config_draft_request_from_wire,
+        evaluate_ssh_config_draft_request_to_wire,
+    )
+
+    text = SshConfigText(
+        text="Host a\n", revision="r1", display_name="~/.ssh/hosts.conf", writable=True,
+        file="/home/u/.ssh/hosts.conf",
+        files=(
+            SshConfigFileRef("", "~/.ssh/config", True),
+            SshConfigFileRef("/home/u/.ssh/hosts.conf", "~/.ssh/hosts.conf", False),
+        ),
+    )
+    wire = ssh_config_text_to_wire(text)
+    assert ssh_config_text_from_wire(wire) == text
+    wire.pop("file"), wire.pop("files")                  # a daemon that predates them
+    old = ssh_config_text_from_wire(wire)
+    assert old.file == "" and old.files == ()
+
+    save = save_ssh_config_text_request_from_wire(
+        {"text": "Host a\n", "expected_revision": "r1", "file": "/home/u/.ssh/hosts.conf"}
+    )
+    assert save == SaveSshConfigTextRequest("Host a\n", "r1", file="/home/u/.ssh/hosts.conf")
+    assert save_ssh_config_text_request_from_wire(
+        {"text": "", "expected_revision": "r1"}
+    ).file == ""
+
+    root = EvaluateSshConfigDraftRequest(text="Host a\n", host="a")
+    assert "file" not in evaluate_ssh_config_draft_request_to_wire(root)
+    part = EvaluateSshConfigDraftRequest(text="Host a\n", host="a", file="/x/hosts.conf")
+    assert evaluate_ssh_config_draft_request_from_wire(
+        evaluate_ssh_config_draft_request_to_wire(part)
+    ) == part

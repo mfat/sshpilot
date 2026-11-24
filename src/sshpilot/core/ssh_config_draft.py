@@ -200,6 +200,9 @@ class DraftContext:
     isolated: bool = False
     #: Settings' forced options, as ``-o Keyword=value`` pairs.
     overrides: Tuple[str, ...] = ()
+    #: The file the draft stands for, when it is not the root: one the root
+    #: reads through ``Include``. The caller has checked that it is.
+    target_path: Optional[str] = None
 
     @property
     def system_config(self) -> Optional[str]:
@@ -283,6 +286,100 @@ def _launch_text(draft_text: str, system_copy: Optional[str]) -> str:
         + "\n# sshpilot: the system-wide file, which -F would skip\n"
         + f'Match all\nInclude "{quoted}"\n'
     )
+
+
+def _same_file(first: str, second: str) -> bool:
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return os.path.abspath(first) == os.path.abspath(second)
+
+
+def _mirror_tree(
+    root_text: str,
+    root_path: str,
+    target_path: str,
+    target_text: str,
+    directory: str,
+    include_base: str,
+) -> Tuple[Optional[str], Optional[str], Dict[str, str]]:
+    """The root as OpenSSH would read it with *target_path* holding
+    *target_text*: ``(root copy's text, target copy's path, copy -> real)``.
+
+    The draft of an included file is no configuration of its own: what it
+    does depends on where the root reads it, and on what was read before.
+    So the files between the root and it are copied, each ``Include`` that
+    leads to it rewritten to name the copy, and OpenSSH is asked about the
+    root copy. Files off that path are read where they are; every Include
+    of a copied file names its files in full, in the order OpenSSH reads
+    them.
+
+    The root's text is ``None`` when the root never reads the file.
+    """
+    copies: Dict[str, Optional[str]] = {}
+    real_of: Dict[str, str] = {}
+    visiting: Set[str] = set()
+    target_copy: List[str] = []
+
+    def rewritten(text: str, depth: int) -> Tuple[str, bool]:
+        lines: List[str] = []
+        leads = False
+        for raw in split_config_lines(text, keepends=True):
+            body = raw.rstrip("\r\n")
+            match = _INCLUDE_RE.match(body)
+            if match is None:
+                lines.append(raw)
+                continue
+            children = _include_children(include_base, body)
+            named = [(child, copy_of(child, depth + 1)) for child in children]
+            if not named:
+                lines.append(raw)       # reads nothing: nothing to spell out
+                continue
+            leads = leads or any(copy for _child, copy in named)
+            # Spelled out even when none leads to the target: a relative
+            # path is looked up from ~/.ssh by OpenSSH, and must not come to
+            # depend on where this copy lies for anyone else reading it.
+            quoted = " ".join(
+                '"' + (copy or os.path.abspath(child)).replace('"', '\\"') + '"'
+                for child, copy in named
+            )
+            lines.append(f"{match.group(1)}{match.group(2)}{quoted}{raw[len(body):]}")
+        return "".join(lines), leads
+
+    def copy_of(path: str, depth: int) -> Optional[str]:
+        real = os.path.abspath(path)
+        if real in copies:
+            return copies[real]
+        if real in visiting or depth > 32:
+            return None
+        if _same_file(real, target_path):
+            # Its own Include lines are OpenSSH's to read: nothing they
+            # name can lead back to it.
+            text, leads = target_text, True
+        else:
+            visiting.add(real)
+            try:
+                with open(real, encoding="utf-8", newline="") as handle:
+                    text, leads = rewritten(handle.read(), depth)
+            except (OSError, UnicodeError):
+                text, leads = "", False
+            visiting.discard(real)
+        if not leads:
+            copies[real] = None
+            return None
+        copy = os.path.join(directory, f"file{len(real_of)}")
+        _write_private(copy, text)
+        copies[real] = copy
+        real_of[os.path.abspath(copy)] = real
+        if _same_file(real, target_path):
+            target_copy.append(copy)
+        return copy
+
+    visiting.add(os.path.abspath(root_path))
+    text, leads = rewritten(root_text, 0)
+    if not leads or not target_copy:
+        return None, None, real_of
+    return text, target_copy[0], real_of
 
 
 class _Run:
@@ -470,18 +567,58 @@ def evaluate_draft(
         system_copy = _system_copy(system, directory) if system else None
         context_files = {os.path.abspath(system_copy): system} if system_copy else {}
         draft_file = os.path.join(directory, "config")
-        _write_private(draft_file, _launch_text(request.text, system_copy))
         query_args = dict(overrides=context.overrides, user=request.user, port=request.port)
+        token = secrets.token_hex(6).upper()
+        probed_text, markers = _with_probes(request.text, token)
+
+        # The draft of an included file: OpenSSH is asked about the root,
+        # with the copies that lead to the draft in the file's place.
+        target = context.target_path
+        launch_text, probed_launch = request.text, probed_text
+        answers_for = draft_file        # the file OpenSSH's complaints are about
+        read_marker = ""
+        if target is not None:
+            try:
+                with open(context.root_path, encoding="utf-8", newline="") as handle:
+                    root_text = handle.read()
+            except (OSError, UnicodeError):
+                root_text = ""
+            include_base = str(openssh_user_dir())
+            # A marker above everything in the file: whether the root
+            # reads it at all, for this host (an Include may stand under
+            # a Host line).
+            read_marker = f"SSHPILOT_PROBE_{token}_READ"
+            markers[read_marker] = 0
+            probed_text = f"SendEnv {read_marker}\n{probed_text}"
+            trees = []
+            for name, text in (("plain", request.text), ("probed", probed_text)):
+                folder = os.path.join(directory, name)
+                os.mkdir(folder, 0o700)
+                trees.append(_mirror_tree(
+                    root_text, context.root_path, target, text, folder, include_base
+                ))
+            (launch_text, target_copy, real_of), (probed_launch, _copy, probed_real) = trees
+            if launch_text is None or probed_launch is None:
+                return SshConfigDraftEvaluation(
+                    errors=(SshConfigDraftError(
+                        "", 0, "the SSH configuration does not read this file"
+                    ),),
+                    forced=forced_values, **base,
+                )
+            context_files.update(real_of)
+            context_files.update(probed_real)
+            context_files[os.path.abspath(draft_file)] = context.root_path
+            answers_for = target_copy
+        _write_private(draft_file, _launch_text(launch_text, system_copy))
 
         # The two questions about the draft do not depend on each other:
         # they are asked at the same time. (A Match exec command therefore
         # runs twice at once, as it runs once per connection anyway.)
-        probed_text, markers = _with_probes(request.text, secrets.token_hex(6).upper())
         probe_answer: List[tuple] = []
         probe_thread = None
         if markers:
             probe_file = os.path.join(directory, "probe")
-            _write_private(probe_file, _launch_text(probed_text, system_copy))
+            _write_private(probe_file, _launch_text(probed_launch, system_copy))
 
             def ask_probe() -> None:
                 try:
@@ -500,7 +637,7 @@ def evaluate_draft(
                 probe_thread.join()
         if stderr:
             return SshConfigDraftEvaluation(
-                errors=_errors(stderr, draft_file, context_files),
+                errors=_errors(stderr, answers_for, context_files),
                 forced=forced_values, **base,
             )
         run.check()
@@ -514,16 +651,25 @@ def evaluate_draft(
                 forced=forced_values, **base,
             )
         matched: Set[int] = set()
+        read = target is None
         if probe_answer:
             for entry in probe_answer[0][0].get("sendenv", ()):
                 for name in entry.split():
-                    if name in markers:
+                    if name == read_marker:
+                        read = True
+                    elif name in markers:
                         matched.add(markers[name])
 
         defaults_values = _builtin_defaults(host, run)
-        lines, sources, includes = _walk(
-            request.text, host, matched, forced, _effective_map(values), system,
-        )
+        if target is None:
+            lines, sources, includes = _walk(
+                request.text, host, matched, forced, _effective_map(values), system,
+            )
+        else:
+            lines, sources, includes = _walk_included(
+                request.text, host, matched if read else None, forced,
+                _effective_map(values), draft_file, target_copy, context_files,
+            )
 
     defaults = tuple(sorted(
         key for key, entries in values.items()
@@ -541,6 +687,85 @@ def evaluate_draft(
         forced=forced_values,
         **base,
     )
+
+
+def _walk_included(
+    draft_text: str,
+    host: str,
+    matched: Optional[Set[int]],
+    forced: Dict[str, str],
+    effective: Dict[str, object],
+    root_copy: str,
+    target_copy: str,
+    real_of: Dict[str, str],
+) -> Tuple[
+    Tuple[SshConfigDraftLine, ...],
+    Tuple[SshConfigDraftSource, ...],
+    Tuple[SshConfigDraftInclude, ...],
+]:
+    """:func:`_walk` for the draft of an included file.
+
+    What a line of such a file does depends on what OpenSSH read before
+    reaching it, in other files. The line behind each option is therefore
+    looked for across the whole configuration (the root copy, with the
+    draft where the file stands), with the walk the rest of the app uses;
+    a line of the draft is the one used when that walk names it. Which of
+    the draft's blocks apply is OpenSSH's answer, as ever: *matched* is
+    ``None`` when the root does not read the file for this host at all.
+    """
+    winners: Dict[str, SshConfigDraftSource] = {}
+    forced_slots = {_slot(canonical_keyword(key)) for key in forced}
+    own = os.path.abspath(target_copy)
+    try:
+        entries = earlier_directives(host, root_copy, effective, _whole=True)
+    except Exception:
+        entries = []
+    for entry in entries:
+        setting = canonical_keyword(str(entry["key"]))
+        if _slot(setting) in winners or _slot(setting) in forced_slots:
+            continue
+        path = os.path.abspath(str(entry["file"]))
+        winners[_slot(setting)] = SshConfigDraftSource(
+            key=setting,
+            file="" if path == own else real_of.get(path, str(entry["file"])),
+            line=int(entry["line"]),
+            block=str(entry["block"]),
+        )
+
+    lines: List[SshConfigDraftLine] = []
+    includes: List[SshConfigDraftInclude] = []
+    include_base = str(openssh_user_dir())
+    for block in scan_blocks(draft_text):
+        applies = matched is not None and (block.kind == GLOBAL or block.line in matched)
+        for item in block.lines:
+            if not item.keyword.isalnum():
+                continue
+            if not applies:
+                lines.append(SshConfigDraftLine(item.line, SshConfigDraftLineState.INACTIVE))
+                continue
+            if item.keyword == "include":
+                files = tuple(_include_children(include_base, item.text))
+                includes.append(SshConfigDraftInclude(item.line, files))
+                lines.append(SshConfigDraftLine(item.line, SshConfigDraftLineState.INCLUDE))
+                continue
+            if item.keyword in ACCUMULATING_DIRECTIVES:
+                lines.append(SshConfigDraftLine(item.line, SshConfigDraftLineState.ACCUMULATED))
+                continue
+            setting = canonical_keyword(item.keyword)
+            if _slot(setting) in forced_slots:
+                lines.append(SshConfigDraftLine(item.line, SshConfigDraftLineState.FORCED))
+                continue
+            winner = winners.get(_slot(setting))
+            if winner is None or (not winner.file and winner.line == item.line):
+                lines.append(SshConfigDraftLine(item.line, SshConfigDraftLineState.APPLIED))
+            else:
+                lines.append(SshConfigDraftLine(
+                    item.line, SshConfigDraftLineState.SHADOWED,
+                    decided_file=winner.file,
+                    decided_line=winner.line,
+                    decided_block=winner.block,
+                ))
+    return tuple(lines), tuple(winners.values()), tuple(includes)
 
 
 def _walk(

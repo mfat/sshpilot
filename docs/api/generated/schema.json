@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.113",
+  "api_implementation_version": "0.114",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -4755,6 +4755,13 @@
           "required": false,
           "sensitive": false,
           "type": "tuple[str, ...]"
+        },
+        {
+          "default": "",
+          "name": "file",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"
@@ -8442,6 +8449,13 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": "",
+          "name": "file",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"
@@ -9893,6 +9907,32 @@
       ],
       "status": "Schema only"
     },
+    "SshConfigFileRef": {
+      "fields": [
+        {
+          "default": null,
+          "name": "file",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "display_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "writable",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
     "SshConfigText": {
       "fields": [
         {
@@ -9922,6 +9962,20 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": "",
+          "name": "file",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "files",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[SshConfigFileRef, ...]"
         }
       ],
       "status": "Implemented"

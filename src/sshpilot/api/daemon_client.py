@@ -953,11 +953,17 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid destination check")
 
-    def get_ssh_config_text(self) -> SshConfigText:
-        """Load the daemon-selected active SSH config text for the raw editor."""
+    def get_ssh_config_text(self, file: str = "") -> SshConfigText:
+        """Load the daemon-selected active SSH config text for the raw
+        editor, or (*file*) the text of a file it reads, named as
+        ``SshConfigText.files`` listed it."""
 
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
-        result = self._request("connections.get_ssh_config_text", {})
+        if type(file) is not str:
+            raise TypeError("file must be a string")
+        result = self._request(
+            "connections.get_ssh_config_text", {"file": file} if file else {}
+        )
         try:
             return ssh_config_text_from_wire(result)
         except (TypeError, ValueError):
@@ -1049,6 +1055,7 @@ class DaemonClient:
             {
                 "text": request.text,
                 "expected_revision": request.expected_revision,
+                **({"file": request.file} if request.file else {}),
             },
         )
         try:

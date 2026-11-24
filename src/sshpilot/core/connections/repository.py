@@ -600,11 +600,19 @@ class ConnectionRepository:
     # Raw SSH config text (daemon-selected editor document)
     # ------------------------------------------------------------------
 
-    def get_ssh_config_text(self) -> SshConfigText:
-        """Return the daemon-selected active SSH config text for the editor."""
+    def get_ssh_config_text(self, file: str = "") -> SshConfigText:
+        """Return the text of the daemon-selected SSH config for the editor,
+        or (*file*) of a file it reads, named as the store listed it."""
 
         with self._lock:
-            return self._ssh_store.get_text()
+            return self._ssh_store.get_text(file)
+
+    def ssh_config_file_path(self, file: str) -> Path:
+        """The path behind a config file name the store gave out; any other
+        name is refused."""
+
+        with self._lock:
+            return self._ssh_store.config_file(file)
 
     def save_ssh_config_text(
         self, request: SaveSshConfigTextRequest
@@ -625,22 +633,19 @@ class ConnectionRepository:
             )
         with self._mutation_scope():
             before = self._begin()
-            disk_before = self._capture_transaction_files_locked(
-                self._ssh_store.root_path
-            )
+            target = self._ssh_store.config_file(request.file)
+            disk_before = self._capture_transaction_files_locked(target)
             try:
                 prepared = self._ssh_store.prepare_replace_text(
-                    request.text, request.expected_revision
+                    request.text, request.expected_revision, request.file
                 )
                 if not self._identity_state_unavailable:
                     intent = self._prepare_identity_intent_locked(
                         prepared, operation_label="raw_config_edit"
                     )
                 committed_write = self._ssh_store.commit_prepared(prepared)
-                result = self._ssh_store.get_text()
-                self._record_post_write_locked(
-                    disk_before, self._ssh_store.root_path
-                )
+                result = self._ssh_store.get_text(request.file)
+                self._record_post_write_locked(disk_before, target)
                 ssh_config = committed_write.config
                 if not self._identity_state_unavailable:
                     self._commit_identity_target_locked(

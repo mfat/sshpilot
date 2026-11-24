@@ -37,6 +37,7 @@ def evaluate_ssh_config_draft_request_to_wire(
         "user": request.user,
         "port": request.port,
         "allowed_exec": list(request.allowed_exec),
+        **({"file": request.file} if request.file else {}),
     }
 
 
@@ -44,9 +45,11 @@ def evaluate_ssh_config_draft_request_from_wire(
     value: Any,
 ) -> EvaluateSshConfigDraftRequest:
     data = _strict_fields(
-        value, required=_REQUEST_FIELDS, context="SSH config draft request"
+        value, required=_REQUEST_FIELDS, optional={"file"},
+        context="SSH config draft request",
     )
     return EvaluateSshConfigDraftRequest(
+        file=data.get("file", ""),
         text=data["text"],
         host=data["host"],
         user=data["user"],

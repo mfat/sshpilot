@@ -2146,12 +2146,14 @@ pending.
 | `user` | `str | None` | No | `null` | No |
 | `port` | `int | None` | No | `null` | No |
 | `allowed_exec` | `tuple[str, ...]` | No | `[]` | No |
+| `file` | `str` | No | `` | No |
 
 Synthetic representation:
 
 ```json
 {
   "allowed_exec": [],
+  "file": "",
   "host": "example",
   "port": null,
   "text": "example",
@@ -5002,11 +5004,13 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** Optimistic raw-text replacement of the daemon-selected SSH config.
+**Purpose:** Optimistic raw-text replacement of one SSH config file.
 
 ``expected_revision`` is the revision returned by the preceding load;
 the daemon rejects the save when any participating config file changed
-since the editor loaded it.
+since the editor loaded it. ``file`` names the file to replace as
+``SshConfigText.files`` listed it (empty: the root); a name the
+configuration no longer reads is refused.
 
 **Related methods:** `save_ssh_config_text`
 **Related events:** None
@@ -5015,12 +5019,14 @@ since the editor loaded it.
 | --- | --- | ---: | --- | ---: |
 | `text` | `str` | Yes | — | Yes |
 | `expected_revision` | `str` | Yes | — | No |
+| `file` | `str` | No | `` | No |
 
 Synthetic representation:
 
 ```json
 {
   "expected_revision": "example",
+  "file": "",
   "text": "<sensitive value omitted>"
 }
 ```
@@ -6315,17 +6321,55 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SshConfigFileRef -->
+## `SshConfigFileRef`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One file of the SSH configuration: the root, or a file it reads
+through ``Include``.
+
+``file`` is how the file is asked for (``get_ssh_config_text``,
+``SaveSshConfigTextRequest``, ``EvaluateSshConfigDraftRequest``): empty
+for the root, otherwise a name the daemon gave out. It is never a path
+of the client's choosing: the daemon answers only for the names it
+listed, the files its own reading of the configuration reached.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `file` | `str` | Yes | — | No |
+| `display_name` | `str` | Yes | — | No |
+| `writable` | `bool` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "display_name": "example",
+  "file": "example",
+  "writable": false
+}
+```
+
 <!-- api-model: SshConfigText -->
 ## `SshConfigText`
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** The daemon-selected active SSH config text plus editor metadata.
+**Purpose:** The text of one SSH config file plus editor metadata.
 
-The daemon resolves which file is active (normal or isolated mode) and
+The daemon resolves which root is active (normal or isolated mode) and
 never accepts a filesystem path from the client. ``display_name`` is the
 daemon-computed display label (home-collapsed); ``writable`` reflects
 whether the daemon's hardened atomic write path can replace the file.
+
+``file`` names the file the text is of (empty: the root) and ``files``
+lists every file of the configuration, the root first: see
+:class:`SshConfigFileRef`. ``revision`` is of the whole configuration,
+whichever file was asked for.
 
 **Related methods:** `get_ssh_config_text`, `save_ssh_config_text`
 **Related events:** None
@@ -6336,12 +6380,16 @@ whether the daemon's hardened atomic write path can replace the file.
 | `revision` | `str` | Yes | — | No |
 | `display_name` | `str` | Yes | — | No |
 | `writable` | `bool` | Yes | — | No |
+| `file` | `str` | No | `` | No |
+| `files` | `tuple[SshConfigFileRef, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
 ```json
 {
   "display_name": "example",
+  "file": "",
+  "files": [],
   "revision": "example",
   "text": "<sensitive value omitted>",
   "writable": false

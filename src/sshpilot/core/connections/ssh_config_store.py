@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ...api.models.connections import SshConfigText
+from ...api.models.connections import SshConfigFileRef, SshConfigText
 from ...ssh_config_document import (
     HostBlock,
     RawSpan,
@@ -615,11 +615,13 @@ class PreparedSshMutation:
             self.target_text,
             expected_bytes=self.expected_bytes,
         )
+        root = self.target_path == store.root_path
         return SshConfigText(
             text=self.target_text,
             revision=store._current_revision(),
-            display_name=store._display_name(),
-            writable=store._is_writable(),
+            display_name=store._display_name(self.target_path),
+            writable=config_file_writable(self.target_path),
+            file="" if root else str(self.target_path),
         )
 
 
@@ -715,10 +717,47 @@ class SshConfigStore:
 
     # -- raw text editor (daemon-selected document) -----------------------
 
-    def _display_name(self) -> str:
+    def config_files(self) -> List[Path]:
+        """Every file of the configuration, the root first: the files the
+        daemon's own reading of it reaches through ``Include``."""
+        try:
+            files = [Path(item) for item in _resolve_config_files(self._root_path)]
+        except (CoreError, OSError) as exc:
+            raise _store_error(
+                "The connection configuration could not be read"
+            ) from exc
+        root = self._root_path
+        return [root] + [item for item in files if item != root]
+
+    def config_file(self, name: str) -> Path:
+        """The file a client names: empty for the root, otherwise one of the
+        names :meth:`config_files` gave out. Any other name is refused, a
+        well-formed path included: the client does not choose files."""
+        if not name:
+            return self._root_path
+        for item in self.config_files()[1:]:
+            if str(item) == name:
+                return item
+        raise CoreError(
+            ErrorCode.VALIDATION_ERROR,
+            "The SSH configuration does not read this file",
+        )
+
+    def _file_refs(self) -> Tuple[SshConfigFileRef, ...]:
+        files = self.config_files()
+        return tuple(
+            SshConfigFileRef(
+                file="" if index == 0 else str(item),
+                display_name=self._display_name(item),
+                writable=config_file_writable(item),
+            )
+            for index, item in enumerate(files)
+        )
+
+    def _display_name(self, target: Optional[Path] = None) -> str:
         """Home-collapsed display label for the editor title (never a path
-        chosen by the client — the daemon resolved the root)."""
-        path = str(self._root_path)
+        chosen by the client — the daemon resolved the file)."""
+        path = str(target or self._root_path)
         try:
             home = os.path.expanduser("~")
         except Exception:
@@ -756,19 +795,32 @@ class SshConfigStore:
                 "The connection configuration could not be read"
             ) from exc
 
-    def get_text(self) -> SshConfigText:
-        """Return the daemon-selected root config text for the raw editor.
+    def get_text(self, file: str = "") -> SshConfigText:
+        """Return the text of one config file for the raw editor: the
+        daemon-selected root, or (*file*) one it reads through ``Include``.
 
         Reading never requires the document to *parse* (the editor is the tool
         that fixes a malformed config); only readability of the root and its
         recursively included files is enforced, matching the strict-load
         policy of the daemon.
         """
+        target = self.config_file(file)
+        if target == self._root_path:
+            text = self._read_root_text()
+        else:
+            try:
+                text = target.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                raise _store_error(
+                    "The connection configuration could not be read"
+                ) from exc
         return SshConfigText(
-            text=self._read_root_text(),
+            text=text,
             revision=self._current_revision(),
-            display_name=self._display_name(),
-            writable=self._is_writable(),
+            display_name=self._display_name(target),
+            writable=config_file_writable(target),
+            file="" if target == self._root_path else str(target),
+            files=self._file_refs(),
         )
 
     def replace_text(self, text: str, expected_revision: str) -> SshConfigText:
@@ -800,23 +852,26 @@ class SshConfigStore:
         )
 
     def prepare_replace_text(
-        self, text: str, expected_revision: str
+        self, text: str, expected_revision: str, file: str = ""
     ) -> PreparedSshMutation:
-        """Prepare a raw-config replacement without writing any file."""
+        """Prepare a raw-config replacement without writing any file.
+
+        *file* names an included file as :meth:`config_files` listed it;
+        empty replaces the root.
+        """
         if type(text) is not str:
             raise TypeError("SSH configuration content must be exact text")
         if type(expected_revision) is not str or not expected_revision.strip():
             raise TypeError("an expected SSH config revision is required")
-        expected_bytes = (
-            self._root_path.read_bytes() if self._root_path.exists() else None
-        )
+        target = self.config_file(file)
+        expected_bytes = target.read_bytes() if target.exists() else None
         if not self._revision_matches(expected_revision):
             raise _stale_error()
         prepared = PreparedSshMutation(
             operation="replace_text",
             base_revision=expected_revision,
             target_revision="",
-            target_path=self._root_path,
+            target_path=target,
             expected_bytes=expected_bytes,
             target_text=text,
         )

@@ -1305,3 +1305,47 @@ def test_a_shared_host_block_is_edited_through_the_api_only_when_asked(tmp_path)
     )
     records = {record.id: record for record in repo.snapshot().connections}
     assert records["web2"].username == "all"            # the same block
+
+
+def test_an_included_config_file_is_read_and_saved_by_the_name_the_daemon_gave(tmp_path):
+    from sshpilot.api.errors import SshPilotError
+    from sshpilot.api.models.connections import SaveSshConfigTextRequest
+
+    included = tmp_path / "hosts.conf"
+    included.write_text("Host inc\n    User old\n")
+    repo, root, _ = _repo(tmp_path, f"Include {included}\n\nHost top\n    User me\n")
+    application = ConnectionApplicationService(repo, client_name="test")
+
+    whole = application.get_ssh_config_text()
+    assert whole.file == "" and whole.text.startswith("Include ")
+    assert [item.file for item in whole.files] == ["", str(included)]
+    assert all(item.writable for item in whole.files)
+
+    part = application.get_ssh_config_text(str(included))
+    assert part.file == str(included) and part.text == "Host inc\n    User old\n"
+    assert part.revision == whole.revision          # one revision for the tree
+
+    # A path the daemon did not list is not a file it answers for.
+    outside = tmp_path / "outside.conf"
+    outside.write_text("Host x\n")
+    with pytest.raises(SshPilotError):
+        application.get_ssh_config_text(str(outside))
+    with pytest.raises(SshPilotError):
+        application.save_ssh_config_text(
+            SaveSshConfigTextRequest("Host y\n", whole.revision, file=str(outside))
+        )
+    assert outside.read_text() == "Host x\n"
+
+    saved = application.save_ssh_config_text(
+        SaveSshConfigTextRequest("Host inc\n    User new\n", part.revision, file=str(included))
+    )
+    assert saved.file == str(included) and saved.revision != part.revision
+    assert included.read_text() == "Host inc\n    User new\n"
+    assert root.read_text().startswith("Include ")  # the root is untouched
+    records = {record.id: record for record in repo.snapshot().connections}
+    assert records["inc"].username == "new"         # reloaded at once
+
+    with pytest.raises(SshPilotError):              # the old revision is stale now
+        application.save_ssh_config_text(
+            SaveSshConfigTextRequest("Host inc\n", part.revision, file=str(included))
+        )

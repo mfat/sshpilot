@@ -273,7 +273,7 @@ class SshPilotClient(Protocol):
     ) -> UnsavedHostCheckResult:
         ...
 
-    def get_ssh_config_text(self) -> SshConfigText:
+    def get_ssh_config_text(self, file: str = "") -> SshConfigText:
         ...
 
     def prepare_external_terminal_launch(

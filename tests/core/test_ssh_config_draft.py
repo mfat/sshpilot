@@ -527,3 +527,76 @@ def test_no_answer_about_the_blocks_is_no_answer_at_all(tmp_path, monkeypatch):
     evaluation = _isolated(tmp_path, "Host web1\n    User x\n")
     assert not evaluation.evaluated and evaluation.values == ()
     assert "timed out" in evaluation.errors[0].diagnostic
+
+
+# -- the draft of an included file ------------------------------------------------
+
+def _included_tree(tmp_path):
+    inc, deep, root = tmp_path / "inc.conf", tmp_path / "deep.conf", tmp_path / "config"
+    inc_text = (
+        f"Compression yes\nHost a.prod\n    User incuser\n    Port 2200\n"
+        f"    Include {deep}\nHost b\n    User bob\n"
+    )
+    inc.write_text(inc_text)
+    deep.write_text("ForwardAgent yes\nUser deepuser\n")
+    root.write_text(
+        f"Host *.prod\n    User rootuser\n    Include {inc}\n"
+        "Host *\n    Port 99\n    ForwardAgent no\n"
+    )
+    return root, inc, inc_text, deep
+
+
+def _included(root, target, text, host):
+    return evaluate_draft(
+        _request(text, host),
+        DraftContext(str(root), isolated=True, target_path=str(target)),
+        text,
+    )
+
+
+def _states(evaluation):
+    return {item.line: item.state for item in evaluation.lines}
+
+
+def test_an_included_file_s_draft_is_read_where_the_root_reads_it(tmp_path):
+    """Its lines win or lose against what OpenSSH read before reaching it,
+    and the values are those of a launch after the draft is saved."""
+    State = SshConfigDraftLineState
+    root, inc, text, _deep = _included_tree(tmp_path)
+    draft = text.replace("Port 2200", "Port 2201")
+    evaluation = _included(root, inc, draft, "a.prod")
+    assert evaluation.evaluated and evaluation.matched_blocks == (2,)
+    assert _states(evaluation) == {
+        1: State.APPLIED, 3: State.SHADOWED, 4: State.APPLIED,
+        5: State.INCLUDE, 7: State.INACTIVE,
+    }
+    shadowed = next(item for item in evaluation.lines if item.line == 3)
+    assert (shadowed.decided_file, shadowed.decided_line) == (str(root), 2)
+
+    inc.write_text(draft)                       # saved: a launch reads this
+    assert _pairs(evaluation) == _ssh_g(["-F", str(root)], "a.prod")
+
+
+def test_an_included_file_the_root_does_not_read_for_the_host_does_nothing(tmp_path):
+    """The Include stands under ``Host *.prod``: for another host the file
+    is not read, whatever its own Host lines say."""
+    root, inc, text, _deep = _included_tree(tmp_path)
+    evaluation = _included(root, inc, text, "b")
+    assert evaluation.evaluated and evaluation.matched_blocks == ()
+    assert set(_states(evaluation).values()) == {SshConfigDraftLineState.INACTIVE}
+
+
+def test_a_file_included_by_an_included_file(tmp_path):
+    State = SshConfigDraftLineState
+    root, _inc, _text, deep = _included_tree(tmp_path)
+    evaluation = _included(root, deep, "ForwardAgent yes\nUser deepuser\n", "a.prod")
+    assert _states(evaluation) == {1: State.APPLIED, 2: State.SHADOWED}
+
+    rejected = _included(root, deep, "ForwardAgent yes\nBogusOption 1\n", "a.prod")
+    assert [(e.file, e.line) for e in rejected.errors] == [("", 2)]   # the draft's line
+
+
+def test_a_file_the_configuration_does_not_read_is_not_evaluated(tmp_path):
+    root, _inc, _text, _deep = _included_tree(tmp_path)
+    evaluation = _included(root, tmp_path / "elsewhere.conf", "User x\n", "a.prod")
+    assert not evaluation.evaluated and evaluation.errors

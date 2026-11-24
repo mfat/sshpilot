@@ -569,9 +569,14 @@ class EvaluateSshConfigDraftRequest:
     user: Optional[str] = None
     port: Optional[int] = None
     allowed_exec: Tuple[str, ...] = ()
+    #: The file ``text`` is a draft of, as ``SshConfigText.files`` listed it
+    #: (empty: the root). The draft of an included file is read where the
+    #: root reads the file, after everything the root reads before it.
+    file: str = ""
 
     def __post_init__(self) -> None:
         _draft_text(self.text, "text")
+        _draft_text(self.file, "file")
         _draft_text(self.host, "host", empty=False)
         if self.user is not None:
             _draft_text(self.user, "user", empty=False)
@@ -1291,19 +1296,51 @@ def delete_plugin_secret_request_from_wire(payload: dict) -> DeletePluginSecretR
 # -- Raw SSH config text (daemon-resolved editor document) -------------------
 
 @dataclass(frozen=True)
-class SshConfigText:
-    """The daemon-selected active SSH config text plus editor metadata.
+class SshConfigFileRef:
+    """One file of the SSH configuration: the root, or a file it reads
+    through ``Include``.
 
-    The daemon resolves which file is active (normal or isolated mode) and
+    ``file`` is how the file is asked for (``get_ssh_config_text``,
+    ``SaveSshConfigTextRequest``, ``EvaluateSshConfigDraftRequest``): empty
+    for the root, otherwise a name the daemon gave out. It is never a path
+    of the client's choosing: the daemon answers only for the names it
+    listed, the files its own reading of the configuration reached.
+    """
+
+    file: str
+    display_name: str
+    writable: bool
+
+    def __post_init__(self) -> None:
+        if type(self.file) is not str or "\x00" in self.file:
+            raise ValueError("SSH config file name must be safe text")
+        if type(self.display_name) is not str or not self.display_name.strip():
+            raise ValueError("SSH config display name must be a non-empty string")
+        if type(self.writable) is not bool:
+            raise TypeError("SSH config writable must be a boolean")
+
+
+@dataclass(frozen=True)
+class SshConfigText:
+    """The text of one SSH config file plus editor metadata.
+
+    The daemon resolves which root is active (normal or isolated mode) and
     never accepts a filesystem path from the client. ``display_name`` is the
     daemon-computed display label (home-collapsed); ``writable`` reflects
     whether the daemon's hardened atomic write path can replace the file.
+
+    ``file`` names the file the text is of (empty: the root) and ``files``
+    lists every file of the configuration, the root first: see
+    :class:`SshConfigFileRef`. ``revision`` is of the whole configuration,
+    whichever file was asked for.
     """
 
     text: str = field(repr=False)
     revision: str
     display_name: str
     writable: bool
+    file: str = ""
+    files: Tuple[SshConfigFileRef, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.text) is not str or "\x00" in self.text:
@@ -1313,24 +1350,35 @@ class SshConfigText:
             raise ValueError("SSH config display name must be a non-empty string")
         if type(self.writable) is not bool:
             raise TypeError("SSH config writable must be a boolean")
+        if type(self.file) is not str or "\x00" in self.file:
+            raise ValueError("SSH config file name must be safe text")
+        if type(self.files) is not tuple or any(
+            type(item) is not SshConfigFileRef for item in self.files
+        ):
+            raise TypeError("SSH config files must be a tuple of SshConfigFileRef")
 
 
 @dataclass(frozen=True)
 class SaveSshConfigTextRequest:
-    """Optimistic raw-text replacement of the daemon-selected SSH config.
+    """Optimistic raw-text replacement of one SSH config file.
 
     ``expected_revision`` is the revision returned by the preceding load;
     the daemon rejects the save when any participating config file changed
-    since the editor loaded it.
+    since the editor loaded it. ``file`` names the file to replace as
+    ``SshConfigText.files`` listed it (empty: the root); a name the
+    configuration no longer reads is refused.
     """
 
     text: str = field(repr=False)
     expected_revision: str
+    file: str = ""
 
     def __post_init__(self) -> None:
         if type(self.text) is not str or "\x00" in self.text:
             raise ValueError("SSH config text must be safe text")
         require_identifier(self.expected_revision, "expected SSH config revision")
+        if type(self.file) is not str or "\x00" in self.file:
+            raise ValueError("SSH config file name must be safe text")
 
 
 # -- Ásbrú import -----------------------------------------------------------

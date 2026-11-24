@@ -5,6 +5,22 @@ notes remain separate.
 
 ## Unreleased
 
+- The files an SSH configuration reads through `Include` can be read,
+  evaluated and saved, not only the root. `SshConfigText.files` lists every
+  file of the configuration as `SshConfigFileRef(file, display_name,
+  writable)`, the root first with an empty `file`; `SshConfigText.file` names
+  the file the text is of. `connections.get_ssh_config_text` takes an optional
+  `file`, and `SaveSshConfigTextRequest` and `EvaluateSshConfigDraftRequest`
+  gained a `file` field (empty: the root, as before). A `file` is a name the
+  daemon gave out, never a path of the client's choosing: one that is not in
+  the daemon's own reading of the configuration fails with
+  `VALIDATION_ERROR`. `revision` stays that of the whole configuration. The
+  draft of an included file is evaluated where the root reads the file,
+  after everything read before it: `matched_blocks` is empty and every line
+  `inactive` when the root does not read the file for the host (an `Include`
+  under a `Host` line that does not apply), and a line another file decides
+  is `shadowed` with that file in `decided_file`. All of it is optional on
+  the wire. The API implementation version is 0.114; Protocol remains 1.0.
 - An SSH `Host` line that names more than one host is no longer a dead end.
   `ConnectionEditorDetails.shared_host_tokens` lists the other tokens on the
   line that declares the connection (more names, patterns, negations); empty

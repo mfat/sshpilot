@@ -128,6 +128,7 @@ from ..models.connections import (
     LookupKeyPassphraseRequest,
     RenameGroupRequest,
     SaveSshConfigTextRequest,
+    SshConfigFileRef,
     SplitConnectionRequest,
     SshConfigText,
     StoreConnectionPasswordRequest,
@@ -3444,6 +3445,11 @@ def ssh_config_text_to_wire(result: SshConfigText) -> Dict[str, Any]:
         "revision": result.revision,
         "display_name": result.display_name,
         "writable": result.writable,
+        "file": result.file,
+        "files": [
+            {"file": item.file, "display_name": item.display_name, "writable": item.writable}
+            for item in result.files
+        ],
     }
 
 
@@ -3453,13 +3459,30 @@ def ssh_config_text_from_wire(value: Any) -> SshConfigText:
     data = _strict_fields(
         value,
         required={"text", "revision", "display_name", "writable"},
+        # Additive: a daemon that predates included files names neither.
+        optional={"file", "files"},
         context="ssh config text",
     )
+    raw_files = data.get("files", [])
+    if type(raw_files) is not list:
+        raise ValueError("ssh config files must be an array")
+    files = []
+    for raw in raw_files:
+        item = _strict_fields(
+            raw, required={"file", "display_name", "writable"}, context="ssh config file"
+        )
+        files.append(SshConfigFileRef(
+            file=_text(item["file"], "ssh config file name", allow_empty=True),
+            display_name=_text(item["display_name"], "ssh config display name"),
+            writable=_boolean(item["writable"], "ssh config writable"),
+        ))
     return SshConfigText(
         text=_text(data["text"], "ssh config text", allow_empty=True),
         revision=_identifier(data["revision"], "ssh config revision"),
         display_name=_text(data["display_name"], "ssh config display name"),
         writable=_boolean(data["writable"], "ssh config writable"),
+        file=_text(data.get("file", ""), "ssh config file name", allow_empty=True),
+        files=tuple(files),
     )
 
 
@@ -3471,11 +3494,13 @@ def save_ssh_config_text_request_from_wire(
     data = _strict_fields(
         value,
         required={"text", "expected_revision"},
+        optional={"file"},
         context="save ssh config text request",
     )
     return SaveSshConfigTextRequest(
         text=_text(data["text"], "ssh config text", allow_empty=True),
         expected_revision=_identifier(data["expected_revision"], "expected ssh config revision"),
+        file=_text(data.get("file", ""), "ssh config file name", allow_empty=True),
     )
 
 

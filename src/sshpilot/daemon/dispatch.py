@@ -1610,10 +1610,17 @@ class RequestDispatcher:
         request: RequestEnvelope,
         _state: ClientProtocolState,
     ) -> DeferredResult:
-        if request.params:
-            raise ValueError("connections.get_ssh_config_text takes no parameters")
+        params = request.params or {}
+        if type(params) is not dict or set(params) - {"file"}:
+            raise ValueError("connections.get_ssh_config_text takes only a file name")
+        file = params.get("file", "")
+        if type(file) is not str:
+            raise ValueError("connections.get_ssh_config_text file must be text")
         return DeferredResult(
-            operation=lambda: ssh_config_text_to_wire(self._connections.get_ssh_config_text()),
+            operation=lambda: ssh_config_text_to_wire(
+                self._connections.get_ssh_config_text(file)
+                if file else self._connections.get_ssh_config_text()
+            ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )
