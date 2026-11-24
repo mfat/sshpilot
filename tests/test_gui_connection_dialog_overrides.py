@@ -409,8 +409,10 @@ def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gu
     assert dialog.auth_order_row._sshpilot_override_icon.get_visible()
     assert "publickey" in dialog.auth_order_row.get_tooltip_text()
     assert dialog._override_banner.get_revealed()
-    # The help line states what is really tried.
-    assert dialog.auth_order_row.get_subtitle() == "publickey"
+    # The header shows the order set here; the line below the list states
+    # what is really tried.
+    assert dialog.auth_order_row.get_subtitle() == "publickey, password"
+    assert dialog.auth_policy.effective_row.get_subtitle() == "publickey"
     dialog.auth_policy.reset_button.emit("clicked")
     assert not dialog._override_banner.get_revealed()
 

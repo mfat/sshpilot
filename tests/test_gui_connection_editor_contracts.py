@@ -762,3 +762,5 @@ def test_reset_shows_what_the_host_inherits_without_its_own_line(gui, root):
     _auth_reset_order(dialog)
     assert section.policy.shown_order() == ["publickey", "keyboard-interactive"]
     assert dialog.auth_order_row.get_subtitle() == "publickey, keyboard-interactive"
+    assert (dialog.auth_policy.effective_row.get_subtitle()
+            == "publickey, keyboard-interactive")

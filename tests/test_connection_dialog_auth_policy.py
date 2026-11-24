@@ -19,7 +19,7 @@ from sshpilot.connection_dialog_auth import (
     AuthPolicy,
     join_extra,
     split_policy_lines,
-    restriction_caption,
+    method_caption,
 )
 
 SSH_G = {  # what `ssh -G` prints on Ubuntu with no order configured
@@ -571,10 +571,10 @@ def test_password_is_enabled_over_a_later_wildcard_and_moved_first(tmp_path):
         edit,
     )
     assert resolved["passwordauthentication"] == "yes"
-    # Kerberos and host-based are off, so they stay put and are not tried:
-    # password is the first method OpenSSH tries.
+    # Moved to the top, it goes ahead of Kerberos and host-based too
+    # (off, so not tried): turning one on later does not put it first.
     assert resolved["preferredauthentications"] == (
-        "gssapi-with-mic,hostbased,password,publickey,keyboard-interactive"
+        "password,gssapi-with-mic,hostbased,publickey,keyboard-interactive"
     )
     assert resolved["gssapiauthentication"] == resolved["hostbasedauthentication"] == "no"
     assert reopened.own_switch("password") is True
@@ -692,6 +692,58 @@ def test_a_listed_method_is_unknown_until_its_switch_arrives():
 
 
 def test_only_a_restricted_switch_gets_a_caption():
-    assert restriction_caption("", False) == ""
-    assert restriction_caption("host-bound", False) == "Enabled for this host (host-bound)"
-    assert restriction_caption("unbound", True) == "Enabled in this profile (unbound)"
+    assert method_caption("", False) == ""
+    assert method_caption("host-bound", False) == "Enabled for this host (host-bound)"
+    assert method_caption("unbound", True) == "Enabled in this profile (unbound)"
+
+
+def test_move_to_top_puts_the_method_ahead_of_switched_off_ones():
+    policy = _host([], dict(SSH_G, gssapiauthentication="no"))
+    assert policy.checked()[0] == "publickey"   # Kerberos, host-based: off
+    assert policy.move("password", 0)
+    assert policy.to_lines() == [
+        "PreferredAuthentications "
+        "password,gssapi-with-mic,hostbased,publickey,keyboard-interactive",
+    ]
+
+
+def test_check_then_uncheck_keeps_a_method_that_was_listed():
+    # Review: the undo took password out of the order because an order
+    # edit (the move) was pending; only checking's own insertion goes.
+    policy = _host(["PreferredAuthentications publickey,password,keyboard-interactive",
+                    "PasswordAuthentication no"])
+    assert policy.move("keyboard-interactive", 0)
+    assert policy.order == ["keyboard-interactive", "password", "publickey"]
+    assert policy.set_tried("password", True)
+    assert policy.set_tried("password", False)
+    assert policy.order == ["keyboard-interactive", "password", "publickey"]
+    assert "PasswordAuthentication no" in policy.to_lines()
+
+
+def test_a_row_says_when_an_earlier_setting_overrules_its_checkbox():
+    # Review: an earlier Host * turns password off; this block turns it on.
+    policy = _host(["PasswordAuthentication yes"])
+    policy.earlier = {"passwordauthentication": "no"}
+    assert policy.shown_checked("password") is True
+    assert "password" not in policy.will_try()
+    assert policy.overruled("password") is True
+    assert method_caption("", False, True) == (
+        "Checked, but not tried: an earlier setting turns it off"
+    )
+    # And the other way: Settings force an order that lists it.
+    policy = _host(["PreferredAuthentications publickey"])
+    policy.forced = {"preferredauthentications": "publickey,password"}
+    assert policy.shown_checked("password") is False
+    assert policy.overruled("password") is False
+    assert policy.overruled("publickey") is None
+
+
+def test_move_to_top_passes_switched_off_methods_when_already_first_tried():
+    policy = _host([], dict(SSH_G, gssapiauthentication="no"))
+    assert policy.checked()[0] == "publickey"
+    assert policy.move("publickey", 0)
+    assert policy.to_lines() == [
+        "PreferredAuthentications "
+        "publickey,gssapi-with-mic,hostbased,keyboard-interactive,password",
+    ]
+    assert not policy.move("publickey", 0)   # already first in the line

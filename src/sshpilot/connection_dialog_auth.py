@@ -20,8 +20,9 @@ not off, so one checkbox per row stands for both: checked means tried.
 * Unchecking takes the method out of the order, or, when only the block's
   own ``yes`` line turns it on, removes that line. It never writes ``no``.
 
-The header says what will be tried, including what an earlier block or
-Settings decide.
+The section's header shows the order set here; the "OpenSSH will try"
+line below the list shows what will be tried, including what an earlier
+block or Settings decide.
 
 Saving without an edit writes the lines back exactly as authored. An edit
 of the order writes the checked methods as one ``PreferredAuthentications``
@@ -173,6 +174,9 @@ class AuthPolicy:
     # Switches checking turned on, as they were before (method -> its
     # value, authored text and ignored copies), so unchecking undoes them.
     _switch_before: Dict[str, tuple] = field(default_factory=dict)
+    # Methods checking added to the order, so unchecking takes back only
+    # what checking put there.
+    _listed_by_check: set = field(default_factory=set)
 
     # -- loading -------------------------------------------------------------
 
@@ -469,10 +473,11 @@ class AuthPolicy:
                 # Checking turned it on: unchecking puts the line back.
                 self._restore_switch(method)
                 if not self._is_checked(method):
-                    if self.edited and method in self.order:
-                        # Checking may have listed it too: take that back
-                        # (back to the methods checked before restores the
-                        # authored order line).
+                    if method in self._listed_by_check:
+                        # Checking listed it too: take that back (back to
+                        # the methods checked before restores the authored
+                        # order line). A method that was listed stays.
+                        self._listed_by_check.discard(method)
                         self.order = [m for m in self.order if m != method]
                         self._end_edit()
                     return True
@@ -483,6 +488,7 @@ class AuthPolicy:
                 # stops it with no order line.
                 self.set_switch(method, None)
                 return True
+            self._listed_by_check.discard(method)
             self._begin_edit()
             self.order = [m for m in self.order if m != method]
             self._end_edit()
@@ -496,8 +502,22 @@ class AuthPolicy:
         if not self.in_order(method):
             self._begin_edit()
             self.order.append(method)
+            self._listed_by_check.add(method)
             self._end_edit()
         return True
+
+    def overruled(self, method: str) -> Optional[bool]:
+        """The checkbox is not what OpenSSH does, because an earlier block
+        or Settings decide: True when checked but not tried, False when
+        unchecked but tried, None when they agree or it is not known."""
+        checked = self.shown_checked(method)
+        will_try = self.will_try()
+        if checked is None or will_try is None or self.standalone:
+            return None
+        tried = method in will_try
+        if checked == tried:
+            return None
+        return checked
 
     def _inherited_switch(self, method: str) -> Optional[bool]:
         """What *method*'s switch would be without this block's own line."""
@@ -581,16 +601,39 @@ class AuthPolicy:
         rest = [m for m in checked if m != method]
         index = max(0, min(index, len(rest)))
         rest.insert(index, method)
-        if rest == checked:
+        # Already first among the tried ones, "Move to top" may still pass
+        # switched-off methods ahead of it in the line.
+        hop_only = rest == checked
+        if hop_only and not self._passes_switched_off(method, index):
             return False
         self._begin_edit()
         # Fill the checked methods' places in turn; unknown tokens and
         # listed methods that are switched off stay put.
         places = set(checked)
         queue = iter(rest)
-        self.order = [next(queue) if m in places else m for m in self.order]
-        self._end_edit()
+        order = [next(queue) if m in places else m for m in self.order]
+        # The moved method also passes switched-off methods right before
+        # it: "Move to top" puts it first in the line, so turning one of
+        # them on later does not put that one ahead of it.
+        at = order.index(method)
+        while at > 0 and order[at - 1] in METHODS and order[at - 1] not in places:
+            order[at - 1], order[at] = order[at], order[at - 1]
+            at -= 1
+        self.order = order
+        if not hop_only:
+            # Back to the methods checked before restores the authored line;
+            # a move past switched-off methods alone changes only the line.
+            self._end_edit()
         return True
+
+    def _passes_switched_off(self, method: str, index: int) -> bool:
+        """Moving *method* to the top passes switched-off methods listed
+        ahead of it, though it is already the first one tried."""
+        if index != 0:
+            return False
+        order = self._first_listed()
+        at = order.index(method) if method in order else 0
+        return at > 0 and order[at - 1] in METHODS and not self._is_checked(order[at - 1])
 
     def move_by(self, method: str, delta: int) -> bool:
         checked = self.checked()
@@ -661,15 +704,56 @@ def join_extra(other: str, policy_lines: Iterable[str]) -> str:
 _DRAG_PREFIX = "sshpilot-auth-method:"
 
 
-def restriction_caption(value: str, profile: bool) -> str:
-    """A method row's caption: the authored value of a switch that is on
-    with a restriction (e.g. host-bound), so it is not hidden; else none.
-    The checkbox says whether the method is tried."""
+def method_caption(value: str, profile: bool, overruled: Optional[bool] = None) -> str:
+    """A method row's caption; empty when the checkbox says it all.
+
+    ``overruled`` (see :meth:`AuthPolicy.overruled`): an earlier block or
+    Settings make OpenSSH do other than the checkbox says, which the row
+    must state. Else the authored value of a switch that is on with a
+    restriction (e.g. host-bound), so it is not hidden.
+    """
+    if overruled is True:
+        return _("Checked, but not tried: an earlier setting turns it off")
+    if overruled is False:
+        return _("Unchecked, but tried: an earlier setting decides")
     if not value:
         return ""
     # {value} is the authored value, e.g. host-bound.
     return (_("Enabled in this profile ({value})") if profile
             else _("Enabled for this host ({value})")).format(value=value)
+
+
+_preview_css_installed = False
+
+
+def _install_preview_css() -> None:
+    """Flat styling for the "OpenSSH will try" preview, once per display."""
+    global _preview_css_installed
+    if _preview_css_installed:
+        return
+    from gi.repository import Gdk, Gtk
+
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(b"""
+list.auth-order-preview-list,
+list.auth-order-preview-list > row.auth-order-preview,
+list.auth-order-preview-list > row.auth-order-preview:hover {
+  background: transparent;
+  box-shadow: none;
+}
+row.auth-order-preview,
+row.auth-order-preview > box.header {
+  padding-left: 0; padding-right: 0; margin-left: 0; margin-right: 0;
+}
+row.auth-order-preview .subtitle { font-family: monospace; }
+""")
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _preview_css_installed = True
 
 
 class AuthPolicyGroup:
@@ -680,9 +764,10 @@ class AuthPolicyGroup:
     ``group``      the PreferencesGroup to place in the page;
     ``rows``       method -> its ``Adw.ActionRow`` (``row._check`` is the box,
                    ``row._actions`` its menu: ``up``/``down``/``top``);
-    ``order_row``  the "Authentication methods" expander: its subtitle says
-                   what OpenSSH will try, and it is marked when an earlier
-                   block decides the order.
+    ``order_row``  the "Authentication methods" expander: its subtitle is
+                   the order set here, and it is marked when an earlier
+                   block decides the order;
+    ``effective_row`` the "OpenSSH will try" preview below the list.
     """
 
     @classmethod
@@ -748,6 +833,25 @@ class AuthPolicyGroup:
 
         self.extra_row = Adw.ActionRow()
         self.extra_row.set_activatable(False)
+
+        # Below the list, in a list of its own (a group places its own rows
+        # ahead of any other child): what OpenSSH will try, all blocks and
+        # Settings counted. A read-only preview, not a setting: no card, the
+        # small dim "property" title above it, the methods in monospace.
+        _install_preview_css()
+        self.effective_row = Adw.ActionRow(title=_("OpenSSH will try:"))
+        self.effective_row.set_activatable(False)
+        self.effective_row.set_subtitle_selectable(True)
+        self.effective_row.add_css_class("property")
+        self.effective_row.add_css_class("auth-order-preview")
+        preview = Gtk.ListBox()
+        preview.add_css_class("auth-order-preview-list")
+        preview.set_selection_mode(Gtk.SelectionMode.NONE)
+        preview.set_margin_top(6)
+        preview.append(self.effective_row)
+        # A profile is not one host: there is no single order in force.
+        preview.set_visible(not self.profile)
+        self.group.add(preview)
 
     def _make_row(self, method: str):
         from gi.repository import Adw, Gdk, Gio, GObject, Gtk
@@ -971,21 +1075,29 @@ class AuthPolicyGroup:
                     _("Use authentication order set by OpenSSH configuration")
                 )
             )
-            # A profile is not one host: no order is in force, so its
-            # header lists the methods it checks and does not disable.
-            will_try = (
-                [m for m in policy.shown_order()
-                 if m not in METHODS or policy.own_switch(m) is not False]
-                if self.profile else policy.will_try()
-            )
-            if will_try is None:
+            # The header: the order this block (or profile) sets, as the
+            # checked rows show it. The preview below: what OpenSSH will
+            # try, earlier blocks and Settings counted.
+            checked = set(policy.checked())
+            if not policy.order_known():
                 self.order_row.set_subtitle(
                     _("Shown once OpenSSH has read the configuration.")
                 )
-            elif not will_try:
-                self.order_row.set_subtitle(_("No method: the login cannot succeed."))
             else:
-                self.order_row.set_subtitle(", ".join(will_try))
+                self.order_row.set_subtitle(", ".join(
+                    m for m in policy._first_listed() if m not in METHODS or m in checked
+                ))
+            will_try = policy.will_try()
+            if will_try is None:
+                self.effective_row.set_subtitle(
+                    _("Shown once OpenSSH has read the configuration.")
+                )
+            elif not will_try:
+                self.effective_row.set_subtitle(
+                    _("No method: the login cannot succeed.")
+                )
+            else:
+                self.effective_row.set_subtitle(", ".join(will_try))
         finally:
             self._syncing = False
 
@@ -1005,9 +1117,14 @@ class AuthPolicyGroup:
         index = checked.index(method) if method in checked else -1
         actions.lookup_action("up").set_enabled(movable and index > 0)
         actions.lookup_action("down").set_enabled(movable and index < len(checked) - 1)
-        actions.lookup_action("top").set_enabled(movable and index > 0)
-        row.set_subtitle(restriction_caption(
-            self.policy.restriction(method), bool(self.profile)
+        # Also first among the tried ones when switched-off methods are
+        # listed ahead of it: "Move to top" puts it first in the line.
+        actions.lookup_action("top").set_enabled(movable and (
+            index > 0 or self.policy._passes_switched_off(method, 0)
+        ))
+        row.set_subtitle(method_caption(
+            self.policy.restriction(method), bool(self.profile),
+            self.policy.overruled(method),
         ))
 
     def _show_switch(self, row, method: str) -> None:

@@ -267,6 +267,10 @@ def test_undoing_an_order_edit_writes_the_authored_lines(start):
         before = policy.checked()
         if method not in before or not policy.move(method, index):
             continue
+        if policy.checked() == before:
+            # Only passed switched-off methods (Move to top): nothing to undo
+            # among the tried ones.
+            continue
         assert policy.move(method, before.index(method))
         assert sorted(policy.to_lines()) == sorted(STARTS[start]), (method, index)
 

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 07:42+0330\n"
+"POT-Creation-Date: 2026-11-24 08:02+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -119,7 +119,7 @@ msgstr "اتصالات باز شود؟"
 #: src/sshpilot/bitwarden_setup.py:852 src/sshpilot/bitwarden_setup.py:956
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
-#: src/sshpilot/connection_dialog_auth.py:848
+#: src/sshpilot/connection_dialog_auth.py:952
 #: src/sshpilot/connection_dialog_port_forwarding.py:247
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
@@ -1763,7 +1763,7 @@ msgstr "اضافه شد"
 
 #: src/sshpilot/connection_dialog.py:1187
 #: src/sshpilot/connection_dialog.py:1337
-#: src/sshpilot/connection_dialog_auth.py:849
+#: src/sshpilot/connection_dialog_auth.py:953
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:360
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:489
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:207
@@ -1965,7 +1965,7 @@ msgstr "بارگیری کلیدها در ssh-agent در اولین استفاد�
 #. --- Password / password-only options ---
 #. Stored in secure storage, never in the connection data.
 #: src/sshpilot/connection_dialog.py:3402
-#: src/sshpilot/connection_dialog_auth.py:108
+#: src/sshpilot/connection_dialog_auth.py:109
 #: src/sshpilot/gtk/login_profile_messages.py:50
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:51
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:320
@@ -2645,34 +2645,42 @@ msgstr "_تلاش دوباره"
 msgid "_Close"
 msgstr "_ببند"
 
-#: src/sshpilot/connection_dialog_auth.py:104
+#: src/sshpilot/connection_dialog_auth.py:105
 msgid "Kerberos (GSSAPI)"
 msgstr "کربروس (GSSAPI)"
 
-#: src/sshpilot/connection_dialog_auth.py:105
+#: src/sshpilot/connection_dialog_auth.py:106
 msgid "Host-based"
 msgstr "مبتنی بر میزبان"
 
-#: src/sshpilot/connection_dialog_auth.py:106
+#: src/sshpilot/connection_dialog_auth.py:107
 msgid "Keys (publickey)"
 msgstr "کلیدها (publickey)"
 
-#: src/sshpilot/connection_dialog_auth.py:107
+#: src/sshpilot/connection_dialog_auth.py:108
 msgid "Keyboard-interactive (PAM, one-time codes)"
 msgstr "تعاملی با صفحه‌کلید (PAM، کدهای یک‌بارمصرف)"
 
+#: src/sshpilot/connection_dialog_auth.py:716
+msgid "Checked, but not tried: an earlier setting turns it off"
+msgstr "تیک خورده، اما امتحان نمی‌شود: یک تنظیم قبلی آن را خاموش می‌کند"
+
+#: src/sshpilot/connection_dialog_auth.py:718
+msgid "Unchecked, but tried: an earlier setting decides"
+msgstr "تیک نخورده، اما امتحان می‌شود: یک تنظیم قبلی تصمیم می‌گیرد"
+
 #. {value} is the authored value, e.g. host-bound.
-#: src/sshpilot/connection_dialog_auth.py:671
+#: src/sshpilot/connection_dialog_auth.py:722
 #, python-brace-format
 msgid "Enabled in this profile ({value})"
 msgstr "در این نمایه فعال است ({value})"
 
-#: src/sshpilot/connection_dialog_auth.py:672
+#: src/sshpilot/connection_dialog_auth.py:723
 #, python-brace-format
 msgid "Enabled for this host ({value})"
 msgstr "برای این میزبان فعال است ({value})"
 
-#: src/sshpilot/connection_dialog_auth.py:719
+#: src/sshpilot/connection_dialog_auth.py:804
 msgid ""
 "Lines this profile sets replace a linked connection's own; what it leaves "
 "unset stays the connection's. Methods are tried from the top; unchecked "
@@ -2682,55 +2690,59 @@ msgstr ""
 "آنچه تنظیم نشده برای خود اتصال می‌ماند. روش‌ها از بالا به پایین امتحان می‌شوند؛ "
 "روش‌های علامت‌نخورده کنار گذاشته می‌شوند."
 
-#: src/sshpilot/connection_dialog_auth.py:723
+#: src/sshpilot/connection_dialog_auth.py:808
 msgid "Methods are tried from the top. Unchecked methods are left out."
 msgstr ""
 "روش‌ها از بالا به پایین امتحان می‌شوند. روش‌های علامت‌نخورده کنار گذاشته می‌شوند."
 
 #. One row that folds the method list away: most hosts never change
 #. it, so the header says what will be tried and the rows wait inside.
-#: src/sshpilot/connection_dialog_auth.py:728
+#: src/sshpilot/connection_dialog_auth.py:813
 msgid "Authentication methods"
 msgstr "روش‌های احراز هویت"
 
-#: src/sshpilot/connection_dialog_auth.py:732 src/sshpilot/preferences.py:1738
+#: src/sshpilot/connection_dialog_auth.py:817 src/sshpilot/preferences.py:1738
 #: src/sshpilot/preferences.py:3058 src/sshpilot/preferences.py:6341
 msgid "Reset"
 msgstr "بازنشانی کنید"
 
-#: src/sshpilot/connection_dialog_auth.py:736
-#: src/sshpilot/connection_dialog_auth.py:970
+#: src/sshpilot/connection_dialog_auth.py:821
+#: src/sshpilot/connection_dialog_auth.py:1074
 msgid "Leave the order to each linked connection"
 msgstr "ترتیب را به هر اتصال پیوندشده واگذار کن"
 
-#: src/sshpilot/connection_dialog_auth.py:737
-#: src/sshpilot/connection_dialog_auth.py:971
+#: src/sshpilot/connection_dialog_auth.py:822
+#: src/sshpilot/connection_dialog_auth.py:1075
 msgid "Use authentication order set by OpenSSH configuration"
 msgstr "استفاده از ترتیب احراز هویت تعیین‌شده در پیکربندی OpenSSH"
 
-#: src/sshpilot/connection_dialog_auth.py:787
+#: src/sshpilot/connection_dialog_auth.py:842
+msgid "OpenSSH will try:"
+msgstr "OpenSSH امتحان خواهد کرد:"
+
+#: src/sshpilot/connection_dialog_auth.py:891
 #: src/sshpilot/advanced_config_rules_view.py:242
 msgid "Move up"
 msgstr "انتقال به بالا"
 
-#: src/sshpilot/connection_dialog_auth.py:788
+#: src/sshpilot/connection_dialog_auth.py:892
 #: src/sshpilot/advanced_config_rules_view.py:243
 msgid "Move down"
 msgstr "انتقال به پایین"
 
-#: src/sshpilot/connection_dialog_auth.py:789
+#: src/sshpilot/connection_dialog_auth.py:893
 msgid "Move to top"
 msgstr "انتقال به ابتدا"
 
-#: src/sshpilot/connection_dialog_auth.py:793
+#: src/sshpilot/connection_dialog_auth.py:897
 msgid "Method options"
 msgstr "گزینه‌های روش"
 
-#: src/sshpilot/connection_dialog_auth.py:841
+#: src/sshpilot/connection_dialog_auth.py:945
 msgid "Remove the custom authentication order?"
 msgstr "ترتیب سفارشی احراز هویت حذف شود؟"
 
-#: src/sshpilot/connection_dialog_auth.py:843
+#: src/sshpilot/connection_dialog_auth.py:947
 msgid ""
 "This will remove your custom authentication order from the SSH configuration "
 "when you save. The host then uses the order it inherits."
@@ -2738,29 +2750,30 @@ msgstr ""
 "با ذخیره، ترتیب سفارشی احراز هویت شما از پیکربندی SSH حذف می‌شود. سپس میزبان "
 "از ترتیب به‌ارث‌رسیده استفاده می‌کند."
 
-#: src/sshpilot/connection_dialog_auth.py:945
+#: src/sshpilot/connection_dialog_auth.py:1049
 msgid "Not known to this dialog; kept as written."
 msgstr "برای این پنجره ناشناخته است؛ همان‌طور که نوشته شده نگه داشته می‌شود."
 
-#: src/sshpilot/connection_dialog_auth.py:983
-#: src/sshpilot/connection_dialog_auth.py:1027
+#: src/sshpilot/connection_dialog_auth.py:1084
+#: src/sshpilot/connection_dialog_auth.py:1093
+#: src/sshpilot/connection_dialog_auth.py:1140
 msgid "Shown once OpenSSH has read the configuration."
 msgstr "پس از خواندن پیکربندی توسط OpenSSH نشان داده می‌شود."
 
-#: src/sshpilot/connection_dialog_auth.py:986
+#: src/sshpilot/connection_dialog_auth.py:1097
 msgid "No method: the login cannot succeed."
 msgstr "هیچ روشی وجود ندارد: ورود نمی‌تواند موفق شود."
 
-#: src/sshpilot/connection_dialog_auth.py:1031
+#: src/sshpilot/connection_dialog_auth.py:1144
 msgid "At least one method must stay checked."
 msgstr "دست‌کم یک روش باید علامت‌خورده بماند."
 
 #. Listed in the order, but its switch is off.
-#: src/sshpilot/connection_dialog_auth.py:1034
+#: src/sshpilot/connection_dialog_auth.py:1147
 msgid "Not tried: it is turned off. Check it to turn it on."
 msgstr "امتحان نمی‌شود: خاموش است. برای روشن کردن، آن را تیک بزنید."
 
-#: src/sshpilot/connection_dialog_auth.py:1036
+#: src/sshpilot/connection_dialog_auth.py:1149
 msgid "Not tried. Check it to add it at the end of the login order."
 msgstr "امتحان نمی‌شود. برای افزودن آن به انتهای ترتیب ورود، علامتش بزنید."
 
@@ -18341,6 +18354,10 @@ msgstr "هیچ پرونده‌ای مطابقت ندارد."
 msgid "No other file is read for this target."
 msgstr "برای این هدف پروندهٔ دیگری خوانده نمی‌شود."
 
+#, python-brace-format
+#~ msgid "This profile tries: {methods}"
+#~ msgstr "این نمایه امتحان می‌کند: {methods}"
+
 #~ msgid "Disabled in this profile, so it is skipped"
 #~ msgstr "در این نمایه غیرفعال است، پس از آن صرف‌نظر می‌شود"
 
@@ -18452,9 +18469,6 @@ msgstr "برای این هدف پروندهٔ دیگری خوانده نمی‌�
 #~ msgstr ""
 #~ "حذف ترتیب این میزبان و استفاده از ترتیب تعیین‌شده در فایل‌های پیکربندی SSH "
 #~ "شما"
-
-#~ msgid "OpenSSH will try:"
-#~ msgstr "OpenSSH امتحان می‌کند:"
 
 #~ msgid "Reset switch"
 #~ msgstr "بازنشانی وضعیت"
