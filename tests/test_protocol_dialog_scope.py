@@ -161,7 +161,7 @@ def test_plugin_fields_join_the_first_group_without_ssh_rows():
     assert dlg._host_group.get_title() == "Host"
     # Host, port, user: the order the plugin fields above take too.
     assert _visible_row_titles(dlg._host_group) == [
-        "Protocol", "Name (optional)", "SSH Alias (spaces separate several hosts)",
+        "Protocol", "Name (optional)", "SSH Alias (no whitespace allowed)",
         "Hostname / IP address", "Port", "Username",
     ]
 
@@ -480,22 +480,30 @@ def _pump_events(count=30):
 
 
 @pytest.mark.integration
-def test_several_names_say_how_many_connections_they_create():
+def test_several_names_are_handed_to_advanced_configuration_as_one_host_line():
     _require_gtk()
     dlg = _dialog()
+    opened = []
+    dlg.parent_window.open_advanced_config = lambda **kw: opened.append(kw) or object()
+    closed = []
+    dlg.close = lambda: closed.append(True)
     row = dlg.host_line_offer_row
     assert not row.get_visible()
     dlg.nickname_row.set_text("web1 web2 web3")
+    dlg.hostname_row.set_text("10.0.0.5")
     _pump_events()
-    assert row.get_visible() and not dlg.host_line_offer_button.get_visible()
-    assert "3" in row.get_title() and "web1, web2, web3" in row.get_title()
-    assert "space" in row.get_subtitle().lower()
-    assert not dlg.display_name_row.get_sensitive()
-    assert dlg._typed_primary_alias() == "web1"
-    assert dlg._typed_shared_names() == ["web2", "web3"]
+    assert row.get_visible() and dlg.host_line_offer_button.get_visible()
+    assert row.get_title() == "A connection has one name"
+    assert dlg._validate_all_required_for_save() is dlg.nickname_row   # not saved here
+    assert dlg.display_name_row.get_sensitive()
+    dlg.host_line_offer_button.emit("clicked")
+    assert opened and opened[0]["new_block"] == (
+        "web1 web2 web3", [("HostName", "10.0.0.5")],
+    )
+    assert closed
     dlg.nickname_row.set_text("web1")
     _pump_events()
-    assert not row.get_visible() and dlg.display_name_row.get_sensitive()
+    assert not row.get_visible()
 
 
 @pytest.mark.integration
@@ -536,7 +544,6 @@ def test_a_saved_connection_keeps_one_name_and_is_sent_to_its_block():
     _pump_events()
     assert dlg.host_line_offer_row.get_visible()
     assert dlg.host_line_offer_button.get_visible()
-    assert dlg._typed_shared_names() == []
     dlg.host_line_offer_button.emit("clicked")
     assert opened and opened[0]["host"] == "web1" and "new_block" not in opened[0]
 

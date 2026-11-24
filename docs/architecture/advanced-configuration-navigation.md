@@ -23,10 +23,10 @@ window.open_advanced_config(
 
 `new_block` begins a block instead of showing a place: a new `Host` block with
 that line and those options is added to the draft, selected and left unsaved
-(`AdvancedConfigWindow.start_block`). The connection editor passes the pattern
-typed where a connection's name goes, with the host, user and port typed
-beside it: a pattern is a rule for several hosts and is authored here, not
-saved as a connection.
+(`AdvancedConfigWindow.start_block`). The connection editor passes a pattern,
+or several names, typed where a connection's name goes, with the host, user
+and port typed beside it: a rule for several hosts and a Host line of several
+names are authored here, not saved from the connection editor.
 
 `MainWindow.open_advanced_config` returns the window, or `None` when it could
 not be opened (no daemon, or one without draft evaluation: a toast says so).

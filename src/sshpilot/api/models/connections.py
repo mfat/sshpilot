@@ -1039,26 +1039,9 @@ class CreateConnectionRequest:
     display_name: str = ""
     config_patch: Mapping[str, Any] = field(default_factory=dict)
     plugin_data: Mapping[str, Any] = field(default_factory=dict)
-    #: More plain names for the new SSH ``Host`` line (``Host web1 web2``):
-    #: each becomes a connection of its own that shares the block. SSH only;
-    #: the result of the create is about ``nickname``.
-    shared_nicknames: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         validate_ssh_host_alias(self.nickname)
-        if isinstance(self.shared_nicknames, str):
-            raise TypeError("shared connection nicknames must be a sequence")
-        object.__setattr__(self, "shared_nicknames", tuple(self.shared_nicknames))
-        seen = {self.nickname.strip()}
-        for name in self.shared_nicknames:
-            validate_ssh_host_alias(name, "shared connection nickname")
-            if any(char.isspace() for char in name):
-                raise ValueError("shared connection nickname must be one word")
-            if name in seen:
-                raise ValueError("connection nicknames must be distinct")
-            seen.add(name)
-        if self.shared_nicknames and self.protocol != "ssh":
-            raise ValueError("only an SSH connection can share its Host line")
         if type(self.hostname) is not str:
             raise TypeError("connection hostname must be a string")
         if type(self.username) is not str:

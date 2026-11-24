@@ -3904,13 +3904,6 @@
           "required": false,
           "sensitive": false,
           "type": "Mapping[str, Any]"
-        },
-        {
-          "default": [],
-          "name": "shared_nicknames",
-          "required": false,
-          "sensitive": false,
-          "type": "tuple[str, ...]"
         }
       ],
       "status": "Implemented"

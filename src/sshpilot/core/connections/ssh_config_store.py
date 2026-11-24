@@ -103,33 +103,6 @@ def _refuse_host_pattern(name: str) -> None:
         )
 
 
-def _shared_nicknames(payload: Mapping[str, Any], nickname: str) -> List[str]:
-    """The other names a new block is to declare, checked.
-
-    Plain names only, each once and none the connection's own: every one of
-    them becomes a connection that shares the block.
-    """
-    raw = payload.get("shared_nicknames") or ()
-    if isinstance(raw, str):
-        raise CoreError(ErrorCode.VALIDATION_ERROR, "Shared names must be a list")
-    names: List[str] = []
-    for item in raw:
-        name = str(item or "").strip()
-        if not name or any(char.isspace() for char in name):
-            raise CoreError(
-                ErrorCode.VALIDATION_ERROR,
-                "A shared connection name must be one word",
-            )
-        _refuse_host_pattern(name)
-        if name == nickname or name in names:
-            raise CoreError(
-                ErrorCode.VALIDATION_ERROR,
-                "A name is given more than once",
-            )
-        names.append(name)
-    return names
-
-
 # ---------------------------------------------------------------------------
 # Hardened atomic writer
 # ---------------------------------------------------------------------------
@@ -1014,11 +987,9 @@ class SshConfigStore:
         if not nickname:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "A nickname is required")
         _refuse_host_pattern(nickname)
-        payload["shared_nicknames"] = _shared_nicknames(payload, nickname)
-        for name in [nickname, *payload["shared_nicknames"]]:
-            if any(record.id == name for record in config.connections):
-                raise _already_exists_error()
-            self._ensure_authored_alias_available(name)
+        if any(record.id == nickname for record in config.connections):
+            raise _already_exists_error()
+        self._ensure_authored_alias_available(nickname)
         expected = self._root_path.read_bytes() if self._root_path.exists() else None
         if self._root_path.exists():
             doc = SSHConfigDocument.parse_file(str(self._root_path))
@@ -1400,11 +1371,9 @@ class SshConfigStore:
                 "A nickname is required",
             )
         _refuse_host_pattern(nickname)
-        payload["shared_nicknames"] = _shared_nicknames(payload, nickname)
-        for name in [nickname, *payload["shared_nicknames"]]:
-            if any(record.id == name for record in config.connections):
-                raise _already_exists_error()
-            self._ensure_authored_alias_available(name)
+        if any(record.id == nickname for record in config.connections):
+            raise _already_exists_error()
+        self._ensure_authored_alias_available(nickname)
 
         expected_revision = config.root_revision
         expected_bytes = (

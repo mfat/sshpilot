@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 17:54+0330\n"
+"POT-Creation-Date: 2026-11-24 20:25+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -194,7 +194,7 @@ msgid "Split View — {name}"
 msgstr "Vue scindée — {name}"
 
 #: src/sshpilot/actions.py:519 src/sshpilot/actions.py:671
-#: src/sshpilot/connection_dialog.py:6173 src/sshpilot/file_manager/pane.py:57
+#: src/sshpilot/connection_dialog.py:6170 src/sshpilot/file_manager/pane.py:57
 #: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1216
 #: src/sshpilot/terminal_manager.py:1179 src/sshpilot/text_editor.py:1840
 #: src/sshpilot/window.py:6697 src/sshpilot/window.py:8520
@@ -218,7 +218,7 @@ msgstr ""
 "{error}"
 
 #: src/sshpilot/actions.py:522 src/sshpilot/actions.py:916
-#: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:6176
+#: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:6173
 #: src/sshpilot/daemon_quit_policy.py:535 src/sshpilot/file_manager/pane.py:58
 #: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2730
 #: src/sshpilot/file_manager/pane.py:3142
@@ -1882,7 +1882,7 @@ msgid "Variable holding the socket path, e.g. $SSH_AUTH_SOCK"
 msgstr "Variable contenant le chemin du socket, p. ex. $SSH_AUTH_SOCK"
 
 #: src/sshpilot/connection_dialog.py:2950
-#: src/sshpilot/connection_dialog.py:5927
+#: src/sshpilot/connection_dialog.py:5924
 msgid "Secure storage is unavailable."
 msgstr "Le stockage sécurisé est indisponible."
 
@@ -2095,7 +2095,6 @@ msgstr "Nom (facultatif)"
 
 #: src/sshpilot/connection_dialog.py:3804
 #: src/sshpilot/connection_dialog.py:4864
-#: src/sshpilot/connection_dialog_host_names.py:198
 msgid "Shown in the connection list. Leave empty to use the SSH alias."
 msgstr ""
 "Affiché dans la liste des connexions. Laissez ce champ vide pour utiliser "
@@ -2596,8 +2595,8 @@ msgid "{field} is required"
 msgstr "Le champ {field} est obligatoire"
 
 #: src/sshpilot/connection_dialog.py:5493
-#: src/sshpilot/connection_dialog.py:5892
-#: src/sshpilot/connection_dialog.py:6093
+#: src/sshpilot/connection_dialog.py:5889
+#: src/sshpilot/connection_dialog.py:6090
 msgid "The connection settings could not be saved."
 msgstr "Impossible d’enregistrer les paramètres de connexion."
 
@@ -2631,27 +2630,27 @@ msgstr ""
 msgid "Please enter a nickname for this connection"
 msgstr "Saisissez un surnom pour cette connexion"
 
-#: src/sshpilot/connection_dialog.py:5761
+#: src/sshpilot/connection_dialog.py:5758
 #: src/sshpilot/login_profile_dialogs.py:449
 msgid "Please correct the invalid key passphrase."
 msgstr "Corrigez la phrase de passe de la clé."
 
-#: src/sshpilot/connection_dialog.py:5854
+#: src/sshpilot/connection_dialog.py:5851
 msgid "The secure storage backend could not be unlocked."
 msgstr "Impossible de déverrouiller le gestionnaire de stockage sécurisé."
 
-#: src/sshpilot/connection_dialog.py:5937
+#: src/sshpilot/connection_dialog.py:5934
 #, python-brace-format
 msgid "Saving to {backend}"
 msgstr "Enregistrement dans {backend}"
 
-#: src/sshpilot/connection_dialog.py:5938
+#: src/sshpilot/connection_dialog.py:5935
 msgid "Saving passwords and passphrases to secure storage…"
 msgstr ""
 "Enregistrement des mots de passe et phrases de passe dans le stockage "
 "sécurisé…"
 
-#: src/sshpilot/connection_dialog.py:6022
+#: src/sshpilot/connection_dialog.py:6019
 msgid ""
 "The connection settings were saved, but secure storage did not answer in "
 "time. The password may have been stored anyway — reopen the connection to "
@@ -2662,7 +2661,7 @@ msgstr ""
 "enregistré — rouvrez la connexion pour le vérifier avant d’enregistrer de "
 "nouveau la connexion."
 
-#: src/sshpilot/connection_dialog.py:6104
+#: src/sshpilot/connection_dialog.py:6101
 msgid ""
 "The connection settings were saved, but secure storage rejected a password "
 "or passphrase. Please try saving again."
@@ -2670,7 +2669,7 @@ msgstr ""
 "Les paramètres de connexion ont été enregistrés, mais le stockage sécurisé a "
 "refusé un mot de passe ou une phrase de passe. Réessayez d’enregistrer."
 
-#: src/sshpilot/connection_dialog.py:6196
+#: src/sshpilot/connection_dialog.py:6193
 msgid ""
 "The connection could not be loaded from the service. You can retry or close "
 "the editor."
@@ -2678,7 +2677,7 @@ msgstr ""
 "Impossible de charger la connexion depuis le service. Réessayez ou fermez "
 "l’éditeur."
 
-#: src/sshpilot/connection_dialog.py:6199
+#: src/sshpilot/connection_dialog.py:6196
 msgid ""
 "The connection could not be loaded from the service. Please close the editor "
 "and try again."
@@ -2686,15 +2685,15 @@ msgstr ""
 "Impossible de charger la connexion depuis le service. Fermez l’éditeur et "
 "réessayez."
 
-#: src/sshpilot/connection_dialog.py:6203
+#: src/sshpilot/connection_dialog.py:6200
 msgid "Could not load connection"
 msgstr "Impossible de charger la connexion"
 
-#: src/sshpilot/connection_dialog.py:6207
+#: src/sshpilot/connection_dialog.py:6204
 msgid "_Retry"
 msgstr "_Réessayer"
 
-#: src/sshpilot/connection_dialog.py:6212 src/sshpilot/window.py:2193
+#: src/sshpilot/connection_dialog.py:6209 src/sshpilot/window.py:2193
 msgid "_Close"
 msgstr "_Fermer"
 
@@ -2925,66 +2924,35 @@ msgid_plural "{n} connections"
 msgstr[0] "{n} connexion"
 msgstr[1] "{n} connexions"
 
-#: src/sshpilot/connection_dialog_host_names.py:73
+#: src/sshpilot/connection_dialog_host_names.py:72
 msgid "SSH Alias (no whitespace allowed)"
 msgstr "Alias SSH (espaces interdits)"
 
-#: src/sshpilot/connection_dialog_host_names.py:74
-msgid "SSH Alias (spaces separate several hosts)"
-msgstr "Alias SSH (les espaces séparent plusieurs hôtes)"
-
-#: src/sshpilot/connection_dialog_host_names.py:84
+#: src/sshpilot/connection_dialog_host_names.py:83
 msgid "Open Advanced Configuration"
 msgstr "Ouvrir la Configuration avancée"
 
-#: src/sshpilot/connection_dialog_host_names.py:124
-#: src/sshpilot/connection_dialog_host_names.py:171
+#: src/sshpilot/connection_dialog_host_names.py:115
+#: src/sshpilot/connection_dialog_host_names.py:128
 msgid "A pattern is not a connection"
 msgstr "Un motif n’est pas une connexion"
 
-#: src/sshpilot/connection_dialog_host_names.py:126
-#: src/sshpilot/connection_dialog_host_names.py:178
-msgid "A saved connection has one name"
-msgstr "Une connexion enregistrée n’a qu’un nom"
+#: src/sshpilot/connection_dialog_host_names.py:116
+#: src/sshpilot/connection_dialog_host_names.py:134
+msgid "A connection has one name"
+msgstr "Une connexion n’a qu’un nom"
 
-#: src/sshpilot/connection_dialog_host_names.py:128
-msgid "A name is given more than once"
-msgstr "Un nom est indiqué plusieurs fois"
-
-#: src/sshpilot/connection_dialog_host_names.py:136
-#, python-brace-format
-msgid "{count} connection sharing one Host block"
-msgid_plural "{count} connections sharing one Host block"
-msgstr[0] "{count} connexion partageant un bloc Host"
-msgstr[1] "{count} connexions partageant un bloc Host"
-
-#: src/sshpilot/connection_dialog_host_names.py:161
-#, python-brace-format
-msgid "This creates {count} connection: {names}"
-msgid_plural "This creates {count} connections: {names}"
-msgstr[0] "Ceci crée {count} connexion : {names}"
-msgstr[1] "Ceci crée {count} connexions : {names}"
-
-#: src/sshpilot/connection_dialog_host_names.py:166
-msgid ""
-"A space separates hosts. They share one Host block, so a change to one "
-"applies to all of them."
-msgstr "Une espace sépare les hôtes. Ils partagent un bloc Host : une modification de l’un s’applique à tous."
-
-#: src/sshpilot/connection_dialog_host_names.py:173
+#: src/sshpilot/connection_dialog_host_names.py:130
 msgid ""
 "It sets options for every host it matches. Create it as a block in Advanced "
 "Configuration."
-msgstr "Il définit des options pour chaque hôte auquel il correspond. Créez-le comme bloc dans la Configuration avancée."
+msgstr ""
+"Il définit des options pour chaque hôte auquel il correspond. Créez-le comme "
+"bloc dans la Configuration avancée."
 
-#: src/sshpilot/connection_dialog_host_names.py:180
-msgid ""
-"To give this block more hosts, edit its Host line in Advanced Configuration."
-msgstr "Pour donner d’autres hôtes à ce bloc, modifiez sa ligne Host dans la Configuration avancée."
-
-#: src/sshpilot/connection_dialog_host_names.py:194
-msgid "A name is for one connection. Name each one after saving."
-msgstr "Un nom vaut pour une seule connexion. Nommez chacune après l’enregistrement."
+#: src/sshpilot/connection_dialog_host_names.py:136
+msgid "To put several hosts on one Host line, use Advanced Configuration."
+msgstr "Pour mettre plusieurs hôtes sur une ligne Host, utilisez la Configuration avancée."
 
 #: src/sshpilot/connection_dialog_login_profile.py:44
 #: src/sshpilot/login_profile_dialogs.py:220
@@ -6443,7 +6411,9 @@ msgstr "Une connexion portant ce nom existe déjà. Choisissez un autre nom."
 msgid ""
 "A pattern is not a connection: it sets options for every host it matches. "
 "Create it as a block in Advanced Configuration."
-msgstr "Un motif n’est pas une connexion : il définit des options pour chaque hôte auquel il correspond. Créez-le comme bloc dans la Configuration avancée."
+msgstr ""
+"Un motif n’est pas une connexion : il définit des options pour chaque hôte "
+"auquel il correspond. Créez-le comme bloc dans la Configuration avancée."
 
 #: src/sshpilot/gtk/secret_status_messages.py:20
 #, python-brace-format
@@ -15278,18 +15248,18 @@ msgstr "• Vérifiez que le serveur est accessible"
 msgid "• Ensure you have proper permissions"
 msgstr "• Vérifiez que les permissions sont suffisantes"
 
-#: src/sshpilot/window.py:8874 src/sshpilot/window.py:9364
-#: src/sshpilot/window.py:9392
+#: src/sshpilot/window.py:8874 src/sshpilot/window.py:9360
+#: src/sshpilot/window.py:9370
 msgid "Saved, but tags/Wake-on-LAN settings could not be stored."
 msgstr ""
 "Connexion enregistrée, mais les étiquettes et les paramètres Wake-on-LAN "
 "n’ont pas pu l’être."
 
-#: src/sshpilot/window.py:8952 src/sshpilot/window.py:9657
+#: src/sshpilot/window.py:8952 src/sshpilot/window.py:9635
 msgid "Failed to save connection"
 msgstr "Échec de l’enregistrement de la connexion"
 
-#: src/sshpilot/window.py:9329
+#: src/sshpilot/window.py:9325
 msgid "Saved, but the login profile could not be applied."
 msgstr ""
 "Connexion enregistrée, mais le profil de connexion n’a pas pu être appliqué."
@@ -18819,6 +18789,36 @@ msgstr "Aucun fichier ne correspond."
 #: src/sshpilot/advanced_config_results_view.py:743
 msgid "No other file is read for this target."
 msgstr "Aucun autre fichier n’est lu pour cette cible."
+
+#~ msgid "SSH Alias (spaces separate several hosts)"
+#~ msgstr "Alias SSH (les espaces séparent plusieurs hôtes)"
+
+#~ msgid "A name is given more than once"
+#~ msgstr "Un nom est indiqué plusieurs fois"
+
+#, python-brace-format
+#~ msgid "{count} connection sharing one Host block"
+#~ msgid_plural "{count} connections sharing one Host block"
+#~ msgstr[0] "{count} connexion partageant un bloc Host"
+#~ msgstr[1] "{count} connexions partageant un bloc Host"
+
+#, python-brace-format
+#~ msgid "This creates {count} connection: {names}"
+#~ msgid_plural "This creates {count} connections: {names}"
+#~ msgstr[0] "Ceci crée {count} connexion : {names}"
+#~ msgstr[1] "Ceci crée {count} connexions : {names}"
+
+#~ msgid ""
+#~ "A space separates hosts. They share one Host block, so a change to one "
+#~ "applies to all of them."
+#~ msgstr ""
+#~ "Une espace sépare les hôtes. Ils partagent un bloc Host : une "
+#~ "modification de l’un s’applique à tous."
+
+#~ msgid "A name is for one connection. Name each one after saving."
+#~ msgstr ""
+#~ "Un nom vaut pour une seule connexion. Nommez chacune après "
+#~ "l’enregistrement."
 
 #~ msgid "Advanced SSH Configuration"
 #~ msgstr "Configuration SSH avancée"

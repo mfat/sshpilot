@@ -2162,8 +2162,6 @@ class ConnectionApplicationService:
             "protocol": request.protocol,
             "display_name": request.display_name,
         }
-        if request.shared_nicknames:
-            data["shared_nicknames"] = list(request.shared_nicknames)
         if request.config_patch:
             self._apply_config_patch(data, request.config_patch)
         if request.plugin_data:

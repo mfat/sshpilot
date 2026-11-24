@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 17:54+0330\n"
+"POT-Creation-Date: 2026-11-24 20:25+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -191,7 +191,7 @@ msgid "Split View — {name}"
 msgstr "分屏视图 — {name}"
 
 #: src/sshpilot/actions.py:519 src/sshpilot/actions.py:671
-#: src/sshpilot/connection_dialog.py:6173 src/sshpilot/file_manager/pane.py:57
+#: src/sshpilot/connection_dialog.py:6170 src/sshpilot/file_manager/pane.py:57
 #: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1216
 #: src/sshpilot/terminal_manager.py:1179 src/sshpilot/text_editor.py:1840
 #: src/sshpilot/window.py:6697 src/sshpilot/window.py:8520
@@ -215,7 +215,7 @@ msgstr ""
 "{error}"
 
 #: src/sshpilot/actions.py:522 src/sshpilot/actions.py:916
-#: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:6176
+#: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:6173
 #: src/sshpilot/daemon_quit_policy.py:535 src/sshpilot/file_manager/pane.py:58
 #: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2730
 #: src/sshpilot/file_manager/pane.py:3142
@@ -1815,7 +1815,7 @@ msgid "Variable holding the socket path, e.g. $SSH_AUTH_SOCK"
 msgstr "保存套接字路径的变量，例如 $SSH_AUTH_SOCK"
 
 #: src/sshpilot/connection_dialog.py:2950
-#: src/sshpilot/connection_dialog.py:5927
+#: src/sshpilot/connection_dialog.py:5924
 msgid "Secure storage is unavailable."
 msgstr "安全存储不可用。"
 
@@ -2025,7 +2025,6 @@ msgstr "命令（可选）"
 
 #: src/sshpilot/connection_dialog.py:3804
 #: src/sshpilot/connection_dialog.py:4864
-#: src/sshpilot/connection_dialog_host_names.py:198
 msgid "Shown in the connection list. Leave empty to use the SSH alias."
 msgstr "连接没有主机或 SSH 别名。"
 
@@ -2501,8 +2500,8 @@ msgid "{field} is required"
 msgstr "{field} 为必填项"
 
 #: src/sshpilot/connection_dialog.py:5493
-#: src/sshpilot/connection_dialog.py:5892
-#: src/sshpilot/connection_dialog.py:6093
+#: src/sshpilot/connection_dialog.py:5889
+#: src/sshpilot/connection_dialog.py:6090
 msgid "The connection settings could not be saved."
 msgstr "无法保存连接设置。"
 
@@ -2534,25 +2533,25 @@ msgstr "“额外选项”页面中有一个 SSH 选项无效。请修正或删�
 msgid "Please enter a nickname for this connection"
 msgstr "请输入此连接的别名"
 
-#: src/sshpilot/connection_dialog.py:5761
+#: src/sshpilot/connection_dialog.py:5758
 #: src/sshpilot/login_profile_dialogs.py:449
 msgid "Please correct the invalid key passphrase."
 msgstr "请更正无效的密钥口令。"
 
-#: src/sshpilot/connection_dialog.py:5854
+#: src/sshpilot/connection_dialog.py:5851
 msgid "The secure storage backend could not be unlocked."
 msgstr "无法解锁安全存储后端。"
 
-#: src/sshpilot/connection_dialog.py:5937
+#: src/sshpilot/connection_dialog.py:5934
 #, python-brace-format
 msgid "Saving to {backend}"
 msgstr "正在保存到 {backend}"
 
-#: src/sshpilot/connection_dialog.py:5938
+#: src/sshpilot/connection_dialog.py:5935
 msgid "Saving passwords and passphrases to secure storage…"
 msgstr "正在将密码和口令保存到安全存储…"
 
-#: src/sshpilot/connection_dialog.py:6022
+#: src/sshpilot/connection_dialog.py:6019
 msgid ""
 "The connection settings were saved, but secure storage did not answer in "
 "time. The password may have been stored anyway — reopen the connection to "
@@ -2561,33 +2560,33 @@ msgstr ""
 "连接设置已保存，但安全存储未及时响应。密码可能仍已保存 — 请在重新保存前重新打"
 "开连接进行检查。"
 
-#: src/sshpilot/connection_dialog.py:6104
+#: src/sshpilot/connection_dialog.py:6101
 msgid ""
 "The connection settings were saved, but secure storage rejected a password "
 "or passphrase. Please try saving again."
 msgstr "连接设置已保存，但安全存储拒绝了密码或口令。请尝试重新保存。"
 
-#: src/sshpilot/connection_dialog.py:6196
+#: src/sshpilot/connection_dialog.py:6193
 msgid ""
 "The connection could not be loaded from the service. You can retry or close "
 "the editor."
 msgstr "无法从服务加载连接。您可以重试或关闭编辑器。"
 
-#: src/sshpilot/connection_dialog.py:6199
+#: src/sshpilot/connection_dialog.py:6196
 msgid ""
 "The connection could not be loaded from the service. Please close the editor "
 "and try again."
 msgstr "无法从服务加载连接。请关闭编辑器并重试。"
 
-#: src/sshpilot/connection_dialog.py:6203
+#: src/sshpilot/connection_dialog.py:6200
 msgid "Could not load connection"
 msgstr "无法加载连接"
 
-#: src/sshpilot/connection_dialog.py:6207
+#: src/sshpilot/connection_dialog.py:6204
 msgid "_Retry"
 msgstr "重试(_R)"
 
-#: src/sshpilot/connection_dialog.py:6212 src/sshpilot/window.py:2193
+#: src/sshpilot/connection_dialog.py:6209 src/sshpilot/window.py:2193
 msgid "_Close"
 msgstr "关闭(_C)"
 
@@ -2808,64 +2807,33 @@ msgid "{n} connection"
 msgid_plural "{n} connections"
 msgstr[0] "{n} 个连接"
 
-#: src/sshpilot/connection_dialog_host_names.py:73
+#: src/sshpilot/connection_dialog_host_names.py:72
 msgid "SSH Alias (no whitespace allowed)"
 msgstr "SSH 别名（不允许包含空格）"
 
-#: src/sshpilot/connection_dialog_host_names.py:74
-msgid "SSH Alias (spaces separate several hosts)"
-msgstr "SSH 别名（用空格分隔多个主机）"
-
-#: src/sshpilot/connection_dialog_host_names.py:84
+#: src/sshpilot/connection_dialog_host_names.py:83
 msgid "Open Advanced Configuration"
 msgstr "打开高级配置"
 
-#: src/sshpilot/connection_dialog_host_names.py:124
-#: src/sshpilot/connection_dialog_host_names.py:171
+#: src/sshpilot/connection_dialog_host_names.py:115
+#: src/sshpilot/connection_dialog_host_names.py:128
 msgid "A pattern is not a connection"
 msgstr "模式不是连接"
 
-#: src/sshpilot/connection_dialog_host_names.py:126
-#: src/sshpilot/connection_dialog_host_names.py:178
-msgid "A saved connection has one name"
-msgstr "已保存的连接只有一个名称"
+#: src/sshpilot/connection_dialog_host_names.py:116
+#: src/sshpilot/connection_dialog_host_names.py:134
+msgid "A connection has one name"
+msgstr "一个连接只有一个名称"
 
-#: src/sshpilot/connection_dialog_host_names.py:128
-msgid "A name is given more than once"
-msgstr "有名称重复出现"
-
-#: src/sshpilot/connection_dialog_host_names.py:136
-#, python-brace-format
-msgid "{count} connection sharing one Host block"
-msgid_plural "{count} connections sharing one Host block"
-msgstr[0] "{count} 个连接共用一个 Host 块"
-
-#: src/sshpilot/connection_dialog_host_names.py:161
-#, python-brace-format
-msgid "This creates {count} connection: {names}"
-msgid_plural "This creates {count} connections: {names}"
-msgstr[0] "这将创建 {count} 个连接：{names}"
-
-#: src/sshpilot/connection_dialog_host_names.py:166
-msgid ""
-"A space separates hosts. They share one Host block, so a change to one "
-"applies to all of them."
-msgstr "空格用于分隔主机。它们共用一个 Host 块，因此对其中一个的更改会应用于全部。"
-
-#: src/sshpilot/connection_dialog_host_names.py:173
+#: src/sshpilot/connection_dialog_host_names.py:130
 msgid ""
 "It sets options for every host it matches. Create it as a block in Advanced "
 "Configuration."
 msgstr "它为每个匹配的主机设置选项。请在高级配置中将其创建为一个块。"
 
-#: src/sshpilot/connection_dialog_host_names.py:180
-msgid ""
-"To give this block more hosts, edit its Host line in Advanced Configuration."
-msgstr "要为此块添加更多主机，请在高级配置中编辑其 Host 行。"
-
-#: src/sshpilot/connection_dialog_host_names.py:194
-msgid "A name is for one connection. Name each one after saving."
-msgstr "一个名称对应一个连接。保存后请分别为每个连接命名。"
+#: src/sshpilot/connection_dialog_host_names.py:136
+msgid "To put several hosts on one Host line, use Advanced Configuration."
+msgstr "要在一行 Host 中写多个主机，请使用高级配置。"
 
 #: src/sshpilot/connection_dialog_login_profile.py:44
 #: src/sshpilot/login_profile_dialogs.py:220
@@ -6144,7 +6112,8 @@ msgstr "已存在同名连接。请选择其他名称。"
 msgid ""
 "A pattern is not a connection: it sets options for every host it matches. "
 "Create it as a block in Advanced Configuration."
-msgstr "模式不是连接：它为每个匹配的主机设置选项。请在高级配置中将其创建为一个块。"
+msgstr ""
+"模式不是连接：它为每个匹配的主机设置选项。请在高级配置中将其创建为一个块。"
 
 #: src/sshpilot/gtk/secret_status_messages.py:20
 #, python-brace-format
@@ -14625,16 +14594,16 @@ msgstr "• 检查服务器是否可访问"
 msgid "• Ensure you have proper permissions"
 msgstr "• 确保您拥有适当的权限"
 
-#: src/sshpilot/window.py:8874 src/sshpilot/window.py:9364
-#: src/sshpilot/window.py:9392
+#: src/sshpilot/window.py:8874 src/sshpilot/window.py:9360
+#: src/sshpilot/window.py:9370
 msgid "Saved, but tags/Wake-on-LAN settings could not be stored."
 msgstr "已保存，但无法存储标签/局域网唤醒 (Wake-on-LAN) 设置。"
 
-#: src/sshpilot/window.py:8952 src/sshpilot/window.py:9657
+#: src/sshpilot/window.py:8952 src/sshpilot/window.py:9635
 msgid "Failed to save connection"
 msgstr "保存连接失败"
 
-#: src/sshpilot/window.py:9329
+#: src/sshpilot/window.py:9325
 msgid "Saved, but the login profile could not be applied."
 msgstr "无法替换远程文件。"
 
@@ -17883,6 +17852,31 @@ msgstr "没有匹配的文件。"
 #: src/sshpilot/advanced_config_results_view.py:743
 msgid "No other file is read for this target."
 msgstr "此目标不读取其他文件。"
+
+#~ msgid "SSH Alias (spaces separate several hosts)"
+#~ msgstr "SSH 别名（用空格分隔多个主机）"
+
+#~ msgid "A name is given more than once"
+#~ msgstr "有名称重复出现"
+
+#, python-brace-format
+#~ msgid "{count} connection sharing one Host block"
+#~ msgid_plural "{count} connections sharing one Host block"
+#~ msgstr[0] "{count} 个连接共用一个 Host 块"
+
+#, python-brace-format
+#~ msgid "This creates {count} connection: {names}"
+#~ msgid_plural "This creates {count} connections: {names}"
+#~ msgstr[0] "这将创建 {count} 个连接：{names}"
+
+#~ msgid ""
+#~ "A space separates hosts. They share one Host block, so a change to one "
+#~ "applies to all of them."
+#~ msgstr ""
+#~ "空格用于分隔主机。它们共用一个 Host 块，因此对其中一个的更改会应用于全部。"
+
+#~ msgid "A name is for one connection. Name each one after saving."
+#~ msgstr "一个名称对应一个连接。保存后请分别为每个连接命名。"
 
 #~ msgid "Advanced SSH Configuration"
 #~ msgstr "高级 SSH 配置"

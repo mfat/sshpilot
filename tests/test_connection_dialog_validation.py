@@ -97,23 +97,13 @@ class TestValidateFieldRow:
         assert result.is_valid is True
         assert d.validation_results["name"] is result
 
-    def test_a_saved_connection_keeps_one_name(self):
-        d, row = _dialog(), FakeRow("bad name")  # no second name when editing
-        d.is_editing = True
+    @pytest.mark.parametrize("editing", [False, True])
+    def test_several_names_mark_error(self, editing):
+        d, row = _dialog(), FakeRow("web1 web2")
+        d.is_editing = editing
         result = d._validate_field_row("name", row)
         assert result.is_valid is False
         assert "error" in row.css
-
-    def test_several_names_are_several_new_connections(self):
-        d, row = _dialog(), FakeRow("web1 web2")
-        result = d._validate_field_row("name", row)
-        assert result.is_valid is True
-        assert "2" in result.message
-        assert "error" not in row.css
-
-    def test_a_name_given_twice_marks_error(self):
-        d, row = _dialog(), FakeRow("web1 web1")
-        assert d._validate_field_row("name", row).is_valid is False
 
     @pytest.mark.parametrize("text", ["*", "*.prod", "web?", "!bad", "*.prod edge"])
     def test_a_pattern_marks_error(self, text):

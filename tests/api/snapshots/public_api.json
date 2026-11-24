@@ -4307,8 +4307,7 @@
       "protocol",
       "display_name",
       "config_patch",
-      "plugin_data",
-      "shared_nicknames"
+      "plugin_data"
     ],
     "CreateGroupRequest": [
       "name",

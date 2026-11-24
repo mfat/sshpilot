@@ -5,20 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
-- A new SSH connection can be several: `CreateConnectionRequest.shared_nicknames`
-  lists more plain names for the new `Host` line (`Host web1 web2`). Each
-  becomes a connection of its own that shares the block; the result of the
-  create is about `nickname`, and the others appear in listings like any host
-  the configuration declares. The names are one word each, distinct, not
-  taken, and SSH only. Optional on the wire.
-  A `Host` pattern (a wildcard or a negation) is refused as a connection
-  name, on create, rename and split, and among `shared_nicknames`: a
-  connection is one host, and the pattern used to be written as a rule block
-  that showed up as no connection at all. The refusal is `VALIDATION_FAILED`
-  with `details["reason"]`, a new `ValidationReason`: `host_pattern`. The
-  frontend owns the wording; a `VALIDATION_FAILED` without a reason says no
-  more than before. The API implementation version is 0.116; Protocol
-  remains 1.0.
+- A `Host` pattern (a wildcard or a negation) is refused as a connection
+  name, on create, rename and split: a connection is one host, and the
+  pattern used to be written as a rule block that showed up as no connection
+  at all. The refusal is `VALIDATION_FAILED` with `details["reason"]`, a new
+  `ValidationReason`: `host_pattern`. The frontend owns the wording; a
+  `VALIDATION_FAILED` without a reason says no more than before. The API
+  implementation version is 0.116; Protocol remains 1.0.
 - A connection change refused before anything was written says which
   refusal it is. `MUTATION_AMBIGUOUS` covered two different things: a write
   whose outcome the daemon could not determine, and a change it would not

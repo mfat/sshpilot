@@ -111,12 +111,7 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         host = data.get('host', '')
     nickname = data.get('nickname') or host
     primary_token = _quote_token(nickname)
-    # A new block may be several hosts' (``shared_nicknames``): they are
-    # written on its one Host line, the connection's own name first.
-    host_tokens = [primary_token] + [
-        _quote_token(str(name)) for name in (data.get('shared_nicknames') or ())
-    ]
-    lines = [f"Host {' '.join(host_tokens)}"]
+    lines = [f"Host {primary_token}"]
 
     # Add basic connection info
     if host != '' and host != nickname:
