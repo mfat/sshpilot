@@ -888,7 +888,24 @@ row.auth-method-list:drop(active) row {
   box-shadow: none;
   outline: none;
 }
-list.auth-method-drag-icon { border-radius: 12px; }
+/* The copy is a surface of its own, with nothing behind it: it paints, in
+   full and opaque, what is behind a row in the list (the window, the card,
+   the nested rows' shade), square like the rows. The border is opaque
+   too: an edge that needs blending has nothing to blend with. */
+list.auth-method-drag-icon {
+  border-radius: 0;
+  box-shadow: none;
+  border: 1px solid mix(@window_bg_color, @window_fg_color, 0.2);
+  background-color: @window_bg_color;
+  background-image:
+    linear-gradient(alpha(@card_shade_color, 0.5), alpha(@card_shade_color, 0.5)),
+    linear-gradient(@card_bg_color, @card_bg_color);
+}
+list.auth-method-drag-icon > row,
+list.auth-method-drag-icon > row:hover {
+  border-radius: 0;
+  background: none;
+}
 row.auth-method-drag-solid { background-color: @card_bg_color; }
 """)
     Gtk.StyleContext.add_provider_for_display(
@@ -1123,7 +1140,6 @@ class AuthPolicyGroup:
             copy.add_prefix(handle)
             card = Gtk.ListBox()
             card.set_selection_mode(Gtk.SelectionMode.NONE)
-            card.add_css_class("boxed-list")
             card.add_css_class("auth-method-drag-icon")
             card.set_size_request(row.get_width(), row.get_height())
             card.append(copy)
