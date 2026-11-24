@@ -293,6 +293,7 @@ class ConnectionRepositoryProtocol(Protocol):
         data: Mapping[str, Any],
         *,
         expected_generation: Optional[int] = None,
+        shared_block: bool = False,
     ) -> ConnectionRecord: ...
 
     def duplicate_connection(self, connection_id: str) -> ConnectionRecord: ...
@@ -2255,6 +2256,7 @@ class ConnectionRepository:
         data: Mapping[str, Any],
         *,
         expected_generation: Optional[int] = None,
+        shared_block: bool = False,
     ) -> ConnectionRecord:
         with self._mutation_scope():
             before = self._begin()
@@ -2289,6 +2291,7 @@ class ConnectionRepository:
                         connection_id,
                         payload,
                         expected_generation=expected_generation,
+                        shared_block=shared_block,
                     )
                     planned_name = str(payload.get("nickname") or connection_id)
                     planned_continuity = (

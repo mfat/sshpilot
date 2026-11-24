@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.112",
+  "api_implementation_version": "0.113",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -4183,7 +4183,8 @@
       "preferred_authentications",
       "source",
       "generation",
-      "authored_directives"
+      "authored_directives",
+      "shared_host_tokens"
     ],
     "ConnectionMetadataSummary": [
       "connection_id",
@@ -5503,7 +5504,8 @@
       "display_name",
       "config_patch",
       "plugin_data",
-      "expected_generation"
+      "expected_generation",
+      "shared_block"
     ],
     "UpdateLoginProfileRequest": [
       "profile_id",

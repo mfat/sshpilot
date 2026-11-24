@@ -5,6 +5,22 @@ notes remain separate.
 
 ## Unreleased
 
+- An SSH `Host` line that names more than one host is no longer a dead end.
+  `ConnectionEditorDetails.shared_host_tokens` lists the other tokens on the
+  line that declares the connection (more names, patterns, negations); empty
+  means the block is the connection's alone. `connections.update` still
+  refuses such a block with `MUTATION_AMBIGUOUS`, unless
+  `UpdateConnectionRequest.shared_block` is true: the block is then edited
+  for every host of the line, the line itself is kept as written, and a
+  changed nickname fails with `VALIDATION_ERROR` (`connections.split` gives
+  the connection a block of its own). Both fields are optional on the wire:
+  an older daemon omits the first and an older client the second.
+  Behaviour, no schema: a plain name beside a pattern on a `Host` line is
+  now a connection (`Host *.prod edge` lists `edge`; the line stays a rule
+  too), unless a wildcard on the same line already matches it (`Host old *`
+  declares nothing). Deleting or splitting a name off such a line keeps the
+  patterns, and drops a line left with negations only. The API
+  implementation version is 0.113; Protocol remains 1.0.
 - `SessionFailureCode.AUTH_METHODS_NOT_TRIED` (`auth_methods_not_tried`, no
   parameters): an SSH session was denied and OpenSSH attempted none of the
   methods the server accepts, because the connection's configuration

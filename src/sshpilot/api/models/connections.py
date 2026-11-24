@@ -884,6 +884,12 @@ class ConnectionEditorDetails(ConnectionDetails):
     # user had set them. Empty means "no evidence" (a record that did not come
     # from a parsed Host block), never "authored nothing".
     authored_directives: Tuple[str, ...] = ()
+    # The other tokens on the SSH ``Host`` line that declares this
+    # connection: more names, patterns, negations. Not empty means the block
+    # is not this host's alone: an update reaches every host the line
+    # matches and must say so (``UpdateConnectionRequest.shared_block``), or
+    # the connection is given a block of its own (``connections.split``).
+    shared_host_tokens: Tuple[str, ...] = ()
 
 
 # -- Secret request / response models --------------------------------------
@@ -1072,6 +1078,12 @@ class UpdateConnectionRequest:
     ``expected_generation`` guards stale editors: ``None`` means no
     generation supplied (the check is skipped); zero is a legitimate
     first-generation value and is enforced like any other.
+
+    ``shared_block`` is the caller's word that it means every host of the
+    connection's ``Host`` line (``ConnectionEditorDetails.shared_host_tokens``
+    not empty). Without it such a block is not edited: the update fails with
+    ``MUTATION_AMBIGUOUS``. With it the line is kept as written, so the
+    nickname cannot change. It means nothing for a block of one host.
     """
 
     nickname: Union[str, None, _UNSET_TYPE] = UNSET
@@ -1082,8 +1094,11 @@ class UpdateConnectionRequest:
     config_patch: Mapping[str, Any] = field(default_factory=dict)
     plugin_data: Mapping[str, Any] = field(default_factory=dict)
     expected_generation: Optional[int] = None  # stale-editor detection
+    shared_block: bool = False  # edit a Host block other hosts share
 
     def __post_init__(self) -> None:
+        if type(self.shared_block) is not bool:
+            raise TypeError("shared_block must be a boolean")
         has_core = any(
             v is not None and v is not UNSET
             for v in (self.nickname, self.hostname, self.username, self.port, self.display_name)

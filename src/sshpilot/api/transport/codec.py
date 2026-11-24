@@ -2448,6 +2448,7 @@ def connection_editor_details_to_wire(
             "source": details.source,
             "generation": details.generation,
             "authored_directives": list(details.authored_directives),
+            "shared_host_tokens": list(details.shared_host_tokens),
         }
     )
     return result
@@ -2467,6 +2468,7 @@ def connection_editor_details_from_wire(
             "target_summary",
             "config_read_only",
             "authored_directives",
+            "shared_host_tokens",
             "plugin_data",
         },
         context="connection editor details",
@@ -2500,6 +2502,14 @@ def connection_editor_details_from_wire(
         raise ValueError("authored_directives must be an array")
     authored_directives = tuple(
         _text(item, "authored directive", allow_empty=False) for item in raw_authored
+    )
+    # Additive, like the above: an older daemon omits it, and empty already
+    # means "a block of this host's own".
+    raw_shared = data.get("shared_host_tokens", [])
+    if type(raw_shared) is not list:
+        raise ValueError("shared_host_tokens must be an array")
+    shared_host_tokens = tuple(
+        _text(item, "shared host token", allow_empty=False) for item in raw_shared
     )
     raw_plugin_data = data.get("plugin_data", {})
     if type(raw_plugin_data) is not dict:
@@ -2565,6 +2575,7 @@ def connection_editor_details_from_wire(
         source=_text(data["source"], "source", allow_empty=True),
         generation=_integer(data["generation"], "generation"),
         authored_directives=authored_directives,
+        shared_host_tokens=shared_host_tokens,
     )
 
 
@@ -2905,6 +2916,8 @@ def update_connection_request_to_wire(
         result["plugin_data"] = dict(request.plugin_data)
     if request.expected_generation is not None:
         result["expected_generation"] = request.expected_generation
+    if request.shared_block:
+        result["shared_block"] = True
     return result
 
 
@@ -2921,6 +2934,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
             "config_patch",
             "plugin_data",
             "expected_generation",
+            "shared_block",
         },
         context="update connection request",
     )
@@ -2956,6 +2970,10 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     if expected_generation is not None:
         expected_generation = _integer(expected_generation, "expected generation")
 
+    shared_block = data.get("shared_block", False)
+    if type(shared_block) is not bool:
+        raise ValueError("shared_block must be a boolean")
+
     raw_plugin_data = data.get("plugin_data", {})
     if type(raw_plugin_data) is not dict:
         raise ValueError("plugin_data must be an object")
@@ -2968,6 +2986,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
         config_patch=config_patch,
         plugin_data=dict(raw_plugin_data),
         expected_generation=expected_generation,
+        shared_block=shared_block,
     )
 
 

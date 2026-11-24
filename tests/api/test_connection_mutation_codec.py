@@ -172,3 +172,19 @@ def test_unsaved_host_check_target_round_trips_and_stays_off_the_wire_when_empty
         unsaved_host_check_request_from_wire({**wire, "target": ["device"]})
     with pytest.raises(ValueError):
         UnsavedHostCheckRequest(hostname="x", target=(("", "value"),))
+
+
+def test_update_shared_block_is_on_the_wire_only_when_set():
+    plain = UpdateConnectionRequest(username="alice")
+    assert "shared_block" not in update_connection_request_to_wire(plain)
+    assert update_connection_request_from_wire({"username": "alice"}).shared_block is False
+
+    shared = UpdateConnectionRequest(username="alice", shared_block=True)
+    wire = update_connection_request_to_wire(shared)
+    assert wire["shared_block"] is True
+    assert update_connection_request_from_wire(wire) == shared
+
+    with pytest.raises(ValueError):
+        update_connection_request_from_wire({"username": "alice", "shared_block": "yes"})
+    with pytest.raises(TypeError):
+        UpdateConnectionRequest(username="alice", shared_block=1)

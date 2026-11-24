@@ -901,6 +901,7 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `source` | `str` | No | `` | No |
 | `generation` | `int` | No | `0` | No |
 | `authored_directives` | `tuple[str, ...]` | No | `[]` | No |
+| `shared_host_tokens` | `tuple[str, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -946,6 +947,7 @@ Synthetic representation:
   "remote_command": "",
   "request_tty": "",
   "security_key_provider": "",
+  "shared_host_tokens": [],
   "source": "",
   "target_summary": "",
   "username": "user",
@@ -6942,6 +6944,12 @@ explicitly present keys in the incoming JSON — omission means preserve.
 generation supplied (the check is skipped); zero is a legitimate
 first-generation value and is enforced like any other.
 
+``shared_block`` is the caller's word that it means every host of the
+connection's ``Host`` line (``ConnectionEditorDetails.shared_host_tokens``
+not empty). Without it such a block is not edited: the update fails with
+``MUTATION_AMBIGUOUS``. With it the line is kept as written, so the
+nickname cannot change. It means nothing for a block of one host.
+
 **Related methods:** `update_connection`
 **Related events:** None
 
@@ -6955,6 +6963,7 @@ first-generation value and is enforced like any other.
 | `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
 | `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 | `expected_generation` | `int | None` | No | `null` | No |
+| `shared_block` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -6967,6 +6976,7 @@ Synthetic representation:
   "nickname": "`UNSET`",
   "plugin_data": {},
   "port": "`UNSET`",
+  "shared_block": false,
   "username": "`UNSET`"
 }
 ```

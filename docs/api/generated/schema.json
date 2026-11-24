@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.112",
+  "api_implementation_version": "0.113",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -3222,6 +3222,13 @@
         {
           "default": [],
           "name": "authored_directives",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "shared_host_tokens",
           "required": false,
           "sensitive": false,
           "type": "tuple[str, ...]"
@@ -10699,6 +10706,13 @@
           "required": false,
           "sensitive": false,
           "type": "int | None"
+        },
+        {
+          "default": false,
+          "name": "shared_block",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"

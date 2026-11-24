@@ -114,3 +114,23 @@ def test_editor_details_codec_preserves_display_name():
     )
 
     assert decoded.display_name == "Production Server"
+
+
+def test_editor_details_codec_carries_the_host_line_s_other_tokens():
+    details = ConnectionEditorDetails(
+        id=ConnectionId("edge"),
+        nickname="edge",
+        host="edge",
+        hostname="edge",
+        username="ops",
+        port=22,
+        aliases=(),
+        authentication_method=AuthenticationMethod.KEY,
+        shared_host_tokens=("*.prod", "!bad.prod"),
+    )
+    wire = connection_editor_details_to_wire(details)
+    assert connection_editor_details_from_wire(wire).shared_host_tokens == (
+        "*.prod", "!bad.prod",
+    )
+    wire.pop("shared_host_tokens")              # a daemon that predates it
+    assert connection_editor_details_from_wire(wire).shared_host_tokens == ()

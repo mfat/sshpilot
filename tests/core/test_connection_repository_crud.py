@@ -1276,3 +1276,32 @@ def test_group_only_delete_keeps_the_ssh_blocks(tmp_path):
     assert [g.name for g in snap.groups] == ["Child"]
     assert snap.groups[0].parent_id is None
     assert "Host web" in root.read_text()
+
+
+def test_a_shared_host_block_is_edited_through_the_api_only_when_asked(tmp_path):
+    """End to end below the wire: the editor is told the block is shared,
+    a plain update is refused, and one that says so edits it for all."""
+    from sshpilot.api.errors import SshPilotError
+
+    text = "Host web1 web2\n    User deploy\n\nHost *.prod edge\n    User ops\n"
+    repo, root, _ = _repo(tmp_path, text)
+    application = ConnectionApplicationService(repo, client_name="test")
+
+    assert application.get_connection_editor("web1").shared_host_tokens == ("web2",)
+    assert application.get_connection_editor("edge").shared_host_tokens == ("*.prod",)
+
+    with pytest.raises(SshPilotError):
+        application.update_connection("web1", UpdateConnectionRequest(username="all"))
+    assert root.read_text() == text
+
+    application.update_connection(
+        "web1", UpdateConnectionRequest(username="all", shared_block=True)
+    )
+    application.update_connection(
+        "edge", UpdateConnectionRequest(username="prod-ops", shared_block=True)
+    )
+    assert root.read_text() == (
+        "Host web1 web2\n    User all\n\nHost *.prod edge\n    User prod-ops\n"
+    )
+    records = {record.id: record for record in repo.snapshot().connections}
+    assert records["web2"].username == "all"            # the same block

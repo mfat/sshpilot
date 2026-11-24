@@ -2344,10 +2344,14 @@ class ConnectionApplicationService:
         if request.plugin_data:
             data.update(dict(request.plugin_data))
         try:
+            # Passed only when asked for: a block other hosts share is
+            # edited on the caller's word alone.
+            shared = {"shared_block": True} if request.shared_block else {}
             updated = self._repository.update_connection(
                 connection_id,
                 data,
                 expected_generation=request.expected_generation,
+                **shared,
             )
         except SshPilotError:
             raise
@@ -2760,6 +2764,7 @@ class ConnectionApplicationService:
             source=record.source or str(data.get("source") or ""),
             generation=record.generation,
             authored_directives=tuple(sorted(record.authored_directives)),
+            shared_host_tokens=tuple(record.shared_host_tokens),
         )
 
     @staticmethod
