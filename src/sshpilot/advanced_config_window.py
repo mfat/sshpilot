@@ -161,10 +161,6 @@ class AdvancedConfigWindow(Adw.Window):
                 Gtk.ShortcutTrigger.parse_string(trigger),
                 Gtk.CallbackAction.new(lambda *_a, d=delta: self.move_selected(d)),
             ))
-        keys.add_shortcut(Gtk.Shortcut.new(
-            Gtk.ShortcutTrigger.parse_string("Escape"),
-            Gtk.CallbackAction.new(lambda *_a: self.show_all_blocks()),
-        ))
         self.add_controller(keys)
         self.connect("close-request", self._on_close_request)
         self._load()
@@ -236,7 +232,7 @@ class AdvancedConfigWindow(Adw.Window):
         for side in ("top", "bottom"):
             getattr(row, f"set_margin_{side}")(8)
         row.set_margin_start(16)
-        row.set_hexpand(True)
+        row.set_margin_end(16)
         self.target_entry = Gtk.SearchEntry()
         self.target_entry.set_placeholder_text(
             _("Filter by host: type a name to see what applies to it")
@@ -260,25 +256,9 @@ class AdvancedConfigWindow(Adw.Window):
         self.target_button.set_popover(self._host_popover)
         self.target_button.set_tooltip_text(_("Choose a host"))
         row.append(self.target_button)
-        # Selecting a host's block narrows the rules like the filter does,
-        # so its matches further down are not left to be scrolled for. This
-        # is the way back to every block.
-        self.show_all_button = Gtk.Button(label=_("Show All Blocks"))
-        self.show_all_button.set_margin_start(8)
-        self.show_all_button.set_tooltip_text(
-            _("Unselect the block and show the blocks that do not apply to its host")
-        )
-        self.show_all_button.set_visible(False)
-        self.show_all_button.connect("clicked", lambda *_a: self.show_all_blocks())
         self._host_names_shown: Optional[List[str]] = None
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        bar.set_margin_end(16)
-        bar.append(row)
-        bar.append(self.show_all_button)
-        bar.set_valign(Gtk.Align.CENTER)
-        self.show_all_button.set_valign(Gtk.Align.CENTER)
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        outer.append(bar)
+        outer.append(row)
         outer.append(Gtk.Separator())
         return outer
 
@@ -308,22 +288,9 @@ class AdvancedConfigWindow(Adw.Window):
 
     def target_text(self) -> str:
         """The host OpenSSH is asked about: the filter's, else the selected
-        block's."""
+        block's. Selecting a block loads it on the right without narrowing
+        the rules; only the filter narrows them."""
         return self.target_entry.get_text().strip() or self.selected_host()
-
-    @property
-    def narrowed_by_selection(self) -> bool:
-        """No filter, and the selected block names a host: the rules are
-        narrowed to the blocks that apply to it, as the filter would."""
-        return not self.filtering and bool(self.selected_host())
-
-    def show_all_blocks(self) -> bool:
-        """Undo the narrowing a selection brings. False when there was none,
-        so Escape goes on to whatever else wants it."""
-        if not self.narrowed_by_selection:
-            return False
-        self.select_block(None)
-        return True
 
     def host_names(self) -> List[str]:
         return self.editor.host_names(self._hosts)
@@ -782,9 +749,6 @@ class AdvancedConfigWindow(Adw.Window):
         self.selected_uid = uid if self.editor.find_block(uid) is not None else None
         self.rules.select(self.selected_uid)
         if self.target_text() != before:
-            if not self.filtering:
-                # Kept-visible blocks were worked on for the host before.
-                self._kept_visible.clear()
             # Another host is in question: agreements to run a Match exec
             # command were for the one before. The question is asked from
             # the idle loop, so the highlight is painted first.
@@ -894,14 +858,10 @@ class AdvancedConfigWindow(Adw.Window):
                 self._show_answer_banner(messages.error_text(evaluation.errors[0]))
             else:
                 self._show_answer_banner("")
-        keep = set(self._kept_visible)
-        if self.selected_uid is not None:
-            keep.add(self.selected_uid)
         matched = self.rules.show_answer(
             self.editor.blocks, evaluation, lines,
-            narrow=self.filtering or self.narrowed_by_selection, keep_visible=keep,
+            narrow=self.filtering, keep_visible=self._kept_visible,
         )
-        self.show_all_button.set_visible(self.narrowed_by_selection)
         user, host = split_target(self.target_text())
         self.results.show(
             Answer(evaluation, list(self.editor.blocks), lines, user, host), matched

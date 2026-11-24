@@ -18467,19 +18467,6 @@ msgstr "Nach Host filtern: Namen eingeben, um zu sehen, was dafür gilt"
 msgid "Choose a host"
 msgstr "Host auswählen"
 
-#. Selecting a host's block narrows the rules like the filter does,
-#. so its matches further down are not left to be scrolled for. This
-#. is the way back to every block.
-#: src/sshpilot/advanced_config_window.py:266
-msgid "Show All Blocks"
-msgstr "Alle Blöcke anzeigen"
-
-#: src/sshpilot/advanced_config_window.py:269
-msgid "Unselect the block and show the blocks that do not apply to its host"
-msgstr ""
-"Auswahl des Blocks aufheben und die Blöcke anzeigen, die nicht für seinen "
-"Host gelten"
-
 #: src/sshpilot/advanced_config_window.py:357
 msgid "The SSH configuration could not be read."
 msgstr "Die SSH-Konfiguration konnte nicht gelesen werden."
