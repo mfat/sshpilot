@@ -45,6 +45,11 @@ template $ConnectionDialog: Adw.Window {
         tooltip-text: _("Open the SSH config editor");
       }
 
+      Gtk.Button advanced_config_button {
+        label: _("Advanced Configuration");
+        tooltip-text: _("Show this host's block among the blocks that apply to it");
+      }
+
       Gtk.Box {
         hexpand: true;
       }

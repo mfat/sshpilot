@@ -39,37 +39,65 @@ def gtk():
 
 
 class _Client:
-    def __init__(self, path):
+    """Serves the root at *path* and the files in *included* (named, as the
+    daemon names them, by their paths)."""
+
+    def __init__(self, path, included=()):
         self.path = path
+        self.included = [str(item) for item in included]
         self.saves = 0
 
-    @staticmethod
-    def _revision(text):
+    def _revision(self):
+        import pathlib
+
+        text = "".join(pathlib.Path(item).read_text() for item in [self.path, *self.included])
         return "r" + hashlib.sha1(text.encode()).hexdigest()[:12]
 
-    def get_ssh_config_text(self):
-        from sshpilot.api.models.connections import SshConfigText
+    def _target(self, file):
+        import pathlib
 
-        text = self.path.read_text()
-        return SshConfigText(text, self._revision(text), "config", True)
+        if not file:
+            return self.path
+        if file not in self.included:
+            from sshpilot.api.errors import ErrorCode, SshPilotError
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "not a file of the configuration")
+        return pathlib.Path(file)
+
+    def _text(self, file):
+        import pathlib
+
+        from sshpilot.api.models.connections import SshConfigFileRef, SshConfigText
+
+        target = self._target(file)
+        files = (SshConfigFileRef("", "config", True),) + tuple(
+            SshConfigFileRef(item, pathlib.Path(item).name, True) for item in self.included
+        )
+        return SshConfigText(
+            target.read_text(), self._revision(), target.name, True,
+            file=file, files=files if self.included else (),
+        )
+
+    def get_ssh_config_text(self, file=""):
+        return self._text(file)
 
     def save_ssh_config_text(self, request):
         from sshpilot.api.errors import ErrorCode, SshPilotError
-        from sshpilot.api.models.connections import SshConfigText
 
-        if request.expected_revision != self._revision(self.path.read_text()):
+        if request.expected_revision != self._revision():
             raise SshPilotError(ErrorCode.STALE_EDITOR, "stale")
-        self.path.write_text(request.text)
+        self._target(request.file).write_text(request.text)
         self.saves += 1
-        return SshConfigText(request.text, self._revision(request.text), "config", True)
+        return self._text(request.file)
 
     def evaluate_ssh_config_draft(self, request):
         from sshpilot.core.ssh_config_draft import DraftContext, evaluate_draft
 
+        target = self._target(request.file)
         context = DraftContext(
-            str(self.path), isolated=True, overrides=("-o", "ConnectTimeout=7")
+            str(self.path), isolated=True, overrides=("-o", "ConnectTimeout=7"),
+            target_path=str(target) if request.file else None,
         )
-        return evaluate_draft(request, context, self.path.read_text())
+        return evaluate_draft(request, context, target.read_text())
 
 
 def _pump(condition, seconds=8.0):
@@ -749,3 +777,88 @@ def test_only_the_open_page_is_filled(window):
     window.results.stack.set_visible_child_name("trace")
     assert "trace" not in window.results._stale
     assert len(_children(window.results.trace_list)) == 4     # Settings + 3 blocks
+
+
+# -- going to a place: the entry point the rest of the app uses ------------------
+
+def _selected(win):
+    block = win.editor.find_block(win.selected_uid)
+    return (block.patterns or block.kind) if block is not None else None
+
+
+def test_going_to_a_host_before_the_window_has_loaded(gtk, tmp_path):
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    path = tmp_path / "config"
+    path.write_text(CONFIG + "\nHost *.prod edge\n    User ops\n")
+    win = AdvancedConfigWindow(None, _Client(path))
+    win.go_to(host="edge", option="user", pin=True)        # nothing is loaded yet
+    assert _pump(lambda: _selected(win) == "*.prod edge")   # a name beside a pattern
+    assert win.target_entry.get_text() == "edge"            # pinned
+    assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh edge")
+
+    win.go_to(host="web2")                                  # the second name of a line
+    assert _selected(win) == "web1 web2"
+    win.go_to(host="nowhere")                               # says so, stays put
+    assert _selected(win) == "web1 web2"
+    win._closing = True
+    win.destroy()
+
+
+def test_a_line_of_the_saved_file_is_found_after_unsaved_edits(window):
+    """Line numbers are of the file as saved: an edit above the line moves
+    it in the draft, and it is still the block that is shown."""
+    glob, web, star = window.draft.blocks
+    saved_line = window._loaded_lines.headers[star.uid]
+    window.add_option(web.uid)
+    window.add_option(web.uid)                              # Host * is two lines lower now
+    window.select_block(None)
+    window.go_to(line=saved_line)
+    assert _selected(window) == "*"
+    window.go_to(line=window._loaded_lines.options[web.options[1].uid])   # an option's line
+    assert _selected(window) == "web1 web2"
+
+
+def test_a_line_no_block_owns_is_shown_as_text(window):
+    window.go_to(line=1)                                    # "# my hosts": a comment
+    assert window.results.stack.get_visible_child_name() == "raw"
+    buffer = window.results.raw_view.get_buffer()
+    bounds = buffer.get_selection_bounds()
+    assert bounds, "the line is not selected"
+    assert buffer.get_text(bounds[0], bounds[1], False) == "# my hosts"
+
+
+def test_an_included_file_is_shown_evaluated_and_saved(gtk, tmp_path):
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    included = tmp_path / "hosts.conf"
+    included.write_text("Host inc1\n    User alice\n\nHost other\n    User bob\n")
+    path = tmp_path / "config"
+    path.write_text(f"Host inc1\n    Port 2200\n\nInclude {included}\n")
+    client = _Client(path, included=[included])
+    win = AdvancedConfigWindow(None, client)
+    assert _pump(lambda: len(win.draft.blocks) == 1)
+    assert win.file_switcher.get_visible()                  # more than one file
+
+    win.go_to(host="inc1", file=str(included))              # a connection's source file
+    assert _pump(lambda: win._file == str(included) and len(win.draft.blocks) == 2)
+    assert _selected(win) == "inc1"
+    assert win.file_switcher.get_selected() == 1
+    assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh inc1")
+    assert [win.rules.cards[b.uid].status.get_label() for b in win.draft.blocks] == [
+        "Matched", "Skipped",
+    ]
+    assert _effective(win, "port") == "2200"                # the root's line counts too
+
+    inc = win.draft.blocks[0]
+    _row(win, inc.options[0].uid).value.set_text("carol")
+    assert _pump(lambda: win.dirty)
+    win.save()
+    assert _pump(lambda: client.saves == 1 and not win.dirty)
+    assert included.read_text().startswith("Host inc1\n    User carol\n")
+    assert "Include" in path.read_text()                    # the root was not written
+
+    win.go_to(host="inc1", file=str(tmp_path / "unknown.conf"))   # not a file it reads:
+    assert _pump(lambda: win._file == "" and _selected(win) == "inc1")   # the root's
+    win._closing = True
+    win.destroy()

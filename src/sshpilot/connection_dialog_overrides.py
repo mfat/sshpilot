@@ -786,6 +786,9 @@ class ConnectionDialogOverridesMixin:
         editor = getattr(self, "edit_ssh_config_button", None)
         if editor is not None:
             editor.connect("clicked", self._on_edit_ssh_config_clicked)
+        advanced = getattr(self, "advanced_config_button", None)
+        if advanced is not None:
+            advanced.connect("clicked", self._on_advanced_config_clicked)
         self._sync_config_buttons()
 
     def _sync_config_buttons(self) -> None:
@@ -797,6 +800,9 @@ class ConnectionDialogOverridesMixin:
         editor = getattr(self, "edit_ssh_config_button", None)
         if editor is not None:
             editor.set_visible(ssh)
+        advanced = getattr(self, "advanced_config_button", None)
+        if advanced is not None:
+            advanced.set_visible(ssh)
         effective = getattr(self, "effective_config_button", None)
         if effective is None:
             return
@@ -876,6 +882,24 @@ class ConnectionDialogOverridesMixin:
 
     def _on_edit_ssh_config_clicked(self, _button) -> None:
         self._open_ssh_config_editor_over(self)
+
+    def _on_advanced_config_clicked(self, _button) -> None:
+        """Open Advanced Configuration above this dialog, at the host's own
+        block when there is one, and re-mark the fields after each save
+        there (as after a save in the SSH config editor: what was typed
+        here stays, and this dialog still saves only what it changed)."""
+        parent = getattr(self, "parent_window", None)
+        opener = getattr(parent, "open_advanced_config", None)
+        if not callable(opener):
+            return
+        connection = getattr(self, "connection", None)
+        editing = bool(getattr(self, "is_editing", False)) and connection is not None
+        opener(
+            host=(getattr(connection, "nickname", "") or "") if editing else "",
+            file=(getattr(connection, "source", "") or "") if editing else "",
+            over=self,
+            on_saved=self._on_ssh_config_saved,
+        )
 
     def _open_ssh_config_editor_over(self, window) -> None:
         """Open the SSH config editor modal over *window* (this dialog, or

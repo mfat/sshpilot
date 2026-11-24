@@ -6262,16 +6262,43 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.show_toast(_("Could not open the SSH config editor."))
             return None
 
-    def _open_advanced_config(self):
+    def open_advanced_config(self, *, host='', line=0, option='', file='',
+                             pin=False, over=None, on_saved=None):
+        """Open Advanced Configuration at a place of the SSH configuration.
+
+        The one way in for the rest of the app (and, through the
+        ``app.advanced-ssh-config-at`` action, for whoever holds no window):
+        see docs/architecture/advanced-configuration-navigation.md.
+
+        *host*, *line*, *option*, *file* and *pin* say where, as
+        ``AdvancedConfigWindow.go_to`` takes them; with none of them the
+        window opens as from the menu. *over*: a modal window to open above
+        (the connection editor), since nothing else could be used while it
+        is up. *on_saved* runs after each save made there.
+
+        Returns the window, or None when it could not be opened.
+        """
+        window = self._open_advanced_config(over=over)
+        if window is None:
+            return None
+        if callable(on_saved):
+            window.add_saved_listener(on_saved)
+        if host or line or file:
+            window.go_to(host=host, line=line, option=option, file=file, pin=pin)
+        return window
+
+    def _open_advanced_config(self, over=None):
         """Open Advanced Configuration: the SSH configuration as blocks,
         with what OpenSSH resolves for a target host.
 
         Like the SSH Config Editor it works on the daemon-selected file and
         never touches it from GTK. One window at a time: opening again
-        presents the one that is open. Returns the window, or None.
+        presents the one that is open. Above a modal window (*over*) it is
+        a window of its own, modal too, and gone with it. Returns the
+        window, or None.
         """
         existing = getattr(self, '_advanced_config_window', None)
-        if existing is not None:
+        if existing is not None and over is None:
             existing.present()
             return existing
         try:
@@ -6296,17 +6323,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if callable(schedule):
                     schedule()
 
-            window = AdvancedConfigWindow(self, client, on_saved=saved)
-            self._advanced_config_window = window
-            window.connect(
-                'destroy', lambda *_a: setattr(self, '_advanced_config_window', None)
-            )
+            window = AdvancedConfigWindow(over or self, client, on_saved=saved)
+            if over is not None:
+                window.set_modal(True)
+            else:
+                self._advanced_config_window = window
+                window.connect(
+                    'destroy', lambda *_a: setattr(self, '_advanced_config_window', None)
+                )
             window.present()
             return window
         except Exception as e:
             logger.error(f"Failed to open Advanced Configuration: {e}", exc_info=True)
             self.show_toast(_("Could not open Advanced Configuration."))
             return None
+
+    def on_advanced_config_for_connection_action(self, *_args):
+        """Context menu: show the connection's block in Advanced Configuration."""
+        connection = getattr(self, '_context_menu_connection', None)
+        if connection is None:
+            row = self.connection_list.get_selected_row()
+            connection = getattr(row, 'connection', None) if row else None
+        if connection is None:
+            return
+        self.open_advanced_config(
+            host=getattr(connection, 'nickname', '') or '',
+            file=getattr(connection, 'source', '') or '',
+        )
 
     def show_connection_selection_for_ssh_copy(self):
         """Open the ssh-copy-id dialog with no server preselected; its

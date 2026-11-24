@@ -384,6 +384,21 @@ class ResultsView(Gtk.Box):
             self.raw_view.get_buffer().set_text(self._text)
             self._raw_syncing = False
 
+    def show_text_line(self, line: int) -> None:
+        """Open the Text page at *line* (1-based) of the text."""
+        self.stack.set_visible_child_name("raw")
+        self._fill_raw()
+        buffer = self.raw_view.get_buffer()
+        found, start = buffer.get_iter_at_line(max(0, line - 1))
+        if not found:
+            start = buffer.get_end_iter()
+        end = start.copy()
+        if not end.ends_line():
+            end.forward_to_line_end()
+        buffer.select_range(start, end)
+        self.raw_view.scroll_to_iter(start, 0.1, True, 0.0, 0.3)
+        self.raw_view.grab_focus()
+
     # -- answers -------------------------------------------------------------
 
     def show(self, answer: Answer, matched: int) -> None:

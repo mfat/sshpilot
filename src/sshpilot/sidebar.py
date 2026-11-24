@@ -5152,6 +5152,8 @@ def _attach_connection_list_context_menu(window):
                         # fallback would copy the connection's own ID.
                         menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: window._copy_connection_address()) if (conn and (getattr(conn, 'protocol', 'ssh') == 'ssh' or getattr(conn, 'hostname', ''))) else None,
                         menu.add_item('utilities-terminal-symbolic', _('Copy SSH Command'), lambda: window.on_copy_ssh_command_action(None, None)) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
+                        # The connection's Host block, among the blocks that apply to it.
+                        menu.add_item('document-properties-symbolic', _('Advanced Configuration'), lambda: window.on_advanced_config_for_connection_action()) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
                         menu.add_item('info-outline-symbolic', _('Dashboard…'), lambda: window.on_machine_info_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                     )
 

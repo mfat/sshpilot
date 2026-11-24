@@ -56,7 +56,8 @@ from .api.models.connections import (  # noqa: E402
     SshConfigDraftEvaluation,
 )
 from .gtk import advanced_config_messages as messages  # noqa: E402
-from .ssh_config_blocks import GLOBAL, LineMap  # noqa: E402
+from .ssh_config_blocks import GLOBAL, HOST, LineMap  # noqa: E402
+from .ssh_config_document import declared_hosts  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,18 @@ class AdvancedConfigWindow(Adw.Window):
         _ensure_css()
         self._client = client
         self._on_saved = on_saved
+        #: Called after each save, besides *on_saved*: see
+        #: :meth:`add_saved_listener`.
+        self._saved_listeners: list = []
+        #: The file on screen, as the daemon names it ("" is the root), and
+        #: every file of the configuration (the root first).
+        self._file = ""
+        self._files: tuple = ()
+        #: The line map of the text as loaded: a line number of the saved
+        #: file finds its block through it however the draft has changed.
+        self._loaded_lines = LineMap({}, {})
+        #: Where :meth:`go_to` was asked to go, until the file is on screen.
+        self._pending_target: Optional[dict] = None
         if parent is not None:
             self.set_transient_for(parent)
         self.set_default_size(1400, 760)
@@ -284,7 +297,19 @@ class AdvancedConfigWindow(Adw.Window):
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.set_vexpand(True)
         scroller.set_child(self._block_list)
+        # The files of the configuration: the root and what it includes.
+        # Hidden while there is only one.
+        self.file_switcher = Gtk.DropDown()
+        self.file_switcher.set_tooltip_text(_("The file of the configuration shown here"))
+        self.file_switcher.set_margin_top(8)
+        self.file_switcher.set_margin_start(8)
+        self.file_switcher.set_margin_end(8)
+        self.file_switcher.set_visible(False)
+        self.file_switcher.connect("notify::selected", self._on_file_chosen)
+        self._file_syncing = False
+        self._file_names_shown: Optional[list] = None
         column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        column.append(self.file_switcher)
         column.append(self.target_entry)
         column.append(scroller)
         column.set_size_request(210, -1)
@@ -335,20 +360,33 @@ class AdvancedConfigWindow(Adw.Window):
     # loading and saving (through the daemon)
     # ------------------------------------------------------------------
 
-    def _load(self) -> None:
+    def _load(self, file: Optional[str] = None) -> None:
+        """Load a file of the configuration: the one on screen again, or
+        *file* as the daemon named it ("" is the root)."""
+        wanted = self._file if file is None else file
         self.save_button.set_sensitive(False)
-        self._run(self._client.get_ssh_config_text, self._on_loaded)
+        self._run(
+            (lambda: self._client.get_ssh_config_text(wanted)) if wanted
+            else self._client.get_ssh_config_text,
+            self._on_loaded,
+        )
 
     def _on_loaded(self, result, error) -> None:
         if error is not None:
             logger.debug("Advanced Configuration could not load", exc_info=error)
             self._show_file_banner(_("The SSH configuration could not be read."))
+            self._pending_target = None
+            self._sync_file_switcher()
             return
+        self._file = str(getattr(result, "file", "") or "")
+        self._files = tuple(getattr(result, "files", ()) or ())
+        self._sync_file_switcher()
         self._revision = result.revision
         self._display_name = result.display_name
         self._writable = bool(result.writable)
         self._title.set_subtitle(result.display_name)
         self.editor.load(result.text)
+        self._loaded_lines = self.editor.lines
         self._loaded = True
         self._allowed_exec.clear()
         self._notes_open.clear()
@@ -360,6 +398,7 @@ class AdvancedConfigWindow(Adw.Window):
         )
         self._show_draft(evaluate_now=True)
         self._check_at_open()
+        self._apply_pending_target()
 
     def _check_at_open(self) -> None:
         """Ask OpenSSH about the file as it is, before any host is looked at.
@@ -368,7 +407,9 @@ class AdvancedConfigWindow(Adw.Window):
         """
         serial = self.editor.serial
         try:
-            request = EvaluateSshConfigDraftRequest(text=self.editor.text, host=_CHECK_HOST)
+            request = EvaluateSshConfigDraftRequest(
+                text=self.editor.text, host=_CHECK_HOST, file=self._file
+            )
         except (TypeError, ValueError):
             return
 
@@ -396,6 +437,7 @@ class AdvancedConfigWindow(Adw.Window):
         try:
             request = EvaluateSshConfigDraftRequest(
                 text=text, host=_CHECK_HOST, allowed_exec=tuple(sorted(self._allowed_exec)),
+                file=self._file,
             )
         except (TypeError, ValueError):
             self._write(text)
@@ -439,7 +481,9 @@ class AdvancedConfigWindow(Adw.Window):
         alert.present(self)
 
     def _write(self, text: str) -> None:
-        request = SaveSshConfigTextRequest(text=text, expected_revision=self._revision)
+        request = SaveSshConfigTextRequest(
+            text=text, expected_revision=self._revision, file=self._file
+        )
         self._run(
             lambda: self._client.save_ssh_config_text(request),
             lambda result, error: self._on_saved_result(text, result, error),
@@ -452,7 +496,7 @@ class AdvancedConfigWindow(Adw.Window):
             if code is ErrorCode.STALE_EDITOR:
                 self._show_file_banner(
                     _("The SSH configuration changed on disk since it was opened."),
-                    _("Reload"), self._load,
+                    _("Reload"), lambda: self._load(),
                 )
             elif code is ErrorCode.SSH_CONFIG_READ_ONLY:
                 self._writable = False
@@ -472,23 +516,176 @@ class AdvancedConfigWindow(Adw.Window):
         self._toasts.add_toast(Adw.Toast.new(_("SSH configuration saved")))
         self._update_chrome()
         self._schedule_evaluation(now=True)  # Match exec commands are saved now
-        if callable(self._on_saved):
+        for listener in [self._on_saved, *self._saved_listeners]:
+            if not callable(listener):
+                continue
             try:
-                self._on_saved()
+                listener()
             except Exception:
                 logger.debug("on_saved failed", exc_info=True)
 
     def _on_reload(self, *_args) -> None:
         if self.dirty:
-            self._confirm_discard(self._load)
+            self._confirm_discard(lambda: self._load())
         else:
             self._load()
+
+    # ------------------------------------------------------------------
+    # the files of the configuration
+    # ------------------------------------------------------------------
+
+    def _sync_file_switcher(self) -> None:
+        """Offer the files the configuration reads; show the one on screen.
+        A configuration of one file has nothing to switch between."""
+        names = [ref.display_name for ref in self._files]
+        self._file_syncing = True
+        try:
+            if names != self._file_names_shown:
+                self._file_names_shown = names
+                self.file_switcher.set_model(Gtk.StringList.new(names))
+            current = next(
+                (index for index, ref in enumerate(self._files) if ref.file == self._file), 0
+            )
+            if names and self.file_switcher.get_selected() != current:
+                self.file_switcher.set_selected(current)
+        finally:
+            self._file_syncing = False
+        self.file_switcher.set_visible(len(names) > 1)
+
+    def _on_file_chosen(self, *_args) -> None:
+        if self._file_syncing:
+            return
+        index = self.file_switcher.get_selected()
+        if 0 <= index < len(self._files):
+            self.open_file(self._files[index].file)
+
+    def open_file(self, file: str) -> None:
+        """Put another file of the configuration on screen: *file* as the
+        daemon named it ("" is the root). Unsaved changes are asked about
+        first; keeping them leaves the file on screen where it is."""
+        if file == self._file:
+            return
+
+        def stay() -> None:
+            self._pending_target = None
+            self._sync_file_switcher()
+
+        if self.dirty:
+            self._confirm_discard(lambda: self._load(file), stay)
+        else:
+            self._load(file)
+
+    def _file_named(self, source: str) -> str:
+        """The daemon's name for *source*, a path as a connection reports
+        its source file. The root, and a path the configuration does not
+        read, are the root (""): there is nowhere else to look."""
+        for ref in self._files[1:]:
+            if ref.file == source:
+                return ref.file
+        return ""
+
+    # ------------------------------------------------------------------
+    # going to a place (the entry point for the rest of the app)
+    # ------------------------------------------------------------------
+
+    def add_saved_listener(self, callback: Callable[[], None]) -> None:
+        """Run *callback* after each save: for a caller that shows values
+        the save may have changed."""
+        self._saved_listeners.append(callback)
+
+    def go_to(
+        self,
+        *,
+        host: str = "",
+        line: int = 0,
+        option: str = "",
+        file: str = "",
+        pin: bool = False,
+    ) -> None:
+        """Show a place of the configuration. See
+        ``docs/architecture/advanced-configuration-navigation.md``.
+
+        *file*: the file it is in, as a connection reports its source (a
+        path); empty, or a path the configuration does not read, is the
+        root. *line*: a line of that file **as saved**; the block or option
+        it belongs to is shown, wherever unsaved edits have moved it, or the
+        line itself on the Text page when no block owns it. *host*: the
+        block that declares the host, when no line is given or it finds
+        nothing. *option*: within that block, the option to show (its
+        keyword). *pin*: make *host* the host OpenSSH is asked about,
+        whichever block is selected afterwards.
+
+        May be called before the window has loaded: it goes there once the
+        file is on screen.
+        """
+        self._pending_target = dict(
+            host=str(host or "").strip(), line=int(line or 0),
+            option=str(option or "").strip(), file=str(file or ""), pin=bool(pin),
+        )
+        if self._loaded:
+            self._apply_pending_target()
+
+    def _apply_pending_target(self) -> None:
+        target = self._pending_target
+        if target is None:
+            return
+        wanted = self._file_named(target["file"])
+        if wanted != self._file:
+            self.open_file(wanted)          # comes back here once it has loaded
+            return
+        self._pending_target = None
+        host, line, option = target["host"], target["line"], target["option"]
+        if target["pin"] and host:
+            self._set_typed(host)
+            self._target_changed()
+        uid = self.editor.owner_of_line(line, self._loaded_lines) if line else None
+        if uid is None and host:
+            uid = self._block_declaring(host)
+        if uid is None:
+            if line:
+                # No block owns the line (a comment, a line OpenSSH cannot
+                # place): it is shown as text.
+                self.results.show_text_line(line)
+            elif host:
+                self._toasts.add_toast(Adw.Toast.new(
+                    _("No Host block names “{host}” in this file.").format(host=host)
+                ))
+            return
+        owner, _found = self.editor.find_option(uid)
+        block = owner if owner is not None else self.editor.find_block(uid)
+        if block is None:
+            return
+        if option:
+            wanted_key = option.lower()
+            uid = next(
+                (item.uid for item in block.options if item.key.strip().lower() == wanted_key),
+                uid,
+            )
+        self.select_block(block.uid, anchor=False)
+
+        def show() -> bool:
+            # Once laid out: a window just opened has no sizes yet.
+            self.rules.scroll_to(block.uid)
+            self.rules.reveal(uid)
+            return False
+
+        GLib.timeout_add(150, show)
+
+    def _block_declaring(self, host: str) -> Optional[int]:
+        for block in self.editor.blocks:
+            if block.kind == HOST and not block.disabled and host in declared_hosts(
+                block.patterns.split()
+            ):
+                return block.uid
+        return None
 
     def _on_copy(self, *_args) -> None:
         self.get_clipboard().set(self.editor.text)
         self._toasts.add_toast(Adw.Toast.new(_("Configuration copied")))
 
-    def _confirm_discard(self, proceed: Callable[[], None]) -> None:
+    def _confirm_discard(
+        self, proceed: Callable[[], None], stay: Optional[Callable[[], None]] = None
+    ) -> None:
         alert = Adw.AlertDialog(
             heading=_("Discard unsaved changes?"),
             body=_("The changes made here have not been saved to the SSH configuration."),
@@ -498,7 +695,10 @@ class AdvancedConfigWindow(Adw.Window):
         alert.set_response_appearance("discard", Adw.ResponseAppearance.DESTRUCTIVE)
         alert.set_default_response("cancel")
         alert.set_close_response("cancel")
-        alert.connect("response", lambda _d, r: r == "discard" and proceed())
+        alert.connect(
+            "response",
+            lambda _d, r: proceed() if r == "discard" else (stay() if stay else None),
+        )
         alert.present(self)
 
     def _on_close_request(self, *_args) -> bool:
@@ -862,7 +1062,7 @@ class AdvancedConfigWindow(Adw.Window):
         try:
             return EvaluateSshConfigDraftRequest(
                 text=self.editor.text, host=host, user=user,
-                allowed_exec=tuple(sorted(self._allowed_exec)),
+                allowed_exec=tuple(sorted(self._allowed_exec)), file=self._file,
             )
         except (TypeError, ValueError):
             return None
@@ -955,6 +1155,7 @@ class AdvancedConfigWindow(Adw.Window):
         returned as it is, to be shown like any other.
         """
         text, allowed = self.editor.text, tuple(sorted(self._allowed_exec))
+        file = self._file
         header = self.editor.lines.headers.get(block.uid, 0)
         listed = plain_host_names(self.editor.blocks)
         candidates = listed + [name for name in sample_hosts(block) if name not in listed]
@@ -967,7 +1168,7 @@ class AdvancedConfigWindow(Adw.Window):
                     return (None, ())
                 try:
                     request = EvaluateSshConfigDraftRequest(
-                        text=text, host=name, allowed_exec=allowed
+                        text=text, host=name, allowed_exec=allowed, file=file
                     )
                 except (TypeError, ValueError):
                     continue

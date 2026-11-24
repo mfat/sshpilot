@@ -1668,6 +1668,7 @@ class ConnectionDialog(
     save_button = Gtk.Template.Child()
     effective_config_button = Gtk.Template.Child()
     edit_ssh_config_button = Gtk.Template.Child()
+    advanced_config_button = Gtk.Template.Child()
     
     def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None, as_new=False):
         super().__init__()

@@ -51,6 +51,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
+              <object class="GtkButton" id="advanced_config_button">
+                <property name="label" translatable="yes">Advanced Configuration</property>
+                <property name="tooltip-text" translatable="yes">Show this host's block among the blocks that apply to it</property>
+              </object>
+            </child>
+            <child>
               <object class="GtkBox">
                 <property name="hexpand">true</property>
               </object>
