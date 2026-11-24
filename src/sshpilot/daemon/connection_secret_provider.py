@@ -147,13 +147,8 @@ class DaemonConnectionSecretProvider:
         }
 
     def lookup_connection_password(
-        self, connection_id: ConnectionId, *, migrate: bool = True
+        self, connection_id: ConnectionId
     ) -> Optional[str]:
-        """The password a launch uses for the connection.
-
-        A password found under an older host key is moved to the current
-        one, unless *migrate* is false: a status question must not write.
-        """
         record = self._record(connection_id)
         if record is None:
             return None
@@ -191,7 +186,7 @@ class DaemonConnectionSecretProvider:
                 continue
             value = manager.lookup(password_spec(host, user))
             if value:
-                if migrate and canonical and host != canonical:
+                if canonical and host != canonical:
                     try:
                         if manager.store(password_spec(canonical, user), value):
                             self._delete_unless_shared(manager, host, user, record)
@@ -231,9 +226,7 @@ class DaemonConnectionSecretProvider:
         return True
 
     def has_connection_password(self, connection_id: ConnectionId) -> bool:
-        # Read-only: asked when the editor opens, where nothing may be
-        # stored or deleted.
-        return self.lookup_connection_password(connection_id, migrate=False) is not None
+        return self.lookup_connection_password(connection_id) is not None
 
     def store_connection_password(
         self,

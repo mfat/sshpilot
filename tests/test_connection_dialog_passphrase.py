@@ -659,14 +659,274 @@ def test_rule_editor_remote_to_local_resets_host_to_localhost():
     assert remote_host_row.get_text() == "localhost"
 
 
+def test_daemon_editor_loads_password_from_protected_reveal(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+
+    class DaemonClient:
+        def __init__(self):
+            self.reveal_id = None
+
+        def reveal_connection_password(self, connection_id):
+            self.reveal_id = connection_id
+            return bytearray(b"hunter2")
+
+    class Bridge:
+        pass
+
+    class UnlockedController:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=False, login_required=False)
+
+    client = DaemonClient()
+    parent = types.SimpleNamespace(
+        connection_manager=object(),  # read-only projection, no secret access
+        client=client,
+        client_bridge=Bridge(),
+        _daemon_ready=lambda: True,
+        secrets_controller=UnlockedController(),
+    )
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(
+        nickname="web", username="root",
+    )
+    dialog.password_row = DummyEntry("")
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    dialog._load_password_async()
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    assert client.reveal_id == "web"
+    assert idle_calls
+    callback, (password,) = idle_calls[0]
+    callback(password)
+    assert dialog.password_row.get_text() == "hunter2"
+    assert dialog._password_saved is True
+    assert dialog._orig_password == "hunter2"
 
 
+def test_unavailable_editor_does_not_read_password_from_projection_manager():
+    class Manager:
+        def get_connection_password(self, _connection):
+            raise AssertionError("frontend manager secret lookup is obsolete")
+
+    parent = types.SimpleNamespace(
+        connection_manager=Manager(),
+        client=None,
+        client_bridge=None,
+        _daemon_ready=lambda: False,
+    )
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(nickname="web", username="root")
+    dialog.password_row = DummyEntry("")
+
+    dialog._load_password_async()
+
+    assert dialog.password_row.get_text() == ""
 
 
+def test_daemon_editor_prompts_unlock_before_loading_password(monkeypatch):
+    """#1199: a locked session vault must be unlocked (not silently skipped)
+    before the connection dialog tries to reveal a saved password."""
+    import sshpilot.connection_dialog as dialog_module
+
+    class DaemonClient:
+        def __init__(self):
+            self.reveal_id = None
+
+        def reveal_connection_password(self, connection_id):
+            self.reveal_id = connection_id
+            return bytearray(b"hunter2")
+
+    class Controller:
+        def __init__(self):
+            self.state = types.SimpleNamespace(needs_unlock=True, login_required=False)
+
+        def load_state(self):
+            return self.state
+
+    client = DaemonClient()
+    controller = Controller()
+    parent = types.SimpleNamespace(
+        connection_manager=object(),
+        client=client,
+        client_bridge=object(),
+        _daemon_ready=lambda: True,
+        secrets_controller=controller,
+    )
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(nickname="web", username="root")
+    dialog.password_row = DummyEntry("")
+
+    idle_calls = []
+    pending_threads = []
+    unlock_calls = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        unlock_calls.append(anchor)
+        on_done(True)
+        return True
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+
+    dialog._load_password_async()
+
+    # The unlock prompt runs before any reveal is attempted.
+    assert unlock_calls == [dialog]
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    assert client.reveal_id == "web"
+    callback, (password,) = idle_calls[0]
+    callback(password)
+    assert dialog.password_row.get_text() == "hunter2"
 
 
+def test_daemon_editor_skips_reveal_worker_gate_when_already_unlocked(monkeypatch):
+    """An already-unlocked backend must not prompt."""
+    import sshpilot.connection_dialog as dialog_module
+
+    class DaemonClient:
+        def reveal_connection_password(self, connection_id):
+            return bytearray(b"hunter2")
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=False, login_required=False)
+
+    parent = types.SimpleNamespace(
+        connection_manager=object(),
+        client=DaemonClient(),
+        client_bridge=object(),
+        _daemon_ready=lambda: True,
+        secrets_controller=Controller(),
+    )
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(nickname="web", username="root")
+    dialog.password_row = DummyEntry("")
+
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    def unexpected_prompt_unlock(*_a, **_kw):
+        raise AssertionError("must not prompt when already unlocked")
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", unexpected_prompt_unlock)
+
+    dialog._load_password_async()
+
+    assert len(pending_threads) == 1
 
 
+def test_password_peek_gates_on_unlock_and_recovers_after_decline(monkeypatch):
+    """Peeking a saved password while locked must prompt to unlock rather than
+    silently revealing nothing. A declined/cancelled unlock must not wedge
+    ``_password_reveal_pending`` forever — a later peek (after the vault is
+    unlocked some other way) must still be able to succeed."""
+    import sshpilot.connection_dialog as dialog_module
+
+    class DaemonClient:
+        def reveal_connection_password(self, connection_id):
+            return bytearray(b"hunter2")
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=True, login_required=False)
+
+    parent = types.SimpleNamespace(
+        connection_manager=object(),
+        client=DaemonClient(),
+        client_bridge=object(),
+        _daemon_ready=lambda: True,
+        secrets_controller=Controller(),
+    )
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(nickname="web", username="root")
+    dialog.password_row = DummyPasswordEntry("")
+    dialog.password_row.set_visibility(True)
+    dialog._password_saved = True
+
+    pending_threads = []
+    idle_calls = []
+    unlock_results = [False, True]
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        on_done(unlock_results.pop(0))
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib, "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+
+    # First peek: unlock declined -> no reveal attempted, pending flag cleared.
+    dialog._on_password_visibility_changed()
+    assert pending_threads == []
+    assert dialog._password_reveal_pending is False
+
+    # Second peek: unlock succeeds -> reveal proceeds and completes normally.
+    dialog._on_password_visibility_changed()
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert dialog.password_row.get_text() == "hunter2"
+    assert dialog._password_reveal_pending is False
 
 
 def test_reveal_after_unlock_runs_worker_directly_when_unlocked():
@@ -808,9 +1068,231 @@ def test_reveal_after_unlock_treats_state_query_failure_as_locked(monkeypatch):
     assert calls == ["worker"]
 
 
+def test_daemon_editor_loads_passphrase_from_protected_reveal(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+    from sshpilot.connection_dialog import FileListEditor
+
+    class DaemonClient:
+        def __init__(self):
+            self.reveal_key = None
+
+        def reveal_key_passphrase(self, key_path):
+            self.reveal_key = key_path
+            return bytearray(b"key-secret")
+
+    class Bridge:
+        pass
+
+    class UnlockedController:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=False, login_required=False)
+
+    client = DaemonClient()
+    parent = types.SimpleNamespace(
+        connection_manager=object(),  # read-only projection, no secret access
+        client=client,
+        client_bridge=Bridge(),
+        _daemon_ready=lambda: True,
+        secrets_controller=UnlockedController(),
+    )
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._connection_manager = parent.connection_manager
+    ed._parent_window = parent
+
+    entry = DummyEntry("")
+    row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry)
+    norm = "/home/demo/.ssh/id_ed25519"
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    ed._load_passphrase_async(entry, row, norm)
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    assert client.reveal_key == norm
+    assert idle_calls
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert entry.get_text() == "key-secret"
+    assert row._pass_initial == "key-secret"
+    assert row._pass_saved is True
 
 
+def test_filelisteditor_prompts_unlock_before_loading_passphrase(monkeypatch):
+    """#1199: a locked session vault must be unlocked before the key editor
+    tries to reveal a saved passphrase, instead of silently showing it empty."""
+    import sshpilot.connection_dialog as dialog_module
+    from sshpilot.connection_dialog import FileListEditor
+
+    class DaemonClient:
+        def __init__(self):
+            self.reveal_key = None
+
+        def reveal_key_passphrase(self, key_path):
+            self.reveal_key = key_path
+            return bytearray(b"key-secret")
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=True, login_required=False)
+
+    client = DaemonClient()
+    parent = types.SimpleNamespace(
+        connection_manager=object(),
+        client=client,
+        client_bridge=object(),
+        _daemon_ready=lambda: True,
+        secrets_controller=Controller(),
+    )
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._connection_manager = parent.connection_manager
+    ed._parent_window = parent
+
+    entry = DummyEntry("")
+    row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry)
+    norm = "/home/demo/.ssh/id_ed25519"
+
+    idle_calls = []
+    pending_threads = []
+    unlock_calls = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        unlock_calls.append(anchor)
+        on_done(True)
+        return True
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+
+    ed._load_passphrase_async(entry, row, norm)
+
+    assert unlock_calls == [parent]
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    assert client.reveal_key == norm
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert entry.get_text() == "key-secret"
 
 
+def test_passphrase_peek_gates_on_unlock_and_recovers_after_decline(monkeypatch):
+    """Same #1201 review concern as the password peek, for the key editor:
+    a declined unlock must clear ``row._pass_reveal_pending`` so a later peek
+    can still succeed instead of being wedged forever."""
+    import sshpilot.connection_dialog as dialog_module
+    from sshpilot.connection_dialog import FileListEditor
+
+    class DaemonClient:
+        def reveal_key_passphrase(self, key_path):
+            return bytearray(b"key-secret")
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=True, login_required=False)
+
+    parent = types.SimpleNamespace(
+        connection_manager=object(),
+        client=DaemonClient(),
+        client_bridge=object(),
+        _daemon_ready=lambda: True,
+        secrets_controller=Controller(),
+    )
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._connection_manager = parent.connection_manager
+    ed._parent_window = parent
+
+    entry = DummyPasswordEntry("")
+    entry.set_visibility(True)
+    row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry, _pass_saved=True)
+    norm = "/home/demo/.ssh/id_ed25519"
+
+    pending_threads = []
+    idle_calls = []
+    unlock_results = [False, True]
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        on_done(unlock_results.pop(0))
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib, "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+
+    # First peek: unlock declined -> no reveal attempted, pending flag cleared.
+    ed._on_passphrase_visibility_changed(row, entry, norm)
+    assert pending_threads == []
+    assert row._pass_reveal_pending is False
+
+    # Second peek: unlock succeeds -> reveal proceeds and completes normally.
+    ed._on_passphrase_visibility_changed(row, entry, norm)
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert entry.get_text() == "key-secret"
+    assert row._pass_reveal_pending is False
 
 
+def test_unavailable_editor_does_not_read_passphrase_from_projection_manager():
+    from sshpilot.connection_dialog import FileListEditor
+
+    class Manager:
+        def get_key_passphrase(self, _key_path):
+            raise AssertionError("frontend manager secret lookup is obsolete")
+
+    parent = types.SimpleNamespace(
+        connection_manager=Manager(),
+        client=None,
+        client_bridge=None,
+        _daemon_ready=lambda: False,
+    )
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._connection_manager = parent.connection_manager
+    ed._parent_window = parent
+    entry = DummyEntry("")
+    row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry)
+
+    ed._load_passphrase_async(entry, row, "/home/demo/.ssh/id_ed25519")
+
+    assert entry.get_text() == ""
