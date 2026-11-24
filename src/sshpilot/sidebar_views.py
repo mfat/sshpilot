@@ -73,7 +73,7 @@ def _ensure_sections_view(window):
     from .advanced_config_window import AdvancedConfigView
 
     def saved():
-        schedule = getattr(window, "_schedule_config_precedence_check", None)
+        schedule = getattr(window, "_schedule_config_syntax_check", None)
         if callable(schedule):
             schedule()
 

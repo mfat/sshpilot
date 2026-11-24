@@ -127,10 +127,6 @@ def get_default_config() -> Dict[str, Any]:
             # On for new installs only: existing configs lack the key, and the
             # call sites fall back to False, so upgraders keep their rows as-is.
             'sidebar_show_dashboard_button': True,
-            # Saved-host settings an earlier SSH config block beats that the
-            # user dismissed from the main-window notice: fingerprints per
-            # SSH config scope ('default' / 'isolated').
-            'config_conflicts_dismissed': {},
             'sidebar_show_split_view_button': False,
             # Pinned Local Terminal row at the top of the connection list
             'sidebar_show_local_terminal': False,

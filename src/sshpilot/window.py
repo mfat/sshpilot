@@ -1037,7 +1037,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 app.install_api_event_subscription(self.client)
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(self.client, bridge=self.client_bridge)
-        schedule = getattr(self, '_schedule_config_precedence_check', None)
+        schedule = getattr(self, '_schedule_config_syntax_check', None)
         if callable(schedule):
             schedule()
         self._run_client_ready_callbacks(True)
@@ -2132,28 +2132,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         container.set_visible(True)
         banner.set_revealed(True)
 
-    def _schedule_config_precedence_check(self) -> None:
-        """Look for unused host settings shortly after the store settles.
+    def _schedule_config_syntax_check(self) -> None:
+        """Ask whether OpenSSH accepts the config shortly after the store settles.
 
         Store refreshes come in bursts; one check follows the last of them.
         """
-        notice = getattr(self, '_config_precedence_notice', None)
+        notice = getattr(self, '_config_syntax_notice', None)
         if notice is None:
             return
-        if getattr(self, '_config_precedence_check_timer', 0):
-            GLib.source_remove(self._config_precedence_check_timer)
+        if getattr(self, '_config_syntax_check_timer', 0):
+            GLib.source_remove(self._config_syntax_check_timer)
 
         def fire():
-            self._config_precedence_check_timer = 0
+            self._config_syntax_check_timer = 0
             if self._daemon_ready():
                 notice.check()
-                # Same moment, same files: whether OpenSSH accepts them.
-                syntax_notice = getattr(self, '_config_syntax_notice', None)
-                if syntax_notice is not None:
-                    syntax_notice.check()
             return False
 
-        self._config_precedence_check_timer = GLib.timeout_add(1000, fire)
+        self._config_syntax_check_timer = GLib.timeout_add(1000, fire)
 
     def _on_active_for_config_syntax(self, *_args) -> None:
         """Ask again whether OpenSSH accepts the config on return to the window.
@@ -2281,17 +2277,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             orientation=Gtk.Orientation.VERTICAL
         )
         self.ssh_config_banner_container.set_visible(False)
-        # Saved hosts whose own settings an earlier block beats; shown until
-        # dismissed, and again for a conflict not dismissed before.
-        self.config_precedence_banner_container = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL
-        )
-        self.config_precedence_banner_container.set_visible(False)
-        from .gtk.config_precedence_notice import ConfigPrecedenceNotice
-        self._config_precedence_notice = ConfigPrecedenceNotice(
-            self, self.config_precedence_banner_container
-        )
-        self._config_precedence_check_timer = 0
+        self._config_syntax_check_timer = 0
         # A line OpenSSH rejects: no SSH connection starts until it is fixed.
         self.config_syntax_banner_container = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL
@@ -4089,7 +4075,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.ssh_config_banner_container)
             content_wrapper.append(self.config_syntax_banner_container)
-            content_wrapper.append(self.config_precedence_banner_container)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
@@ -4108,7 +4093,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(self.ssh_config_banner_container)
             main_box.append(self.config_syntax_banner_container)
-            main_box.append(self.config_precedence_banner_container)
             main_box.append(self.update_banner_container)
             main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
@@ -6239,7 +6223,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             def saved():
                 # A corrected line or a moved block changes no connection, so
                 # no store refresh follows: look at the notices again here.
-                schedule = getattr(self, '_schedule_config_precedence_check', None)
+                schedule = getattr(self, '_schedule_config_syntax_check', None)
                 if callable(schedule):
                     schedule()
                 if callable(on_saved):
@@ -6362,7 +6346,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 return None
 
             def saved():
-                schedule = getattr(self, '_schedule_config_precedence_check', None)
+                schedule = getattr(self, '_schedule_config_syntax_check', None)
                 if callable(schedule):
                     schedule()
                 # The read-only sections of the main window show the file.
@@ -7462,7 +7446,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """
         self.group_manager.bind_connections(manager.connections)
         self._sync_ssh_config_link_notice(manager)
-        schedule = getattr(self, '_schedule_config_precedence_check', None)
+        schedule = getattr(self, '_schedule_config_syntax_check', None)
         if callable(schedule):
             schedule()
         # A rebuild that runs after this reset, before the idle one, already
