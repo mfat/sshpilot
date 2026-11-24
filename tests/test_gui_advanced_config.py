@@ -622,6 +622,28 @@ def test_retyping_the_picked_block_s_host_follows_it(gtk, tmp_path):
     win.destroy()
 
 
+# -- review findings -----------------------------------------------------------
+
+def _open_on(gtk, tmp_path, text, *, writable=True, client_class=_Client):
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    path = tmp_path / "config"
+    path.write_text(text)
+    client = client_class(path)
+    client.writable = writable
+    win = AdvancedConfigWindow(None, client)
+    win._test_client = client
+    assert _pump(lambda: win._loaded)
+    return win
+
+
+class _ReadOnlyClient(_Client):
+    def get_ssh_config_text(self, file=""):
+        from sshpilot.api.models.connections import SshConfigText
+
+        return SshConfigText(self.path.read_text(), self._revision(), "config", False)
+
+
 def test_a_file_notice_does_not_hide_what_openssh_says(gtk, tmp_path):
     """Review: a read-only notice suppressed every later banner, the Match
     exec prompt included, so such a draft could never be evaluated."""
