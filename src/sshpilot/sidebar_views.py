@@ -319,6 +319,8 @@ def build_sidebar_view_stack(window, sidebar_box) -> None:
     stack.add_named(window._sidebar_rules_view, RULES)
     window._sidebar_view_stack = stack
     sidebar_box.append(stack)
+    # Once the first rows are on screen; later rebuilds keep it in step.
+    GLib.timeout_add(1500, lambda: (sync_switcher_height(window), False)[1])
     entry = getattr(window, "search_entry", None)
     if entry is not None:
         entry.connect(

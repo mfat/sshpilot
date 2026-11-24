@@ -4418,8 +4418,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             from .sidebar_views import refresh_rules, sync_switcher_height
             refresh_rules(self)
-            # Once the rows are there: the dropdown is as tall as one.
-            GLib.idle_add(lambda: (sync_switcher_height(self), False)[1])
+            # From the rows about to be replaced: the dropdown is as tall
+            # as one of them.
+            sync_switcher_height(self)
         except Exception:
             logger.debug("Could not refresh the sidebar rules", exc_info=True)
         steps = self._rebuild_connection_list_steps()
