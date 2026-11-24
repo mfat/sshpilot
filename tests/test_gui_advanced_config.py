@@ -932,3 +932,46 @@ def test_the_cursor_on_the_raw_page_selects_the_block_it_is_in(window):
     found, position = buffer.get_iter_at_line(window.editor.lines.headers[web.uid] - 1)
     buffer.place_cursor(position)
     assert window.selected_uid == star.uid
+
+
+# -- answers are had ahead of time: a selection shows them at once -----------------
+
+def test_a_selection_is_answered_in_the_same_step(gtk, tmp_path):
+    """The hosts the configuration names are asked about in the background,
+    so selecting one shows which blocks apply with no wait, a pattern block
+    too; and an edit asks again rather than showing what no longer holds."""
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    path = tmp_path / "config"
+    path.write_text(CONFIG + "\nHost db1\n    User postgres\n")
+    client = _Client(path)
+    win = AdvancedConfigWindow(None, client)
+    assert _pump(lambda: len(win.draft.blocks) == 4)
+    glob, web, star, db = win.draft.blocks
+    # web1, web2, db1, and the name made up for "Host *"
+    assert _pump(lambda: len(win._answers) >= 4, seconds=10), win._answers.keys()
+
+    asked = []
+    real = client.evaluate_ssh_config_draft
+    client.evaluate_ssh_config_draft = lambda request: asked.append(request.host) or real(request)
+    command = win.results.summary_rows["command"]
+
+    win.select_block(web.uid)                              # no pump: at once
+    assert command.get_subtitle() == "ssh web1" and _dimmed(win) == ["db1"]
+    win.select_block(db.uid)
+    assert command.get_subtitle() == "ssh db1" and _dimmed(win) == ["web1 web2"]
+    win.select_block(star.uid)                             # a pattern block
+    assert [win.rules.cards[b.uid].status.get_label() for b in win.draft.blocks] == [
+        "Always", "Matched", "Matched", "Matched",
+    ]
+    assert asked == []                                     # nothing was asked
+
+    # The tooltip of a pill is kept, and given when the pointer asks.
+    assert win.rules.cards[web.uid].status._tooltip
+
+    win.select_block(web.uid)
+    _row(win, web.options[0].uid).value.set_text("admin")  # another draft
+    assert _pump(lambda: _effective(win, "user") == "admin")
+    assert "web1" in asked                                 # asked again, for the new text
+    win._closing = True
+    win.destroy()

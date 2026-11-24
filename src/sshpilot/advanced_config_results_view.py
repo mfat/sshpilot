@@ -70,6 +70,12 @@ class EffectiveItem(GObject.Object):
     def set(self, values: List[str], source, *, forced: bool, default: bool,
             unused: int) -> None:
         """Take a new answer; the row showing the item follows."""
+        # Most options are the same from one host to the next: an item
+        # that is told what it already shows has nothing to redo.
+        told = (tuple(values), source, forced, default, unused)
+        if told == getattr(self, "_told", None):
+            return
+        self._told = told
         self.values = "\n".join(values)
         self.forced = forced
         self.unused = unused

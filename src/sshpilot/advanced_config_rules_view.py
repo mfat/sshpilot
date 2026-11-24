@@ -67,18 +67,37 @@ def pill(text: str = "", style: str = "muted") -> Gtk.Label:
     label.add_css_class("advcfg-pill")
     label.add_css_class(style)
     label._style = style
+    # The tooltip is handed over when the pointer asks for it: setting one
+    # costs a hundred times what the rest of a pill does, and a selection
+    # changes dozens of pills that nobody will hover.
+    label._tooltip = ""
+    label.set_has_tooltip(True)
+    label.connect("query-tooltip", _pill_tooltip)
     label.set_visible(bool(text))
     return label
 
 
+def _pill_tooltip(label, _x, _y, _keyboard, tooltip) -> bool:
+    if not label._tooltip:
+        return False
+    tooltip.set_text(label._tooltip)
+    return True
+
+
 def set_pill(label: Gtk.Label, text: str, style: str, tooltip: str = "") -> None:
+    # A selection repaints every pill of every card: one that already says
+    # this is left alone (asking GTK to set what is set is not free).
+    shown = (text, style, tooltip)
+    if getattr(label, "_shown", None) == shown:
+        return
+    label._shown = shown
     if label.get_label() != text:
         label.set_label(text)
     if label._style != style:
         label.remove_css_class(label._style)
         label.add_css_class(style)
         label._style = style
-    label.set_tooltip_text(tooltip or None)
+    label._tooltip = tooltip
     label.set_visible(bool(text))
 
 
@@ -101,6 +120,8 @@ class OptionRow:
     def __init__(self, view: "RulesView", option: Option) -> None:
         self.view = view
         self.uid = option.uid
+        #: What :meth:`show` last put on the line.
+        self._said: Optional[tuple] = None
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         grip = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
         grip.add_css_class("dim-label")
@@ -156,6 +177,11 @@ class OptionRow:
 
     def show(self, item, error) -> None:
         """OpenSSH's word on this line: a state, a rejection, or nothing."""
+        # The same word as last time (most lines, on most selections):
+        # nothing to do. The items are values, compared as such.
+        if self._said == (item, error) and self._said is not None:
+            return
+        self._said = (item, error)
         for entry in (self.key, self.value):
             _set_class(entry, "error", error is not None)
         if error is not None:
@@ -184,6 +210,8 @@ class BlockCard:
         #: The last answer does not apply this block: it is dimmed while it
         #: is not selected.
         self.dims = False
+        #: Whether the card is dimmed on screen now.
+        self.dimmed = False
         controller = view.controller
         movable = block.kind != GLOBAL
 
@@ -524,7 +552,9 @@ class RulesView(Gtk.Box):
     def dim(card: "BlockCard", dimmed: bool) -> None:
         """Dim a block that does not apply, or bring it back. It stays as
         it is otherwise: whole, in its place, and editable."""
-        _set_class(card.card, "skipped", dimmed)
+        if card.dimmed != dimmed:
+            card.dimmed = dimmed
+            _set_class(card.card, "skipped", dimmed)
 
     def show_answer(
         self,

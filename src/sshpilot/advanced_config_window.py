@@ -67,6 +67,12 @@ _HISTORY_DELAY_MS = 700
 #: name no block mentions is enough to learn whether it accepts the text.
 _CHECK_HOST = "sshpilot-config-check"
 
+#: How long the draft must have stood before its hosts are asked about ahead
+#: of time, and how many of them are: beyond that, a host is asked about
+#: when it is selected.
+_PREFETCH_DELAY_MS = 350
+_PREFETCH_HOSTS = 150
+
 _CSS = """
 .advcfg-pill { font-size: 0.82em; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
 .advcfg-pill.success { background-color: alpha(@success_color, 0.16); color: @success_color; }
@@ -85,7 +91,7 @@ _CSS = """
 .advcfg-block.selected { outline: 2px solid @accent_color; outline-offset: -1px; }
 .advcfg-block.selected > .advcfg-header { background-color: alpha(@accent_color, 0.16); }
 .advcfg-block.disabled { opacity: 0.6; }
-.advcfg-block { transition: opacity 200ms ease-out; }
+.advcfg-block { transition: opacity 90ms ease-out; }
 .advcfg-block.skipped { opacity: 0.45; }
 .advcfg-drop-before { box-shadow: 0 -3px 0 0 @accent_color; }
 .advcfg-drop-after { box-shadow: 0 3px 0 0 @accent_color; }
@@ -144,6 +150,12 @@ class AdvancedConfigWindow(Adw.Window):
         self._loaded_lines = LineMap({}, {})
         #: Where :meth:`go_to` was asked to go, until the file is on screen.
         self._pending_target: Optional[dict] = None
+        #: Answers had for the draft as it is: see :meth:`_answer_cache`.
+        self._answers: dict = {}
+        self._answers_key: Optional[tuple] = None
+        self._ask_lock = threading.Lock()
+        self._prefetching = False
+        self._prefetch_source = 0
         #: True while a move of the Raw page's cursor is selecting a block.
         self._selecting_from_raw = False
         if parent is not None:
@@ -384,6 +396,7 @@ class AdvancedConfigWindow(Adw.Window):
         self._writable = bool(result.writable)
         self._title.set_subtitle(result.display_name)
         self.editor.load(result.text)
+        self._forget_answers()      # another text, whatever its serial says
         self._loaded_lines = self.editor.lines
         self._loaded = True
         self._allowed_exec.clear()
@@ -417,7 +430,7 @@ class AdvancedConfigWindow(Adw.Window):
             if result.errors and serial == self.editor.serial and self._evaluation is None:
                 self._show_answer_banner(messages.error_text(result.errors[0]))
 
-        self._run(lambda: self._client.evaluate_ssh_config_draft(request), done)
+        self._run(lambda: self._ask_once(request), done)
 
     def save(self) -> None:
         """Save what is on screen, after asking OpenSSH whether it accepts it."""
@@ -450,7 +463,7 @@ class AdvancedConfigWindow(Adw.Window):
             else:
                 self._write(text)
 
-        self._run(lambda: self._client.evaluate_ssh_config_draft(request), checked)
+        self._run(lambda: self._ask_once(request), checked)
 
     def _confirm_rejected(self, text: str, evaluation: SshConfigDraftEvaluation) -> None:
         alert = Adw.AlertDialog(
@@ -819,7 +832,7 @@ class AdvancedConfigWindow(Adw.Window):
         # worked on for that host too.
         self._allowed_exec.clear()
         self._kept_visible.clear()
-        self._schedule_evaluation(idle=idle)
+        self._schedule_evaluation(idle=idle, now=not idle and self._answer_ready())
 
     def _on_block_picked(self, _listbox, row) -> None:
         if self._target_syncing or row is None:
@@ -1063,8 +1076,10 @@ class AdvancedConfigWindow(Adw.Window):
         self._mirror_selection()
         self._mark_selection_in_raw()
         if self._question() != before:
-            # Asked from the idle loop, so the highlight is painted first.
-            self._target_changed(idle=True)
+            # An answer had already is shown with the selection, in the same
+            # frame. One that must be asked for is asked from the idle
+            # loop, so the highlight is painted first.
+            self._target_changed(idle=not self._answer_ready())
 
     def reveal_line(self, line: int) -> None:
         """Show the option or block the draft has at *line* (from a source
@@ -1110,6 +1125,91 @@ class AdvancedConfigWindow(Adw.Window):
         else:
             self._evaluate_source = GLib.timeout_add(_EVALUATE_DELAY_MS, self._evaluate)
 
+    # -- answers already had ------------------------------------------------
+    #
+    # Asking OpenSSH takes a moment, and a selection must show at once which
+    # blocks apply. So an answer is kept for as long as the draft it is
+    # about stands, and the hosts the configuration names are asked about
+    # ahead of time, in the background: a selection then finds its answer
+    # waiting. One question is put to the daemon at a time, since a newer
+    # one from this window would make it drop the one before.
+
+    def _answer_cache(self) -> dict:
+        """The answers had for the draft as it is: ``(host, user) -> answer``.
+        Another draft, file or set of agreed commands starts afresh."""
+        key = (self.editor.serial, self._file, tuple(sorted(self._allowed_exec)))
+        if key != self._answers_key:
+            self._answers_key, self._answers = key, {}
+        return self._answers
+
+    def _forget_answers(self) -> None:
+        self._answers_key, self._answers = None, {}
+
+    def _ask(self, request, cache: dict, key: tuple):
+        """Ask the daemon (from a worker thread) and keep an answer that is
+        one. *cache* is the draft's own: a draft since replaced is not
+        given this answer."""
+        with self._ask_lock:
+            answer = self._client.evaluate_ssh_config_draft(request)
+        if answer.evaluated:
+            cache[key] = answer
+        return answer
+
+    def _ask_once(self, request):
+        """Ask the daemon a question whose answer is not kept (the check a
+        save makes), in turn with the others."""
+        with self._ask_lock:
+            return self._client.evaluate_ssh_config_draft(request)
+
+    def _schedule_prefetch(self) -> None:
+        if self._prefetch_source:
+            GLib.source_remove(self._prefetch_source)
+        self._prefetch_source = GLib.timeout_add(_PREFETCH_DELAY_MS, self._prefetch)
+
+    def _prefetch(self) -> bool:
+        """Ask about every host the configuration names that has no answer
+        yet, quietly. Stops at the first answer that is not one (a command
+        waiting for consent, a rejected draft): every host would get it."""
+        self._prefetch_source = 0
+        if self._prefetching or not self._loaded or self._closing:
+            return False
+        cache = self._answer_cache()
+        text, file = self.editor.text, self._file
+        allowed = tuple(sorted(self._allowed_exec))
+        # The hosts the blocks spell out, and for each pattern block the
+        # made-up name it is tried with: what any selection will ask.
+        wanted = list(plain_host_names(self.editor.blocks))
+        for block in self.editor.blocks:
+            if not block.disabled:
+                wanted.extend(name for name in sample_hosts(block) if name not in wanted)
+        names = [name for name in wanted[:_PREFETCH_HOSTS] if (name, None) not in cache]
+        if not names:
+            return False
+        self._prefetching = True
+
+        def work() -> None:
+            try:
+                for name in names:
+                    if cache is not self._answers or self._closing:
+                        return              # the draft moved on
+                    try:
+                        request = EvaluateSshConfigDraftRequest(
+                            text=text, host=name, allowed_exec=allowed, file=file
+                        )
+                    except (TypeError, ValueError):
+                        continue
+                    if not self._ask(request, cache, (name, None)).evaluated:
+                        return
+            except Exception:
+                logger.debug("prefetch stopped", exc_info=True)
+            finally:
+                self._prefetching = False
+
+        threading.Thread(
+            target=work, daemon=True, name="sshpilot-advanced-config-prefetch"
+        ).start()
+        return False
+
     def _evaluate(self) -> bool:
         self._evaluate_source = 0
         # Every question, the empty one included, outdates the ones before:
@@ -1117,16 +1217,36 @@ class AdvancedConfigWindow(Adw.Window):
         self._request_serial = serial = self._request_serial + 1
         request = self._request()
         draft_serial, lines = self.editor.serial, self.editor.lines
+        cache = self._answer_cache()
+
+        def show(result) -> None:
+            if isinstance(result, tuple):       # a pattern block's answer
+                self._evaluation, self._related = None, (*result, lines)
+            else:
+                self._evaluation, self._related = result, None
+                self._evaluated_serial = draft_serial
+                self._evaluated_lines = lines
+            self._show_answer()
+            self._schedule_prefetch()
+
         work = None
         if request is not None:
-            work = lambda: self._client.evaluate_ssh_config_draft(request)  # noqa: E731
+            key = (request.host, request.user)
+            if key in cache:
+                show(cache[key])                # had already: shown at once
+                return False
+            work = lambda: self._ask(request, cache, key)  # noqa: E731
         else:
             block = self._pattern_block()
             if block is not None:
-                work = self._related_work(block, serial)
+                had, work = self._related_work(block, serial, cache)
+                if had is not None:
+                    show(had)
+                    return False
         if work is None:
             self._evaluation = self._related = None
             self._show_answer()
+            self._schedule_prefetch()
             return False
 
         def done(result, error) -> None:
@@ -1142,18 +1262,25 @@ class AdvancedConfigWindow(Adw.Window):
                     _("OpenSSH could not be asked about this configuration.")
                 )
                 return
-            if isinstance(result, tuple):       # a pattern block's answer
-                if result[0] is None:
-                    return                      # given up for a newer question
-                self._evaluation, self._related = None, (*result, lines)
-            else:
-                self._evaluation, self._related = result, None
-                self._evaluated_serial = draft_serial
-                self._evaluated_lines = lines
-            self._show_answer()
+            if isinstance(result, tuple) and result[0] is None:
+                return                          # given up for a newer question
+            show(result)
 
         self._run(work, done)
         return False
+
+    def _answer_ready(self) -> bool:
+        """Whether the question as it stands has its answer already."""
+        cache = self._answer_cache()
+        request = self._request()
+        if request is not None:
+            return (request.host, request.user) in cache
+        block = self._pattern_block()
+        if block is None:
+            return True                         # nothing to ask
+        listed = plain_host_names(self.editor.blocks)
+        candidates = listed + [name for name in sample_hosts(block) if name not in listed]
+        return all((name, None) in cache for name in candidates)
 
     def _question(self) -> tuple:
         """What OpenSSH is asked: a host, or a pattern block's hosts."""
@@ -1172,9 +1299,9 @@ class AdvancedConfigWindow(Adw.Window):
             return None
         return block
 
-    def _related_work(self, block, serial: int) -> Callable[[], object]:
+    def _related_work(self, block, serial: int, cache: dict) -> tuple:
         """The question a pattern block stands for: which blocks apply to a
-        host it applies to?
+        host it applies to? ``(answer had already or None, work to get it)``.
 
         A pattern is no host, and OpenSSH is only ever asked about a host.
         So it is asked about each host the configuration spells out (and a
@@ -1190,19 +1317,13 @@ class AdvancedConfigWindow(Adw.Window):
         listed = plain_host_names(self.editor.blocks)
         candidates = listed + [name for name in sample_hosts(block) if name not in listed]
 
-        def work():
+        def gather(answer_for) -> object:
             related: set = set()
             hosts = []
             for name in candidates:
-                if serial != self._request_serial:
-                    return (None, ())
-                try:
-                    request = EvaluateSshConfigDraftRequest(
-                        text=text, host=name, allowed_exec=allowed, file=file
-                    )
-                except (TypeError, ValueError):
+                answer = answer_for(name)
+                if answer is None:
                     continue
-                answer = self._client.evaluate_ssh_config_draft(request)
                 if not answer.evaluated:
                     return answer
                 if header in answer.matched_blocks:
@@ -1211,7 +1332,32 @@ class AdvancedConfigWindow(Adw.Window):
                         hosts.append(name)
             return (related, tuple(hosts))
 
-        return work
+        if all((name, None) in cache for name in candidates):
+            return gather(lambda name: cache[(name, None)]), None
+
+        class _Superseded(Exception):
+            pass
+
+        def ask(name):
+            if (name, None) in cache:
+                return cache[(name, None)]
+            if serial != self._request_serial:
+                raise _Superseded()
+            try:
+                request = EvaluateSshConfigDraftRequest(
+                    text=text, host=name, allowed_exec=allowed, file=file
+                )
+            except (TypeError, ValueError):
+                return None
+            return self._ask(request, cache, (name, None))
+
+        def work():
+            try:
+                return gather(ask)
+            except _Superseded:
+                return (None, ())
+
+        return None, work
 
     def _allow_exec(self) -> None:
         """Agree to the commands the banner is about: those, word for word,
