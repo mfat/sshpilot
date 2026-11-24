@@ -880,11 +880,14 @@ row.auth-order-preview > box.header {
   padding-left: 0; padding-right: 0; margin-left: 0; margin-right: 0;
 }
 row.auth-order-preview .subtitle { font-family: monospace; }
-/* A method row being dragged: its place stays, faded, while a solid copy
-   follows the pointer; a line marks where it lands. */
-row.auth-method-dragging { opacity: 0.3; }
-row.auth-method-drop-above { box-shadow: inset 0 3px 0 0 @accent_bg_color; }
-row.auth-method-drop-below { box-shadow: inset 0 -3px 0 0 @accent_bg_color; }
+/* A method row being dragged: a solid copy follows the pointer, and the
+   empty space in the list says where it lands. No drop outline besides. */
+row.auth-method-list:drop(active),
+row.auth-method-list:drop(active) list,
+row.auth-method-list:drop(active) row {
+  box-shadow: none;
+  outline: none;
+}
 list.auth-method-drag-icon { border-radius: 12px; }
 row.auth-method-drag-solid { background-color: @card_bg_color; }
 """)
@@ -950,6 +953,7 @@ class AuthPolicyGroup:
         # it, so the header says what will be tried and the rows wait inside.
         self.order_row = Adw.ExpanderRow(title=_("Authentication methods"))
         self.order_row.set_subtitle_lines(2)
+        self.order_row.add_css_class("auth-method-list")
         self.group.add(self.order_row)
 
         self.reset_button = Gtk.Button(label=_("Reset"))
@@ -966,6 +970,20 @@ class AuthPolicyGroup:
         self.rows: Dict[str, object] = {}
         for method in METHODS:
             self.rows[method] = self._make_row(method)
+        # One drop target for the whole list, not one per row: the gap that
+        # opens under the pointer belongs to no row.
+        from gi.repository import Gdk, GObject
+
+        self._drag_method: Optional[str] = None
+        self._drag_home = 0       # the dragged row's own place
+        self._drag_gap: Optional[int] = None
+        self._drag_height = 0
+        self._drag_grab = (0, 0)
+        target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        target.connect("motion", self._on_drop_motion)
+        target.connect("leave", self._on_drop_leave)
+        target.connect("drop", self._on_drop)
+        self.order_row.add_controller(target)
         # Rows currently inside the expander, in order (it has no child list).
         self._shown_rows: List[object] = []
 
@@ -992,7 +1010,7 @@ class AuthPolicyGroup:
         self.group.add(preview)
 
     def _make_row(self, method: str):
-        from gi.repository import Adw, Gdk, Gio, GObject, Gtk
+        from gi.repository import Adw, Gdk, Gio, Gtk
 
         row = Adw.ActionRow(title=method_label(method))
         row._method = method
@@ -1056,16 +1074,9 @@ class AuthPolicyGroup:
         source.connect("drag-end", self._on_drag_end, row)
         source.connect("drag-cancel", self._on_drag_cancel, row)
         row.add_controller(source)
-        target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
-        target.connect("motion", self._on_drop_motion, row)
-        target.connect("leave", self._on_drop_leave, row)
-        target.connect("drop", self._on_drop, row)
-        row.add_controller(target)
         return row
 
     # -- dragging a row ----------------------------------------------------
-
-    _DROP_MARKS = ("auth-method-drop-above", "auth-method-drop-below")
 
     def _on_drag_prepare(self, _source, x, y, row):
         from gi.repository import Gdk
@@ -1077,20 +1088,25 @@ class AuthPolicyGroup:
         return Gdk.ContentProvider.new_for_value(_DRAG_PREFIX + row._method)
 
     def _on_drag_begin(self, _source, drag, row) -> None:
-        """A solid copy of the row follows the pointer; the row itself
-        stays in its place, faded, until it is dropped."""
+        """A solid copy of the row follows the pointer. The row itself
+        leaves the list, and an empty space of its size shows where it will
+        land: first at its own place, then wherever the pointer is."""
         from gi.repository import Adw, Gtk
 
         from .platform_utils import is_macos
 
-        grab = getattr(self, "_drag_grab", (0, 0))
+        method = row._method
+        self._drag_method = method
+        self._drag_height = self._row_height(row)
+        self._drag_home = self.policy.rows().index(method)
         if is_macos():
             # Gtk.DragIcon has tripped AppKit when a drag begins (see
             # dnd_payload.set_internal_drag_icon): the row paints itself as
-            # the icon there, on a solid background and not faded.
+            # the icon there, so it has to stay in the list, on a solid
+            # background.
             row.add_css_class("auth-method-drag-solid")
             try:
-                _source.set_icon(Gtk.WidgetPaintable.new(row), *grab)
+                _source.set_icon(Gtk.WidgetPaintable.new(row), *self._drag_grab)
             except Exception:
                 pass
             return
@@ -1112,10 +1128,11 @@ class AuthPolicyGroup:
             card.set_size_request(row.get_width(), row.get_height())
             card.append(copy)
             Gtk.DragIcon.get_for_drag(drag).set_child(card)
-            drag.set_hotspot(*grab)
+            drag.set_hotspot(*self._drag_grab)
         except Exception:
-            pass
-        row.add_css_class("auth-method-dragging")
+            return  # no copy to show: the row stays, as its own stand-in
+        row.set_visible(False)
+        self._show_gap(self._drag_home)
 
     def _on_drag_end(self, _source, _drag, _delete, row) -> None:
         self._drag_over(row)
@@ -1125,28 +1142,77 @@ class AuthPolicyGroup:
         return False
 
     def _drag_over(self, row) -> None:
-        row.remove_css_class("auth-method-dragging")
+        self._drag_method = None
+        self._show_gap(None)
         row.remove_css_class("auth-method-drag-solid")
-        self._clear_drop_marks()
+        row.set_visible(True)
 
-    def _clear_drop_marks(self) -> None:
-        for row in self.rows.values():
-            for mark in self._DROP_MARKS:
-                row.remove_css_class(mark)
+    @staticmethod
+    def _row_height(row) -> int:
+        """The height the row takes in the list: its border and padding
+        counted (``get_height`` is the content alone), margins not."""
+        ok, bounds = row.compute_bounds(row)
+        return int(round(bounds.get_height())) if ok else row.get_height()
 
-    def _on_drop_motion(self, _target, _x, y, row):
+    def _other_rows(self) -> List[object]:
+        """The rows the dragged one is placed among, in order."""
+        return [
+            self.rows[m] for m in self.policy.rows() if m != self._drag_method
+        ]
+
+    def _show_gap(self, index: Optional[int]) -> None:
+        """Open an empty space the size of the dragged row before the
+        *index*-th of the other rows (after the last one when past the end);
+        ``None`` closes it."""
+        self._drag_gap = index
+        others = self._other_rows()
+        for at, row in enumerate(others):
+            row.set_margin_top(self._drag_height if index == at else 0)
+            row.set_margin_bottom(
+                self._drag_height
+                if index is not None and index >= len(others) and at == len(others) - 1
+                else 0
+            )
+
+    def _gap_index_at(self, y: float) -> int:
+        """Where the space goes for a pointer at *y* (the expander's own
+        coordinates): the place whose space would be centred nearest to it.
+
+        Worked out from the rows' heights alone, not from where the space
+        is now, so opening it does not change the answer under the pointer.
+        """
+        from gi.repository import Graphene
+
+        others = self._other_rows()
+        if not others:
+            return 0
+        ok, top = others[0].compute_point(self.order_row, Graphene.Point())
+        start = (top.y if ok else 0) - others[0].get_margin_top()
+        best, best_distance = 0, None
+        edge = start
+        for index in range(len(others) + 1):
+            distance = abs(y - (edge + self._drag_height / 2))
+            if best_distance is None or distance < best_distance:
+                best, best_distance = index, distance
+            if index < len(others):
+                edge += self._row_height(others[index])
+        return best
+
+    def _on_drop_motion(self, _target, _x, y):
         from gi.repository import Gdk
 
-        if not self._editable():
+        if self._drag_method is None or not self._editable():
             return 0
-        below = y > row.get_height() / 2
-        self._clear_drop_marks()
-        row.add_css_class(self._DROP_MARKS[1 if below else 0])
+        index = self._gap_index_at(y)
+        if index != self._drag_gap:
+            self._show_gap(index)
         return Gdk.DragAction.MOVE
 
-    def _on_drop_leave(self, _target, row) -> None:
-        for mark in self._DROP_MARKS:
-            row.remove_css_class(mark)
+    def _on_drop_leave(self, _target) -> None:
+        # Outside the list a drop does nothing: the space goes back to the
+        # row's own place.
+        if self._drag_method is not None:
+            self._show_gap(self._drag_home)
 
     def _on_reset_clicked(self, *_args) -> None:
         """Reset the order; ask first when that removes a saved line."""
@@ -1195,24 +1261,18 @@ class AuthPolicyGroup:
     def _can_move(self, method: str) -> bool:
         return self._editable() and method in self.policy.checked()
 
-    def _on_drop(self, _target, value, _x, y, row) -> bool:
-        self._clear_drop_marks()
+    def _on_drop(self, _target, value, _x, y) -> bool:
         value = str(value or "")
         if not value.startswith(_DRAG_PREFIX):
             return False  # only this list's own rows
         source = value[len(_DRAG_PREFIX):]
-        if not self._editable() or source not in self.rows:
+        if source != self._drag_method or not self._editable():
             return False
-        dest = row._method
-        rows = self.policy.rows()
-        if source == dest or dest not in rows:
-            return False
-        index = rows.index(dest)
-        if y > row.get_height() / 2:
-            index += 1
-        if rows.index(source) < index:
-            index -= 1
-        # The row lands where it was dropped, among all rows.
+        index = self._gap_index_at(y)
+        # Before the row is placed: the list is rebuilt from the model, and
+        # must not be laid out around a space any more.
+        self._drag_over(self.rows[source])
+        # The row lands in the space, among all rows.
         return self._edit(lambda: self.policy.place_row(source, index))
 
     # -- model <-> widgets ------------------------------------------------
