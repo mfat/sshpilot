@@ -536,18 +536,28 @@ def _parent_pid(pid: int) -> Optional[int]:
 _ANCESTOR_LIMIT = 8
 
 
-def terminate_owned_ancestor(pid: int) -> Optional[int]:
+# The environment variable that carries a launch's askpass token: set by the
+# broker on every daemon-owned OpenSSH child, inherited by its helper.
+ASKPASS_TOKEN_VARIABLE = "SSHPILOT_DAEMON_ASKPASS_TOKEN"
+
+
+def terminate_owned_ancestor(pid: int, *, token: str) -> Optional[int]:
     """End the owned child that *pid* descends from; returns its PID.
 
     *pid* is a process started on behalf of one of our children (an askpass
-    helper). Its own identity is never trusted: only a process recorded in
-    the registry, whose creation time still matches, is signalled, so the
-    worst a wrong or recycled *pid* can do is nothing. ``None`` when no owned
-    ancestor is found; the caller then leaves the child to end by itself.
+    helper), as the helper reported it. It is never trusted: the process
+    signalled must be recorded in the registry with a matching creation time
+    *and* have been launched with *token*, the askpass token of the prompt
+    being cancelled. Owning a process is not enough: a wrong, recycled or
+    forged *pid* could otherwise lead to another connection's child. When
+    the token cannot be read the process is left alone. ``None`` when no
+    such ancestor is found; the caller then leaves the child to end by itself.
     """
 
     registry = active_registry()
     if registry is None or type(pid) is not int or pid <= 1:
+        return None
+    if type(token) is not str or not token:
         return None
     try:
         owned = {entry.pid: entry for entry in registry.live_entries()}
@@ -559,8 +569,47 @@ def terminate_owned_ancestor(pid: int) -> Optional[int]:
             return None
         entry = owned.get(current)
         if entry is not None:
+            # The first owned ancestor is the only candidate: it is the child
+            # the helper's chain started from, or the chain is not ours.
+            if not _launched_with_token(current, token):
+                return None
             return current if _terminate_registered(entry) else None
         current = _parent_pid(current)
+    return None
+
+
+def _launched_with_token(pid: int, token: str) -> bool:
+    """True when *pid* was started with this askpass *token*.
+
+    False whenever its environment cannot be read: proving the process
+    belongs to the prompt is the condition for signalling it.
+    """
+    import hmac
+
+    value = _environment_value(pid, ASKPASS_TOKEN_VARIABLE)
+    return value is not None and hmac.compare_digest(
+        value.encode("utf-8", "surrogateescape"),
+        token.encode("utf-8", "surrogateescape"),
+    )
+
+
+def _environment_value(pid: int, name: str) -> Optional[str]:
+    """*name* in the environment *pid* started with, or ``None``."""
+    try:
+        import psutil
+
+        return psutil.Process(pid).environ().get(name)
+    except Exception:
+        pass
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    prefix = name.encode() + b"="
+    for item in data.split(b"\0"):
+        if item.startswith(prefix):
+            return item[len(prefix):].decode("utf-8", "surrogateescape")
     return None
 
 

@@ -2395,17 +2395,24 @@ def test_mark_authenticated_commits_every_context_sharing_a_session_id(
 
 
 _FAKE_SSH = """
-import subprocess, sys
+import os, subprocess, sys
 log, helper, prompt = sys.argv[1:4]
+# A helper may run with another launch's token (the review case: a helper
+# whose PID leads to a child that is not this prompt's).
+env = dict(os.environ)
+if len(sys.argv) > 4:
+    env["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = sys.argv[4]
 # OpenSSH: a declined prompt is a wrong answer, so ask again, three times.
 for _attempt in range(3):
     with open(log, "a") as handle:
         handle.write("attempt\\n")
-    subprocess.run((helper, prompt), stdout=subprocess.DEVNULL)
+    subprocess.run((helper, prompt), stdout=subprocess.DEVNULL, env=env)
 """
 
 
-def _cancel_first_prompt_of_fake_ssh(monkeypatch, tmp_path, *, owned: bool):
+def _cancel_first_prompt_of_fake_ssh(
+    monkeypatch, tmp_path, *, owned: bool, prompt_of_another_launch: bool = False
+):
     """Run a stand-in ssh that asks for a code three times; cancel the first.
 
     Returns ``(attempts made, the stand-in's exit code)``.
@@ -2436,10 +2443,29 @@ def _cancel_first_prompt_of_fake_ssh(monkeypatch, tmp_path, *, owned: bool):
                 _launch_environment(),
             ),
         )
+        extra = ()
+        if prompt_of_another_launch:
+            # A second launch: its helper prompts, but runs under this child.
+            _argv, other = instance.prepare_launch(
+                SessionLaunchSpec(
+                    session_id=SessionId("session-2"),
+                    connection_id=CONNECTION_ID,
+                    protocol="ssh",
+                    hostname="example.test",
+                    username="alice",
+                    port=22,
+                ),
+                lambda _connection_id, **_kwargs: (
+                    ("/usr/bin/ssh", "example"),
+                    _launch_environment(),
+                ),
+            )
+            extra = (other["SSHPILOT_DAEMON_ASKPASS_TOKEN"],)
         child = subprocess.Popen(
             (
                 sys.executable, "-c", _FAKE_SSH, str(log),
                 environment["SSH_ASKPASS"], "(alice@example.test) Verification code: ",
+                *extra,
             ),
             env=environment,
         )
@@ -2461,9 +2487,10 @@ def _cancel_first_prompt_of_fake_ssh(monkeypatch, tmp_path, *, owned: bool):
             for summary in instance.list(CLIENT_A)
             if summary.state is InteractionState.PENDING
         ] == []
-        assert instance.classify_startup_failure(SESSION_ID) is (
-            ErrorCode.OPERATION_CANCELLED
-        )
+        if not prompt_of_another_launch:
+            assert instance.classify_startup_failure(SESSION_ID) is (
+                ErrorCode.OPERATION_CANCELLED
+            )
         return len(log.read_text().splitlines()), code
     finally:
         if child is not None and child.poll() is None:
@@ -2497,4 +2524,18 @@ def test_a_cancel_never_ends_a_process_the_daemon_does_not_own(monkeypatch, tmp_
     its remaining prompts declined silently as before."""
     attempts, code = _cancel_first_prompt_of_fake_ssh(monkeypatch, tmp_path, owned=False)
     assert attempts == 3
+    assert code == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+def test_a_cancel_never_ends_an_owned_child_launched_for_another_prompt(
+    monkeypatch, tmp_path
+) -> None:
+    """Review P1: the helper's PID is reported by the helper. Owning the
+    process it leads to is not enough; it must be the child launched for
+    the prompt being cancelled (its askpass token), or nothing is ended."""
+    attempts, code = _cancel_first_prompt_of_fake_ssh(
+        monkeypatch, tmp_path, owned=True, prompt_of_another_launch=True
+    )
+    assert attempts == 3, "another prompt's cancel ended this connection"
     assert code == 0

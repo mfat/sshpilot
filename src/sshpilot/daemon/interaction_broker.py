@@ -63,7 +63,10 @@ from sshpilot.askpass_utils import (
     append_askpass_log,
     classify_prompt,
 )
-from sshpilot.daemon.process_registry import terminate_owned_ancestor
+from sshpilot.daemon.process_registry import (
+    ASKPASS_TOKEN_VARIABLE,
+    terminate_owned_ancestor,
+)
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
 from sshpilot.logging_support import log_context
 
@@ -391,7 +394,7 @@ class InteractionBroker:
                 ":sshpilot-daemon"
             )
             environment["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
-            environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
+            environment[ASKPASS_TOKEN_VARIABLE] = token
         append_askpass_log(
             f"ASKPASS: daemon broker ready for {username}@{hostname}:{port} "
             f"session={spec.session_id}"
@@ -486,7 +489,7 @@ class InteractionBroker:
         env["SSH_ASKPASS_REQUIRE"] = "force"
         env["DISPLAY"] = env.get("DISPLAY") or fallback_display(":sshpilot-daemon")
         env["SSHPILOT_DAEMON_ASKPASS_SOCKET"] = self._askpass_address
-        env["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = token
+        env[ASKPASS_TOKEN_VARIABLE] = token
         append_askpass_log(
             f"ASKPASS: daemon broker ready for operation scope={scope_id}"
         )
@@ -1208,7 +1211,8 @@ class InteractionBroker:
             helper_pid = self._askpass_helper_pids.get(helper_transport)
         if not first or helper_pid is None:
             return
-        ended = terminate_owned_ancestor(helper_pid)
+        # Only the child launched for this prompt (its token) is ended.
+        ended = terminate_owned_ancestor(helper_pid, token=token)
         append_askpass_log(
             "ASKPASS: prompt cancelled; "
             + ("ended the connection" if ended else "connection left to end")
