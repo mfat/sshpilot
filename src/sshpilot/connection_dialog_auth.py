@@ -180,6 +180,12 @@ class AuthPolicy:
     # is when it is unchecked, checked or another one moves. ``None`` until
     # then (and after a reset): the checked methods in order, then the rest.
     _rows: Optional[List[str]] = None
+    # Unchecked rows the user dragged to a place: checked, the method is
+    # tried there, also when the line lists it somewhere else.
+    _placed: set = field(default_factory=set)
+    # The order line around a check that moved a listed method to its row's
+    # place (method -> line before, line after), so unchecking moves it back.
+    _line_before_check: Dict[str, tuple] = field(default_factory=dict)
 
     # -- loading -------------------------------------------------------------
 
@@ -403,6 +409,10 @@ class AuthPolicy:
         if rest == rows:
             return False
         self._rows = rest
+        if method in self.checked():
+            self._placed.discard(method)
+        else:
+            self._placed.add(method)
         if self._follow_rows():
             self._end_edit()
         return True
@@ -558,10 +568,14 @@ class AuthPolicy:
                 return False
             # The row stays where it is, unchecked.
             self._hold_rows()
+            moved = self._line_before_check.pop(method, None)
             if method in self._switch_before:
                 # Checking turned it on: unchecking puts the line back.
                 self._restore_switch(method)
                 if not self._is_checked(method):
+                    if moved is not None and self.order == moved[1]:
+                        # ... and back at the place checking moved it from.
+                        self.order = list(moved[0])
                     if self.edited and not self._listed_at_start(method):
                         # Checking listed it too: take that back. A method
                         # the line listed before the edit stays, switched off.
@@ -600,10 +614,18 @@ class AuthPolicy:
             self._begin_edit()
             self.order.append(method)
             self._follow_rows()
+        elif method in self._placed:
+            # Listed already, but its row was dragged to a place: that is
+            # where it was asked to be tried, so the line follows.
+            self._begin_edit()
+            before = list(self.order)
+            if self._follow_rows():
+                self._line_before_check[method] = (before, list(self.order))
         else:
             # Listed already: it is tried at its place in the line, and its
             # row goes there.
             self._seat_row(method)
+        self._placed.discard(method)
         self._end_edit()
         return True
 
@@ -780,6 +802,8 @@ class AuthPolicy:
         self.order = None
         self._before_edit = None
         self._rows = None
+        self._placed.clear()
+        self._line_before_check.clear()
         self._drop_passthrough({PREFERRED_AUTH_KEYWORD})
         if "order" in self._loaded:
             self._unknown_after_reset.add("order")

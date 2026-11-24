@@ -912,3 +912,19 @@ def test_a_reset_sorts_the_rows_again():
     assert policy.rows()[1] == "keyboard-interactive"
     assert policy.reset_order()
     assert policy.rows()[:len(policy.checked())] == policy.checked()
+
+
+def test_a_listed_method_dragged_while_unchecked_is_tried_where_it_was_dropped():
+    # Review: dropped above keys and then checked, password jumped back
+    # behind them, because the line already listed it there.
+    lines = ["PreferredAuthentications publickey,password", "PasswordAuthentication no"]
+    policy = _host(lines)
+    assert policy.place_row("password", 0)
+    assert policy.to_lines() == lines            # an unchecked row: nothing to save
+    assert policy.set_tried("password", True)
+    assert policy.rows()[:2] == ["password", "publickey"]
+    assert policy.to_lines() == ["PreferredAuthentications password,publickey"]
+    # Unchecking takes both back: the switch line and the place in the line.
+    assert policy.set_tried("password", False)
+    assert policy.to_lines() == lines and not policy.edited
+    assert policy.rows()[0] == "password"        # the row stays where it was put
