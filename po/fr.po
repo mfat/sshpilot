@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 08:28+0330\n"
+"POT-Creation-Date: 2026-11-24 08:41+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -116,7 +116,7 @@ msgstr "Ouvrir les connexions ?"
 #: src/sshpilot/bitwarden_setup.py:852 src/sshpilot/bitwarden_setup.py:956
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
-#: src/sshpilot/connection_dialog_auth.py:1003
+#: src/sshpilot/connection_dialog_auth.py:1167
 #: src/sshpilot/connection_dialog_port_forwarding.py:247
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
@@ -1775,7 +1775,7 @@ msgstr "Ajoutée"
 
 #: src/sshpilot/connection_dialog.py:1187
 #: src/sshpilot/connection_dialog.py:1337
-#: src/sshpilot/connection_dialog_auth.py:1004
+#: src/sshpilot/connection_dialog_auth.py:1168
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:360
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:489
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:207
@@ -2682,30 +2682,30 @@ msgstr "Clés (publickey)"
 msgid "Keyboard-interactive (PAM, one-time codes)"
 msgstr "Clavier interactif (PAM, codes à usage unique)"
 
-#: src/sshpilot/connection_dialog_auth.py:765
+#: src/sshpilot/connection_dialog_auth.py:844
 msgid "Checked, but not tried: an earlier setting leaves it out of the order"
 msgstr "Cochée, mais pas essayée : un réglage antérieur l’exclut de l’ordre"
 
-#: src/sshpilot/connection_dialog_auth.py:767
+#: src/sshpilot/connection_dialog_auth.py:846
 msgid "Checked, but not tried: an earlier setting turns it off"
 msgstr "Cochée, mais pas essayée : un réglage antérieur la désactive"
 
-#: src/sshpilot/connection_dialog_auth.py:769
+#: src/sshpilot/connection_dialog_auth.py:848
 msgid "Unchecked, but tried: an earlier setting decides"
 msgstr "Non cochée, mais essayée : un réglage antérieur décide"
 
 #. {value} is the authored value, e.g. host-bound.
-#: src/sshpilot/connection_dialog_auth.py:773
+#: src/sshpilot/connection_dialog_auth.py:852
 #, python-brace-format
 msgid "Enabled in this profile ({value})"
 msgstr "Activé dans ce profil ({value})"
 
-#: src/sshpilot/connection_dialog_auth.py:774
+#: src/sshpilot/connection_dialog_auth.py:853
 #, python-brace-format
 msgid "Enabled for this host ({value})"
 msgstr "Activé pour cet hôte ({value})"
 
-#: src/sshpilot/connection_dialog_auth.py:855
+#: src/sshpilot/connection_dialog_auth.py:942
 msgid ""
 "Lines this profile sets replace a linked connection's own; what it leaves "
 "unset stays the connection's. Methods are tried from the top; unchecked "
@@ -2715,7 +2715,7 @@ msgstr ""
 "ce qu’il laisse non défini reste celui de la connexion. Les méthodes sont "
 "essayées de haut en bas ; les méthodes non cochées sont omises."
 
-#: src/sshpilot/connection_dialog_auth.py:859
+#: src/sshpilot/connection_dialog_auth.py:946
 msgid "Methods are tried from the top. Unchecked methods are left out."
 msgstr ""
 "Les méthodes sont essayées de haut en bas. Les méthodes non cochées sont "
@@ -2723,53 +2723,53 @@ msgstr ""
 
 #. One row that folds the method list away: most hosts never change
 #. it, so the header says what will be tried and the rows wait inside.
-#: src/sshpilot/connection_dialog_auth.py:864
+#: src/sshpilot/connection_dialog_auth.py:951
 msgid "Authentication methods"
 msgstr "Méthodes d’authentification"
 
-#: src/sshpilot/connection_dialog_auth.py:868 src/sshpilot/preferences.py:1738
+#: src/sshpilot/connection_dialog_auth.py:955 src/sshpilot/preferences.py:1738
 #: src/sshpilot/preferences.py:3058 src/sshpilot/preferences.py:6341
 msgid "Reset"
 msgstr "Réinitialiser"
 
-#: src/sshpilot/connection_dialog_auth.py:872
-#: src/sshpilot/connection_dialog_auth.py:1125
+#: src/sshpilot/connection_dialog_auth.py:959
+#: src/sshpilot/connection_dialog_auth.py:1293
 msgid "Leave the order to each linked connection"
 msgstr "Laisser l’ordre à chaque connexion liée"
 
-#: src/sshpilot/connection_dialog_auth.py:873
-#: src/sshpilot/connection_dialog_auth.py:1126
+#: src/sshpilot/connection_dialog_auth.py:960
+#: src/sshpilot/connection_dialog_auth.py:1294
 msgid "Use authentication order set by OpenSSH configuration"
 msgstr ""
 "Utiliser l’ordre d’authentification défini par la configuration OpenSSH"
 
-#: src/sshpilot/connection_dialog_auth.py:893
+#: src/sshpilot/connection_dialog_auth.py:980
 msgid "OpenSSH will try:"
 msgstr "OpenSSH essaiera :"
 
-#: src/sshpilot/connection_dialog_auth.py:942
+#: src/sshpilot/connection_dialog_auth.py:1029
 #: src/sshpilot/advanced_config_rules_view.py:242
 msgid "Move up"
 msgstr "Monter"
 
-#: src/sshpilot/connection_dialog_auth.py:943
+#: src/sshpilot/connection_dialog_auth.py:1030
 #: src/sshpilot/advanced_config_rules_view.py:243
 msgid "Move down"
 msgstr "Descendre"
 
-#: src/sshpilot/connection_dialog_auth.py:944
+#: src/sshpilot/connection_dialog_auth.py:1031
 msgid "Move to top"
 msgstr "Placer en tête"
 
-#: src/sshpilot/connection_dialog_auth.py:948
+#: src/sshpilot/connection_dialog_auth.py:1035
 msgid "Method options"
 msgstr "Options de la méthode"
 
-#: src/sshpilot/connection_dialog_auth.py:996
+#: src/sshpilot/connection_dialog_auth.py:1160
 msgid "Remove the custom authentication order?"
 msgstr "Supprimer l’ordre d’authentification personnalisé ?"
 
-#: src/sshpilot/connection_dialog_auth.py:998
+#: src/sshpilot/connection_dialog_auth.py:1162
 msgid ""
 "This will remove your custom authentication order from the SSH configuration "
 "when you save. The host then uses the order it inherits."
@@ -2777,33 +2777,32 @@ msgstr ""
 "Votre ordre d’authentification personnalisé sera supprimé de la "
 "configuration SSH à l’enregistrement. L’hôte utilisera alors l’ordre hérité."
 
-#: src/sshpilot/connection_dialog_auth.py:1100
+#: src/sshpilot/connection_dialog_auth.py:1268
 msgid "Not known to this dialog; kept as written."
 msgstr "Inconnu de cette boîte de dialogue ; conservé tel quel."
 
-#: src/sshpilot/connection_dialog_auth.py:1135
-#: src/sshpilot/connection_dialog_auth.py:1144
-#: src/sshpilot/connection_dialog_auth.py:1196
+#: src/sshpilot/connection_dialog_auth.py:1303
+#: src/sshpilot/connection_dialog_auth.py:1312
+#: src/sshpilot/connection_dialog_auth.py:1364
 msgid "Shown once OpenSSH has read the configuration."
 msgstr "Affiché une fois qu’OpenSSH a lu la configuration."
 
-#: src/sshpilot/connection_dialog_auth.py:1148
+#: src/sshpilot/connection_dialog_auth.py:1316
 msgid "No method: the login cannot succeed."
 msgstr "Aucune méthode : la connexion ne peut pas réussir."
 
-#: src/sshpilot/connection_dialog_auth.py:1200
+#: src/sshpilot/connection_dialog_auth.py:1368
 msgid "At least one method must stay checked."
 msgstr "Au moins une méthode doit rester cochée."
 
 #. Listed in the order, but its switch is off.
-#: src/sshpilot/connection_dialog_auth.py:1203
+#: src/sshpilot/connection_dialog_auth.py:1371
 msgid "Not tried: it is turned off. Check it to turn it on."
 msgstr "Pas essayé : cette méthode est désactivée. Cochez-la pour l’activer."
 
-#: src/sshpilot/connection_dialog_auth.py:1205
-msgid "Not tried. Check it to add it at the end of the login order."
-msgstr ""
-"Non essayée. Cochez-la pour l’ajouter à la fin de l’ordre de connexion."
+#: src/sshpilot/connection_dialog_auth.py:1373
+msgid "Not tried. Check it to add it to the login order at this place."
+msgstr "Pas essayée. Cochez-la pour l’ajouter à l’ordre de connexion à cet endroit."
 
 #: src/sshpilot/connection_dialog_field_helpers.py:51
 msgid "Enter hostname first"

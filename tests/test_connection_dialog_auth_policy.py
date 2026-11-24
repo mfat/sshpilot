@@ -842,3 +842,73 @@ def test_the_overruled_caption_names_the_order_when_the_order_is_the_cause():
     policy.earlier = {"passwordauthentication": "no"}
     assert policy.overruled("password") is True
     assert not policy.overruled_by_order("password")
+
+
+# -- rows stay where they are while editing --------------------------------------
+
+DEFAULT_OFF = dict(SSH_G, gssapiauthentication="no")
+
+
+def _default_host():
+    policy = _host([], DEFAULT_OFF)
+    policy.set_fallback(DEFAULT_OFF)
+    return policy
+
+
+def test_rows_open_with_the_checked_methods_first():
+    assert _default_host().rows() == [
+        "publickey", "keyboard-interactive", "password", "gssapi-with-mic", "hostbased",
+    ]
+
+
+def test_an_unchecked_row_stays_where_it_is():
+    policy = _default_host()
+    before = policy.rows()
+    assert policy.set_tried("keyboard-interactive", False)
+    assert policy.rows() == before
+    assert policy.checked() == ["publickey", "password"]
+
+
+def test_checking_it_again_puts_it_back_in_the_order_at_its_row():
+    policy = _default_host()
+    assert policy.set_tried("keyboard-interactive", False)
+    assert policy.set_tried("keyboard-interactive", True)
+    assert policy.checked() == ["publickey", "keyboard-interactive", "password"]
+    assert policy.to_lines() == [] and not policy.edited   # an exact undo
+
+
+def test_a_listed_method_checked_goes_to_its_place_in_the_line():
+    # Kerberos is first in OpenSSH's order: checked, it is tried first, and
+    # its row says so. The line is not rewritten for it.
+    policy = _default_host()
+    assert policy.set_tried("password", False)
+    assert policy.set_tried("gssapi-with-mic", True)
+    assert policy.rows()[0] == "gssapi-with-mic"
+    assert policy.rows().index("password") == 3   # still where it was left
+
+
+def test_a_row_can_be_dragged_anywhere():
+    policy = _default_host()
+    # A checked row: the order follows.
+    assert policy.place_row("password", 0)
+    assert policy.rows()[:3] == ["password", "publickey", "keyboard-interactive"]
+    assert policy.checked() == ["password", "publickey", "keyboard-interactive"]
+    # An unchecked row: only the list changes, nothing to save.
+    lines = policy.to_lines()
+    assert policy.place_row("hostbased", 1)
+    assert policy.rows()[1] == "hostbased" and policy.to_lines() == lines
+    # Checked there, an unlisted method joins the order at that place.
+    policy = _host(["PreferredAuthentications publickey,password"])
+    assert policy.place_row("keyboard-interactive", 1)
+    assert policy.to_lines() == ["PreferredAuthentications publickey,password"]
+    assert policy.set_tried("keyboard-interactive", True)
+    assert policy.order == ["publickey", "keyboard-interactive", "password"]
+    assert not policy.place_row("keyboard-interactive", 1)   # already there
+
+
+def test_a_reset_sorts_the_rows_again():
+    policy = _host(["PreferredAuthentications publickey,keyboard-interactive,password"])
+    assert policy.set_tried("keyboard-interactive", False)
+    assert policy.rows()[1] == "keyboard-interactive"
+    assert policy.reset_order()
+    assert policy.rows()[:len(policy.checked())] == policy.checked()

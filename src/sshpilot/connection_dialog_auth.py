@@ -176,6 +176,10 @@ class AuthPolicy:
     # value, authored text and ignored copies), so the opposite click puts
     # the line back as written.
     _switch_before: Dict[str, tuple] = field(default_factory=dict)
+    # The rows as shown, held from the first edit on: a row stays where it
+    # is when it is unchecked, checked or another one moves. ``None`` until
+    # then (and after a reset): the checked methods in order, then the rest.
+    _rows: Optional[List[str]] = None
 
     # -- loading -------------------------------------------------------------
 
@@ -332,9 +336,76 @@ class AuthPolicy:
         return [m for m in self._first_listed() if m in METHODS and self._is_checked(m)]
 
     def rows(self) -> List[str]:
-        """Known methods in row order: the checked ones in order, then the rest."""
+        """Known methods in row order.
+
+        As loaded: the checked ones in order, then the rest. Once edited the
+        rows are held where they are, so unchecking a method does not send
+        its row to the bottom; the checked rows, read from the top, are
+        always the order in force.
+        """
         checked = self.checked()
-        return checked + [m for m in METHODS if m not in checked]
+        if self._rows is None:
+            return checked + [m for m in METHODS if m not in checked]
+        ticked = set(checked)
+        queue = iter(checked)
+        return [next(queue) if m in ticked else m for m in self._rows]
+
+    def _hold_rows(self) -> None:
+        self._rows = self.rows()
+
+    def _reorder_checked(self, target: List[str]) -> None:
+        """Write the checked methods into the line in *target* order: their
+        places are filled in turn; unknown tokens and listed methods that
+        are switched off stay put."""
+        places = set(target)
+        queue = iter(target)
+        self.order = [next(queue) if m in places else m for m in self.order]
+
+    def _follow_rows(self) -> bool:
+        """Make the order the checked rows, read from the top."""
+        checked = self.checked()
+        ticked = set(checked)
+        target = [m for m in (self._rows or ()) if m in ticked]
+        if len(target) != len(checked) or target == checked:
+            return False
+        self._begin_edit()
+        self._reorder_checked(target)
+        return True
+
+    def _seat_row(self, method: str) -> None:
+        """Put *method*'s row where the order has it among the checked rows
+        (a no-op when it is there already)."""
+        checked = self.checked()
+        ticked = set(checked)
+        if method not in ticked or [m for m in self._rows if m in ticked] == checked:
+            return
+        rows = [m for m in self._rows if m != method]
+        at = checked.index(method)
+        if at + 1 < len(checked):
+            rows.insert(rows.index(checked[at + 1]), method)
+        elif at > 0:
+            rows.insert(rows.index(checked[at - 1]) + 1, method)
+        else:
+            rows.append(method)
+        self._rows = rows
+
+    def place_row(self, method: str, index: int) -> bool:
+        """Put *method*'s row at *index* among all rows (a drag).
+
+        Any row can go anywhere. A checked one changes the order; an
+        unchecked one only changes where it joins the order when checked.
+        """
+        if method not in METHODS or not self.can_edit():
+            return False
+        rows = self.rows()
+        rest = [m for m in rows if m != method]
+        rest.insert(max(0, min(index, len(rest))), method)
+        if rest == rows:
+            return False
+        self._rows = rest
+        if self._follow_rows():
+            self._end_edit()
+        return True
 
     def shown_checked(self, method: str) -> Optional[bool]:
         """The row's checkbox: tried here. ``None`` while not known.
@@ -485,6 +556,8 @@ class AuthPolicy:
         if not value:
             if self.checked() == [method]:
                 return False
+            # The row stays where it is, unchecked.
+            self._hold_rows()
             if method in self._switch_before:
                 # Checking turned it on: unchecking puts the line back.
                 self._restore_switch(method)
@@ -515,6 +588,7 @@ class AuthPolicy:
             return True
         if not self.can_set_tried(method):
             return False
+        self._hold_rows()
         if self.shown_switch(method) is False:
             if method in self._switch_before:
                 # Unchecking dropped its line: checking puts it back.
@@ -522,8 +596,14 @@ class AuthPolicy:
             if self.shown_switch(method) is False:
                 self._switch_on(method)
         if not self.in_order(method):
+            # Not in the line: it joins the order at the place its row has.
             self._begin_edit()
             self.order.append(method)
+            self._follow_rows()
+        else:
+            # Listed already: it is tried at its place in the line, and its
+            # row goes there.
+            self._seat_row(method)
         self._end_edit()
         return True
 
@@ -653,11 +733,9 @@ class AuthPolicy:
         ):
             return False
         self._begin_edit()
-        # Fill the checked methods' places in turn; unknown tokens and
-        # listed methods that are switched off stay put.
+        self._reorder_checked(rest)
+        order = list(self.order)
         places = set(checked)
-        queue = iter(rest)
-        order = [next(queue) if m in places else m for m in self.order]
         if first_in_line:
             at = order.index(method)
             while at > 0 and order[at - 1] in METHODS and order[at - 1] not in places:
@@ -701,6 +779,7 @@ class AuthPolicy:
         # the opposite click still puts that line back.
         self.order = None
         self._before_edit = None
+        self._rows = None
         self._drop_passthrough({PREFERRED_AUTH_KEYWORD})
         if "order" in self._loaded:
             self._unknown_after_reset.add("order")
@@ -778,7 +857,8 @@ _preview_css_installed = False
 
 
 def _install_preview_css() -> None:
-    """Flat styling for the "OpenSSH will try" preview, once per display."""
+    """The section's own styling (the flat "OpenSSH will try" preview, a
+    method row while it is dragged), installed once."""
     global _preview_css_installed
     if _preview_css_installed:
         return
@@ -800,6 +880,13 @@ row.auth-order-preview > box.header {
   padding-left: 0; padding-right: 0; margin-left: 0; margin-right: 0;
 }
 row.auth-order-preview .subtitle { font-family: monospace; }
+/* A method row being dragged: its place stays, faded, while a solid copy
+   follows the pointer; a line marks where it lands. */
+row.auth-method-dragging { opacity: 0.3; }
+row.auth-method-drop-above { box-shadow: inset 0 3px 0 0 @accent_bg_color; }
+row.auth-method-drop-below { box-shadow: inset 0 -3px 0 0 @accent_bg_color; }
+list.auth-method-drag-icon { border-radius: 12px; }
+row.auth-method-drag-solid { background-color: @card_bg_color; }
 """)
     Gtk.StyleContext.add_provider_for_display(
         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -961,28 +1048,105 @@ class AuthPolicyGroup:
             ))
         row.add_controller(keys)
 
+        # Any row can be dragged anywhere, checked or not.
         source = Gtk.DragSource()
         source.set_actions(Gdk.DragAction.MOVE)
-        source.connect("prepare", lambda *_a, m=method: (
-            Gdk.ContentProvider.new_for_value(_DRAG_PREFIX + m)
-            if self._can_move(m)
-            else None
-        ))
-        source.connect("drag-begin", lambda src, _drag, r=row: self._drag_icon(src, r))
+        source.connect("prepare", self._on_drag_prepare, row)
+        source.connect("drag-begin", self._on_drag_begin, row)
+        source.connect("drag-end", self._on_drag_end, row)
+        source.connect("drag-cancel", self._on_drag_cancel, row)
         row.add_controller(source)
         target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        target.connect("motion", self._on_drop_motion, row)
+        target.connect("leave", self._on_drop_leave, row)
         target.connect("drop", self._on_drop, row)
         row.add_controller(target)
         return row
 
-    @staticmethod
-    def _drag_icon(source, row) -> None:
-        from gi.repository import Gtk
+    # -- dragging a row ----------------------------------------------------
 
+    _DROP_MARKS = ("auth-method-drop-above", "auth-method-drop-below")
+
+    def _on_drag_prepare(self, _source, x, y, row):
+        from gi.repository import Gdk
+
+        if not self._editable():
+            return None
+        # Where the row was grabbed, so the copy stays under the pointer.
+        self._drag_grab = (int(x), int(y))
+        return Gdk.ContentProvider.new_for_value(_DRAG_PREFIX + row._method)
+
+    def _on_drag_begin(self, _source, drag, row) -> None:
+        """A solid copy of the row follows the pointer; the row itself
+        stays in its place, faded, until it is dropped."""
+        from gi.repository import Adw, Gtk
+
+        from .platform_utils import is_macos
+
+        grab = getattr(self, "_drag_grab", (0, 0))
+        if is_macos():
+            # Gtk.DragIcon has tripped AppKit when a drag begins (see
+            # dnd_payload.set_internal_drag_icon): the row paints itself as
+            # the icon there, on a solid background and not faded.
+            row.add_css_class("auth-method-drag-solid")
+            try:
+                _source.set_icon(Gtk.WidgetPaintable.new(row), *grab)
+            except Exception:
+                pass
+            return
         try:
-            source.set_icon(Gtk.WidgetPaintable.new(row), 0, 0)
+            copy = Adw.ActionRow(title=row.get_title(), subtitle=row.get_subtitle())
+            check = Gtk.CheckButton()
+            check.set_valign(Gtk.Align.CENTER)
+            check.set_active(row._check.get_active())
+            check.set_inconsistent(row._check.get_inconsistent())
+            copy.add_prefix(check)
+            handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+            handle.set_valign(Gtk.Align.CENTER)
+            handle.add_css_class("dim-label")
+            copy.add_prefix(handle)
+            card = Gtk.ListBox()
+            card.set_selection_mode(Gtk.SelectionMode.NONE)
+            card.add_css_class("boxed-list")
+            card.add_css_class("auth-method-drag-icon")
+            card.set_size_request(row.get_width(), row.get_height())
+            card.append(copy)
+            Gtk.DragIcon.get_for_drag(drag).set_child(card)
+            drag.set_hotspot(*grab)
         except Exception:
             pass
+        row.add_css_class("auth-method-dragging")
+
+    def _on_drag_end(self, _source, _drag, _delete, row) -> None:
+        self._drag_over(row)
+
+    def _on_drag_cancel(self, _source, _drag, _reason, row) -> bool:
+        self._drag_over(row)
+        return False
+
+    def _drag_over(self, row) -> None:
+        row.remove_css_class("auth-method-dragging")
+        row.remove_css_class("auth-method-drag-solid")
+        self._clear_drop_marks()
+
+    def _clear_drop_marks(self) -> None:
+        for row in self.rows.values():
+            for mark in self._DROP_MARKS:
+                row.remove_css_class(mark)
+
+    def _on_drop_motion(self, _target, _x, y, row):
+        from gi.repository import Gdk
+
+        if not self._editable():
+            return 0
+        below = y > row.get_height() / 2
+        self._clear_drop_marks()
+        row.add_css_class(self._DROP_MARKS[1 if below else 0])
+        return Gdk.DragAction.MOVE
+
+    def _on_drop_leave(self, _target, row) -> None:
+        for mark in self._DROP_MARKS:
+            row.remove_css_class(mark)
 
     def _on_reset_clicked(self, *_args) -> None:
         """Reset the order; ask first when that removes a saved line."""
@@ -1032,11 +1196,12 @@ class AuthPolicyGroup:
         return self._editable() and method in self.policy.checked()
 
     def _on_drop(self, _target, value, _x, y, row) -> bool:
+        self._clear_drop_marks()
         value = str(value or "")
         if not value.startswith(_DRAG_PREFIX):
             return False  # only this list's own rows
         source = value[len(_DRAG_PREFIX):]
-        if not self._can_move(source):
+        if not self._editable() or source not in self.rows:
             return False
         dest = row._method
         rows = self.policy.rows()
@@ -1047,8 +1212,8 @@ class AuthPolicyGroup:
             index += 1
         if rows.index(source) < index:
             index -= 1
-        # Dropped among the unchecked rows: last of the checked ones.
-        return self._edit(lambda: self.policy.move(source, index))
+        # The row lands where it was dropped, among all rows.
+        return self._edit(lambda: self.policy.place_row(source, index))
 
     # -- model <-> widgets ------------------------------------------------
 
@@ -1068,13 +1233,16 @@ class AuthPolicyGroup:
 
     def _edit(self, change: Callable[[], bool]) -> bool:
         # Keyboard shortcuts reach here even when the action is disabled.
+        before = self.policy.to_lines()
         changed = bool(change())
         if changed:
             self.sync()
-            try:
-                self._on_changed()
-            except Exception:
-                pass
+            # An unchecked row moved changes the list, not what is saved.
+            if self.policy.to_lines() != before:
+                try:
+                    self._on_changed()
+                except Exception:
+                    pass
         return changed
 
     def _on_toggled(self, check, method: str) -> None:
@@ -1202,7 +1370,7 @@ class AuthPolicyGroup:
             # Listed in the order, but its switch is off.
             note = _("Not tried: it is turned off. Check it to turn it on.")
         elif not value:
-            note = _("Not tried. Check it to add it at the end of the login order.")
+            note = _("Not tried. Check it to add it to the login order at this place.")
         else:
             note = None
         check.set_tooltip_text(note)
