@@ -34,6 +34,7 @@ from ...ssh_config_document import (
     _split_config_option,
     _split_keyword,
     include_patterns,
+    declared_hosts,
     split_config_lines,
 )
 from ...platform.paths import include_base_dir
@@ -894,13 +895,17 @@ def load_ssh_configuration(
         raw_copy.pop("uuid", None)
         host_cfg = dict(raw_copy)
         host_cfg["host"] = token
-        host_cfg["__host_tokens"] = list(tokens)
+        # The names only: a pattern beside them makes the line a rule as
+        # well (recorded by ``flush_block``), not this host any less a host.
+        host_cfg["__host_tokens"] = declared_hosts(tokens)
         connection_data = _parse_host_config(
             host_cfg, source=str(cfg_file), isolated=isolated, rules=rules
         )
         if not connection_data:
             return
         connection_data["source"] = str(cfg_file)
+        # What else is on the Host line: the block is theirs too.
+        connection_data["__shared_host_tokens"] = tuple(t for t in tokens if t != token)
         if token not in connections:
             connection_order.append(token)
         connections[token] = connection_data
@@ -923,8 +928,11 @@ def load_ssh_configuration(
             _parse_host_config(
                 host_cfg, source=str(cfg_file), isolated=isolated, rules=rules
             )
-            return
-        for token in cleaned:
+            # ``Host *.prod edge`` is a rule and it declares ``edge``:
+            # ``ssh edge`` uses the block, so the names it spells out are
+            # hosts like any other. A line of patterns only declares none,
+            # and so does a name a wildcard beside it already matches.
+        for token in declared_hosts(cleaned):
             _materialise(token, config, cleaned, cfg_file)
 
     def _absorb_option_lines(raw_lines, config: Dict[str, Any]) -> None:

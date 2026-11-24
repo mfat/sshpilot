@@ -36,7 +36,8 @@ from ...ssh_config_document import (
     RawSpan,
     SSHConfigDocument,
     _split_keyword,
-    is_concrete_host_block,
+    declares_host,
+    literal_host_tokens,
     split_config_lines,
 )
 from ...ssh_config_formatter import merged_block_lines
@@ -543,6 +544,22 @@ def _preserve_multivalue_on_update(
             new_data[attr] = existing
 
 
+def _join_host_tokens(tokens: Sequence[str]) -> str:
+    """A ``Host`` line's tokens as ssh_config(5) writes them: patterns bare
+    (``*`` and ``?`` mean something to OpenSSH, nothing to a shell), a token
+    holding white space in double quotes."""
+    return " ".join(
+        f'"{token}"' if any(char.isspace() for char in token) else token
+        for token in tokens
+    )
+
+
+def _still_matches(tokens: Sequence[str]) -> bool:
+    """Whether a ``Host`` line left with *tokens* can still match a host: one
+    holding only negations (``Host !db``) matches none, and is dropped."""
+    return any(not token.startswith("!") for token in tokens)
+
+
 def _source_of(record: ConnectionRecord) -> str:
     """Daemon-recorded source file for a connection (never client data)."""
     return record.source or str((record.data or {}).get("source") or "")
@@ -926,12 +943,20 @@ class SshConfigStore:
         data: Mapping[str, Any],
         *,
         expected_generation: Optional[int],
+        shared_block: bool = False,
     ) -> PreparedSshMutation:
-        """Prepare an existing Host-block update without writing it."""
+        """Prepare an existing Host-block update without writing it.
+
+        A block whose ``Host`` line holds other tokens too (more names, or
+        patterns) is the declaration of every host that line matches. It is
+        edited only when *shared_block* says the caller means all of them:
+        the line is then kept as written, so the connection cannot be
+        renamed this way (:meth:`prepare_split` gives it a block of its own).
+        """
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
-        self._ensure_unique_managed_declaration(connection_id, allow_shared=False)
+        self._ensure_unique_managed_declaration(connection_id, allow_shared=shared_block)
         payload = dict(data)
         payload.pop("uuid", None)
         payload.pop("source", None)
@@ -955,11 +980,21 @@ class SshConfigStore:
         for node in doc.nodes:
             if (
                 isinstance(node, HostBlock)
-                and is_concrete_host_block(node)
-                and connection_id in node.tokens
+                and declares_host(node, connection_id)
             ):
                 if not found:
-                    nodes.append(RawSpan(lines=doc.render_lines(merged_block_lines(node, payload))))
+                    lines = merged_block_lines(node, payload)
+                    if len(node.tokens) > 1:
+                        if new_name != connection_id:
+                            raise CoreError(
+                                ErrorCode.VALIDATION_ERROR,
+                                "A connection that shares its Host declaration "
+                                "cannot be renamed in place",
+                            )
+                        # The line names more than this host: it stays as
+                        # written, patterns and all.
+                        lines[0] = node.lines[0]
+                    nodes.append(RawSpan(lines=doc.render_lines(lines)))
                 found = True
                 continue
             nodes.append(node)
@@ -1009,14 +1044,13 @@ class SshConfigStore:
         for node in doc.nodes:
             if (
                 isinstance(node, HostBlock)
-                and is_concrete_host_block(node)
-                and removing.intersection(node.tokens)
+                and removing.intersection(literal_host_tokens(node))
             ):
-                found.update(removing.intersection(node.tokens))
+                found.update(removing.intersection(literal_host_tokens(node)))
                 remaining = [token for token in node.tokens if token not in removing]
-                if remaining:
+                if _still_matches(remaining):
                     node.tokens = remaining
-                    node.lines[0] = doc.render_lines([f"Host {shlex.join(remaining)}\n"])[0]
+                    node.lines[0] = doc.render_lines([f"Host {_join_host_tokens(remaining)}\n"])[0]
                     nodes.append(node)
                 continue
             nodes.append(node)
@@ -1094,14 +1128,13 @@ class SshConfigStore:
         for node in doc.nodes:
             if (
                 isinstance(node, HostBlock)
-                and is_concrete_host_block(node)
-                and original_host_token in node.tokens
+                and declares_host(node, original_host_token)
             ):
                 found = True
                 remaining = [token for token in node.tokens if token != original_host_token]
-                if remaining:
+                if _still_matches(remaining):
                     node.tokens = remaining
-                    node.lines[0] = doc.render_lines([f"Host {shlex.join(remaining)}\n"])[0]
+                    node.lines[0] = doc.render_lines([f"Host {_join_host_tokens(remaining)}\n"])[0]
                     nodes.append(node)
                 continue
             nodes.append(node)
@@ -1164,7 +1197,7 @@ class SshConfigStore:
         wanted = set(connection_ids)
         occurrences: Dict[str, List[HostBlock]] = {alias: [] for alias in wanted}
         for block in self._authored_concrete_host_blocks():
-            for alias in wanted.intersection(block.tokens):
+            for alias in wanted.intersection(literal_host_tokens(block)):
                 occurrences[alias].append(block)
         for blocks in occurrences.values():
             if len(blocks) > 1:
@@ -1183,19 +1216,17 @@ class SshConfigStore:
         return [
             block
             for block in self._authored_concrete_host_blocks()
-            if alias in block.tokens
+            if declares_host(block, alias)
         ]
 
     def _authored_concrete_host_blocks(self) -> List[HostBlock]:
-        """Enumerate literal Host declarations across the Include graph."""
+        """Enumerate the Host lines that spell out a host, across the Include
+        graph: a line of plain names, or one that mixes them with patterns."""
         occurrences: List[HostBlock] = []
         for cfg_file in _resolve_config_files(self._root_path):
             doc = SSHConfigDocument.parse_file(str(cfg_file))
             for node in doc.nodes:
-                if (
-                    isinstance(node, HostBlock)
-                    and is_concrete_host_block(node)
-                ):
+                if isinstance(node, HostBlock) and literal_host_tokens(node):
                     occurrences.append(node)
         return occurrences
 
@@ -1204,7 +1235,7 @@ class SshConfigStore:
         return {
             alias
             for block in self._authored_concrete_host_blocks()
-            for alias in block.tokens
+            for alias in literal_host_tokens(block)
         }
 
     def _ensure_authored_alias_available(self, alias: str) -> None:
@@ -1320,8 +1351,7 @@ class SshConfigStore:
         for node in doc.nodes:
             if (
                 isinstance(node, HostBlock)
-                and is_concrete_host_block(node)
-                and connection_id in node.tokens
+                and declares_host(node, connection_id)
             ):
                 if not host_found:
                     new_nodes.append(
@@ -1369,17 +1399,16 @@ class SshConfigStore:
         for node in doc.nodes:
             if (
                 isinstance(node, HostBlock)
-                and is_concrete_host_block(node)
-                and connection_id in node.tokens
+                and declares_host(node, connection_id)
             ):
                 modified = True
                 remaining = [t for t in node.tokens if t != connection_id]
-                if remaining:
+                if _still_matches(remaining):
                     header = node.lines[0]
                     indent = header[: len(header) - len(header.lstrip())]
                     node.tokens = remaining
                     node.lines[0] = doc.render_lines(
-                        [f"{indent}Host {shlex.join(remaining)}\n"]
+                        [f"{indent}Host {_join_host_tokens(remaining)}\n"]
                     )[0]
                     new_nodes.append(node)
                 # else: drop the whole block
@@ -1486,8 +1515,7 @@ class SshConfigStore:
             for node in doc.nodes
             if (
                 isinstance(node, HostBlock)
-                and is_concrete_host_block(node)
-                and original_host_token in node.tokens
+                and declares_host(node, original_host_token)
             )
         ]
         if not matching_blocks:
@@ -1499,16 +1527,15 @@ class SshConfigStore:
         for node in doc.nodes:
             if (
                 isinstance(node, HostBlock)
-                and is_concrete_host_block(node)
-                and original_host_token in node.tokens
+                and declares_host(node, original_host_token)
             ):
                 remaining = [t for t in node.tokens if t != original_host_token]
-                if remaining:
+                if _still_matches(remaining):
                     header = node.lines[0]
                     indent = header[: len(header) - len(header.lstrip())]
                     node.tokens = remaining
                     node.lines[0] = doc.render_lines(
-                        [f"{indent}Host {shlex.join(remaining)}\n"]
+                        [f"{indent}Host {_join_host_tokens(remaining)}\n"]
                     )[0]
                     new_nodes.append(node)
                 continue

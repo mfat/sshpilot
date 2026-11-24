@@ -611,3 +611,49 @@ def test_comment_tail_is_not_an_include(tmp_path, separator):
     assert _ids(
         load_ssh_configuration(root, isolated=False, _content_overrides={root: content})
     ) == ["ok"]
+
+
+# ---------------------------------------------------------------------------
+# Names beside patterns on a Host line
+# ---------------------------------------------------------------------------
+def test_a_name_beside_a_pattern_is_a_connection_and_the_line_stays_a_rule(tmp_path):
+    """``ssh edge`` uses ``Host *.prod edge``: the name is a host of its own."""
+    path = tmp_path / "config"
+    path.write_text("Host *.prod edge\n    User ops\n", encoding="utf-8")
+    result = load_ssh_configuration(path, isolated=False)
+    assert _ids(result) == ["edge"]
+    edge = _by_id(result, "edge")
+    assert edge.username == "ops" and "user" in edge.authored_directives
+    assert edge.shared_host_tokens == ("*.prod",)
+    assert [rule.get("host") for rule in result.rules] == ["*.prod"]
+
+
+def test_a_name_a_wildcard_beside_it_already_matches_is_not_declared(tmp_path):
+    """In ``Host old *`` the name adds nothing: the line is a rule only, and
+    ``old`` is declared by the block that names it without a wildcard."""
+    path = tmp_path / "config"
+    path.write_text(
+        "Host old *\n    ForwardAgent no\n\nHost prod-a prod-*\n    User deploy\n\n"
+        "Host old\n    HostName old.example\n",
+        encoding="utf-8",
+    )
+    result = load_ssh_configuration(path, isolated=False)
+    assert _ids(result) == ["old"]
+    assert _by_id(result, "old").shared_host_tokens == ()
+
+
+def test_a_name_with_a_negation_is_a_connection(tmp_path):
+    path = tmp_path / "config"
+    path.write_text("Host prod !prod-db\n    Port 2200\n", encoding="utf-8")
+    result = load_ssh_configuration(path, isolated=False)
+    assert _ids(result) == ["prod"]
+    assert _by_id(result, "prod").shared_host_tokens == ("!prod-db",)
+
+
+def test_names_sharing_a_host_line_know_each_other(tmp_path):
+    path = tmp_path / "config"
+    path.write_text("Host web1 web2\n    User deploy\n\nHost solo\n", encoding="utf-8")
+    result = load_ssh_configuration(path, isolated=False)
+    assert _by_id(result, "web1").shared_host_tokens == ("web2",)
+    assert _by_id(result, "web2").shared_host_tokens == ("web1",)
+    assert _by_id(result, "solo").shared_host_tokens == ()

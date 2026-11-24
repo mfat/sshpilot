@@ -53,6 +53,10 @@ class ConnectionRecord:
     # when the host is the alias itself). No UUID fields are produced.
     host: str = ""
     aliases: tuple = ()
+    # The other tokens on the ``Host`` line that declares this connection:
+    # more names, patterns, negations. Not empty means the block is not this
+    # host's alone, and an edit to it reaches every host the line matches.
+    shared_host_tokens: tuple = ()
     # Literal parser evidence used only by the identity prototype. These are
     # not serialized as public connection fields and do not become SSH IDs.
     raw_port: Optional[str] = None
@@ -164,6 +168,9 @@ class ConnectionRecord:
             generation=generation,
             host=str(raw.get("host") or nick or cid).strip(),
             aliases=aliases,
+            shared_host_tokens=tuple(
+                str(token) for token in (raw.get("__shared_host_tokens") or ())
+            ),
             raw_port=(str(raw_port) if raw_port is not None else None),
             raw_username=(str(raw_username) if raw_username is not None else None),
             raw_identity_files=(
