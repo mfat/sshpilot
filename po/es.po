@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 21:55+0330\n"
+"POT-Creation-Date: 2026-11-24 22:15+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -18407,8 +18407,8 @@ msgid "Global"
 msgstr "Global"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:133
-msgid "Options Above All Blocks"
-msgstr "Opciones sobre todos los bloques"
+msgid "Global Options"
+msgstr "Opciones globales"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:140
 msgid "New Host Block"
@@ -18707,6 +18707,9 @@ msgstr "Lo que muestra la ventana"
 msgid "{kind} · off"
 msgstr "{kind} · desactivado"
 
+#~ msgid "Options Above All Blocks"
+#~ msgstr "Opciones sobre todos los bloques"
+
 #~ msgid "Config Sections"
 #~ msgstr "Secciones de configuración"
 
@@ -18731,9 +18734,6 @@ msgstr "{kind} · desactivado"
 #~ msgstr ""
 #~ "Una regla establece opciones para cada host que coincide con ella, como "
 #~ "«Host *.example.com». Añada una desde el menú +."
-
-#~ msgid "Global Options"
-#~ msgstr "Opciones globales"
 
 #~ msgid "Search rules"
 #~ msgstr "Buscar reglas"

@@ -130,7 +130,7 @@ def block_list_title(kind: str, patterns: str) -> str:
     """A block's name in a list of blocks: what follows its keyword. The
     row's caption says what kind of block it is."""
     if kind == "global":
-        return _("Options Above All Blocks")
+        return _("Global Options")
     if kind == "match":
         # Match is OpenSSH's keyword: not translated.
         return "Match " + patterns.strip()

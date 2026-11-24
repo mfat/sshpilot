@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 21:55+0330\n"
+"POT-Creation-Date: 2026-11-24 22:15+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -18452,8 +18452,8 @@ msgid "Global"
 msgstr "Глобальные"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:133
-msgid "Options Above All Blocks"
-msgstr "Параметры над всеми блоками"
+msgid "Global Options"
+msgstr "Глобальные параметры"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:140
 msgid "New Host Block"
@@ -18760,6 +18760,9 @@ msgstr "Что показывает окно"
 msgid "{kind} · off"
 msgstr "{kind} · выкл."
 
+#~ msgid "Options Above All Blocks"
+#~ msgstr "Параметры над всеми блоками"
+
 #~ msgid "Config Sections"
 #~ msgstr "Разделы конфигурации"
 
@@ -18784,9 +18787,6 @@ msgstr "{kind} · выкл."
 #~ msgstr ""
 #~ "Правило задаёт параметры для каждого хоста, которому оно соответствует, "
 #~ "например «Host *.example.com». Добавьте правило из меню «+»."
-
-#~ msgid "Global Options"
-#~ msgstr "Глобальные параметры"
 
 #~ msgid "Search rules"
 #~ msgstr "Поиск правил"

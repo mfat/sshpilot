@@ -1429,7 +1429,7 @@ def test_the_block_list_names_each_block_and_says_what_it_is(gtk, tmp_path):
         assert _pump(lambda: len(win._block_rows) == 7)
         rows = [win._block_rows[block.uid] for block in win.editor.blocks]
         assert [(r.title.get_label(), r.caption.get_label()) for r in rows] == [
-            ("Options Above All Blocks", "All hosts"),
+            ("Global Options", "All hosts"),
             ("web1", "Connection"),
             ("db1 db2", "2 connections"),
             ("Match host *.corp", "Match rule"),

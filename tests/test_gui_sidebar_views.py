@@ -119,7 +119,7 @@ def test_the_dropdown_switches_the_whole_window(window):
     # The sidebar lists the blocks, each said to be what it is.
     assert view.sidebar_column.get_parent() is window._sidebar_sections_holder
     assert [(r.title.get_label(), r.caption.get_label()) for r in _rows(view)] == [
-        ("Options Above All Blocks", "All hosts"),
+        ("Global Options", "All hosts"),
         ("web1", "Connection"),
         ("*.prod", "Host pattern"),
         ("Match host *.corp", "Match rule"),

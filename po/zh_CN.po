@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 21:55+0330\n"
+"POT-Creation-Date: 2026-11-24 22:15+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -17609,8 +17609,8 @@ msgid "Global"
 msgstr "全局"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:133
-msgid "Options Above All Blocks"
-msgstr "所有区块之上的选项"
+msgid "Global Options"
+msgstr "全局选项"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:140
 msgid "New Host Block"
@@ -17896,6 +17896,9 @@ msgstr "窗口显示的内容"
 msgid "{kind} · off"
 msgstr "{kind} · 已关闭"
 
+#~ msgid "Options Above All Blocks"
+#~ msgstr "所有区块之上的选项"
+
 #~ msgid "Config Sections"
 #~ msgstr "配置区段"
 
@@ -17920,9 +17923,6 @@ msgstr "{kind} · 已关闭"
 #~ msgstr ""
 #~ "规则为它匹配的每个主机设置选项，例如“Host *.example.com”。可从 + 菜单添"
 #~ "加。"
-
-#~ msgid "Global Options"
-#~ msgstr "全局选项"
 
 #~ msgid "Search rules"
 #~ msgstr "搜索规则"

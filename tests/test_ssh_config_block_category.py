@@ -29,7 +29,7 @@ def test_a_block_is_one_of_four_things(kind, patterns, category):
 
 
 def test_a_list_names_a_block_by_what_follows_its_keyword():
-    assert block_list_title(GLOBAL, "") == "Options Above All Blocks"
+    assert block_list_title(GLOBAL, "") == "Global Options"
     assert block_list_title(HOST, " web1 web2 ") == "web1 web2"
     assert block_list_title(HOST, "*") == "Host *"
     assert block_list_title(HOST, "*.prod") == "*.prod"

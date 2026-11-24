@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 21:55+0330\n"
+"POT-Creation-Date: 2026-11-24 22:15+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -18161,8 +18161,8 @@ msgid "Global"
 msgstr "سراسری"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:133
-msgid "Options Above All Blocks"
-msgstr "گزینه‌های بالای همهٔ بلوک‌ها"
+msgid "Global Options"
+msgstr "گزینه‌های سراسری"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:140
 msgid "New Host Block"
@@ -18461,6 +18461,9 @@ msgstr "آنچه پنجره نشان می‌دهد"
 msgid "{kind} · off"
 msgstr "{kind} · خاموش"
 
+#~ msgid "Options Above All Blocks"
+#~ msgstr "گزینه‌های بالای همهٔ بلوک‌ها"
+
 #~ msgid "Config Sections"
 #~ msgstr "بخش‌های پیکربندی"
 
@@ -18485,9 +18488,6 @@ msgstr "{kind} · خاموش"
 #~ msgstr ""
 #~ "یک قاعده برای هر میزبانی که با آن مطابقت دارد گزینه تعیین می‌کند، مانند "
 #~ "«Host *.example.com». از منوی + یکی اضافه کنید."
-
-#~ msgid "Global Options"
-#~ msgstr "گزینه‌های سراسری"
 
 #~ msgid "Search rules"
 #~ msgstr "جستجوی قواعد"
