@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 12:37+0330\n"
+"POT-Creation-Date: 2026-11-24 12:54+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -174,8 +174,8 @@ msgstr "اتصالات باز شود؟"
 #: src/sshpilot/resources/ui/scp_download_window.ui:25
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:21
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
-#: src/sshpilot/advanced_config_window.py:463
-#: src/sshpilot/advanced_config_window.py:691
+#: src/sshpilot/advanced_config_window.py:485
+#: src/sshpilot/advanced_config_window.py:716
 msgid "Cancel"
 msgstr "لغو کنید"
 
@@ -387,7 +387,7 @@ msgstr "نام جلسه"
 #: src/sshpilot/resources/ui/command_edit_dialog.ui:25
 #: src/sshpilot/resources/ui/connection_dialog.ui:71
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:31
-#: src/sshpilot/advanced_config_window.py:210
+#: src/sshpilot/advanced_config_window.py:223
 msgid "Save"
 msgstr "ذخیره کنید"
 
@@ -871,8 +871,8 @@ msgid "Discard changes to authorized_keys?"
 msgstr "از تغییرات در authorized_keys صرفنظر شود؟"
 
 #: src/sshpilot/authorized_keys_window.py:798
-#: src/sshpilot/advanced_config_window.py:692
-#: src/sshpilot/advanced_config_results_view.py:323
+#: src/sshpilot/advanced_config_window.py:717
+#: src/sshpilot/advanced_config_results_view.py:332
 msgid "Discard"
 msgstr "دور انداختن"
 
@@ -1687,7 +1687,7 @@ msgstr "فقط دستورات SSH مجاز هستند. مثال: ssh user@host"
 #: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:121
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:109
 #: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:130
-#: src/sshpilot/advanced_config_results_view.py:216
+#: src/sshpilot/advanced_config_results_view.py:225
 msgid "Command"
 msgstr "فرمان"
 
@@ -1799,7 +1799,7 @@ msgstr "اتصال جدید"
 #: src/sshpilot/login_profile_dialogs.py:890 src/sshpilot/terminal.py:1205
 #: src/sshpilot/terminal.py:1210 src/sshpilot/terminal.py:1523
 #: src/sshpilot/terminal.py:1552 src/sshpilot/window.py:3255
-#: src/sshpilot/advanced_config_results_view.py:213
+#: src/sshpilot/advanced_config_results_view.py:222
 msgid "Connection"
 msgstr "اتصال"
 
@@ -2745,12 +2745,12 @@ msgid "OpenSSH will try:"
 msgstr "OpenSSH امتحان خواهد کرد:"
 
 #: src/sshpilot/connection_dialog_auth.py:1222
-#: src/sshpilot/advanced_config_rules_view.py:249
+#: src/sshpilot/advanced_config_rules_view.py:288
 msgid "Move up"
 msgstr "انتقال به بالا"
 
 #: src/sshpilot/connection_dialog_auth.py:1223
-#: src/sshpilot/advanced_config_rules_view.py:250
+#: src/sshpilot/advanced_config_rules_view.py:289
 msgid "Move down"
 msgstr "انتقال به پایین"
 
@@ -4140,7 +4140,7 @@ msgid "Descending"
 msgstr "نزولی"
 
 #: src/sshpilot/file_manager/pane_controls.py:153
-#: src/sshpilot/advanced_config_results_view.py:186
+#: src/sshpilot/advanced_config_results_view.py:195
 msgid "Order"
 msgstr "ترتیب"
 
@@ -5235,7 +5235,7 @@ msgstr "انتخاب کلید"
 
 #: src/sshpilot/gtk/login_profile_messages.py:35
 #: src/sshpilot/login_profile_dialogs.py:243
-#: src/sshpilot/advanced_config_results_view.py:220
+#: src/sshpilot/advanced_config_results_view.py:229
 msgid "Identity files"
 msgstr "فایل‌های هویت"
 
@@ -7635,7 +7635,7 @@ msgstr "نمایش اتصال‌ها"
 #: src/sshpilot/login_profile_dialogs.py:682
 #: src/sshpilot/login_profile_dialogs.py:751
 #: src/sshpilot/resources/ui/authorized_key_entry_dialog.ui:27
-#: src/sshpilot/advanced_config_results_view.py:329
+#: src/sshpilot/advanced_config_results_view.py:338
 msgid "Apply"
 msgstr "اعمال"
 
@@ -8179,18 +8179,18 @@ msgid "Restore…"
 msgstr "بازیابی"
 
 #: src/sshpilot/macos_menubar.py:67 src/sshpilot/text_editor.py:412
-#: src/sshpilot/window.py:3668 src/sshpilot/advanced_config_window.py:204
+#: src/sshpilot/window.py:3668 src/sshpilot/advanced_config_window.py:217
 msgid "Undo"
 msgstr "واگرد"
 
 #: src/sshpilot/macos_menubar.py:68 src/sshpilot/text_editor.py:418
-#: src/sshpilot/advanced_config_window.py:206
+#: src/sshpilot/advanced_config_window.py:219
 msgid "Redo"
 msgstr "انجام دوباره"
 
 #: src/sshpilot/macos_menubar.py:79 src/sshpilot/omni_search.py:183
 #: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window.py:2411
-#: src/sshpilot/window_help.py:52 src/sshpilot/advanced_config_window.py:254
+#: src/sshpilot/window_help.py:52 src/sshpilot/advanced_config_window.py:275
 msgid "Toggle Sidebar"
 msgstr "نوار کناری را تغییر دهید"
 
@@ -8231,9 +8231,9 @@ msgstr "ویرایشگر پیکربندی SSH"
 #: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
 #: src/sshpilot/sidebar.py:5156 src/sshpilot/window.py:4279
 #: src/sshpilot/resources/ui/connection_dialog.ui:55
-#: src/sshpilot/advanced_config_window.py:152
-#: src/sshpilot/advanced_config_window.py:202
-#: src/sshpilot/advanced_config_window.py:766
+#: src/sshpilot/advanced_config_window.py:165
+#: src/sshpilot/advanced_config_window.py:215
+#: src/sshpilot/advanced_config_window.py:791
 msgid "Advanced Configuration"
 msgstr "پیکربندی پیشرفته"
 
@@ -8677,7 +8677,7 @@ msgid "Environment"
 msgstr "محیط زیست"
 
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:146
-#: src/sshpilot/advanced_config_results_view.py:188
+#: src/sshpilot/advanced_config_results_view.py:197
 msgid "Raw"
 msgstr "خام"
 
@@ -9794,7 +9794,7 @@ msgid "Daemon host"
 msgstr "میزبان دیمون"
 
 #: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:92
-#: src/sshpilot/advanced_config_results_view.py:218
+#: src/sshpilot/advanced_config_results_view.py:227
 msgid "User"
 msgstr "کاربر"
 
@@ -13565,13 +13565,13 @@ msgid "Choose a keyword"
 msgstr "انتخاب کلیدواژه"
 
 #: src/sshpilot/ssh_option_list.py:159 src/sshpilot/ssh_option_list.py:161
-#: src/sshpilot/advanced_config_rules_view.py:122
+#: src/sshpilot/advanced_config_rules_view.py:146
 msgid "Value"
 msgstr "ارزش"
 
 #. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
 #: src/sshpilot/ssh_option_list.py:273 src/sshpilot/ssh_option_list.py:277
-#: src/sshpilot/advanced_config_rules_view.py:280
+#: src/sshpilot/advanced_config_rules_view.py:319
 msgid "Add Option"
 msgstr "افزودن گزینه"
 
@@ -13820,7 +13820,7 @@ msgstr "نشست پایان یافت."
 #. Dismiss button to hide the banner manually
 #: src/sshpilot/terminal.py:623 src/sshpilot/terminal.py:697
 #: src/sshpilot/window.py:2217 src/sshpilot/window.py:2243
-#: src/sshpilot/advanced_config_window.py:507
+#: src/sshpilot/advanced_config_window.py:529
 msgid "Dismiss"
 msgstr "رد کردن"
 
@@ -14484,7 +14484,7 @@ msgstr "نادیده گرفتن تغییرات"
 msgid "Follow System Style"
 msgstr "پیروی از سبک سیستم"
 
-#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:497
+#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:519
 msgid "Reload"
 msgstr "بارگذاری مجدد"
 
@@ -18048,44 +18048,52 @@ msgstr "عبور مستقیم"
 msgid "Copy key to Server"
 msgstr "رونوشت کلید به سرور"
 
-#: src/sshpilot/advanced_config_window.py:215
+#: src/sshpilot/advanced_config_window.py:228
 msgid "Reload from Disk"
 msgstr "بارگذاری دوباره از دیسک"
 
-#: src/sshpilot/advanced_config_window.py:216
+#: src/sshpilot/advanced_config_window.py:229
 msgid "Copy Configuration"
 msgstr "رونوشت از پیکربندی"
 
-#: src/sshpilot/advanced_config_window.py:270
+#: src/sshpilot/advanced_config_window.py:231
+msgid "Collapse All"
+msgstr "جمع کردن همه"
+
+#: src/sshpilot/advanced_config_window.py:232
+msgid "Expand All"
+msgstr "باز کردن همه"
+
+#: src/sshpilot/advanced_config_window.py:291
 msgid "Type a host to check"
 msgstr "میزبانی برای بررسی تایپ کنید"
 
-#: src/sshpilot/advanced_config_window.py:272
+#: src/sshpilot/advanced_config_window.py:293
 msgid "A host typed here is the one checked, whichever block is selected."
 msgstr "میزبانی که اینجا تایپ شود بررسی می‌شود، هر بلوکی که انتخاب شده باشد."
 
-#: src/sshpilot/advanced_config_window.py:282
+#: src/sshpilot/advanced_config_window.py:303
 msgid "All Blocks"
 msgstr "همه بلوک‌ها"
 
-#: src/sshpilot/advanced_config_window.py:301
+#: src/sshpilot/advanced_config_window.py:322
 msgid "The file of the configuration shown here"
 msgstr "پروندهٔ پیکربندی که اینجا نشان داده شده است"
 
-#: src/sshpilot/advanced_config_window.py:375
+#: src/sshpilot/advanced_config_window.py:396
 msgid "The SSH configuration could not be read."
 msgstr "پیکربندی SSH خوانده نشد."
 
-#: src/sshpilot/advanced_config_window.py:395
-#: src/sshpilot/advanced_config_window.py:502
+#: src/sshpilot/advanced_config_window.py:417
+#: src/sshpilot/advanced_config_window.py:524
 msgid "This SSH configuration is read-only: changes cannot be saved."
 msgstr "این پیکربندی SSH فقط‌خواندنی است: تغییرات ذخیره نمی‌شوند."
 
-#: src/sshpilot/advanced_config_window.py:457
+#: src/sshpilot/advanced_config_window.py:479
 msgid "Save a configuration OpenSSH rejects?"
 msgstr "پیکربندی‌ای که OpenSSH رد می‌کند ذخیره شود؟"
 
-#: src/sshpilot/advanced_config_window.py:459
+#: src/sshpilot/advanced_config_window.py:481
 msgid ""
 "OpenSSH refuses the whole configuration over one such line, so no SSH "
 "connection starts until it is corrected."
@@ -18093,41 +18101,41 @@ msgstr ""
 "OpenSSH به‌خاطر یک چنین خطی کل پیکربندی را نمی‌پذیرد، پس تا اصلاح آن هیچ اتصال "
 "SSH آغاز نمی‌شود."
 
-#: src/sshpilot/advanced_config_window.py:464
+#: src/sshpilot/advanced_config_window.py:486
 msgid "Save Anyway"
 msgstr "در هر صورت ذخیره شود"
 
-#: src/sshpilot/advanced_config_window.py:496
+#: src/sshpilot/advanced_config_window.py:518
 msgid "The SSH configuration changed on disk since it was opened."
 msgstr "پیکربندی SSH از زمان باز شدن روی دیسک تغییر کرده است."
 
-#: src/sshpilot/advanced_config_window.py:507
+#: src/sshpilot/advanced_config_window.py:529
 msgid "The SSH configuration could not be saved."
 msgstr "پیکربندی SSH ذخیره نشد."
 
 #. an earlier failure is history
-#: src/sshpilot/advanced_config_window.py:514
+#: src/sshpilot/advanced_config_window.py:536
 msgid "SSH configuration saved"
 msgstr "پیکربندی SSH ذخیره شد"
 
-#: src/sshpilot/advanced_config_window.py:649
+#: src/sshpilot/advanced_config_window.py:671
 #, python-brace-format
 msgid "No Host block names “{host}” in this file."
 msgstr "هیچ بلوک Host در این پرونده «{host}» را نام نبرده است."
 
-#: src/sshpilot/advanced_config_window.py:682
+#: src/sshpilot/advanced_config_window.py:707
 msgid "Configuration copied"
 msgstr "پیکربندی رونوشت شد"
 
-#: src/sshpilot/advanced_config_window.py:688
+#: src/sshpilot/advanced_config_window.py:713
 msgid "Discard unsaved changes?"
 msgstr "تغییرات ذخیره‌نشده دور ریخته شود؟"
 
-#: src/sshpilot/advanced_config_window.py:689
+#: src/sshpilot/advanced_config_window.py:714
 msgid "The changes made here have not been saved to the SSH configuration."
 msgstr "تغییرهای انجام‌شده در این‌جا در پیکربندی SSH ذخیره نشده‌اند."
 
-#: src/sshpilot/advanced_config_window.py:847
+#: src/sshpilot/advanced_config_window.py:873
 msgid ""
 "Global options must stay above every Host and Match block: OpenSSH reads an "
 "option below a Host line as that host's."
@@ -18135,11 +18143,11 @@ msgstr ""
 "گزینه‌های سراسری باید بالاتر از همهٔ بلوک‌های Host و Match بمانند: OpenSSH "
 "گزینه‌ای را که زیر یک خط Host باشد متعلق به همان میزبان می‌خواند."
 
-#: src/sshpilot/advanced_config_window.py:1142
+#: src/sshpilot/advanced_config_window.py:1309
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "امکان پرسیدن از OpenSSH دربارهٔ این پیکربندی نبود."
 
-#: src/sshpilot/advanced_config_window.py:1237
+#: src/sshpilot/advanced_config_window.py:1430
 msgid "Run and Evaluate"
 msgstr "اجرا و ارزیابی"
 
@@ -18148,7 +18156,7 @@ msgid "Applied"
 msgstr "اعمال‌شده"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:22
-#: src/sshpilot/advanced_config_results_view.py:236
+#: src/sshpilot/advanced_config_results_view.py:245
 msgid "Shadowed"
 msgstr "بی‌اثر"
 
@@ -18249,9 +18257,9 @@ msgstr ""
 
 #. Host and Match are OpenSSH's keywords: not translated.
 #: src/sshpilot/gtk/advanced_config_messages.py:124
-#: src/sshpilot/advanced_config_rules_view.py:224
-#: src/sshpilot/advanced_config_rules_view.py:439
-#: src/sshpilot/advanced_config_results_view.py:614
+#: src/sshpilot/advanced_config_rules_view.py:263
+#: src/sshpilot/advanced_config_rules_view.py:505
+#: src/sshpilot/advanced_config_results_view.py:669
 msgid "Global"
 msgstr "سراسری"
 
@@ -18313,100 +18321,109 @@ msgid_plural "{count} lines not used"
 msgstr[0] "{count} خط استفاده‌نشده"
 msgstr[1] "{count} خط استفاده‌نشده"
 
-#: src/sshpilot/advanced_config_rules_view.py:111
+#: src/sshpilot/advanced_config_rules_view.py:135
 msgid "Drag to reorder or to another block"
 msgstr "برای تغییر ترتیب یا انتقال به بلوک دیگر بکشید"
 
-#: src/sshpilot/advanced_config_rules_view.py:116
+#: src/sshpilot/advanced_config_rules_view.py:140
 msgid "Option"
 msgstr "گزینه"
 
-#: src/sshpilot/advanced_config_rules_view.py:127
+#: src/sshpilot/advanced_config_rules_view.py:151
 msgid "Remove option"
 msgstr "برداشتن گزینه"
 
-#: src/sshpilot/advanced_config_rules_view.py:166
+#: src/sshpilot/advanced_config_rules_view.py:195
 msgid "Rejected"
 msgstr "رد شده"
 
-#: src/sshpilot/advanced_config_rules_view.py:214
+#: src/sshpilot/advanced_config_rules_view.py:245
 msgid "Drag to reorder"
 msgstr "برای تغییر ترتیب بکشید"
 
-#: src/sshpilot/advanced_config_rules_view.py:228
+#: src/sshpilot/advanced_config_rules_view.py:255
+#: src/sshpilot/advanced_config_rules_view.py:365
+msgid "Collapse"
+msgstr "جمع کردن"
+
+#: src/sshpilot/advanced_config_rules_view.py:267
 msgid "Options for every target"
 msgstr "گزینه‌ها برای همهٔ هدف‌ها"
 
-#: src/sshpilot/advanced_config_rules_view.py:241
+#: src/sshpilot/advanced_config_rules_view.py:280
 msgid "Host patterns"
 msgstr "الگوهای میزبان"
 
-#: src/sshpilot/advanced_config_rules_view.py:241
+#: src/sshpilot/advanced_config_rules_view.py:280
 msgid "Match criteria"
 msgstr "معیارهای Match"
 
-#: src/sshpilot/advanced_config_rules_view.py:259
+#: src/sshpilot/advanced_config_rules_view.py:298
 msgid "Block options"
 msgstr "گزینه‌های بلوک"
 
-#: src/sshpilot/advanced_config_rules_view.py:283
+#: src/sshpilot/advanced_config_rules_view.py:322
 msgid "Common Option"
 msgstr "گزینهٔ پرکاربرد"
 
-#: src/sshpilot/advanced_config_rules_view.py:324
+#: src/sshpilot/advanced_config_rules_view.py:365
+msgid "Expand"
+msgstr "باز کردن"
+
+#: src/sshpilot/advanced_config_rules_view.py:388
 msgid "Enable Block"
 msgstr "فعال کردن بلوک"
 
-#: src/sshpilot/advanced_config_rules_view.py:324
+#: src/sshpilot/advanced_config_rules_view.py:388
 msgid "Disable Block"
 msgstr "غیرفعال کردن بلوک"
 
 #. (Global options have no header line to put a note above.)
-#: src/sshpilot/advanced_config_rules_view.py:327
+#: src/sshpilot/advanced_config_rules_view.py:391
 msgid "Add or Edit Note"
 msgstr "افزودن یا ویرایش یادداشت"
 
-#: src/sshpilot/advanced_config_rules_view.py:328
+#: src/sshpilot/advanced_config_rules_view.py:392
 msgid "Duplicate Block"
 msgstr "تکثیر بلوک"
 
-#: src/sshpilot/advanced_config_rules_view.py:329
+#: src/sshpilot/advanced_config_rules_view.py:393
 msgid "Delete Block"
 msgstr "حذف بلوک"
 
-#: src/sshpilot/advanced_config_rules_view.py:378
+#: src/sshpilot/advanced_config_rules_view.py:442
 msgid "Note (written as a comment above the block)"
 msgstr "یادداشت (به‌صورت توضیح بالای بلوک نوشته می‌شود)"
 
-#: src/sshpilot/advanced_config_rules_view.py:431
+#: src/sshpilot/advanced_config_rules_view.py:497
 msgid "Configuration rules"
 msgstr "قواعد پیکربندی"
 
-#: src/sshpilot/advanced_config_rules_view.py:440
+#: src/sshpilot/advanced_config_rules_view.py:506
 msgid "Add options above every Host and Match line"
 msgstr "افزودن گزینه‌ها بالاتر از همهٔ خط‌های Host و Match"
 
-#: src/sshpilot/advanced_config_rules_view.py:445
+#: src/sshpilot/advanced_config_rules_view.py:511
 msgid "Add a block at the end"
 msgstr "افزودن یک بلوک در انتها"
 
-#: src/sshpilot/advanced_config_rules_view.py:458
+#: src/sshpilot/advanced_config_rules_view.py:524
 msgid "No Configuration Rules"
 msgstr "هیچ قاعدهٔ پیکربندی وجود ندارد"
 
-#: src/sshpilot/advanced_config_rules_view.py:459
+#: src/sshpilot/advanced_config_rules_view.py:525
 msgid "Add a Host or Match block to start."
 msgstr "برای شروع یک بلوک Host یا Match بیفزایید."
 
-#: src/sshpilot/advanced_config_results_view.py:90
+#: src/sshpilot/advanced_config_results_view.py:99
 msgid "Show this line in the rules"
 msgstr "نمایش این خط در قواعد"
 
-#: src/sshpilot/advanced_config_results_view.py:181
+#: src/sshpilot/advanced_config_results_view.py:190
 msgid "Effective"
 msgstr "مؤثر"
 
-#: src/sshpilot/advanced_config_results_view.py:184
+#: src/sshpilot/advanced_config_results_view.py:193
 msgid ""
 "The order OpenSSH reads the configuration in for this target. The first "
 "value it obtains for an option is the one it keeps."
@@ -18414,7 +18431,7 @@ msgstr ""
 "ترتیبی که OpenSSH پیکربندی را برای این هدف می‌خواند. نخستین مقداری که برای یک "
 "گزینه به دست می‌آورد همان است که نگه می‌دارد."
 
-#: src/sshpilot/advanced_config_results_view.py:191
+#: src/sshpilot/advanced_config_results_view.py:200
 msgid ""
 "Files OpenSSH reads for this target besides this one. They are read where "
 "their Include line stands, and are not edited here."
@@ -18422,35 +18439,35 @@ msgstr ""
 "پرونده‌هایی که OpenSSH برای این هدف افزون بر این پرونده می‌خواند. آن‌ها در جای "
 "خط Include خود خوانده می‌شوند و این‌جا ویرایش نمی‌شوند."
 
-#: src/sshpilot/advanced_config_results_view.py:193
+#: src/sshpilot/advanced_config_results_view.py:202
 msgid "Includes"
 msgstr "پرونده‌های Include"
 
-#: src/sshpilot/advanced_config_results_view.py:217
+#: src/sshpilot/advanced_config_results_view.py:226
 msgid "Host name and port"
 msgstr "نام میزبان و درگاه"
 
-#: src/sshpilot/advanced_config_results_view.py:219
+#: src/sshpilot/advanced_config_results_view.py:228
 msgid "Proxy"
 msgstr "پراکسی"
 
-#: src/sshpilot/advanced_config_results_view.py:230
+#: src/sshpilot/advanced_config_results_view.py:239
 msgid "Filter options or values"
 msgstr "پالایش گزینه‌ها یا مقدارها"
 
-#: src/sshpilot/advanced_config_results_view.py:234
+#: src/sshpilot/advanced_config_results_view.py:243
 msgid "Configured"
 msgstr "پیکربندی‌شده"
 
-#: src/sshpilot/advanced_config_results_view.py:235
+#: src/sshpilot/advanced_config_results_view.py:244
 msgid "Hide options left at OpenSSH's default"
 msgstr "پنهان کردن گزینه‌هایی که روی پیش‌فرض OpenSSH مانده‌اند"
 
-#: src/sshpilot/advanced_config_results_view.py:237
+#: src/sshpilot/advanced_config_results_view.py:246
 msgid "Only options with lines that are not used"
 msgstr "فقط گزینه‌هایی که خط استفاده‌نشده دارند"
 
-#: src/sshpilot/advanced_config_results_view.py:316
+#: src/sshpilot/advanced_config_results_view.py:325
 msgid ""
 "The configuration as it will be saved. Edit it and apply to read it into the "
 "rules again."
@@ -18458,11 +18475,11 @@ msgstr ""
 "پیکربندی همان‌گونه که ذخیره خواهد شد. آن را ویرایش و اعمال کنید تا دوباره در "
 "قواعد خوانده شود."
 
-#: src/sshpilot/advanced_config_results_view.py:326
+#: src/sshpilot/advanced_config_results_view.py:335
 msgid "Drop the text typed here"
 msgstr "دور ریختن متنی که این‌جا نوشته شده"
 
-#: src/sshpilot/advanced_config_results_view.py:488
+#: src/sshpilot/advanced_config_results_view.py:543
 msgid ""
 "Choose a block that names a host in the sidebar, or type a host there, to "
 "see what OpenSSH would use for it."
@@ -18470,24 +18487,24 @@ msgstr ""
 "برای دیدن آنچه OpenSSH برای یک میزبان به کار می‌برد، در نوار کناری بلوکی را "
 "که نام میزبانی دارد انتخاب کنید یا همان‌جا نام میزبان را تایپ کنید."
 
-#: src/sshpilot/advanced_config_results_view.py:604
+#: src/sshpilot/advanced_config_results_view.py:659
 msgid "First"
 msgstr "نخست"
 
-#: src/sshpilot/advanced_config_results_view.py:631
-#: src/sshpilot/advanced_config_results_view.py:655
+#: src/sshpilot/advanced_config_results_view.py:686
+#: src/sshpilot/advanced_config_results_view.py:710
 msgid "System-wide configuration"
 msgstr "پیکربندی سراسری سامانه"
 
-#: src/sshpilot/advanced_config_results_view.py:633
+#: src/sshpilot/advanced_config_results_view.py:688
 msgid "Last"
 msgstr "آخر"
 
-#: src/sshpilot/advanced_config_results_view.py:650
+#: src/sshpilot/advanced_config_results_view.py:705
 msgid "No file matches."
 msgstr "هیچ پرونده‌ای مطابقت ندارد."
 
-#: src/sshpilot/advanced_config_results_view.py:661
+#: src/sshpilot/advanced_config_results_view.py:716
 msgid "No other file is read for this target."
 msgstr "برای این هدف پروندهٔ دیگری خوانده نمی‌شود."
 

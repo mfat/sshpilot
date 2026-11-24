@@ -975,3 +975,47 @@ def test_a_selection_is_answered_in_the_same_step(gtk, tmp_path):
     assert "web1" in asked                                 # asked again, for the new text
     win._closing = True
     win.destroy()
+
+
+# -- folding blocks ------------------------------------------------------------------
+
+def _open_blocks(win):
+    """The blocks whose options are on screen (not folded to the header)."""
+    return [
+        block.patterns or block.kind for block in win.draft.blocks
+        if win.rules.cards[block.uid].revealer.get_reveal_child()
+    ]
+
+
+def test_blocks_fold_when_the_user_folds_them_and_not_otherwise(window):
+    glob, web, star = window.draft.blocks
+    everything = ["global", "web1 web2", "*"]
+    assert _open_blocks(window) == everything
+
+    window.rules.cards[web.uid].fold_button.emit("clicked")      # the arrow
+    assert _open_blocks(window) == ["global", "*"]
+    assert window.rules.cards[web.uid].card.has_css_class("folded")
+    window.select_block(web.uid)                                  # a selection
+    window.select_block(star.uid)                                 # folds and opens nothing
+    assert _open_blocks(window) == ["global", "*"]
+    window.rules.cards[web.uid].fold_button.emit("clicked")
+    assert _open_blocks(window) == everything
+
+    window.activate_action("advcfg.collapse-all", None)           # the window's menu
+    assert _open_blocks(window) == []
+    window.go_to(host="web1", option="port")                      # asked for: it opens
+    assert _pump(lambda: _open_blocks(window) == ["web1 web2"])
+    window.activate_action("advcfg.expand-all", None)
+    assert _open_blocks(window) == everything
+    assert window.editor.text == CONFIG and not window.dirty      # a view of it only
+
+
+def test_dragging_a_block_folds_the_others_while_it_lasts(window):
+    glob, web, star = window.draft.blocks
+    window.rules.set_folded(glob.uid, True)                       # folded before the drag
+    window.rules.begin_block_drag(star.uid)
+    assert _open_blocks(window) == ["*"]                          # only the dragged one
+    window.rules.end_block_drag()
+    assert _open_blocks(window) == ["web1 web2", "*"]             # as they were
+    window.rules.end_block_drag()                                 # a second end is nothing
+    assert _open_blocks(window) == ["web1 web2", "*"]

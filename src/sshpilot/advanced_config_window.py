@@ -91,6 +91,7 @@ _CSS = """
 .advcfg-block.selected { outline: 2px solid @accent_color; outline-offset: -1px; }
 .advcfg-block.selected > .advcfg-header { background-color: alpha(@accent_color, 0.16); }
 .advcfg-block.disabled { opacity: 0.6; }
+.advcfg-block.folded > .advcfg-header { border-radius: 12px; border-bottom-color: transparent; }
 .advcfg-block { transition: opacity 90ms ease-out; }
 .advcfg-block.skipped { opacity: 0.45; }
 .advcfg-drop-before { box-shadow: 0 -3px 0 0 @accent_color; }
@@ -226,9 +227,17 @@ class AdvancedConfigWindow(Adw.Window):
         menu = Gio.Menu()
         menu.append(_("Reload from Disk"), "advcfg.reload")
         menu.append(_("Copy Configuration"), "advcfg.copy")
+        folding = Gio.Menu()
+        folding.append(_("Collapse All"), "advcfg.collapse-all")
+        folding.append(_("Expand All"), "advcfg.expand-all")
+        menu.append_section(None, folding)
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
         actions = Gio.SimpleActionGroup()
-        for name, callback in (("reload", self._on_reload), ("copy", self._on_copy)):
+        for name, callback in (
+            ("reload", self._on_reload), ("copy", self._on_copy),
+            ("collapse-all", lambda *_a: self.rules.fold_all(True)),
+            ("expand-all", lambda *_a: self.rules.fold_all(False)),
+        ):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
             actions.add_action(action)
@@ -675,7 +684,9 @@ class AdvancedConfigWindow(Adw.Window):
         self.select_block(block.uid)
 
         def show() -> bool:
-            # Once laid out: a window just opened has no sizes yet.
+            # Once laid out: a window just opened has no sizes yet. A folded
+            # block opens: it is what the caller wanted shown.
+            self.rules.set_folded(block.uid, False)
             self.rules.scroll_to(block.uid)
             self.rules.reveal(uid)
             self._level_raw_with_rules()

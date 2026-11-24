@@ -48,6 +48,9 @@ COMMON_OPTIONS = (
 #: its height. Between the top and the middle.
 _CARD_REST = 0.25
 
+#: How long a card takes to fold or open.
+_FOLD_MS = 150
+
 _BLOCK_DRAG = "block"
 _OPTION_DRAG = "option"
 
@@ -244,6 +247,14 @@ class BlockCard:
         grip.add_css_class("dim-label")
         grip.set_opacity(1.0 if movable else 0.3)
         header.append(grip)
+        # Folding is the user's: nothing folds or opens a block on its own,
+        # except a drag (the others fold while it lasts) and going to a
+        # line inside a folded block (it opens).
+        self.fold_button = Gtk.Button(icon_name="pan-down-symbolic")
+        self.fold_button.add_css_class("flat")
+        self.fold_button.set_tooltip_text(_("Collapse"))
+        self.fold_button.connect("clicked", lambda *_a: view.set_folded(self.uid, not self.folded))
+        header.append(self.fold_button)
         self.number = Gtk.Label()
         self.number.add_css_class("dim-label")
         self.number.add_css_class("numeric")
@@ -312,7 +323,15 @@ class BlockCard:
         presets.set_create_popup_func(self._build_preset_menu)
         self.footer.append(presets)
         self.rows_box.append(self.footer)
-        self.card.append(body)
+        #: Folded to its header line by the user (the arrow, Collapse All).
+        self.folded = False
+        self.revealer = Gtk.Revealer(
+            transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN,
+            transition_duration=_FOLD_MS,
+            reveal_child=True,
+        )
+        self.revealer.set_child(body)
+        self.card.append(self.revealer)
 
         if movable:
             source = Gtk.DragSource()
@@ -320,13 +339,30 @@ class BlockCard:
             source.connect("prepare", lambda *_a: Gdk.ContentProvider.new_for_value(
                 DragItem(_BLOCK_DRAG, self.uid)
             ))
-            source.connect("drag-begin", lambda src, _drag: view.drag_icon(src, self.card))
+
+            def begun(src, _drag) -> None:
+                view.drag_icon(src, self.card)
+                view.begin_block_drag(self.uid)
+
+            source.connect("drag-begin", begun)
+            source.connect("drag-end", lambda *_a: view.end_block_drag())
+            source.connect("drag-cancel", lambda *_a: (view.end_block_drag(), False)[1])
             header.add_controller(source)       # the whole band, not only the grip
         target = Gtk.DropTarget.new(DragItem, Gdk.DragAction.MOVE)
         target.connect("motion", view.on_drop_motion, self.card)
         target.connect("leave", lambda *_a: view.clear_drop(self.card))
         target.connect("drop", self._on_drop)
         self.card.add_controller(target)
+
+    def show_folded(self, folded: bool, *, animate: bool = True) -> None:
+        """Fold the card to its header line or open it, as shown: what the
+        user chose (``folded``) is not touched."""
+        _set_class(self.card, "folded", folded)
+        if self.revealer.get_reveal_child() == folded:
+            self.revealer.set_transition_duration(_FOLD_MS if animate else 0)
+            self.revealer.set_reveal_child(not folded)
+        self.fold_button.set_icon_name("pan-end-symbolic" if folded else "pan-down-symbolic")
+        self.fold_button.set_tooltip_text(_("Expand") if folded else _("Collapse"))
 
     # -- menus: built when first opened ------------------------------------
 
@@ -446,6 +482,8 @@ class RulesView(Gtk.Box):
         self.syncing = False
         self.cards: Dict[int, BlockCard] = {}
         self.selected_uid: Optional[int] = None
+        #: The block being dragged, while one is.
+        self._dragging: Optional[int] = None
         self.set_size_request(420, -1)
         self.preset_menu = Gio.Menu()
         for number, (key, _value) in enumerate(COMMON_OPTIONS):
@@ -551,6 +589,59 @@ class RulesView(Gtk.Box):
         if current is not None:
             current.card.add_css_class("selected")
             self.dim(current, False)        # the block in hand is at full strength
+
+    # -- folding ---------------------------------------------------------------
+
+    def set_folded(self, uid: int, folded: bool) -> None:
+        """Fold one block to its header line, or open it: the user's doing."""
+        card = self.cards.get(uid)
+        if card is not None and card.folded != folded:
+            card.folded = folded
+            card.show_folded(folded)
+
+    def fold_all(self, folded: bool) -> None:
+        for card in self.cards.values():
+            card.folded = folded
+            card.show_folded(folded)
+
+    def begin_block_drag(self, uid: int) -> None:
+        """A block is being dragged: every other one folds to its header
+        line while that lasts, so the whole order is short enough to drop
+        into. The dragged block stays where the pointer has it."""
+        if self._dragging is not None:
+            return
+        self._dragging = uid
+        top = self.card_top(uid)
+        for other, card in self.cards.items():
+            if other != uid:
+                card.show_folded(True, animate=False)
+        if top is not None:
+            self._after_layout(lambda: self.put_card_at(uid, top))
+
+    def end_block_drag(self) -> None:
+        """The drag is over, dropped or not: the blocks are as they were."""
+        uid, self._dragging = self._dragging, None
+        if uid is None:
+            return
+        for card in self.cards.values():
+            card.show_folded(card.folded, animate=False)
+        if uid in self.cards:
+            self._after_layout(lambda: self.scroll_to(uid))
+
+    def _after_layout(self, action) -> None:
+        """Run *action* once the list has been laid out again. Sizes change
+        in the frame's layout step, which comes after its tick: the frame
+        after the next one is the first to see them."""
+        frames = [0]
+
+        def tick(_widget, _clock) -> bool:
+            frames[0] += 1
+            if frames[0] < 2:
+                return True
+            action()
+            return False
+
+        self.scroller.add_tick_callback(tick)
 
     @staticmethod
     def dim(card: "BlockCard", dimmed: bool) -> None:
@@ -695,10 +786,12 @@ class RulesView(Gtk.Box):
             GLib.idle_add(lambda: (self.box.set_margin_bottom(room), False)[1])
 
     def reveal(self, uid: int) -> None:
-        """Scroll to and flash the option or block with *uid*."""
+        """Scroll to and flash the option or block with *uid*. A folded
+        block opens for an option inside it: it is what was asked for."""
         widget = None
         for card in self.cards.values():
             if uid in card.rows:
+                self.set_folded(card.uid, False)
                 widget = card.rows[uid].box
                 card.rows[uid].value.grab_focus()
                 break
