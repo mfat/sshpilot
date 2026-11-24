@@ -1058,3 +1058,24 @@ def test_where_a_drop_lands_is_shown_as_the_connection_list_shows_it(window):
     rules.end_option_drag()
     assert shown() == []
     assert window.editor.text == CONFIG                           # showing moved nothing
+
+
+def test_undo_and_redo_have_keys_wherever_the_keyboard_is(window):
+    """Ctrl+Z is the window's undo, not the field's it was pressed in; on
+    the Raw page it is left to the text typed there."""
+    names = lambda: [b.patterns or b.kind for b in window.draft.blocks]  # noqa: E731
+    glob, web, star = window.draft.blocks
+    window.delete_block(star.uid)
+    assert names() == ["global", "web1 web2"]
+    assert window._history_key(window.undo) is True
+    assert names() == ["global", "web1 web2", "*"] and window.editor.text == CONFIG
+    assert window._history_key(window.redo) is True
+    assert names() == ["global", "web1 web2"]
+    window.undo()
+
+    raw = window.results.raw_view
+    window.get_focus = lambda: raw                         # the keyboard is in the text
+    window.delete_block(window.draft.blocks[2].uid)
+    assert window._history_key(window.undo) is False       # the text's own undo
+    assert names() == ["global", "web1 web2"]
+    assert "Ctrl+Z" in window.undo_button.get_tooltip_text()

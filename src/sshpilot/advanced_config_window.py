@@ -196,6 +196,25 @@ class AdvancedConfigWindow(Adw.Window):
                 Gtk.CallbackAction.new(lambda *_a, d=delta: self.move_selected(d)),
             ))
         self.add_controller(keys)
+        # Undo and redo are the window's, wherever the keyboard is: a field
+        # has an undo of its own for what was typed into it, which knows
+        # nothing of a block deleted or moved, and would answer Ctrl+Z
+        # first. So the keys are taken on the way down, before any field
+        # sees them. (The Raw page keeps its own: text typed there is not
+        # in the rules until it is applied.)
+        history_keys = Gtk.ShortcutController()
+        history_keys.set_scope(Gtk.ShortcutScope.LOCAL)
+        history_keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        for trigger, step in (
+            ("<Control>z", self.undo), ("<Meta>z", self.undo),
+            ("<Control><Shift>z", self.redo), ("<Meta><Shift>z", self.redo),
+            ("<Control>y", self.redo),
+        ):
+            history_keys.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(trigger),
+                Gtk.CallbackAction.new(lambda *_a, s=step: self._history_key(s)),
+            ))
+        self.add_controller(history_keys)
         self.connect("close-request", self._on_close_request)
         self._load()
 
@@ -212,9 +231,15 @@ class AdvancedConfigWindow(Adw.Window):
         header = Adw.HeaderBar()
         self._title = Adw.WindowTitle(title=_("Advanced Configuration"), subtitle="")
         header.set_title_widget(self._title)
-        self.undo_button = Gtk.Button(icon_name="edit-undo-symbolic", tooltip_text=_("Undo"))
+        # The keys are named beside the words: the buttons are small, and
+        # an undo nobody finds is no undo.
+        self.undo_button = Gtk.Button(
+            icon_name="edit-undo-symbolic", tooltip_text=_("Undo") + " (Ctrl+Z)"
+        )
         self.undo_button.connect("clicked", lambda *_a: self.undo())
-        self.redo_button = Gtk.Button(icon_name="edit-redo-symbolic", tooltip_text=_("Redo"))
+        self.redo_button = Gtk.Button(
+            icon_name="edit-redo-symbolic", tooltip_text=_("Redo") + " (Ctrl+Shift+Z)"
+        )
         self.redo_button.connect("clicked", lambda *_a: self.redo())
         header.pack_start(self.undo_button)
         header.pack_start(self.redo_button)
@@ -1094,6 +1119,16 @@ class AdvancedConfigWindow(Adw.Window):
             return False
 
         self._history_source = GLib.timeout_add(_HISTORY_DELAY_MS, fire)
+
+    def _history_key(self, step: Callable[[], None]) -> bool:
+        """Ctrl+Z and its kin. False leaves the key to whoever has it: the
+        Raw page's text, which has an undo of its own."""
+        focus = self.get_focus()
+        raw = self.results.raw_view
+        if focus is not None and (focus is raw or focus.is_ancestor(raw)):
+            return False
+        step()
+        return True
 
     def undo(self) -> None:
         self._cancel_history_timer()
