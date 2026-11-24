@@ -1573,9 +1573,21 @@ class AuthPolicyGroup:
         finally:
             self._syncing = False
 
-    def set_preview_note(self, note: str) -> None:
-        """Why OpenSSH tries something else: the tooltip of the preview."""
-        self._preview_note = str(note or "")
+    def set_preview_notes(self, notes) -> None:
+        """Why OpenSSH tries something else: the tooltip of the preview.
+
+        *notes*: ``(row title, note)`` of each row that is set here and not
+        used. A note reads "Not used: ..." about its own row, so away from
+        that row it is shown under the row's name.
+        """
+        from gi.repository import GLib
+
+        self._preview_note = "\n\n".join(
+            "<b>{}</b>\n{}".format(
+                GLib.markup_escape_text(str(title)), GLib.markup_escape_text(str(note))
+            )
+            for title, note in notes
+        )
         self._style_preview()
 
     def _style_preview(self) -> None:
@@ -1584,7 +1596,7 @@ class AuthPolicyGroup:
             self.effective_row.add_css_class("error")
         else:
             self.effective_row.remove_css_class("error")
-        self.effective_row.set_tooltip_text(
+        self.effective_row.set_tooltip_markup(
             (self._preview_note or None) if conflict else None
         )
 

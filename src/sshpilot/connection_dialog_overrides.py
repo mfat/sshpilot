@@ -593,8 +593,8 @@ class ConnectionDialogOverridesMixin:
         notes of the authentication rows that are set here and not used.
         """
         section = getattr(self, "auth_policy", None)
-        set_note = getattr(section, "set_preview_note", None)
-        if not callable(set_note):
+        set_notes = getattr(section, "set_preview_notes", None)
+        if not callable(set_notes):
             return
         notes = []
         for row_name, _keyword in OVERRIDABLE_ROWS:
@@ -604,10 +604,12 @@ class ConnectionDialogOverridesMixin:
             if getattr(row, "_sshpilot_override_state", None) != OVERRIDDEN:
                 continue
             note = getattr(row, "_sshpilot_override_note", "") or ""
-            if note and note not in notes:
-                notes.append(note)
+            if note:
+                # Each note is about its own row ("Not used: ..."): away
+                # from the row it needs the row's name to say what is not.
+                notes.append((row.get_title(), note))
         try:
-            set_note("\n\n".join(notes))
+            set_notes(notes)
         except Exception:
             logger.debug("Could not note the authentication preview", exc_info=True)
 
