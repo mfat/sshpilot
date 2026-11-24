@@ -768,8 +768,14 @@ def test_reset_shows_what_the_host_inherits_without_its_own_line(gui, root):
 
 # -- a Host line that is more than one host's -----------------------------------
 
-def _shared_hosts(root, gui, line, body=("HostName 192.0.2.40", "User alice")):
-    """Write one block under ``Host <line>`` and wait for *line*'s first name."""
+def _shared_hosts(root, gui, line, address):
+    """Write one block under ``Host <line>`` and wait for *line*'s first name.
+
+    *address* is the test's own: hosts that vanish while others with the
+    same destination appear leave the daemon unable to tell which is which,
+    and it refuses to edit them until that is settled.
+    """
+    body = (f"HostName {address}", "User alice")
     root.write_text(f"Host {line}\n" + "".join(f"    {item}\n" for item in body))
     first = line.split()[0]
     assert _pump(lambda: _find(gui.window, first) is not None), (
@@ -780,8 +786,8 @@ def _shared_hosts(root, gui, line, body=("HostName 192.0.2.40", "User alice")):
 
 def test_a_shared_host_block_is_edited_for_all_its_hosts(gui, root):
     n = next(_names)
-    a, b = f"shared{n}a", f"shared{n}b"
-    _shared_hosts(root, gui, f"{a} {b}")
+    a, b, address = f"shared{n}a", f"shared{n}b", f"192.0.2.{100 + n}"
+    _shared_hosts(root, gui, f"{a} {b}", address)
     assert _pump(lambda: _find(gui.window, b) is not None)
 
     dialog = _open(gui, a)
@@ -791,7 +797,7 @@ def test_a_shared_host_block_is_edited_for_all_its_hosts(gui, root):
     assert not dialog.nickname_row.get_sensitive()        # the line is kept
 
     dialog.username_row.set_text("bob")
-    expected = ["HostName 192.0.2.40", "User bob"]
+    expected = [f"HostName {address}", "User bob"]
     _save_and_wait(dialog, root, f"{a} {b}", expected)
     assert _canon(_block(root, f"{a} {b}")) == _canon(expected)
     assert root.read_text().count("Host ") == 1            # still one block
@@ -800,8 +806,8 @@ def test_a_shared_host_block_is_edited_for_all_its_hosts(gui, root):
 
 def test_a_host_is_edited_separately_from_the_block_it_shares(gui, root):
     n = next(_names)
-    a, b = f"split{n}a", f"split{n}b"
-    _shared_hosts(root, gui, f"{a} {b}")
+    a, b, address = f"split{n}a", f"split{n}b", f"192.0.2.{100 + n}"
+    _shared_hosts(root, gui, f"{a} {b}", address)
 
     dialog = _open(gui, a)
     dialog._shared_block_banner.emit("button-clicked")     # Edit Separately
@@ -811,15 +817,16 @@ def test_a_host_is_edited_separately_from_the_block_it_shares(gui, root):
     dialog.username_row.set_text("bob")
     _save(dialog)
     assert _pump(lambda: _block(root, a) != [], seconds=5), "no block of its own"
-    assert _canon(_block(root, b)) == _canon(["HostName 192.0.2.40", "User alice"])
+    assert _canon(_block(root, b)) == _canon([f"HostName {address}", "User alice"])
     assert "User bob" in _block(root, a)
     assert _ssh_g(root, b).get("user") == "alice"          # the other host is as it was
     assert _ssh_g(root, a).get("user") == "bob"
 
 
 def test_a_name_beside_a_pattern_is_listed_and_says_what_it_shares(gui, root):
-    name = f"edge{next(_names)}"
-    root.write_text(f"Host *.prod {name}\n    HostName 192.0.2.41\n    User ops\n")
+    n = next(_names)
+    name, address = f"edge{n}", f"192.0.2.{100 + n}"
+    root.write_text(f"Host *.prod {name}\n    HostName {address}\n    User ops\n")
     assert _pump(lambda: _find(gui.window, name) is not None), (
         "a name beside a pattern is not listed as a connection"
     )
@@ -828,6 +835,6 @@ def test_a_name_beside_a_pattern_is_listed_and_says_what_it_shares(gui, root):
     assert banner.get_revealed() and "*.prod" in banner.get_title()
 
     dialog.username_row.set_text("deploy")
-    expected = ["HostName 192.0.2.41", "User deploy"]
+    expected = [f"HostName {address}", "User deploy"]
     _save_and_wait(dialog, root, f"*.prod {name}", expected)
     assert _canon(_block(root, f"*.prod {name}")) == _canon(expected)   # line kept
