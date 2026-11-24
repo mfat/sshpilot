@@ -47,6 +47,8 @@ class Answer:
     lines: LineMap
     user: Optional[str] = None
     host: str = ""
+    #: Said in place of the usual hint while there is no evaluation.
+    note: str = ""
 
     @property
     def answered(self) -> bool:
@@ -416,7 +418,7 @@ class ResultsView(Gtk.Box):
         self.note.set_visible(not answer.answered)
         if not answer.answered:
             if evaluation is None:
-                note = _(
+                note = answer.note or _(
                     "Choose a block that names a host in the sidebar, or type "
                     "a host there, to see what OpenSSH would use for it."
                 )

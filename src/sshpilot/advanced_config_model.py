@@ -52,6 +52,34 @@ def can_place(blocks: Sequence[Block]) -> bool:
     return True
 
 
+def plain_host_names(blocks: Sequence[Block]) -> List[str]:
+    """Every host the blocks that are on spell out (not the patterns)."""
+    names: List[str] = []
+    for block in blocks:
+        if block.kind != HOST or block.disabled:
+            continue
+        for token in block.patterns.split():
+            if token and not any(char in token for char in '*?!"') and token not in names:
+                names.append(token)
+    return names
+
+
+def sample_hosts(block: Optional[Block]) -> List[str]:
+    """Made-up names the patterns of a ``Host`` block could apply to
+    (``*.prod`` gives ``x.prod``). They are candidates and no more: whether
+    the block applies to one is OpenSSH's answer, like any other name's."""
+    if block is None or block.kind != HOST:
+        return []
+    names: List[str] = []
+    for token in block.patterns.split():
+        if token.startswith("!") or '"' in token:
+            continue
+        name = token.replace("*", "x").replace("?", "x")
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 def first_host_name(block: Optional[Block]) -> str:
     """The host a block is about: the first name on its ``Host`` line that
     is a plain name, not a pattern. Empty for ``Match``, global, switched-off

@@ -17,7 +17,7 @@ Menus are built when they are first opened, for the same reason.
 from __future__ import annotations
 
 from gettext import gettext as _
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import gi
 
@@ -541,16 +541,25 @@ class RulesView(Gtk.Box):
         lines: LineMap,
         *,
         keep_open,
+        related: Optional[Set[int]] = None,
     ) -> int:
         """Put OpenSSH's answer on the cards. Returns how many blocks apply.
 
         Every block stays on screen, in the file's order. One that does not
         apply to the host in question folds to its faded header, unless it
         is selected or in *keep_open* (being worked on).
+
+        *related* stands in for an evaluation while the block picked names
+        no host of its own: the header lines of the blocks that apply to a
+        host it applies to. The blocks are marked; the option lines are
+        not, since what a line does is told per host.
         """
         answered = bool(evaluation and evaluation.evaluated)
         matched = set(evaluation.matched_blocks) if answered else set()
         states = {item.line: item for item in evaluation.lines} if answered else {}
+        status = messages.block_status
+        if related and not answered:
+            answered, matched, status = True, related, messages.related_status
         errors = (
             {error.line: error for error in evaluation.errors if not error.file}
             if evaluation else {}
@@ -564,9 +573,7 @@ class RulesView(Gtk.Box):
             applies = None
             if answered and not block.disabled:
                 applies = block.kind == GLOBAL or header_line in matched
-            label, style, tooltip = messages.block_status(
-                block.disabled, applies, block.kind == GLOBAL
-            )
+            label, style, tooltip = status(block.disabled, applies, block.kind == GLOBAL)
             set_pill(card.status, label, style, tooltip)
             count += bool(applies)
             card.folds = applies is False and block.uid not in keep_open

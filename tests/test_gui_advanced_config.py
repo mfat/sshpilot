@@ -506,6 +506,54 @@ def test_selecting_a_block_does_not_change_the_host_in_question(gtk, tmp_path):
     win.destroy()
 
 
+def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
+    """A pattern or a Match rule names no host. Picking one marks the blocks
+    that apply to a host it applies to, each host being OpenSSH's answer."""
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Host a.prod\n    User a\n\nHost b.prod c.test\n    User b\n\n"
+        "Host d.test\n    User d\n\nHost *.prod\n    Port 2200\n\n"
+        "Match host *.test\n    Port 2300\n\nHost *.lab\n    Port 2400\n\n"
+        "Host *\n    Compression yes\n"
+    )
+    win = AdvancedConfigWindow(None, _Client(path))
+    assert _pump(lambda: len(win.draft.blocks) == 7)
+    a, b, d, prod, test, lab, star = win.draft.blocks
+
+    def pills():
+        return [win.rules.cards[block.uid].status.get_label() for block in win.draft.blocks]
+
+    _pick(win, "Host *.prod")
+    assert _pump(lambda: pills()[0] == "Matched")
+    assert pills() == ["Matched", "Matched", "Skipped", "Matched", "Skipped", "Skipped", "Matched"]
+    assert _folded(win) == ["d.test", "host *.test", "*.lab"]
+    assert win._evaluation is None and not win.results.summary.get_visible()
+    assert "a.prod, b.prod" in win.results.note.get_label()
+    assert _status(win, a.options[0]) is None             # lines are told per host
+    assert win._block_rows[d.uid].get_child().get_opacity() < 1
+
+    _pick(win, "Match host *.test")                       # a rule, as a pattern
+    assert _pump(lambda: pills()[2] == "Matched")
+    assert pills() == ["Skipped", "Matched", "Matched", "Skipped", "Matched", "Skipped", "Matched"]
+    assert "c.test, d.test" in win.results.note.get_label()
+
+    _pick(win, "Host *.lab")                              # no listed host fits it:
+    assert _pump(lambda: pills()[5] == "Matched")         # a made-up one is asked about
+    assert pills() == ["Skipped"] * 5 + ["Matched", "Matched"]
+    assert "none of the hosts" in win.results.note.get_label()
+
+    _pick(win, "Host a.prod")                             # a host: the usual answer
+    assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh a.prod")
+    assert pills() == ["Matched", "Skipped", "Skipped", "Matched", "Skipped", "Skipped", "Matched"]
+    assert _status(win, a.options[0]) == "Applied"
+    _pick(win, "")
+    assert _pump(lambda: pills() == [""] * 7 and _folded(win) == [])
+    win._closing = True
+    win.destroy()
+
+
 def test_retyping_the_picked_block_s_host_follows_it(gtk, tmp_path):
     from sshpilot.advanced_config_window import AdvancedConfigWindow
 

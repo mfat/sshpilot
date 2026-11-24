@@ -40,6 +40,8 @@ from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from .advanced_config_model import (  # noqa: E402
     first_host_name,
+    plain_host_names,
+    sample_hosts,
     DraftEditor,
     Refusal,
     can_place,  # noqa: F401 - re-exported for callers and tests
@@ -53,7 +55,7 @@ from .api.models.connections import (  # noqa: E402
     SshConfigDraftEvaluation,
 )
 from .gtk import advanced_config_messages as messages  # noqa: E402
-from .ssh_config_blocks import LineMap  # noqa: E402
+from .ssh_config_blocks import GLOBAL, LineMap  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +143,10 @@ class AdvancedConfigWindow(Adw.Window):
         self._loaded = False
         #: The last answer and the draft (line map, serial) it was about.
         self._evaluation: Optional[SshConfigDraftEvaluation] = None
+        #: In place of an evaluation while the block picked names no host
+        #: of its own: ``(header lines of the related blocks, the hosts of
+        #: the configuration it applies to, the line map)``.
+        self._related: Optional[tuple] = None
         self._evaluated_lines = LineMap({}, {})
         self._evaluated_serial = 0
         self._request_serial = 0
@@ -617,14 +623,14 @@ class AdvancedConfigWindow(Adw.Window):
     def _on_block_picked(self, _listbox, row) -> None:
         if self._target_syncing or row is None:
             return
-        before = self.target_text()
+        before = self._question()
         self._picked_uid = row._uid
         self._set_typed("")
         if row._uid is not None:
             self.select_block(row._uid)
             self.rules.scroll_to(row._uid)
         self._scroll_after_answer = row._uid
-        if self.target_text() != before:
+        if self._question() != before:
             # Asked from the idle loop, so the highlight is painted first.
             self._target_changed(idle=True)
 
@@ -873,11 +879,18 @@ class AdvancedConfigWindow(Adw.Window):
         # an answer still on its way for another host must not come back.
         self._request_serial = serial = self._request_serial + 1
         request = self._request()
-        if request is None:
-            self._evaluation = None
+        draft_serial, lines = self.editor.serial, self.editor.lines
+        work = None
+        if request is not None:
+            work = lambda: self._client.evaluate_ssh_config_draft(request)  # noqa: E731
+        else:
+            block = self._pattern_block()
+            if block is not None:
+                work = self._related_work(block, serial)
+        if work is None:
+            self._evaluation = self._related = None
             self._show_answer()
             return False
-        draft_serial, lines = self.editor.serial, self.editor.lines
 
         def done(result, error) -> None:
             if serial != self._request_serial:
@@ -886,19 +899,79 @@ class AdvancedConfigWindow(Adw.Window):
                 return          # the daemon dropped it for a newer question
             if error is not None:
                 logger.debug("draft evaluation failed", exc_info=error)
-                self._evaluation = None
+                self._evaluation = self._related = None
                 self._show_answer()
                 self._show_answer_banner(
                     _("OpenSSH could not be asked about this configuration.")
                 )
                 return
-            self._evaluation = result
-            self._evaluated_serial = draft_serial
-            self._evaluated_lines = lines
+            if isinstance(result, tuple):       # a pattern block's answer
+                if result[0] is None:
+                    return                      # given up for a newer question
+                self._evaluation, self._related = None, (*result, lines)
+            else:
+                self._evaluation, self._related = result, None
+                self._evaluated_serial = draft_serial
+                self._evaluated_lines = lines
             self._show_answer()
 
-        self._run(lambda: self._client.evaluate_ssh_config_draft(request), done)
+        self._run(work, done)
         return False
+
+    def _question(self) -> tuple:
+        """What OpenSSH is asked: a host, or a pattern block's hosts."""
+        block = self._pattern_block()
+        return (self.target_text(), block.uid if block is not None else None)
+
+    def _pattern_block(self):
+        """The block picked in the sidebar when it names no host of its own
+        (a pattern, a Match rule) and no host is typed."""
+        if self.target_entry.get_text().strip():
+            return None
+        block = self.editor.find_block(self._picked_uid)
+        if block is None or block.disabled or block.kind == GLOBAL:
+            return None
+        return None if first_host_name(block) else block
+
+    def _related_work(self, block, serial: int) -> Callable[[], object]:
+        """The question a pattern block stands for: which blocks apply to a
+        host it applies to?
+
+        A pattern is no host, and OpenSSH is only ever asked about a host.
+        So it is asked about each host the configuration spells out (and a
+        name made up from the pattern, for a pattern no listed host fits):
+        the hosts whose answer has the block are the ones it applies to,
+        and every block in those answers is related to it. An answer that
+        is not one (a command waiting for consent, a rejected draft) is
+        returned as it is, to be shown like any other.
+        """
+        text, allowed = self.editor.text, tuple(sorted(self._allowed_exec))
+        header = self.editor.lines.headers.get(block.uid, 0)
+        listed = plain_host_names(self.editor.blocks)
+        candidates = listed + [name for name in sample_hosts(block) if name not in listed]
+
+        def work():
+            related: set = set()
+            hosts = []
+            for name in candidates:
+                if serial != self._request_serial:
+                    return (None, ())
+                try:
+                    request = EvaluateSshConfigDraftRequest(
+                        text=text, host=name, allowed_exec=allowed
+                    )
+                except (TypeError, ValueError):
+                    continue
+                answer = self._client.evaluate_ssh_config_draft(request)
+                if not answer.evaluated:
+                    return answer
+                if header in answer.matched_blocks:
+                    related.update(answer.matched_blocks)
+                    if name in listed:
+                        hosts.append(name)
+            return (related, tuple(hosts))
+
+        return work
 
     def _allow_exec(self) -> None:
         """Agree to the commands the banner is about: those, word for word,
@@ -911,7 +984,10 @@ class AdvancedConfigWindow(Adw.Window):
     def _show_answer(self) -> None:
         """Hand OpenSSH's answer (or its absence) to the two views."""
         evaluation = self._evaluation
+        related = self._related if evaluation is None else None
         lines = self._evaluated_lines if evaluation is not None else self.editor.lines
+        if related is not None:
+            lines = related[2]
         if evaluation is None:
             self._show_answer_banner("")
         elif self._evaluated_serial == self.editor.serial:
@@ -926,11 +1002,14 @@ class AdvancedConfigWindow(Adw.Window):
                 self._show_answer_banner("")
         matched = self.rules.show_answer(
             self.editor.blocks, evaluation, lines, keep_open=self._kept_visible,
+            related=related[0] if related is not None else None,
         )
         for uid, row in self._block_rows.items():
             card = self.rules.cards.get(uid)
             row.get_child().set_opacity(0.45 if card is not None and card.folds else 1.0)
-        if self._scroll_after_answer is not None and evaluation is not None:
+        if self._scroll_after_answer is not None and (
+            evaluation is not None or related is not None
+        ):
             # The block just picked has moved: blocks above it folded.
             # Once, for that pick: later answers follow edits, and must not
             # pull the view away from what is being edited.
@@ -938,5 +1017,9 @@ class AdvancedConfigWindow(Adw.Window):
             GLib.timeout_add(260, lambda: (self.rules.scroll_to(uid), False)[1])
         user, host = split_target(self.target_text())
         self.results.show(
-            Answer(evaluation, list(self.editor.blocks), lines, user, host), matched
+            Answer(
+                evaluation, list(self.editor.blocks), lines, user, host,
+                note=messages.related_note(related[1]) if related is not None else "",
+            ),
+            matched,
         )

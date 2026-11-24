@@ -90,6 +90,32 @@ def block_status(disabled: bool, matched: Optional[bool], is_global: bool) -> tu
     return (_("Skipped"), "muted", _("OpenSSH does not apply this block to the target."))
 
 
+def related_status(disabled: bool, related: Optional[bool], is_global: bool) -> tuple:
+    """A block's pill while the block picked names no host of its own (a
+    pattern, a Match rule): whether the two apply to a host in common."""
+    if disabled or related is None or is_global:
+        return block_status(disabled, related, is_global)
+    if related:
+        return (_("Matched"), "success",
+                _("Applies to a host the picked block applies to."))
+    return (_("Skipped"), "muted", _("Applies to no host the picked block applies to."))
+
+
+def related_note(hosts) -> str:
+    """What the pages say while the block picked names no host of its own."""
+    if not hosts:
+        return _(
+            "The picked block applies to none of the hosts this configuration "
+            "names. Type a host in the sidebar to see what OpenSSH would use for it."
+        )
+    shown = ", ".join(hosts[:12]) + (", …" if len(hosts) > 12 else "")
+    return _(
+        "The picked block applies to: {hosts}. Blocks that apply to any of "
+        "them are marked. Pick or type one host to see what OpenSSH would "
+        "use for it."
+    ).format(hosts=shown)
+
+
 def block_title(kind: str, patterns: str) -> str:
     """A block as the sidebar names it: its own first line."""
     if kind == "global":

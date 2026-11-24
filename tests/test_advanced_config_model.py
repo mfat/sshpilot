@@ -6,6 +6,8 @@ from sshpilot.advanced_config_model import (
     Refusal,
     can_place,
     first_host_name,
+    plain_host_names,
+    sample_hosts,
 )
 from sshpilot.ssh_config_blocks import GLOBAL, HOST, MATCH, Block
 
@@ -151,3 +153,15 @@ def test_the_host_a_block_is_about(editor):
     assert first_host_name(Block(kind=HOST, patterns="*.prod !x edge")) == "edge"
     assert first_host_name(Block(kind=MATCH, patterns="host web1")) == ""
     assert first_host_name(None) == ""
+
+
+def test_the_hosts_a_pattern_block_is_asked_about(editor):
+    """A pattern is no host: OpenSSH is asked about the names the blocks
+    spell out, and about a name made up from the pattern."""
+    off = Block(kind=HOST, patterns="old", disabled=True)
+    assert plain_host_names(editor.blocks + [off]) == ["web1", "web2"]
+    assert sample_hosts(Block(kind=HOST, patterns="*.prod !bad.prod web?")) == [
+        "x.prod", "webx",
+    ]
+    assert sample_hosts(Block(kind=MATCH, patterns="host *.prod")) == []   # criteria
+    assert sample_hosts(None) == []
