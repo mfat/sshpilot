@@ -1824,6 +1824,12 @@ class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
         if callable(self.host_close_refused):
             self.host_close_refused()
 
+    def get_focus(self):
+        """The widget the keyboard is in, as a window says it: asked of the
+        window this one is shown in."""
+        root = self.get_root()
+        return root.get_focus() if root is not None else None
+
     def present(self) -> None:
         if callable(self.host_present):
             self.host_present()

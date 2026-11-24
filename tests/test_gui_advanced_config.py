@@ -100,6 +100,51 @@ class _Client:
         return evaluate_draft(request, context, target.read_text())
 
 
+@pytest.fixture(autouse=True, params=["window", "embedded"])
+def shell(request, monkeypatch):
+    """Every test runs against both shells of the one editor: the window,
+    and the widget the main window embeds (its Configuration view). They
+    are the same controller (``AdvancedConfigBase``); this is what keeps a
+    change that works in one from breaking the other unnoticed.
+
+    Embedded, ``AdvancedConfigWindow`` in the module is a stand-in that
+    builds the view inside a plain window laid out as the main one is: the
+    list of blocks in a sidebar, the view beside it.
+    """
+    if request.param == "window":
+        return "window"
+    gi = pytest.importorskip("gi")
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gtk
+
+    if not isinstance(getattr(Gtk, "MAJOR_VERSION", None), int):
+        pytest.skip("gi is stubbed in this environment (no real GTK)")
+    import sshpilot.advanced_config_window as module
+
+    class Hosted(module.AdvancedConfigView):
+        __gtype_name__ = None
+
+        def __init__(self, parent, client, **kwargs):
+            super().__init__(parent, client, **kwargs)
+            self._host_window = Gtk.Window()
+            self._host_window.set_default_size(1400, 760)
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            self.sidebar_column.set_size_request(210, -1)
+            box.append(self.sidebar_column)
+            self.set_hexpand(True)
+            box.append(self)
+            self._host_window.set_child(box)
+            self.host_present = self._host_window.present
+            self.host_close = self._host_window.close
+
+        def destroy(self):
+            self._host_window.destroy()
+
+    del Hosted.__gtype_name__
+    monkeypatch.setattr(module, "AdvancedConfigWindow", Hosted)
+    return "embedded"
+
+
 def _pump(condition, seconds=8.0):
     from gi.repository import GLib
 
@@ -1255,7 +1300,37 @@ def test_a_source_in_an_included_file_is_gone_to_and_back(gtk, tmp_path):
     win.destroy()
 
 
-def test_a_narrow_window_closes_the_sidebar_and_then_shows_one_pane(window):
+def test_embedded_the_panes_take_turns_and_the_list_is_left_to_the_host(window, shell):
+    """The list of blocks is the host's to show: the layouts never hide it
+    or make room for it."""
+    if shell != "embedded":
+        pytest.skip("the window's own sidebar is the next test's")
+
+    def shown():
+        return tuple(
+            name for name, widget in (("rules", window.rules), ("results", window.results))
+            if widget.get_visible()
+        )
+
+    column = window.sidebar_column
+    assert not window.sidebar_button.get_visible()
+    assert shown() == ("rules", "results")
+    window._set_layout("narrow")
+    assert shown() == ("rules", "results") and column.get_visible()
+    window._set_layout("single")
+    assert shown() == ("rules",) and window.pane_switch.get_visible()
+    window.results_tab.set_active(True)
+    assert shown() == ("results",) and column.get_visible()
+    window.go_to(host="web1")
+    assert shown() == ("rules",)
+    window._set_layout("wide")
+    assert shown() == ("rules", "results") and column.get_visible()
+
+
+def test_a_narrow_window_closes_the_sidebar_and_then_shows_one_pane(window, shell):
+    if shell == "embedded":
+        pytest.skip("embedded, the list of blocks is in the host's sidebar")
+
     def shown():
         return tuple(
             name for name, widget in (
