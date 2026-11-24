@@ -24,7 +24,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from .advanced_config_rules_view import pill, set_pill  # noqa: E402
 from .api.models.connections import (  # noqa: E402
@@ -185,7 +185,7 @@ class ResultsView(Gtk.Box):
                 "The first value it obtains for an option is the one it keeps."
             )), "trace", _("Order"), "view-list-symbolic")
         self.stack.add_titled_with_icon(
-            self._build_raw(), "raw", _("Text"), "text-x-generic-symbolic")
+            self._build_raw(), "raw", _("Raw"), "text-x-generic-symbolic")
         self.stack.add_titled_with_icon(
             self._build_list("include_list", _(
                 "Files OpenSSH reads for this target besides this one. They are "
@@ -338,13 +338,22 @@ class ResultsView(Gtk.Box):
         self.raw_view = Gtk.TextView(monospace=True)
         for side in ("top", "bottom", "left", "right"):
             getattr(self.raw_view, f"set_{side}_margin")(10)
-        self.raw_view.get_buffer().connect("changed", self._on_raw_changed)
+        buffer = self.raw_view.get_buffer()
+        buffer.connect("changed", self._on_raw_changed)
+        # The selected block's lines stand out here, and the block the
+        # cursor is in is the selected one: the two views are one place.
+        self._raw_block_tag = buffer.create_tag(
+            "advcfg-selected-block",
+            paragraph_background_rgba=Gdk.RGBA(0.21, 0.52, 0.89, 0.16),
+        )
+        self._raw_block = (0, 0)
+        buffer.connect("notify::cursor-position", self._on_raw_cursor_moved)
         scroller.set_child(self.raw_view)
         frame.set_child(scroller)
         box.append(frame)
         return box
 
-    # -- the Text page -------------------------------------------------------
+    # -- the Raw page --------------------------------------------------------
 
     @property
     def raw_pending(self) -> bool:
@@ -360,6 +369,7 @@ class ResultsView(Gtk.Box):
         self.revert_raw_button.set_sensitive(False)
         self._stale.add("raw")
         self._fill_visible()
+        self._paint_raw_block()
 
     def set_text(self, text: str) -> None:
         """The draft's text changed; the page follows unless it is being
@@ -374,6 +384,7 @@ class ResultsView(Gtk.Box):
         pending = self.raw_text() != self._text
         self.apply_raw_button.set_sensitive(pending)
         self.revert_raw_button.set_sensitive(pending)
+        self._paint_raw_block()     # typed-over text is not the rules' lines
         self.controller.raw_text_changed()
 
     def _fill_raw(self) -> None:
@@ -383,6 +394,46 @@ class ResultsView(Gtk.Box):
             self._raw_syncing = True
             self.raw_view.get_buffer().set_text(self._text)
             self._raw_syncing = False
+        self._paint_raw_block()
+
+    def mark_block(self, first: int, last: int, *, scroll: bool = True) -> None:
+        """Make lines *first* to *last* (1-based) of the text stand out as
+        the selected block's, and bring them into view. ``(0, 0)``: none.
+
+        While text typed here waits to be applied the lines are not the
+        rules': nothing is marked until it is applied or dropped.
+        """
+        self._raw_block = (int(first or 0), int(last or 0))
+        if self.raw_pending:
+            return
+        self._paint_raw_block()
+        if scroll and first and self.stack.get_visible_child_name() == "raw":
+            found, start = self.raw_view.get_buffer().get_iter_at_line(first - 1)
+            if found:
+                self.raw_view.scroll_to_iter(start, 0.0, True, 0.0, 0.1)
+
+    def _paint_raw_block(self) -> None:
+        buffer = self.raw_view.get_buffer()
+        buffer.remove_tag(self._raw_block_tag, buffer.get_start_iter(), buffer.get_end_iter())
+        first, last = self._raw_block
+        if not first or self.raw_pending:
+            return
+        found, start = buffer.get_iter_at_line(first - 1)
+        if not found:
+            return
+        found, end = buffer.get_iter_at_line(max(first, last) - 1)
+        if not found:
+            end = buffer.get_end_iter()
+        elif not end.ends_line():
+            end.forward_to_line_end()
+        buffer.apply_tag(self._raw_block_tag, start, end)
+
+    def _on_raw_cursor_moved(self, buffer, _pspec) -> None:
+        # The user's cursor only: text put here by the window moves it too.
+        if self._raw_syncing or self.raw_pending or not self.raw_view.has_focus():
+            return
+        position = buffer.get_iter_at_mark(buffer.get_insert())
+        self.controller.raw_cursor_moved(position.get_line() + 1)
 
     def show_text_line(self, line: int) -> None:
         """Open the Text page at *line* (1-based) of the text."""

@@ -144,6 +144,8 @@ class AdvancedConfigWindow(Adw.Window):
         self._loaded_lines = LineMap({}, {})
         #: Where :meth:`go_to` was asked to go, until the file is on screen.
         self._pending_target: Optional[dict] = None
+        #: True while a move of the Raw page's cursor is selecting a block.
+        self._selecting_from_raw = False
         if parent is not None:
             self.set_transient_for(parent)
         self.set_default_size(1400, 760)
@@ -750,6 +752,7 @@ class AdvancedConfigWindow(Adw.Window):
         self.rules.sync(self.editor.blocks, self._notes_open, self.editor.has_global)
         self.rules.select(self.selected_uid)
         self.results.set_text(self.editor.text)
+        self._mark_selection_in_raw(scroll=False)
         self._sync_block_list()
         self._update_chrome()
         self._show_answer()                     # the last answer, until the new one
@@ -864,6 +867,7 @@ class AdvancedConfigWindow(Adw.Window):
         if not changed:
             return
         self.results.set_text(self.editor.text)
+        self._mark_selection_in_raw(scroll=False)
         self._schedule_history()
         self._update_chrome()
         self._schedule_evaluation()
@@ -965,6 +969,44 @@ class AdvancedConfigWindow(Adw.Window):
     def raw_text_changed(self) -> None:
         self._update_chrome()
 
+    # -- the Raw page and the rules are one place ---------------------------
+
+    def _mark_selection_in_raw(self, *, scroll: bool = True) -> None:
+        """Make the selected block's lines stand out on the Raw page (and,
+        when the selection moved, bring them into view there)."""
+        block = self.editor.find_block(self.selected_uid)
+        if block is None:
+            self.results.mark_block(0, 0)
+            return
+        lines = self.editor.lines
+        owned = [lines.headers.get(block.uid, 0)] + [
+            lines.options.get(option.uid, 0) for option in block.options
+        ]
+        owned = [line for line in owned if line]
+        if not owned:
+            self.results.mark_block(0, 0)
+            return
+        self.results.mark_block(
+            min(owned), max(owned), scroll=scroll and not self._selecting_from_raw
+        )
+
+    def raw_cursor_moved(self, line: int) -> None:
+        """The cursor is on *line* of the Raw page: the block that line
+        belongs to is the selected one, and is brought up in the rules."""
+        uid = self.editor.owner_of_line(line)
+        if uid is None:
+            return
+        owner, _option = self.editor.find_option(uid)
+        block_uid = owner.uid if owner is not None else uid
+        if block_uid == self.selected_uid:
+            return
+        self._selecting_from_raw = True     # the text is where the eye is
+        try:
+            self.select_block(block_uid)
+        finally:
+            self._selecting_from_raw = False
+        self.rules.scroll_to(block_uid)
+
     def apply_raw(self) -> None:
         text = self.results.raw_text()
         self.results.discard_raw()
@@ -1019,6 +1061,7 @@ class AdvancedConfigWindow(Adw.Window):
         self.selected_uid = uid if self.editor.find_block(uid) is not None else None
         self.rules.select(self.selected_uid)
         self._mirror_selection()
+        self._mark_selection_in_raw()
         if self._question() != before:
             # Asked from the idle loop, so the highlight is painted first.
             self._target_changed(idle=True)
@@ -1201,9 +1244,6 @@ class AdvancedConfigWindow(Adw.Window):
             self.editor.blocks, evaluation, lines, keep_open=self._kept_visible,
             related=related[0] if related is not None else None,
         )
-        for uid, row in self._block_rows.items():
-            card = self.rules.cards.get(uid)
-            row.get_child().set_opacity(0.45 if card is not None and card.dims else 1.0)
         user, host = split_target(self.target_text())
         self.results.show(
             Answer(

@@ -397,8 +397,8 @@ def test_the_sidebar_lists_the_blocks_and_a_typed_host_stays(window):
     window.target_entry.set_text("")                  # unpinned: the selection says
     assert _pump(lambda: _dimmed(window) == ["db1 *.internal"])
     assert window.target_text() == "web1"             # web's block is selected
-    rows = window._block_rows
-    assert rows[db.uid].get_child().get_opacity() < 1 == rows[web.uid].get_child().get_opacity()
+    # The sidebar's rows are never dimmed: every block can be picked.
+    assert all(row.get_child().get_opacity() == 1 for row in window._block_rows.values())
     _pick(window, "Host db1 *.internal")
     assert window.target_text() == "db1"              # the first plain name
     assert _pump(lambda: _effective(window, "user") == "fallback")
@@ -577,7 +577,6 @@ def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
     assert win._evaluation is None and not win.results.summary.get_visible()
     assert "a.prod, b.prod" in win.results.note.get_label()
     assert _status(win, a.options[0]) is None             # lines are told per host
-    assert win._block_rows[d.uid].get_child().get_opacity() < 1
 
     _pick(win, "Match host *.test")                       # a rule, as a pattern
     assert _pump(lambda: pills()[2] == "Matched")
@@ -880,3 +879,56 @@ def test_an_included_file_is_shown_evaluated_and_saved(gtk, tmp_path):
     assert _pump(lambda: win._file == "" and _selected(win) == "inc1")   # the root's
     win._closing = True
     win.destroy()
+
+
+# -- the Raw page and the rules are one place ------------------------------------
+
+def _raw_marked(win):
+    """The lines of the Raw page marked as the selected block's."""
+    buffer = win.results.raw_view.get_buffer()
+    tag = win.results._raw_block_tag
+    marked = []
+    for number in range(buffer.get_line_count()):
+        found, start = buffer.get_iter_at_line(number)
+        if found and start.has_tag(tag):
+            end = start.copy()
+            end.forward_to_line_end()
+            marked.append(buffer.get_text(start, end, False))
+    return marked
+
+
+def test_the_raw_page_marks_the_selected_block_and_follows_edits(window):
+    assert window.results.stack.get_page(
+        window.results.stack.get_child_by_name("raw")
+    ).get_title() == "Raw"
+    _text_page(window)
+    glob, web, star = window.draft.blocks
+    window.select_block(web.uid)
+    assert _raw_marked(window) == [
+        "Host web1 web2", "    User deploy", "    Port 2222", "    IdentityFile ~/.ssh/a",
+    ]
+    window.select_block(star.uid)
+    assert _raw_marked(window)[0] == "Host *"
+    window.add_option(star.uid, "Compression", "no")        # the block grew
+    assert _raw_marked(window)[-1].strip() == "Compression no"
+    window.select_block(None)
+    assert _raw_marked(window) == []
+
+
+def test_the_cursor_on_the_raw_page_selects_the_block_it_is_in(window):
+    buffer = _text_page(window)
+    window.results.raw_view.has_focus = lambda: True         # the user is in it
+    glob, web, star = window.draft.blocks
+    line = window.editor.lines.options[star.options[0].uid]  # a line of Host *
+    found, position = buffer.get_iter_at_line(line - 1)
+    buffer.place_cursor(position)
+    assert window.selected_uid == star.uid
+    assert window._block_list.get_selected_row()._uid == star.uid
+    assert _raw_marked(window)[0] == "Host *"
+
+    # Text typed and not applied is not the rules' lines: nothing follows it.
+    buffer.insert_at_cursor("x")
+    assert window.results.raw_pending and _raw_marked(window) == []
+    found, position = buffer.get_iter_at_line(window.editor.lines.headers[web.uid] - 1)
+    buffer.place_cursor(position)
+    assert window.selected_uid == star.uid
