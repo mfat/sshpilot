@@ -355,3 +355,14 @@ def test_the_dropdown_is_as_tall_as_a_connection_row(window, gtk):  # noqa: F811
     switcher = window._sidebar_view_switcher
     assert switcher.has_css_class("sidebar-view-switcher")      # the accent fill
     assert switcher.get_height() == rows.get_first_child().get_height()
+
+
+def test_ctrl_f_is_the_search_of_the_view_on_screen(window):
+    from sshpilot.sidebar_views import CONNECTIONS, focus_sections_search, show_view
+
+    assert focus_sections_search(window) is False        # connections: their own search
+    view = _sections(window)
+    assert focus_sections_search(window) is True
+    assert _pump(lambda: view.target_entry.has_focus() or view.target_entry.get_focus_child())
+    show_view(window, CONNECTIONS)
+    assert focus_sections_search(window) is False

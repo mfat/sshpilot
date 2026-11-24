@@ -5642,6 +5642,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def focus_search_entry(self):
         """Toggle search on/off and show appropriate toast notification."""
+        # In the Configuration view the search is of its blocks.
+        try:
+            from .sidebar_views import focus_sections_search
+            if focus_sections_search(self):
+                return
+        except Exception:
+            logger.debug("Could not focus the configuration search", exc_info=True)
         try:
             if hasattr(self, 'search_entry') and self.search_entry:
                 sidebar_hidden = self._sidebar_hidden_by_toggle()

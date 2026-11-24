@@ -418,14 +418,18 @@ class AdvancedConfigBase:
         # of the rules, seen as a list. The selected block says which host
         # OpenSSH is asked about: the one it names (the first plain name on
         # its Host line), or, for a pattern or a Match rule, the hosts it
-        # applies to. A host typed in the field takes its place and stays:
-        # blocks can then be selected and edited while that one host is
-        # watched.
+        # applies to.
+        #
+        # The field above the list is a search: it keeps the blocks whose
+        # name or address (HostName) holds what is typed, and selects
+        # the best of them, so its configuration and what OpenSSH resolves
+        # for it are shown. What no block holds finds nothing and changes
+        # nothing. The exact name of a host the configuration names is the
+        # host asked about (_typed_host): the second name of "Host a b"
+        # shows what OpenSSH resolves for b, not for a.
         self.target_entry = Gtk.SearchEntry()
-        self.target_entry.set_placeholder_text(_("Type a host to check"))
-        self.target_entry.set_tooltip_text(
-            _("A host typed here is the one checked, whichever block is selected.")
-        )
+        self.target_entry.set_placeholder_text(_("Search blocks"))
+        self.target_entry.set_tooltip_text(_("Find blocks by name, hostname or IP address"))
         for side in ("top", "bottom", "start", "end"):
             getattr(self.target_entry, f"set_margin_{side}")(8)
         self.target_entry.connect("search-changed", self._on_target_typed)
@@ -433,6 +437,14 @@ class AdvancedConfigBase:
         self._block_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._block_list.add_css_class("navigation-sidebar")
         self._block_list.connect("row-selected", self._on_block_picked)
+        self._block_list.set_filter_func(self._block_row_shown)
+        nothing = Gtk.Label(
+            label=_("No block matches."), wrap=True, xalign=0,
+        )
+        nothing.add_css_class("dim-label")
+        for side in ("top", "bottom", "start", "end"):
+            getattr(nothing, f"set_margin_{side}")(12)
+        self._block_list.set_placeholder(nothing)
         self._all_row = BlockRow()
         self._all_row.set_plain(_("All Blocks"), "view-list-symbolic")
         self._all_row._uid = None
@@ -444,6 +456,12 @@ class AdvancedConfigBase:
         #: moment after the text changes, so text the window put there
         #: itself is told apart by this, not by a flag.
         self._typed_seen = ""
+        #: The host asked about whichever block is selected: _typed_host.
+        self._pinned_host = ""
+        #: Text the window itself put in the field (_set_typed), and True
+        #: while it is doing so.
+        self._window_text = None
+        self._setting_typed = False
         self._block_list.select_row(self._all_row)
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -494,9 +512,65 @@ class AdvancedConfigBase:
     def target_text(self) -> str:
         """The host OpenSSH is asked about: the one typed in the sidebar,
         else the one the selected block names. Empty: none."""
-        return self.target_entry.get_text().strip() or first_host_name(
+        return self._typed_host() or first_host_name(
             self.editor.find_block(self.selected_uid)
         )
+
+    # -- the search field ------------------------------------------------
+
+    def _search_words(self) -> list:
+        return self.target_entry.get_text().casefold().split()
+
+    def _block_matches(self, block, words) -> bool:
+        """Whether *block* is found by every word: in its name (what its
+        row in the list reads) or in its address (HostName). Its other
+        options are not searched: a host is not found by a directive that
+        happens to mention it."""
+        text = " ".join([
+            messages.block_list_title(block.kind, block.patterns),
+            *(option.value for option in block.options
+              if option.key.strip().lower() == "hostname"),
+        ]).casefold()
+        return all(word in text for word in words)
+
+    def _matching_blocks(self) -> list:
+        words = self._search_words()
+        if not words:
+            return []
+        return [block for block in self.editor.blocks if self._block_matches(block, words)]
+
+    def _typed_host(self) -> str:
+        """The host asked about whichever block is selected, if there is
+        one: the exact name of a host typed in the search field, or a host
+        a caller asked to keep in question (``go_to`` with *pin*, a source
+        line followed from the Effective page). Empty otherwise: the
+        selected block then says."""
+        return self._pinned_host
+
+    def _block_row_shown(self, row) -> bool:
+        words = self._search_words()
+        if not words:
+            return True
+        block = self.editor.find_block(getattr(row, "_uid", None))
+        # "All Blocks" is not something found.
+        return block is not None and self._block_matches(block, words)
+
+    def _select_found_block(self) -> None:
+        """Select the block the search is most likely about: the one that
+        names the host typed, else the first that holds the words."""
+        found = self._matching_blocks()
+        if not found:
+            return
+        typed = self.target_entry.get_text().strip()
+        best = next(
+            (block for block in found
+             if block.kind == HOST and typed in block.patterns.split()),
+            found[0],
+        )
+        if self.editor.find_block(self.selected_uid) in found and best is found[0]:
+            return                      # what is selected is among the found
+        self.select_block(best.uid)
+        self.rules.scroll_to(best.uid)
 
     # ------------------------------------------------------------------
     # background work
@@ -1052,6 +1126,7 @@ class AdvancedConfigBase:
                     self._block_list.insert(row, index + 1)
                 # An icon, the name, and what the block is for.
                 row.update(block.kind, block.patterns, block.disabled)
+            self._block_list.invalidate_filter()
         finally:
             self._target_syncing = False
         self._mirror_selection()
@@ -1086,15 +1161,47 @@ class AdvancedConfigBase:
     def _set_typed(self, text: str) -> None:
         """Put *text* in the field as the window's own doing."""
         self._typed_seen = text
-        if self.target_entry.get_text() != text:
-            self.target_entry.set_text(text)
+        # The field reports a change at once when it is emptied and a
+        # moment later otherwise, and replacing its text does both: neither
+        # is typing. The first is let pass here, the second by the text
+        # being the one the window put.
+        self._window_text = text
+        self._setting_typed = True
+        try:
+            if self.target_entry.get_text() != text:
+                self.target_entry.set_text(text)
+        finally:
+            self._setting_typed = False
+        # Kept in question as it is: a caller's host need not be one the
+        # file names.
+        self._pinned_host = text.strip()
+        self._block_list.invalidate_filter()
 
     def _on_target_typed(self, *_args) -> None:
         typed = self.target_entry.get_text().strip()
+        self._block_list.invalidate_filter()
+        if self._setting_typed:
+            return
+        if self._window_text is not None and typed == self._window_text.strip():
+            self._typed_seen = typed
+            return
+        self._window_text = None
         if typed == self._typed_seen:
             return
         self._typed_seen = typed
-        self._target_changed()
+        # The user's own typing finds a block; text the window put there
+        # (a host kept in question) leaves the selection alone.
+        selected = self.selected_uid
+        # The exact name of a host the configuration names is the host in
+        # question; anything else typed is a search and no host at all.
+        host = self._pinned_host
+        self._pinned_host = typed if typed in plain_host_names(self.editor.blocks) else ""
+        self._select_found_block()
+        # A selection the search moved has asked for itself.
+        if host != self._pinned_host:
+            self._target_changed(
+                idle=self.selected_uid != selected and not self._answer_ready()
+            )
 
     def _toast_refusal(self, refusal) -> None:
         if refusal is Refusal.GLOBAL_ORDER:
@@ -1404,7 +1511,7 @@ class AdvancedConfigBase:
         # The line belongs to the answer on screen: the host it is about
         # stays the one in question, as a typed one, whichever block the
         # line turns out to be in.
-        if not self.target_entry.get_text().strip():
+        if not self._typed_host():
             self._set_typed(self.target_text())
         self.show_pane("rules")
         self.select_block(owner.uid if owner is not None else uid)
@@ -1607,7 +1714,7 @@ class AdvancedConfigBase:
     def _pattern_block(self):
         """The selected block when it names no host of its own (a pattern,
         a Match rule) and no host is typed."""
-        if self.target_entry.get_text().strip():
+        if self._typed_host():
             return None
         block = self.editor.find_block(self.selected_uid)
         if block is None or block.disabled or block.kind == GLOBAL:

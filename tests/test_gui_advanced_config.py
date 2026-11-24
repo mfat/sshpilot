@@ -174,10 +174,19 @@ def window(gtk, tmp_path):
     win.destroy()
 
 
+def _check(win, host):
+    """Keep *host* in question whichever block is selected, as ``go_to``
+    with *pin* does (the connection editor's way in). It need not be a host
+    the file names. Typing in the search field is another matter: that
+    finds blocks, and a name no block has finds nothing."""
+    win._set_typed(host)
+    win._target_changed()
+
+
 def _filter_by(win, host):
-    """Type a host in the sidebar and wait for OpenSSH's answer on it."""
+    """Keep a host in question and wait for OpenSSH's answer on it."""
     assert _pump(lambda: bool(win.draft.blocks))
-    win.target_entry.set_text(host)
+    _check(win, host)
     assert _pump(lambda: (
         win._evaluation is not None and win._evaluation.evaluated
         and win._evaluated_serial == win.editor.serial
@@ -197,7 +206,7 @@ def _dimmed(win):
 
 def _block_rows(win):
     """The sidebar's rows, as they read ("" is All Blocks)."""
-    return [row._text for row in _children(win._block_list)]
+    return [row._text for row in _children(win._block_list) if hasattr(row, "_text")]
 
 
 def _pick(win, text):
@@ -281,7 +290,7 @@ def test_filtering_by_a_host_shows_openssh_s_answer(window):
 
 
 def test_another_target_is_asked_again(window):
-    window.target_entry.set_text("db1")
+    _check(window, "db1")
     assert _pump(lambda: _effective(window, "user") == "fallback")
     # The block OpenSSH skips for the host folds, where it is.
     assert _pump(lambda: _dimmed(window) == ["web1 web2"])
@@ -291,9 +300,13 @@ def test_another_target_is_asked_again(window):
     assert all(
         _row(window, o.uid).box.has_css_class("advcfg-unused") for o in web.options
     )
-    window.target_entry.set_text("web1")
+    window.target_entry.set_text("web1")       # typed: found, selected, asked about
     assert _pump(lambda: _dimmed(window) == [] and _effective(window, "user") == "deploy")
-    window.target_entry.set_text("")           # no host: every block open
+    assert window.selected_uid == web.uid
+    window.target_entry.set_text("")           # the search ends: what it found stays
+    _pump(lambda: False, seconds=0.5)
+    assert window.selected_uid == web.uid and _effective(window, "user") == "deploy"
+    window.select_block(None)                  # no block, no host: every block open
     assert _pump(lambda: window._evaluation is None)
     assert _dimmed(window) == []
     assert window._block_list.get_selected_row() is window._all_row
@@ -307,7 +320,7 @@ def test_a_block_being_worked_on_stays_open(window):
     assert _settled(window)
     assert window.rules.cards[block.uid].status.get_label() == ""
     assert _dimmed(window) == []
-    window.target_entry.set_text("db1")        # another host starts afresh
+    _check(window, "db1")                      # another host starts afresh
     assert _pump(lambda: _dimmed(window) == ["web1 web2"])
     window.select_block(None)                  # and it folds once it is left
     assert _dimmed(window) == ["web1 web2", "elsewhere"]
@@ -1447,6 +1460,74 @@ def test_the_block_list_names_each_block_and_says_what_it_is(gtk, tmp_path):
         win._sync_block_list()
         assert rows[1].caption.get_label() == "Host pattern"
         assert win._block_rows[web1.uid] is rows[1]
+    finally:
+        win._closing = True
+        win.destroy()
+
+
+# -- the search above the list of blocks ---------------------------------------------
+
+def _shown_rows(win):
+    """The rows of the list the search leaves on screen, as they read."""
+    win._block_list.invalidate_filter()
+    return [
+        row._text for row in _children(win._block_list)
+        if hasattr(row, "_text") and row.get_child_visible()
+    ]
+
+
+def test_the_field_is_a_search_of_the_blocks(gtk, tmp_path):
+    """Typing finds blocks by name or address, selects the best of them, and
+    is not a host to ask about: a name no block has does nothing."""
+    from sshpilot.advanced_config_window import AdvancedConfigWindow
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Host web1 web2\n    HostName 10.0.0.5\n    User deploy\n\n"
+        "Host db1\n    HostName db.internal\n    ProxyJump web1\n\n"
+        "Host *.prod\n    User ops\n\nHost *\n    User fallback\n"
+    )
+    win = AdvancedConfigWindow(None, _Client(path))
+    try:
+        win.present()
+        assert _pump(lambda: len(win._block_rows) == 4)
+        web, db, prod, star = win.editor.blocks
+        assert win.target_entry.get_placeholder_text() == "Search blocks"
+
+        def typed(text):
+            win.target_entry.set_text(text)
+            _pump(lambda: False, seconds=0.5)
+
+        typed("db")                                   # by name
+        assert _shown_rows(win) == ["Host db1"]
+        assert win.selected_uid == db.uid             # found: selected, its config shown
+        assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh db1")
+
+        typed("10.0.0")                               # by address (HostName)
+        assert _shown_rows(win) == ["Host web1 web2"] and win.selected_uid == web.uid
+
+        typed("deploy")                               # not by any other directive
+        assert _shown_rows(win) == []
+        typed("web1")                                 # nor by one that mentions the host
+        assert _shown_rows(win) == ["Host web1 web2"]
+
+        typed("web2")                                 # the second name of a line
+        assert win.selected_uid == web.uid
+        assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh web2")
+
+        # A name no block has: nothing is found, selected or asked about.
+        asked = win._request_serial
+        typed("nowhere")
+        assert _shown_rows(win) == []
+        assert win.selected_uid == web.uid and win.target_text() == "web1"
+        assert win._typed_host() == ""
+        _pump(lambda: False, seconds=0.5)
+        assert win.results.summary_rows["command"].get_subtitle() == "ssh web1"
+        assert asked == win._request_serial or win.target_text() == "web1"
+
+        typed("")                                     # the search ends: every block again
+        assert _shown_rows(win) == ["", "Host web1 web2", "Host db1", "Host *.prod", "Host *"]
+        assert win.selected_uid == web.uid
     finally:
         win._closing = True
         win.destroy()

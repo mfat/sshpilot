@@ -208,6 +208,20 @@ def show_view(window, name: str) -> None:
         view.reload()                   # does nothing over unsaved changes
 
 
+def focus_sections_search(window) -> bool:
+    """Ctrl+F while the Configuration view is shown: its search of the
+    blocks, not the connections'. False when that view is not the one shown."""
+    view = getattr(window, "_config_sections_view", None)
+    if view is None or current_view(window) != SECTIONS:
+        return False
+    entry = view.target_entry
+    entry.grab_focus()
+    text = entry.get_text()
+    if text:
+        entry.select_region(0, len(text))
+    return True
+
+
 def refresh_sections(window) -> None:
     """Read the configuration again if its sections are what is shown."""
     view = getattr(window, "_config_sections_view", None)
