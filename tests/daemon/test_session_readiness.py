@@ -226,6 +226,32 @@ def test_diagnostic_mux_marker_promotes():
     core.close()
 
 
+def test_denial_with_no_accepted_method_tried_has_its_own_reason():
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-untried")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    detail = "alice@example.test: Permission denied (keyboard-interactive)."
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.FAILED, detail, no_accepted_method_tried=True
+        ),
+    )
+    failed = runtime.get_session(prepared.id)
+    assert failed.state is SessionState.FAILED
+    assert failed.failure.code is SessionFailureCode.AUTH_METHODS_NOT_TRIED
+    assert failed.failure.diagnostic == detail
+
+    runtime.shutdown()
+    core.close()
+
+
 def test_diagnostic_failure_fails_session_with_trusted_detail():
     repo = make_test_repository()
     core = ConnectionApplicationService(repo, client_name="diag-fail")

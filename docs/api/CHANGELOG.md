@@ -5,6 +5,14 @@ notes remain separate.
 
 ## Unreleased
 
+- `SessionFailureCode.AUTH_METHODS_NOT_TRIED` (`auth_methods_not_tried`, no
+  parameters): an SSH session was denied and OpenSSH attempted none of the
+  methods the server accepts, because the connection's configuration
+  (`PreferredAuthentications`, a method switched off) leaves all of them out.
+  Such a failure was `SSH_DIAGNOSTIC` before; `diagnostic` still carries
+  OpenSSH's `Permission denied (...)` line, which names the methods the
+  server accepts. The API implementation version is 0.112; Protocol remains
+  1.0.
 - `connections.evaluate_ssh_config_draft(EvaluateSshConfigDraftRequest(text,
   host, user, port, allowed_exec))` returns `SshConfigDraftEvaluation`: what
   OpenSSH (`ssh -G`) would use for `host` if `text` were saved as the root

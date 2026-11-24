@@ -435,6 +435,8 @@ class _SessionRecord:
     pty_fallback: bool = False
     authenticated: bool = False
     diagnostic_failure_detail: Optional[str] = None
+    # That failure was a denial with no accepted method attempted.
+    diagnostic_methods_not_tried: bool = False
     diagnostic_result: Optional[SshDiagnosticResult] = None
     # Serializes handle.resize() dispatch for this session — see
     # SessionRuntime._dispatch_resize.
@@ -842,10 +844,15 @@ class SessionRuntime:
                         ):
                             if record.diagnostic_failure_detail is None:
                                 record.diagnostic_failure_detail = result.detail
+                                record.diagnostic_methods_not_tried = (
+                                    result.no_accepted_method_tried
+                                )
                             error_code = self._startup_failure_code(session_id)
                             record.failure = SessionFailure(
                                 code=self._diagnostic_failure_reason(
-                                    error_code, result.detail
+                                    error_code,
+                                    result.detail,
+                                    result.no_accepted_method_tried,
                                 ),
                                 error_code=error_code,
                                 diagnostic=result.detail,
@@ -988,6 +995,9 @@ class SessionRuntime:
             if result.state is SshDiagnosticState.FAILED:
                 if record.diagnostic_failure_detail is None:
                     record.diagnostic_failure_detail = result.detail
+                    record.diagnostic_methods_not_tried = (
+                        result.no_accepted_method_tried
+                    )
                 if parked:
                     record.diagnostic_result = result
                 elif (
@@ -997,7 +1007,9 @@ class SessionRuntime:
                     error_code = self._startup_failure_code(session_id)
                     record.failure = SessionFailure(
                         code=self._diagnostic_failure_reason(
-                            error_code, result.detail
+                            error_code,
+                            result.detail,
+                            result.no_accepted_method_tried,
                         ),
                         error_code=error_code,
                         diagnostic=result.detail,
@@ -1118,10 +1130,12 @@ class SessionRuntime:
 
     @staticmethod
     def _diagnostic_failure_reason(
-        error_code: ErrorCode, diagnostic: str
+        error_code: ErrorCode, diagnostic: str, methods_not_tried: bool = False
     ) -> SessionFailureCode:
         if error_code is ErrorCode.OPERATION_CANCELLED:
             return SessionFailureCode.AUTH_CANCELLED
+        if diagnostic and methods_not_tried:
+            return SessionFailureCode.AUTH_METHODS_NOT_TRIED
         if diagnostic:
             return SessionFailureCode.SSH_DIAGNOSTIC
         return SessionFailureCode.AUTH_INCOMPLETE
@@ -1148,7 +1162,10 @@ class SessionRuntime:
         spec = record.launch_spec
         if spec is None or spec.protocol == "ssh":
             return reason, parameters
-        if reason is SessionFailureCode.SSH_DIAGNOSTIC:
+        if reason in {
+            SessionFailureCode.SSH_DIAGNOSTIC,
+            SessionFailureCode.AUTH_METHODS_NOT_TRIED,
+        }:
             return SessionFailureCode.PROCESS_FAILED, {}
         if reason in {
             SessionFailureCode.SSH_EXITED,
@@ -2236,7 +2253,10 @@ class SessionRuntime:
                     reason = SessionFailureCode.ENDED_BEFORE_OUTPUT
                 else:
                     reason = self._diagnostic_failure_reason(
-                        failure_code, failure_reason or ""
+                        failure_code,
+                        failure_reason or "",
+                        bool(record.diagnostic_failure_detail)
+                        and record.diagnostic_methods_not_tried,
                     )
                 reason, parameters = self._protocol_failure_reason(
                     record, reason, exit_info

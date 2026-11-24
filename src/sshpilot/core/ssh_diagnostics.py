@@ -47,6 +47,12 @@ _TERMINAL_PERMISSION_DENIED_RE = re.compile(
 _RETRIABLE_PERMISSION_DENIED_RE = re.compile(
     r"permission denied,?\s+please try again\.?"
 )
+# ``debug1: Next authentication method: publickey``: OpenSSH is about to
+# attempt a method the server accepts and the configuration allows.
+_NEXT_METHOD_RE = re.compile(r"next authentication method:\s*(\S+)", re.IGNORECASE)
+# The methods the server would still accept, from the final
+# ``Permission denied (publickey,password).`` line.
+_DENIED_METHODS_RE = re.compile(r"permission denied \(([^)]*)\)", re.IGNORECASE)
 
 _AUTH_SUCCESS_STATES = frozenset(
     {
@@ -70,10 +76,17 @@ class SshDiagnosticState(str, Enum):
 
 @dataclass(frozen=True)
 class SshDiagnosticResult:
-    """One decisive verdict plus the triggering diagnostic line."""
+    """One decisive verdict plus the triggering diagnostic line.
+
+    ``no_accepted_method_tried`` marks a ``Permission denied`` where OpenSSH
+    attempted none of the methods the server accepts: the configuration
+    (``PreferredAuthentications``, a method switched off) leaves all of them
+    out, so no key was offered and nothing was asked.
+    """
 
     state: SshDiagnosticState
     detail: str = ""
+    no_accepted_method_tried: bool = False
 
 
 def _terminal_failure_detail(line: str) -> Optional[str]:
@@ -107,6 +120,7 @@ class SshDiagnosticParser:
         self._buffer = bytearray()
         self._latched: Optional[SshDiagnosticResult] = None
         self._pending_emit: Optional[SshDiagnosticResult] = None
+        self._attempted: set = set()
 
     def feed(self, data: bytes) -> Optional[SshDiagnosticResult]:
         """Consume *data* and return a newly observed decisive result."""
@@ -186,7 +200,24 @@ class SshDiagnosticParser:
             )
             return
         if _DEBUG_LINE_RE.match(line):
+            attempt = _NEXT_METHOD_RE.search(line)
+            if attempt:
+                self._attempted.add(attempt.group(1).lower())
             return
         detail = _terminal_failure_detail(line)
         if detail is not None:
-            self._emit(SshDiagnosticResult(SshDiagnosticState.FAILED, detail))
+            self._emit(
+                SshDiagnosticResult(
+                    SshDiagnosticState.FAILED,
+                    detail,
+                    no_accepted_method_tried=self._none_accepted_tried(detail),
+                )
+            )
+
+    def _none_accepted_tried(self, detail: str) -> bool:
+        """The server named the methods it accepts and none was attempted."""
+        denied = _DENIED_METHODS_RE.search(detail)
+        if not denied:
+            return False
+        accepted = {m.strip().lower() for m in denied.group(1).split(",") if m.strip()}
+        return bool(accepted) and not (accepted & self._attempted)

@@ -183,3 +183,32 @@ def test_multiple_failure_markers_report_first():
     )
     assert result is not None
     assert result.state is SshDiagnosticState.FAILED
+
+
+def test_denied_with_no_accepted_method_attempted_is_flagged():
+    """The server takes keyboard-interactive; the host is set to try password."""
+    result = _feed(
+        "debug1: Authentications that can continue: keyboard-interactive\n"
+        "debug1: No more authentication methods to try.\n"
+        "pilot@example.test: Permission denied (keyboard-interactive).\n"
+    )
+    assert result.state is SshDiagnosticState.FAILED
+    assert result.no_accepted_method_tried is True
+
+
+def test_denied_after_an_accepted_method_was_attempted_is_not_flagged():
+    result = _feed(
+        "debug1: Authentications that can continue: publickey,password\n"
+        "debug1: Next authentication method: publickey\n"
+        "debug1: Offering public key: /k ED25519 SHA256:x explicit\n"
+        "debug1: Authentications that can continue: publickey,password\n"
+        "debug1: No more authentication methods to try.\n"
+        "pilot@example.test: Permission denied (publickey,password).\n"
+    )
+    assert result.state is SshDiagnosticState.FAILED
+    assert result.no_accepted_method_tried is False
+
+
+def test_other_failures_are_not_flagged():
+    result = _feed("ssh: connect to host example.test port 22: Connection refused\n")
+    assert result.no_accepted_method_tried is False

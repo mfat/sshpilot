@@ -97,6 +97,9 @@ class SessionFailureCode(str, Enum):
     ENDED_BEFORE_OUTPUT = "ended_before_output"
     SSH_EXITED = "ssh_exited"
     SSH_DIAGNOSTIC = "ssh_diagnostic"
+    # Permission denied, and OpenSSH attempted none of the methods the server
+    # accepts: the connection's configuration leaves all of them out.
+    AUTH_METHODS_NOT_TRIED = "auth_methods_not_tried"
     # The protocol-neutral pair for non-SSH sessions (telnet, serial, ...),
     # which neither authenticate through SSH Pilot nor are SSH sessions.
     PROCESS_EXITED = "process_exited"

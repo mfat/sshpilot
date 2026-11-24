@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.111",
+  "api_implementation_version": "0.112",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -6092,6 +6092,7 @@
       "ended_before_output",
       "ssh_exited",
       "ssh_diagnostic",
+      "auth_methods_not_tried",
       "process_exited",
       "process_failed"
     ],
