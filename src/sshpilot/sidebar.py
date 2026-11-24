@@ -4757,12 +4757,17 @@ def _build_sidebar_header(window, sidebar_box):
     add_menu = Gio.Menu()
     add_menu.append(_('New Connection'), 'app.new-connection')
     add_menu.append(_('New Group'), 'win.create-group')
+    # Its own section: a rule is made in Advanced Configuration and shows in
+    # the Rules view, not in the connection list.
+    rule_section = Gio.Menu()
+    rule_section.append(_('New Host Rule…'), 'win.new-host-rule')
+    add_menu.append_section(None, rule_section)
     add_button = Gtk.MenuButton()
     add_button.add_css_class('flat')
     add_button.set_can_focus(False)
     add_button.set_icon_name('list-add-symbolic')
     add_button.set_menu_model(add_menu)
-    label_icon_button(add_button, _('New'), tooltip=_('New Connection or Group'))
+    label_icon_button(add_button, _('New'), tooltip=_('New Connection, Group or Host Rule'))
     window._sidebar_add_button = add_button
 
     window.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
@@ -5741,14 +5746,18 @@ def build_sidebar(window):
     sidebar_box.set_vexpand(True)
     window._sidebar_box = sidebar_box
 
+    from .sidebar_views import build_sidebar_switcher, build_sidebar_view_stack
+
     _build_sidebar_header(window, sidebar_box)
+    build_sidebar_switcher(window, sidebar_box)
     _build_sidebar_search(window, sidebar_box)
     _create_sidebar_connection_list(window, sidebar_box)
     _attach_connection_list_context_menu(window)
     _attach_connection_list_shortcuts(window)
 
     window.connection_scrolled.set_child(window.connection_list)
-    sidebar_box.append(window.connection_scrolled)
+    # The list shares its place with the Rules view (sidebar_views).
+    build_sidebar_view_stack(window, sidebar_box)
 
     _build_sidebar_toolbar(window, sidebar_box)
     _build_sidebar_popup_header(window, sidebar_box)

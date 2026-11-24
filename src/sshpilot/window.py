@@ -4264,6 +4264,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         new_section = Gio.Menu()
         new_section.append(_('New Connection'), 'app.new-connection')
         new_section.append(_('New Group'), 'win.create-group')
+        new_section.append(_('New Host Rule…'), 'win.new-host-rule')
         new_section.append(_('New Local Terminal'), 'app.local-terminal')
         new_section.append(_('New Split View'), 'win.new-split-view')
         menu.append_section(None, new_section)
@@ -4412,6 +4413,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """
         self._cancel_pending_connection_rows()
         self._connection_rows_split = False
+        # The configuration may have changed: the Rules view, if it is the
+        # one shown, reads it again.
+        try:
+            from .sidebar_views import refresh_rules
+            refresh_rules(self)
+        except Exception:
+            logger.debug("Could not refresh the sidebar rules", exc_info=True)
         steps = self._rebuild_connection_list_steps()
         if first_rows is None:
             for _visible in steps:
