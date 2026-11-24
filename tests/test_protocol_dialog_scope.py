@@ -156,14 +156,96 @@ def test_plugin_fields_join_the_first_group_without_ssh_rows():
     assert _visible_row_titles(dlg._host_group) == [
         "Protocol", "Name (optional)",
         "Host", "Port", "Username", "Domain", "Password",
-        "Tags (comma-separated)",
     ]
     _select(dlg, "ssh")
     assert dlg._host_group.get_title() == "Host"
+    # Host, port, user: the order the plugin fields above take too.
     assert _visible_row_titles(dlg._host_group) == [
         "Protocol", "Name (optional)", "SSH Alias (no whitespace allowed)",
-        "Hostname / IP address", "Username", "Port", "Tags (comma-separated)",
+        "Hostname / IP address", "Port", "Username",
     ]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("protocol_id", ["ssh", "rdp"])
+def test_tags_and_group_close_the_page_for_every_protocol(protocol_id):
+    _require_gtk()
+    dlg = _dialog()
+    _select(dlg, protocol_id)
+    assert dlg._organize_group.get_title() == "Organize"
+    assert _visible_row_titles(dlg._organize_group)[0] == "Tags (comma-separated)"
+    # The protocol's own groups come before it, not after.
+    page = dlg._organize_group.get_parent()
+    assert dlg._plugin_fields_box.get_next_sibling() is dlg._organize_group
+    assert page.get_last_child() is dlg._organize_group
+
+
+def _visible_sidebar_entries(dlg):
+    return [name for name, row in dlg._sidebar_rows.items() if row.get_visible()]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("protocol_id,pages", [
+    ("ssh", ["connection", "authentication", "forwarding", "commands",
+             "advanced", "wol"]),
+    ("docker", ["connection", "commands"]),
+])
+def test_the_sidebar_lists_only_the_pages_shown(protocol_id, pages):
+    _require_gtk()
+    dlg = _dialog()
+    _select(dlg, protocol_id)
+    assert _visible_sidebar_entries(dlg) == pages
+    assert not dlg.split_view.get_collapsed()
+    assert dlg.config_buttons_box.get_visible() == (protocol_id == "ssh")
+
+
+@pytest.mark.integration
+def test_a_lone_page_shows_without_a_sidebar():
+    _require_gtk()
+    dlg = _dialog()
+    _select(dlg, "serial")
+    assert dlg.split_view.get_collapsed()
+    assert dlg.split_view.get_show_content()
+    assert not dlg.content_page.get_can_pop()
+    _select(dlg, "ssh")
+    assert not dlg.split_view.get_collapsed()
+    assert dlg.content_page.get_can_pop()
+
+
+@pytest.mark.integration
+def test_hiding_the_shown_page_moves_to_a_shown_one():
+    _require_gtk()
+    dlg = _dialog()
+    assert dlg.select_page("advanced")
+    _select(dlg, "docker")
+    assert dlg.content_stack.get_visible_child_name() == "connection"
+    assert not dlg.select_page("advanced")
+
+
+@pytest.mark.integration
+def test_a_refused_save_shows_the_page_of_the_field_to_fix():
+    _require_gtk()
+    dlg = _dialog()
+    dlg.nickname_row.set_text("web")
+    dlg.hostname_row.set_text("not a host!!")
+    dlg.select_page("commands")
+    saved, _errors = _save(dlg)
+    assert not saved
+    assert dlg.content_stack.get_visible_child_name() == "connection"
+
+
+@pytest.mark.integration
+def test_the_header_names_the_page_and_the_target():
+    _require_gtk()
+    dlg = _dialog()
+    dlg.hostname_row.set_text("box.example.com")
+    dlg.username_row.set_text("alice")
+    assert dlg.content_title.get_title() == "Connection"
+    assert dlg.content_title.get_subtitle() == "alice@box.example.com"
+    dlg.port_row.set_text("2222")
+    assert dlg.content_title.get_subtitle() == "alice@box.example.com:2222"
+    dlg.select_page("forwarding")
+    assert dlg.content_title.get_title() == "Port Forwarding"
 
 
 @pytest.mark.integration

@@ -8,62 +8,122 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <requires lib="gtk" version="4.0"/>
   <template class="ConnectionDialog" parent="AdwWindow">
     <property name="modal">true</property>
-    <property name="default-width">600</property>
-    <property name="default-height">700</property>
+    <property name="default-width">880</property>
+    <property name="default-height">680</property>
+    <property name="width-request">360</property>
+    <property name="height-request">400</property>
+    <child>
+      <object class="AdwBreakpoint" id="narrow_breakpoint">
+        <condition>max-width: 640sp</condition>
+      </object>
+    </child>
     <property name="content">
-      <object class="GtkBox">
-        <property name="orientation">1</property>
-        <property name="spacing">0</property>
-        <child>
-          <object class="AdwHeaderBar">
-            <property name="show-end-title-buttons">true</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox" id="content_mount">
-            <property name="orientation">1</property>
-            <property name="vexpand">true</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkSeparator">
-            <property name="orientation">0</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">0</property>
-            <property name="spacing">12</property>
-            <property name="margin-start">24</property>
-            <property name="margin-end">24</property>
-            <property name="margin-top">12</property>
-            <property name="margin-bottom">12</property>
-            <child>
-              <object class="GtkButton" id="advanced_config_button">
-                <property name="label" translatable="yes">Advanced Configuration</property>
-                <property name="tooltip-text" translatable="yes">Show this host's block among the blocks that apply to it</property>
+      <object class="AdwNavigationSplitView" id="split_view">
+        <property name="min-sidebar-width">190</property>
+        <property name="max-sidebar-width">250</property>
+        <property name="sidebar-width-fraction">0.27</property>
+        <property name="sidebar">
+          <object class="AdwNavigationPage" id="sidebar_page">
+            <property name="title" translatable="yes">Connection</property>
+            <property name="tag">connection-sidebar</property>
+            <property name="child">
+              <object class="AdwToolbarView">
+                <child type="top">
+                  <object class="AdwHeaderBar">
+                    <property name="show-end-title-buttons">false</property>
+                  </object>
+                </child>
+                <property name="content">
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">2</property>
+                    <property name="vscrollbar-policy">1</property>
+                    <child>
+                      <object class="GtkListBox" id="sidebar_list">
+                        <property name="selection-mode">1</property>
+                        <property name="activate-on-single-click">true</property>
+                        <style>
+                          <class name="navigation-sidebar"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+                <child type="bottom">
+                  <object class="GtkBox" id="config_buttons_box">
+                    <property name="orientation">1</property>
+                    <property name="spacing">2</property>
+                    <property name="margin-start">6</property>
+                    <property name="margin-end">6</property>
+                    <property name="margin-top">6</property>
+                    <property name="margin-bottom">6</property>
+                    <child>
+                      <object class="GtkButton" id="advanced_config_button">
+                        <property name="tooltip-text" translatable="yes">Show this host's block among the blocks that apply to it</property>
+                        <property name="child">
+                          <object class="AdwButtonContent">
+                            <property name="icon-name">document-properties-symbolic</property>
+                            <property name="label" translatable="yes">Advanced Configuration</property>
+                            <property name="halign">1</property>
+                          </object>
+                        </property>
+                        <style>
+                          <class name="flat"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
               </object>
-            </child>
-            <child>
-              <object class="GtkBox">
-                <property name="hexpand">true</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkButton" id="cancel_button">
-                <property name="label" translatable="yes">Cancel</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkButton" id="save_button">
-                <property name="label" translatable="yes">Save</property>
-                <style>
-                  <class name="suggested-action"/>
-                </style>
-              </object>
-            </child>
+            </property>
           </object>
-        </child>
+        </property>
+        <property name="content">
+          <object class="AdwNavigationPage" id="content_page">
+            <property name="title" translatable="yes">Connection</property>
+            <property name="tag">connection-content</property>
+            <property name="child">
+              <object class="AdwToolbarView">
+                <child type="top">
+                  <object class="AdwHeaderBar">
+                    <property name="show-start-title-buttons">false</property>
+                    <property name="show-end-title-buttons">false</property>
+                    <property name="title-widget">
+                      <object class="AdwWindowTitle" id="content_title">
+                        <property name="title" translatable="yes">Connection</property>
+                      </object>
+                    </property>
+                    <child type="start">
+                      <object class="GtkButton" id="cancel_button">
+                        <property name="label" translatable="yes">Cancel</property>
+                      </object>
+                    </child>
+                    <child type="end">
+                      <object class="GtkButton" id="save_button">
+                        <property name="label" translatable="yes">Save</property>
+                        <style>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <property name="content">
+                  <object class="GtkBox" id="content_mount">
+                    <property name="orientation">1</property>
+                    <property name="vexpand">true</property>
+                    <child>
+                      <object class="GtkStack" id="content_stack">
+                        <property name="vexpand">true</property>
+                        <property name="hexpand">true</property>
+                        <property name="transition-type">1</property>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </property>
+          </object>
+        </property>
       </object>
     </property>
   </template>

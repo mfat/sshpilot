@@ -1,60 +1,132 @@
 using Gtk 4.0;
 using Adw 1;
 
-// Layout skeleton only. The tabbed preferences content (content_mount) and the
-// validators/data loading are built in Python (connection_dialog.py); this file
-// owns the container structure and the pinned buttons: the SSH configuration
-// ones on the left, Cancel/Save on the right.
+// Layout skeleton only, laid out like the Settings window: a sidebar of
+// sections beside the selected page. The sidebar rows and the pages
+// (content_stack) are built in Python (connection_dialog.py:
+// _build_connection_tab_pages / _build_sidebar_navigation); this file owns the
+// split view, the header bars (Cancel / Save on the page's), and the Advanced
+// Configuration button at the foot of the sidebar.
 template $ConnectionDialog: Adw.Window {
   modal: true;
-  default-width: 600;
-  default-height: 700;
+  default-width: 880;
+  default-height: 680;
+  // Breakpoints need an explicit minimum size.
+  width-request: 360;
+  height-request: 400;
 
-  content: Gtk.Box {
-    orientation: vertical;
-    spacing: 0;
+  // No setters: below this width _sync_split_layout collapses the split view
+  // into list -> page navigation. It also collapses it when a protocol leaves
+  // a single page, so that one page shows without a sidebar.
+  Adw.Breakpoint narrow_breakpoint {
+    condition ("max-width: 640sp")
+  }
 
-    Adw.HeaderBar {
-      show-end-title-buttons: true;
-    }
+  content: Adw.NavigationSplitView split_view {
+    min-sidebar-width: 190;
+    max-sidebar-width: 250;
+    sidebar-width-fraction: 0.27;
 
-    Gtk.Box content_mount {
-      orientation: vertical;
-      vexpand: true;
-    }
+    sidebar: Adw.NavigationPage sidebar_page {
+      title: _("Connection");
+      tag: "connection-sidebar";
 
-    Gtk.Separator {
-      orientation: horizontal;
-    }
+      child: Adw.ToolbarView {
+        // Just the dialog's title, centred, as in the Settings window: the
+        // sidebar is too narrow to share its header with a button.
+        [top]
+        Adw.HeaderBar {
+          show-end-title-buttons: false;
+        }
 
-    Gtk.Box {
-      orientation: horizontal;
-      spacing: 12;
-      margin-start: 24;
-      margin-end: 24;
-      margin-top: 12;
-      margin-bottom: 12;
+        content: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+          vscrollbar-policy: automatic;
 
-      Gtk.Button advanced_config_button {
-        label: _("Advanced Configuration");
-        tooltip-text: _("Show this host's block among the blocks that apply to it");
-      }
+          Gtk.ListBox sidebar_list {
+            selection-mode: single;
+            activate-on-single-click: true;
 
-      Gtk.Box {
-        hexpand: true;
-      }
+            styles [
+              "navigation-sidebar",
+            ]
+          }
+        };
 
-      Gtk.Button cancel_button {
-        label: _("Cancel");
-      }
+        // About the SSH configuration as a whole rather than one page, so
+        // it stays put while the pages change.
+        [bottom]
+        Gtk.Box config_buttons_box {
+          orientation: vertical;
+          spacing: 2;
+          margin-start: 6;
+          margin-end: 6;
+          margin-top: 6;
+          margin-bottom: 6;
 
-      Gtk.Button save_button {
-        label: _("Save");
+          Gtk.Button advanced_config_button {
+            tooltip-text: _("Show this host's block among the blocks that apply to it");
 
-        styles [
-          "suggested-action",
-        ]
-      }
-    }
+            child: Adw.ButtonContent {
+              icon-name: "document-properties-symbolic";
+              label: _("Advanced Configuration");
+              halign: start;
+            };
+
+            styles [
+              "flat",
+            ]
+          }
+        }
+      };
+    };
+
+    content: Adw.NavigationPage content_page {
+      title: _("Connection");
+      tag: "connection-content";
+
+      child: Adw.ToolbarView {
+        // Cancel and Save on either side of the title, as in other GNOME
+        // dialogs; Cancel (and Escape) stands in for the close button.
+        [top]
+        Adw.HeaderBar {
+          show-start-title-buttons: false;
+          show-end-title-buttons: false;
+
+          // Title: the page; subtitle: what the connection reaches
+          // (user@host:port), kept current by _update_content_title.
+          title-widget: Adw.WindowTitle content_title {
+            title: _("Connection");
+          };
+
+          [start]
+          Gtk.Button cancel_button {
+            label: _("Cancel");
+          }
+
+          [end]
+          Gtk.Button save_button {
+            label: _("Save");
+
+            styles [
+              "suggested-action",
+            ]
+          }
+        }
+
+        // Banners (read-only config, overridden settings) are prepended
+        // here, above the pages.
+        content: Gtk.Box content_mount {
+          orientation: vertical;
+          vexpand: true;
+
+          Gtk.Stack content_stack {
+            vexpand: true;
+            hexpand: true;
+            transition-type: crossfade;
+          }
+        };
+      };
+    };
   };
 }
