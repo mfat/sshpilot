@@ -6432,19 +6432,22 @@ class TerminalWidget(Gtk.Box):
 
     def _on_drop_enter(self, drop_target, x, y):
         """Handle drag enter event - show visual feedback."""
+        # "No action" by value: the name Gdk.DragAction.NONE only exists
+        # from GTK 4.20, and raised here on older GTK.
+        refuse = Gdk.DragAction(0)
         try:
             # Check if we have a valid connection
             if not self.connection or not self.is_connected:
-                return Gdk.DragAction.NONE
+                return refuse
 
             # Only accept drops if we have a remote connection (not local shell)
             if self._is_local_terminal():
-                return Gdk.DragAction.NONE
+                return refuse
 
             return Gdk.DragAction.COPY
         except Exception as e:
             logger.debug(f"Error in drop enter: {e}", exc_info=True)
-            return Gdk.DragAction.NONE
+            return refuse
 
     def _on_drop_leave(self, drop_target):
         """Handle drag leave event."""

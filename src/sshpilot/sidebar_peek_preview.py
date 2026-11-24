@@ -121,12 +121,36 @@ class SidebarPeekPreview(Gtk.DrawingArea):
             return 2.2  # still frame: sidebar out, pointer on a row
         return clock.get_frame_time() / 1_000_000
 
+    def _accent(self):
+        """The accent colour as ``(r, g, b, 1)``.
+
+        ``StyleManager.get_accent_color_rgba`` needs libadwaita 1.6; on 1.5
+        (Ubuntu 24.04) the theme's named colour is read instead, and GNOME
+        blue stands in if even that is missing. Without this the drawing
+        failed on every frame there and the preview stayed blank.
+        """
+        getter = getattr(Adw.StyleManager.get_default(), "get_accent_color_rgba", None)
+        color = None
+        if callable(getter):
+            try:
+                color = getter()
+            except Exception:
+                color = None
+        if color is None:
+            try:
+                found, looked = self.get_style_context().lookup_color("accent_bg_color")
+                color = looked if found else None
+            except Exception:
+                color = None
+        if color is None:
+            return (0.208, 0.518, 0.894, 1.0)
+        return (color.red, color.green, color.blue, 1.0)
+
     def _draw(self, _area, cr, width, height):
         dark = Adw.StyleManager.get_default().get_dark()
         fg = self.get_color()
         fg = (fg.red, fg.green, fg.blue, 1.0)
-        accent = Adw.StyleManager.get_default().get_accent_color_rgba()
-        accent = (accent.red, accent.green, accent.blue, 1.0)
+        accent = self._accent()
         window_bg = (0.13, 0.13, 0.15, 1) if dark else (0.98, 0.98, 0.98, 1)
         panel_bg = (0.18, 0.18, 0.2, 1) if dark else (1, 1, 1, 1)
         pointer_xy, pointer_alpha, panel, on_button, hovered_row = frame_at(self._now())

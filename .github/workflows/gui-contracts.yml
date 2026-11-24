@@ -57,8 +57,13 @@ jobs:
       - name: Run the dialog tests that need no daemon
         # The authentication section and the login profile dialogs in real
         # windows: dragging, profile locks, the "OpenSSH will try" line,
-        # the questions asked before a profile replaces settings. Their own
-        # process: they build dialogs directly and boot no application.
+        # the questions asked before a profile replaces settings; and the
+        # Advanced Configuration window against real OpenSSH. Their own
+        # process: they build windows directly and boot no application.
+        # This runner's GTK 4.14 / libadwaita 1.5 is the oldest supported:
+        # API newer than that fails here (tests/architecture/
+        # test_toolkit_minimum.py catches by name what it can without a
+        # display).
         env:
           SSHPILOT_GUI_TESTS: "1"
           GDK_BACKEND: x11
@@ -70,7 +75,8 @@ jobs:
               tests/test_gui_connection_dialog_auth_section.py \
               tests/test_gui_connection_dialog_login_profile.py \
               tests/test_gui_login_profile_auth_section.py \
-              tests/test_gui_login_profile_dialogs.py
+              tests/test_gui_login_profile_dialogs.py \
+              tests/test_gui_advanced_config.py
 
       - name: Log in with a saved authentication order (throwaway sshd)
         # The order saved by the editor's model, launched with the daemon's
@@ -88,7 +94,7 @@ jobs:
           python3 - <<'EOF'
           import sys
           import xml.etree.ElementTree as ET
-          for report, least in (("contracts.xml", 60), ("dialogs.xml", 56), ("real-login.xml", 6)):
+          for report, least in (("contracts.xml", 60), ("dialogs.xml", 108), ("real-login.xml", 6)):
               suite = ET.parse(report).getroot()
               suite = suite.find("testsuite") if suite.tag == "testsuites" else suite
               tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))
