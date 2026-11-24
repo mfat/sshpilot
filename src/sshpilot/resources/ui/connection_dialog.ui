@@ -20,8 +20,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="content">
       <object class="AdwNavigationSplitView" id="split_view">
         <property name="min-sidebar-width">190</property>
-        <property name="max-sidebar-width">250</property>
-        <property name="sidebar-width-fraction">0.27</property>
+        <property name="max-sidebar-width">260</property>
+        <property name="sidebar-width-fraction">0.29</property>
         <property name="sidebar">
           <object class="AdwNavigationPage" id="sidebar_page">
             <property name="title" translatable="yes">Connection</property>
@@ -109,26 +109,22 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   </object>
                 </property>
                 <child type="bottom">
-                  <object class="GtkBox" id="config_buttons_box">
-                    <property name="orientation">1</property>
-                    <property name="spacing">2</property>
-                    <property name="margin-start">6</property>
-                    <property name="margin-end">6</property>
-                    <property name="margin-top">6</property>
-                    <property name="margin-bottom">6</property>
+                  <object class="GtkListBox" id="config_buttons_box">
+                    <property name="selection-mode">0</property>
+                    <property name="activate-on-single-click">true</property>
+                    <style>
+                      <class name="navigation-sidebar"/>
+                    </style>
                     <child>
-                      <object class="GtkButton" id="advanced_config_button">
+                      <object class="AdwActionRow" id="advanced_config_button">
+                        <property name="title" translatable="yes">Advanced Configuration</property>
                         <property name="tooltip-text" translatable="yes">Show this host's block among the blocks that apply to it</property>
-                        <property name="child">
-                          <object class="AdwButtonContent">
+                        <property name="activatable">true</property>
+                        <child type="prefix">
+                          <object class="GtkImage">
                             <property name="icon-name">document-properties-symbolic</property>
-                            <property name="label" translatable="yes">Advanced Configuration</property>
-                            <property name="halign">1</property>
                           </object>
-                        </property>
-                        <style>
-                          <class name="flat"/>
-                        </style>
+                        </child>
                       </object>
                     </child>
                   </object>

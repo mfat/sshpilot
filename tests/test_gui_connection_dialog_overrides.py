@@ -235,7 +235,7 @@ def test_the_config_button_opens_advanced_configuration_over_the_dialog(gui):
     assert new.advanced_config_button.get_visible()
     assert not hasattr(new, "edit_ssh_config_button")       # the two older buttons are gone
     assert not hasattr(new, "effective_config_button")
-    new.advanced_config_button.emit("clicked")
+    new.advanced_config_button.emit("activated")
     assert opened[-1]["over"] is new and opened[-1]["host"] == ""   # no block yet
     new.close()
 
@@ -247,7 +247,7 @@ def test_the_config_button_opens_advanced_configuration_over_the_dialog(gui):
     dialog = ConnectionDialog(
         parent, connection=connection, connection_manager=parent.connection_manager
     )
-    dialog.advanced_config_button.emit("clicked")
+    dialog.advanced_config_button.emit("activated")
     target = opened[-1]
     assert target["over"] is dialog and target["host"] == "web"
     assert target["file"] == "/home/u/.ssh/conf.d/web.conf"

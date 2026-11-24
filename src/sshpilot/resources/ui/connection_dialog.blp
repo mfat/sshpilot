@@ -24,8 +24,9 @@ template $ConnectionDialog: Adw.Window {
 
   content: Adw.NavigationSplitView split_view {
     min-sidebar-width: 190;
-    max-sidebar-width: 250;
-    sidebar-width-fraction: 0.27;
+    max-sidebar-width: 260;
+    // Wide enough for "Advanced Configuration" on one line.
+    sidebar-width-fraction: 0.29;
 
     sidebar: Adw.NavigationPage sidebar_page {
       title: _("Connection");
@@ -109,28 +110,26 @@ template $ConnectionDialog: Adw.Window {
         };
 
         // About the SSH configuration as a whole rather than one page, so
-        // it stays put while the pages change.
+        // it stays put while the pages change. A row of the same kind as
+        // the sections above, so it has their size and their type.
         [bottom]
-        Gtk.Box config_buttons_box {
-          orientation: vertical;
-          spacing: 2;
-          margin-start: 6;
-          margin-end: 6;
-          margin-top: 6;
-          margin-bottom: 6;
+        Gtk.ListBox config_buttons_box {
+          selection-mode: none;
+          activate-on-single-click: true;
 
-          Gtk.Button advanced_config_button {
+          styles [
+            "navigation-sidebar",
+          ]
+
+          Adw.ActionRow advanced_config_button {
+            title: _("Advanced Configuration");
             tooltip-text: _("Show this host's block among the blocks that apply to it");
+            activatable: true;
 
-            child: Adw.ButtonContent {
+            [prefix]
+            Gtk.Image {
               icon-name: "document-properties-symbolic";
-              label: _("Advanced Configuration");
-              halign: start;
-            };
-
-            styles [
-              "flat",
-            ]
+            }
           }
         }
       };

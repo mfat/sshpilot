@@ -787,7 +787,8 @@ class ConnectionDialogOverridesMixin:
         """Wire "Advanced Configuration" at the dialog's foot."""
         advanced = getattr(self, "advanced_config_button", None)
         if advanced is not None:
-            advanced.connect("clicked", self._on_advanced_config_clicked)
+            # A sidebar row (connection_dialog.blp), not a button.
+            advanced.connect("activated", self._on_advanced_config_clicked)
         self._sync_config_buttons()
 
     def _sync_config_buttons(self) -> None:
