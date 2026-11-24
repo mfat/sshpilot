@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 20:25+0330\n"
+"POT-Creation-Date: 2026-11-24 20:31+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -2945,8 +2945,8 @@ msgstr "Шаблон — это не подключение"
 
 #: src/sshpilot/connection_dialog_host_names.py:116
 #: src/sshpilot/connection_dialog_host_names.py:134
-msgid "A connection has one name"
-msgstr "У подключения одно имя"
+msgid "An alias can't contain spaces"
+msgstr "Псевдоним не может содержать пробелы"
 
 #: src/sshpilot/connection_dialog_host_names.py:130
 msgid ""
@@ -2957,8 +2957,8 @@ msgstr ""
 "как блок в расширенной конфигурации."
 
 #: src/sshpilot/connection_dialog_host_names.py:136
-msgid "To put several hosts on one Host line, use Advanced Configuration."
-msgstr "Чтобы указать несколько хостов в одной строке Host, используйте расширенную конфигурацию."
+msgid "For several aliases on one Host line, use Advanced Configuration."
+msgstr "Чтобы указать несколько псевдонимов в одной строке Host, используйте расширенную конфигурацию."
 
 #: src/sshpilot/connection_dialog_login_profile.py:44
 #: src/sshpilot/login_profile_dialogs.py:220
@@ -18714,6 +18714,9 @@ msgstr "Нет подходящих файлов."
 #: src/sshpilot/advanced_config_results_view.py:743
 msgid "No other file is read for this target."
 msgstr "Для этой цели другие файлы не читаются."
+
+#~ msgid "A connection has one name"
+#~ msgstr "У подключения одно имя"
 
 #~ msgid "SSH Alias (spaces separate several hosts)"
 #~ msgstr "Псевдоним SSH (пробелы разделяют несколько хостов)"

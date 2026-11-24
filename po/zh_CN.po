@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 20:25+0330\n"
+"POT-Creation-Date: 2026-11-24 20:31+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -2822,8 +2822,8 @@ msgstr "模式不是连接"
 
 #: src/sshpilot/connection_dialog_host_names.py:116
 #: src/sshpilot/connection_dialog_host_names.py:134
-msgid "A connection has one name"
-msgstr "一个连接只有一个名称"
+msgid "An alias can't contain spaces"
+msgstr "别名不能包含空格"
 
 #: src/sshpilot/connection_dialog_host_names.py:130
 msgid ""
@@ -2832,8 +2832,8 @@ msgid ""
 msgstr "它为每个匹配的主机设置选项。请在高级配置中将其创建为一个块。"
 
 #: src/sshpilot/connection_dialog_host_names.py:136
-msgid "To put several hosts on one Host line, use Advanced Configuration."
-msgstr "要在一行 Host 中写多个主机，请使用高级配置。"
+msgid "For several aliases on one Host line, use Advanced Configuration."
+msgstr "要在一行 Host 中写多个别名，请使用高级配置。"
 
 #: src/sshpilot/connection_dialog_login_profile.py:44
 #: src/sshpilot/login_profile_dialogs.py:220
@@ -17852,6 +17852,9 @@ msgstr "没有匹配的文件。"
 #: src/sshpilot/advanced_config_results_view.py:743
 msgid "No other file is read for this target."
 msgstr "此目标不读取其他文件。"
+
+#~ msgid "A connection has one name"
+#~ msgstr "一个连接只有一个名称"
 
 #~ msgid "SSH Alias (spaces separate several hosts)"
 #~ msgstr "SSH 别名（用空格分隔多个主机）"

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 20:25+0330\n"
+"POT-Creation-Date: 2026-11-24 20:31+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -2912,8 +2912,8 @@ msgstr "الگو یک اتصال نیست"
 
 #: src/sshpilot/connection_dialog_host_names.py:116
 #: src/sshpilot/connection_dialog_host_names.py:134
-msgid "A connection has one name"
-msgstr "هر اتصال یک نام دارد"
+msgid "An alias can't contain spaces"
+msgstr "نام مستعار نمی‌تواند فاصله داشته باشد"
 
 #: src/sshpilot/connection_dialog_host_names.py:130
 msgid ""
@@ -2924,8 +2924,8 @@ msgstr ""
 "در پیکربندی پیشرفته بسازید."
 
 #: src/sshpilot/connection_dialog_host_names.py:136
-msgid "To put several hosts on one Host line, use Advanced Configuration."
-msgstr "برای قرار دادن چند میزبان در یک خط Host، از پیکربندی پیشرفته استفاده کنید."
+msgid "For several aliases on one Host line, use Advanced Configuration."
+msgstr "برای چند نام مستعار در یک خط Host، از پیکربندی پیشرفته استفاده کنید."
 
 #: src/sshpilot/connection_dialog_login_profile.py:44
 #: src/sshpilot/login_profile_dialogs.py:220
@@ -18417,6 +18417,9 @@ msgstr "هیچ پرونده‌ای مطابقت ندارد."
 #: src/sshpilot/advanced_config_results_view.py:743
 msgid "No other file is read for this target."
 msgstr "برای این هدف پروندهٔ دیگری خوانده نمی‌شود."
+
+#~ msgid "A connection has one name"
+#~ msgstr "هر اتصال یک نام دارد"
 
 #~ msgid "SSH Alias (spaces separate several hosts)"
 #~ msgstr "نام مستعار SSH (فاصله چند میزبان را جدا می‌کند)"

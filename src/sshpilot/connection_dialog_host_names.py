@@ -113,7 +113,7 @@ class ConnectionDialogHostNamesMixin:
             return None
         if kind == PATTERN:
             return ValidationResult(False, _("A pattern is not a connection"), "error")
-        return ValidationResult(False, _("A connection has one name"), "error")
+        return ValidationResult(False, _("An alias can't contain spaces"), "error")
 
     def _sync_host_line_ui(self) -> None:
         """Show the offer row for a Host line this dialog does not save."""
@@ -131,9 +131,9 @@ class ConnectionDialogHostNamesMixin:
                 "a block in Advanced Configuration."
             ))
         else:
-            row.set_title(_("A connection has one name"))
+            row.set_title(_("An alias can't contain spaces"))
             row.set_subtitle(_(
-                "To put several hosts on one Host line, use Advanced "
+                "For several aliases on one Host line, use Advanced "
                 "Configuration."
             ))
         row.set_visible(True)

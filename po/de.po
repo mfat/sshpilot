@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-24 20:25+0330\n"
+"POT-Creation-Date: 2026-11-24 20:31+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -2962,8 +2962,8 @@ msgstr "Ein Muster ist keine Verbindung"
 
 #: src/sshpilot/connection_dialog_host_names.py:116
 #: src/sshpilot/connection_dialog_host_names.py:134
-msgid "A connection has one name"
-msgstr "Eine Verbindung hat einen Namen"
+msgid "An alias can't contain spaces"
+msgstr "Ein Alias darf keine Leerzeichen enthalten"
 
 #: src/sshpilot/connection_dialog_host_names.py:130
 msgid ""
@@ -2974,8 +2974,8 @@ msgstr ""
 "in der Erweiterten Konfiguration an."
 
 #: src/sshpilot/connection_dialog_host_names.py:136
-msgid "To put several hosts on one Host line, use Advanced Configuration."
-msgstr "Um mehrere Hosts in eine Host-Zeile zu schreiben, verwenden Sie die Erweiterte Konfiguration."
+msgid "For several aliases on one Host line, use Advanced Configuration."
+msgstr "Für mehrere Aliasse in einer Host-Zeile verwenden Sie die Erweiterte Konfiguration."
 
 #: src/sshpilot/connection_dialog_login_profile.py:44
 #: src/sshpilot/login_profile_dialogs.py:220
@@ -18811,6 +18811,9 @@ msgstr "Keine Datei passt."
 #: src/sshpilot/advanced_config_results_view.py:743
 msgid "No other file is read for this target."
 msgstr "Für dieses Ziel wird keine weitere Datei gelesen."
+
+#~ msgid "A connection has one name"
+#~ msgstr "Eine Verbindung hat einen Namen"
 
 #~ msgid "SSH Alias (spaces separate several hosts)"
 #~ msgstr "SSH-Alias (Leerzeichen trennen mehrere Hosts)"

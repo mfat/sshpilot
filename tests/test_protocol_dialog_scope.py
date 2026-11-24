@@ -493,7 +493,7 @@ def test_several_names_are_handed_to_advanced_configuration_as_one_host_line():
     dlg.hostname_row.set_text("10.0.0.5")
     _pump_events()
     assert row.get_visible() and dlg.host_line_offer_button.get_visible()
-    assert row.get_title() == "A connection has one name"
+    assert row.get_title() == "An alias can't contain spaces"
     assert dlg._validate_all_required_for_save() is dlg.nickname_row   # not saved here
     assert dlg.display_name_row.get_sensitive()
     dlg.host_line_offer_button.emit("clicked")
