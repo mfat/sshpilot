@@ -19174,3 +19174,11 @@ msgstr "Nenhum outro ficheiro é lido para este destino."
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "Tentativa de autenticação {attempt}"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Show All Blocks"
+msgstr "Mostrar todos os blocos"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Unselect the block and show the blocks that do not apply to its host"
+msgstr "Desmarcar o bloco e mostrar os blocos que não se aplicam ao seu anfitrião"

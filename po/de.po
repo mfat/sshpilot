@@ -19335,3 +19335,11 @@ msgstr "Für dieses Ziel wird keine weitere Datei gelesen."
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "Authentifizierungsversuch {attempt}"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Show All Blocks"
+msgstr "Alle Blöcke anzeigen"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Unselect the block and show the blocks that do not apply to its host"
+msgstr "Auswahl des Blocks aufheben und die Blöcke anzeigen, die nicht für seinen Host gelten"

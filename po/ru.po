@@ -19230,3 +19230,11 @@ msgstr "Для этой цели другие файлы не читаются."
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "Попытка аутентификации {attempt}"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Show All Blocks"
+msgstr "Показать все блоки"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Unselect the block and show the blocks that do not apply to its host"
+msgstr "Снять выделение с блока и показать блоки, которые не относятся к его хосту"

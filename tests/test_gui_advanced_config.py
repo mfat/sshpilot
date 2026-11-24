@@ -422,9 +422,10 @@ def test_a_real_click_on_a_card_selects_it(window):
     assert window.selected_uid == web.uid
 
 
-def test_selecting_a_host_s_block_loads_it_without_narrowing_the_rules(gtk, tmp_path):
-    """With no filter, clicking a block asks OpenSSH about the host it names
-    and shows the answer on the right; every block stays on screen."""
+def test_selecting_a_host_s_block_narrows_the_rules_to_it(gtk, tmp_path):
+    """With no filter, clicking a block asks OpenSSH about the host it names,
+    shows the answer on the right, and hides the blocks that do not apply,
+    so a match further down is not left to be scrolled for."""
     from sshpilot.advanced_config_window import AdvancedConfigWindow
 
     path = tmp_path / "config"
@@ -433,26 +434,35 @@ def test_selecting_a_host_s_block_loads_it_without_narrowing_the_rules(gtk, tmp_
     assert _pump(lambda: len(win.draft.blocks) == 4)
     _glob, web, star, db = win.draft.blocks
     everything = ["global", "web1 web2", "*", "db1"]
+    assert not win.show_all_button.get_visible()
 
     win.select_block(web.uid)
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh web1")
     assert _effective(win, "user") == "deploy"
-    assert _shown(win) == everything                      # nothing is hidden
+    assert _shown(win) == ["global", "web1 web2", "*"]   # db1 is skipped: hidden
     assert win.target_entry.get_text() == ""              # the filter is untouched
     assert win.rules.cards[db.uid].status.get_label() == "Skipped"
+    assert win.show_all_button.get_visible()
 
     win.select_block(db.uid)
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh db1")
     assert _effective(win, "user") == "fallback"          # Host * comes first
-    assert _shown(win) == everything
+    assert _shown(win) == ["global", "*", "db1"]
+
+    assert win.show_all_blocks()                          # the button, or Escape
+    assert win.selected_uid is None
+    assert _pump(lambda: _shown(win) == everything and not win.show_all_button.get_visible())
+    assert not win.show_all_blocks()                      # nothing to undo: Escape passes
 
     win.select_block(star.uid)                            # a pattern names no host
     assert _pump(lambda: win._evaluation is None)
     assert not win.results.summary.get_visible() and _shown(win) == everything
+    assert not win.show_all_button.get_visible()
 
     win.target_entry.set_text("web2")                     # the filter wins, and narrows
     assert _pump(lambda: win.results.summary_rows["command"].get_subtitle() == "ssh web2")
     assert _pump(lambda: _shown(win) == ["global", "web1 web2", "*"])
+    assert not win.show_all_button.get_visible()          # the filter's own clear does it
     win._closing = True
     win.destroy()
 

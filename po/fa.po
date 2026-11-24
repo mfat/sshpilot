@@ -18917,3 +18917,11 @@ msgstr "برای این هدف پروندهٔ دیگری خوانده نمی‌�
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "تلاش برای احراز هویت {attempt}"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Show All Blocks"
+msgstr "نمایش همه بلوک‌ها"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Unselect the block and show the blocks that do not apply to its host"
+msgstr "لغو انتخاب بلوک و نمایش بلوک‌هایی که برای میزبان آن اعمال نمی‌شوند"

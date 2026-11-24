@@ -18331,3 +18331,11 @@ msgstr "此目标不读取其他文件。"
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "认证尝试 {attempt}"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Show All Blocks"
+msgstr "显示所有块"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "Unselect the block and show the blocks that do not apply to its host"
+msgstr "取消选择该块，并显示不适用于其主机的块"
