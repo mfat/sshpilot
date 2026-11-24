@@ -164,6 +164,18 @@ class AuthPolicy:
     # ``ssh -G`` cannot answer. ``fallback_known`` is False until it arrives.
     fallback: Dict[str, str] = field(default_factory=dict)
     fallback_known: bool = False
+    # The fallback is OpenSSH's own answer for the configuration without
+    # this block's authentication lines (a draft evaluation): complete, and
+    # right for ``Match`` blocks too, so it is used for every value.
+    fallback_resolved: bool = False
+    # What OpenSSH resolves with this block's pending lines (lower-case
+    # keyword -> value), and the lines that answer is for. ``None`` until a
+    # draft was evaluated; an edit makes it stale until the next answer.
+    draft: Optional[Dict[str, str]] = None
+    _draft_lines: Optional[List[str]] = None
+    # OpenSSH was asked and gave no answer: what the host inherits and what
+    # it will try are unknown, and are shown as that (not as a default).
+    lookup_failed: bool = False
     # A login profile's own lines: no host to resolve, nothing above them.
     standalone: bool = False
     # Methods whose switch a linked login profile sets: not changed here.
@@ -241,6 +253,40 @@ class AuthPolicy:
             return
         self.fallback = {str(k).lower(): str(v) for k, v in inherited.items()}
         self.fallback_known = True
+        self.fallback_resolved = False
+        self.lookup_failed = False
+
+    def set_draft(
+        self,
+        effective: Mapping[str, str],
+        inherited: Mapping[str, str],
+        lines: Iterable[str],
+    ) -> None:
+        """Take OpenSSH's answers for the pending block.
+
+        *effective*: ``ssh -G`` with *lines* (this block's authentication
+        lines when it was asked) in place; *inherited*: the same without
+        them. Both lower-case keyword -> value in force.
+        """
+        self.fallback = {str(k).lower(): str(v) for k, v in inherited.items()}
+        self.fallback_known = True
+        self.fallback_resolved = True
+        self.draft = {str(k).lower(): str(v) for k, v in effective.items()}
+        self._draft_lines = [str(line) for line in lines]
+        self.lookup_failed = False
+
+    def set_lookup_failed(self) -> None:
+        """OpenSSH could not say what this host inherits or will try."""
+        self.fallback = {}
+        self.fallback_known = False
+        self.fallback_resolved = False
+        self.draft = None
+        self._draft_lines = None
+        self.lookup_failed = True
+
+    def _draft_current(self) -> bool:
+        """The draft answer is for the lines the block has now."""
+        return self.draft is not None and self._draft_lines == self.to_lines()
 
     def _fallback_switch(self, method: str) -> Optional[bool]:
         if not self.fallback_known:
@@ -257,7 +303,8 @@ class AuthPolicy:
 
     def _uses_fallback(self, key: str) -> bool:
         """``ssh -G`` cannot tell what *key* inherits: reset, or no host yet."""
-        return key in self._unknown_after_reset or not self.inherited_known
+        return (self.fallback_resolved or self.lookup_failed
+                or key in self._unknown_after_reset or not self.inherited_known)
 
     # -- what is shown -----------------------------------------------------
 
@@ -453,6 +500,11 @@ class AuthPolicy:
 
     def effective_order(self) -> Optional[List[str]]:
         """What OpenSSH uses, or ``None`` when it cannot be known yet."""
+        if self.lookup_failed and not self.standalone:
+            return None
+        if self._draft_current():
+            raw = self.draft.get(PREFERRED_AUTH_KEYWORD)
+            return parse_order(raw) if raw else list(DEFAULT_ORDER)
         decided = self._decided_elsewhere(PREFERRED_AUTH_KEYWORD)
         if decided:
             return parse_order(decided)
@@ -463,6 +515,13 @@ class AuthPolicy:
         return list(self.inherited_order or DEFAULT_ORDER)
 
     def effective_switch(self, method: str) -> Optional[bool]:
+        if self.lookup_failed and not self.standalone:
+            return None
+        if self._draft_current():
+            parsed = parse_switch(
+                first_of_setting(self.draft, KEYWORD_OF[method].lower())
+            )
+            return OPENSSH_SWITCH_DEFAULTS[method] if parsed is None else parsed
         decided = self._decided_elsewhere(KEYWORD_OF[method].lower())
         if decided is not None:
             return parse_switch(decided)
@@ -476,6 +535,14 @@ class AuthPolicy:
         return [
             m for m in order
             if m not in KEYWORD_OF or self.effective_switch(m) is not False
+        ]
+
+    def unconfirmed_tried(self) -> List[str]:
+        """Methods of :meth:`will_try` whose switch is not known: the order
+        lists them, but whether they are turned on has not been answered."""
+        return [
+            m for m in (self.will_try() or [])
+            if m in KEYWORD_OF and self.effective_switch(m) is None
         ]
 
     # -- edits -------------------------------------------------------------
@@ -653,7 +720,7 @@ class AuthPolicy:
 
     def _inherited_switch(self, method: str) -> Optional[bool]:
         """What *method*'s switch would be without this block's own line."""
-        if method in self._loaded:
+        if method in self._loaded or self.lookup_failed:
             # ssh -G answered with the block's own line: what remains once
             # it is dropped comes from the fallback, when known.
             return self._fallback_switch(method)
@@ -1326,6 +1393,9 @@ class AuthPolicyGroup:
             policy.forced = dict(self.policy.forced)
         if not policy.fallback_known and self.policy.fallback_known:
             policy.set_fallback(self.policy.fallback)
+            policy.fallback_resolved = self.policy.fallback_resolved
+        if self.policy.lookup_failed and not policy.fallback_known:
+            policy.lookup_failed = True
         policy.standalone = self.profile
         policy.locked_methods = set(self._locked_methods)
         self.policy = policy
@@ -1407,7 +1477,11 @@ class AuthPolicyGroup:
                     m for m in policy._first_listed() if m not in METHODS or m in checked
                 ))
             will_try = policy.will_try()
-            if will_try is None:
+            if will_try is None and policy.lookup_failed:
+                self.effective_row.set_subtitle(
+                    _("Unknown: OpenSSH could not read the configuration.")
+                )
+            elif will_try is None:
                 self.effective_row.set_subtitle(
                     _("Shown once OpenSSH has read the configuration.")
                 )
@@ -1416,7 +1490,15 @@ class AuthPolicyGroup:
                     _("No method: the login cannot succeed.")
                 )
             else:
-                self.effective_row.set_subtitle(", ".join(will_try))
+                # A listed method whose switch has no answer may or may
+                # not be tried: the row says so, as its checkbox does.
+                unsure = set(policy.unconfirmed_tried())
+                self.effective_row.set_subtitle(", ".join(
+                    # {method} is an OpenSSH method name, e.g. gssapi-with-mic.
+                    _("{method} (unknown if enabled)").format(method=m)
+                    if m in unsure else m
+                    for m in will_try
+                ))
         finally:
             self._syncing = False
 
@@ -1460,7 +1542,9 @@ class AuthPolicyGroup:
             value is not None and self._editable() and not last and not locked
         )
         # Never dimmed (see _show_row); the tooltip says why it cannot change.
-        if value is None:
+        if value is None and policy.lookup_failed:
+            note = _("Unknown: OpenSSH could not read the configuration.")
+        elif value is None:
             note = _("Shown once OpenSSH has read the configuration.")
         elif self._order_locked or locked:
             note = self._lock_note

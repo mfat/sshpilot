@@ -40,7 +40,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="margin-bottom">12</property>
             <child>
               <object class="GtkButton" id="effective_config_button">
-                <property name="label" translatable="yes">Effective Config</property>
+                <property name="label" translatable="yes">Saved Effective Config</property>
                 <property name="tooltip-text" translatable="yes">Show what SSH uses for this host, as saved</property>
               </object>
             </child>

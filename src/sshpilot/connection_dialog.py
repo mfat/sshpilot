@@ -76,6 +76,13 @@ from .connection_dialog_login_profile import (
 from .connection_dialog_validation import ConnectionDialogValidationMixin
 from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
+from .connection_dialog_effective import ConnectionDialogEffectiveMixin
+from .connection_dialog_secrets import (
+    SavedSecretField,
+    SecretStatus,
+    check_status,
+    planned_operation,
+)
 from .connection_dialog_overrides import (
     ConnectionDialogOverridesMixin,
     inherited_note_text,
@@ -1300,12 +1307,7 @@ class FileListEditor(Adw.PreferencesGroup):
         pass_entry = Gtk.PasswordEntry()
         pass_entry.set_show_peek_icon(True)
         row._pass_saved = False
-        pass_entry.connect(
-            "notify::visibility",
-            lambda _entry, r=row, e=pass_entry, n=norm: self._on_passphrase_visibility_changed(
-                r, e, n
-            ),
-        )
+        row._pass_remove_pending = False
         pass_entry.set_valign(Gtk.Align.CENTER)
         pass_entry.set_width_chars(18)
         try:
@@ -1313,11 +1315,12 @@ class FileListEditor(Adw.PreferencesGroup):
         except Exception:
             pass
         row._pass_initial = ''
-        # A stored passphrase can come from a slow secret backend (rbw on a large vault
-        # is ≈1s per lookup), so load it off the main thread: the dialog opens instantly
-        # and the entry fills in when ready, unless the user is already typing.
+        # Only whether a passphrase is saved is asked here, never the
+        # passphrase: Reveal fetches it, on request (connection_dialog_secrets).
+        field = None
         if self._connection_manager is not None or getattr(self, '_parent_window', None) is not None:
-            self._load_passphrase_async(pass_entry, row, norm)
+            field = self._make_passphrase_field(pass_entry, row, norm)
+        row._pass_field = field
         # Clear the error state as soon as the user edits the value again.
         pass_entry.connect('changed', lambda e: e.remove_css_class('error'))
         # Commit on Enter and when focus leaves the entry.
@@ -1326,6 +1329,10 @@ class FileListEditor(Adw.PreferencesGroup):
         focus.connect('leave', lambda _c, e=pass_entry, p=path, n=norm: self._commit_passphrase(e, p, n))
         pass_entry.add_controller(focus)
         row.add_suffix(pass_entry)
+        if field is not None:
+            for button in field.build_buttons():
+                row.add_suffix(button)
+            field.load_status()
         # Track the entry on the row so the save flow can flush all passphrases at once.
         row._pass_entry = pass_entry
         row._pass_path = path
@@ -1339,105 +1346,54 @@ class FileListEditor(Adw.PreferencesGroup):
         row.add_suffix(remove_btn)
         return row
 
-    def _load_passphrase_async(self, pass_entry, row, norm):
-        """Load the saved passphrase into the masked editor field."""
+    def _make_passphrase_field(self, pass_entry, row, norm):
+        """The saved-passphrase status, Reveal and Remove of one key row."""
         parent = getattr(self, '_parent_window', None)
-        client = getattr(parent, 'client', None)
-        use_daemon = (
-            callable(getattr(parent, '_daemon_ready', None))
-            and parent._daemon_ready()
-            and callable(getattr(client, 'reveal_key_passphrase', None))
-        )
-        if not use_daemon:
-            return
 
-        def _apply(value):
+        def _client():
+            client = getattr(parent, 'client', None)
+            ready = (
+                callable(getattr(parent, '_daemon_ready', None))
+                and parent._daemon_ready()
+            )
+            return client if ready else None
+
+        def check():
+            client = _client()
+            if not callable(getattr(client, 'has_key_passphrase', None)):
+                return SecretStatus.UNAVAILABLE
+            return check_status(client, lambda: client.has_key_passphrase(norm))
+
+        def reveal():
+            client = _client()
+            if not callable(getattr(client, 'reveal_key_passphrase', None)):
+                raise RuntimeError("Daemon key passphrase reveal unavailable")
+            secret = client.reveal_key_passphrase(norm)
             try:
-                if type(value) is str:
-                    if not pass_entry.get_text():
-                        pass_entry.set_text(value)
-                        row._pass_initial = value
-                    row._pass_saved = bool(value)
-                else:
-                    row._pass_saved = bool(value)
-                if row._pass_saved and hasattr(pass_entry, 'set_show_peek_icon'):
-                    pass_entry.set_show_peek_icon(True)
+                return secret.decode('utf-8')
+            finally:
+                secret[:] = b'\0' * len(secret)
+                secret.clear()
+
+        def changed(field):
+            row._pass_initial = field.revealed or ''
+            row._pass_saved = field.status == SecretStatus.SAVED
+            row._pass_remove_pending = field.remove_pending
+            try:
+                pass_entry.set_property('placeholder-text', field.text())
             except Exception:
                 pass
-            return False
 
-        def _start_worker():
-            def worker():
-                try:
-                    secret = client.reveal_key_passphrase(norm)
-                    try:
-                        value = secret.decode('utf-8')
-                    finally:
-                        secret[:] = b'\0' * len(secret)
-                        secret.clear()
-                except Exception:
-                    logger.warning("Daemon key passphrase reveal unavailable", exc_info=True)
-                    value = False
-                GLib.idle_add(_apply, value)
-
-            threading.Thread(target=worker, daemon=True).start()
-
-        _reveal_after_unlock(parent, parent, _start_worker)
-
-    def _on_passphrase_visibility_changed(self, row, pass_entry, norm):
-        try:
-            visible = bool(pass_entry.get_visibility())
-        except Exception:
-            return
-        if not visible or pass_entry.get_text() or not getattr(row, '_pass_saved', False):
-            return
-        if getattr(row, '_pass_reveal_pending', False):
-            return
-        row._pass_reveal_pending = True
-        parent = getattr(self, '_parent_window', None)
-        client = getattr(parent, 'client', None)
-        use_daemon = (
-            callable(getattr(parent, '_daemon_ready', None))
-            and parent._daemon_ready()
-            and callable(getattr(client, 'reveal_key_passphrase', None))
+        return SavedSecretField(
+            pass_entry,
+            kind="passphrase",
+            check=check,
+            reveal=reveal,
+            unlock=lambda start, declined: _reveal_after_unlock(
+                parent, parent, start, on_declined=declined
+            ),
+            on_changed=changed,
         )
-        if not use_daemon:
-            row._pass_reveal_pending = False
-            return
-
-        def apply(value):
-            try:
-                if value and not pass_entry.get_text():
-                    pass_entry.set_text(value)
-                    row._pass_initial = value
-                if not value:
-                    pass_entry.set_visibility(False)
-            except Exception:
-                pass
-            row._pass_reveal_pending = False
-            return False
-
-        def _start_worker():
-            def worker():
-                value = ''
-                try:
-                    secret = client.reveal_key_passphrase(norm)
-                    try:
-                        value = secret.decode('utf-8')
-                    finally:
-                        secret[:] = b'\0' * len(secret)
-                        secret.clear()
-                except Exception:
-                    logger.warning("Daemon key passphrase reveal unavailable", exc_info=True)
-                    value = ''
-                GLib.idle_add(apply, value)
-
-            threading.Thread(target=worker, daemon=True).start()
-
-        def _on_declined():
-            row._pass_reveal_pending = False
-
-        _reveal_after_unlock(parent, parent, _start_worker, on_declined=_on_declined)
 
     def _commit_passphrase(self, pass_entry, path, norm, force=False):
         """Validate an edited passphrase; persistence is deferred to dialog save."""
@@ -1488,7 +1444,11 @@ class FileListEditor(Adw.PreferencesGroup):
             if entry is None:
                 continue
             try:
-                if entry.get_text() != (getattr(row, '_pass_initial', '') or ''):
+                if planned_operation(
+                    entry.get_text(),
+                    getattr(row, '_pass_initial', '') or None,
+                    bool(getattr(row, '_pass_remove_pending', False)),
+                ) is not None:
                     return True
             except Exception:
                 pass
@@ -1512,9 +1472,15 @@ class FileListEditor(Adw.PreferencesGroup):
                     None,
                 )
                 initial = getattr(row, '_pass_initial', '') if row is not None else ''
-                if text == initial:
+                # An empty entry leaves a saved passphrase alone unless it
+                # was revealed and erased, or Remove was chosen.
+                operation = planned_operation(
+                    text, initial or None,
+                    bool(getattr(row, '_pass_remove_pending', False)),
+                )
+                if operation is None:
                     continue
-                operations.append(('store' if text else 'delete', norm, text))
+                operations.append((operation[0], norm, operation[1]))
             except Exception:
                 logger.debug("Failed to collect passphrase for %s", norm, exc_info=True)
         return operations
@@ -1616,6 +1582,7 @@ class ConnectionDialog(
     ConnectionDialogFieldHelpersMixin,
     ConnectionDialogPortForwardingMixin,
     ConnectionDialogOverridesMixin,
+    ConnectionDialogEffectiveMixin,
 ):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
 
@@ -1718,6 +1685,7 @@ class ConnectionDialog(
         self._save_buttons = []
         self._active_save_request = None
         self.connect('close-request', self._cancel_active_save_request)
+        self.connect('close-request', lambda *_a: self._cancel_effective_refresh())
         
         self.setup_ui()
         GLib.idle_add(self.load_connection_data)
@@ -2073,13 +2041,24 @@ class ConnectionDialog(
         apply_notes = getattr(self, '_apply_override_notes', None)
         if callable(apply_notes):
             apply_notes()
+        # The lines changed: ask OpenSSH what the host uses with them.
+        self._schedule_effective_refresh()
 
     def _auth_policy_set_fallback(self, inherited) -> None:
-        """What the host inherits without its own authentication lines."""
+        """What the host inherits without its own authentication lines.
+
+        ``None``: the lookup failed, which is shown as unknown. Once OpenSSH
+        itself has answered for the pending block (the draft evaluation,
+        see ``connection_dialog_effective``), that answer stands: this one
+        comes from a walk of the files that cannot judge ``Match`` blocks.
+        """
         section = getattr(self, 'auth_policy', None)
-        if section is None:
+        if section is None or getattr(self, '_effective_draft_answered', False):
             return
-        section.policy.set_fallback(inherited)
+        if inherited is None:
+            section.policy.set_lookup_failed()
+        else:
+            section.policy.set_fallback(inherited)
         section.sync()
 
     def _auth_policy_set_forced(self, forced) -> None:
@@ -2663,121 +2642,72 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         _start_worker()
 
-    def _load_password_async(self):
-        """Load the saved password into the masked editor field."""
-        def _apply(value):
-            try:
-                if type(value) is str and not self.password_row.get_text():
-                    self.password_row.set_text(value)
-                    self._orig_password = value
-                self._password_saved = bool(value)
-            except Exception:
-                pass
-
-        self._reveal_saved_password_async(_apply)
-
-    def _reveal_saved_password_async(self, apply):
-        """Fetch this connection's saved login password off the main thread.
-
-        ``apply`` runs on the main loop with the password string, or False
-        when the reveal failed. Nothing runs without a ready daemon.
-        """
-        if not hasattr(self.connection, 'username'):
-            return
-
+    def _saved_password_client(self):
+        """The daemon client, once it can be asked; else ``None``."""
         parent = getattr(self, 'parent_window', None)
         client = getattr(parent, 'client', None)
-        use_daemon = (
+        ready = (
             callable(getattr(parent, '_daemon_ready', None))
             and parent._daemon_ready()
-            and callable(getattr(client, 'reveal_connection_password', None))
         )
-        if not use_daemon:
-            return
+        return client if ready else None
 
-        def _apply(value):
-            apply(value)
-            return False
+    def _check_saved_password(self):
+        """Whether a login password is saved, without reading it."""
+        client = self._saved_password_client()
+        if (
+            not hasattr(self.connection, 'username')
+            or not callable(getattr(client, 'has_connection_password', None))
+        ):
+            return SecretStatus.UNAVAILABLE
+        from .api.connection_identity import connection_id_for
 
-        def _start_worker():
-            def worker():
-                try:
-                    from .api.connection_identity import connection_id_for
-                    secret = client.reveal_connection_password(
-                        connection_id_for(self.connection)
-                    )
-                    try:
-                        value = secret.decode('utf-8')
-                    finally:
-                        secret[:] = b'\0' * len(secret)
-                        secret.clear()
-                except Exception:
-                    logger.warning("Daemon connection password reveal unavailable", exc_info=True)
-                    value = False
-                GLib.idle_add(_apply, value)
+        connection_id = connection_id_for(self.connection)
+        return check_status(
+            client, lambda: client.has_connection_password(connection_id)
+        )
 
-            threading.Thread(target=worker, daemon=True).start()
+    def _fetch_saved_password(self) -> str:
+        """The saved login password, for Reveal only (worker thread)."""
+        client = self._saved_password_client()
+        if not callable(getattr(client, 'reveal_connection_password', None)):
+            raise RuntimeError("Daemon connection password reveal unavailable")
+        from .api.connection_identity import connection_id_for
 
-        _reveal_after_unlock(parent, self, _start_worker)
-
-    def _on_password_visibility_changed(self, *_args):
+        secret = client.reveal_connection_password(connection_id_for(self.connection))
         try:
-            visible = bool(self.password_row.get_visibility())
-        except Exception:
-            return
-        if not visible or self.password_row.get_text() or not self._password_saved:
-            return
-        if getattr(self, '_password_reveal_pending', False):
-            return
-        self._password_reveal_pending = True
-        parent = getattr(self, 'parent_window', None)
-        client = getattr(parent, 'client', None)
-        use_daemon = (
-            callable(getattr(parent, '_daemon_ready', None))
-            and parent._daemon_ready()
-            and callable(getattr(client, 'reveal_connection_password', None))
+            return secret.decode('utf-8')
+        finally:
+            secret[:] = b'\0' * len(secret)
+            secret.clear()
+
+    def _make_password_field(self, row, on_changed):
+        """Status, Reveal and Remove for a saved login password row."""
+        field = SavedSecretField(
+            row,
+            kind="password",
+            check=self._check_saved_password,
+            reveal=self._fetch_saved_password,
+            unlock=lambda start, declined: _reveal_after_unlock(
+                getattr(self, 'parent_window', None), self, start,
+                on_declined=declined,
+            ),
+            on_changed=on_changed,
         )
-        if not use_daemon:
-            self._password_reveal_pending = False
-            self.show_error(_("Secure storage is unavailable."))
-            return
+        try:
+            for button in field.build_buttons():
+                row.add_suffix(button)
+        except Exception:
+            logger.debug("Could not add the saved-password buttons", exc_info=True)
+        return field
 
-        def apply(value):
-            try:
-                if value and not self.password_row.get_text():
-                    self.password_row.set_text(value)
-                    self._orig_password = value
-                if not value:
-                    self.password_row.set_visibility(False)
-            except Exception:
-                pass
-            self._password_reveal_pending = False
-            return False
-
-        def _start_worker():
-            def worker():
-                value = ''
-                try:
-                    from .api.connection_identity import connection_id_for
-                    secret = client.reveal_connection_password(
-                        connection_id_for(self.connection)
-                    )
-                    try:
-                        value = secret.decode('utf-8')
-                    finally:
-                        secret[:] = b'\0' * len(secret)
-                        secret.clear()
-                except Exception:
-                    logger.warning("Daemon connection password reveal unavailable", exc_info=True)
-                    value = ''
-                GLib.idle_add(apply, value)
-
-            threading.Thread(target=worker, daemon=True).start()
-
-        def _on_declined():
-            self._password_reveal_pending = False
-
-        _reveal_after_unlock(parent, self, _start_worker, on_declined=_on_declined)
+    def _on_password_field_changed(self, field) -> None:
+        self._password_saved = field.status == SecretStatus.SAVED
+        group = getattr(self, '_password_group', None)
+        if group is not None:
+            text = field.text()
+            # A group's description is markup.
+            group.set_description(GLib.markup_escape_text(text) if text else None)
 
     def _capture_editor_delta_baseline(self):
         """Capture the authoritative form values used to build update deltas."""
@@ -3084,20 +3014,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 except Exception:
                     self.add_keys_to_agent_row.set_selected(0)
 
+            field = getattr(self, '_password_field', None)
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
-            else:
-                # Fallback: fetch from the selected secret backend off the main thread —
-                # rbw on a large vault is ≈1s per lookup and would otherwise freeze the
-                # dialog open. The masked row fills in when ready (see _load_password_async).
-                self._load_password_async()
-            # Capture original password value to detect user changes later. The async
-            # fetch updates this when it fills the row, so a loaded value isn't seen as
-            # a user edit on save.
-            try:
-                self._orig_password = self.password_row.get_text()
-            except Exception:
-                self._orig_password = ""
+                if field is not None:
+                    # A value handed over with the connection is the baseline.
+                    field.revealed = self.connection.password
+            elif field is not None:
+                # Only asks whether one is saved; nothing is read or unlocked.
+                field.load_status()
 
             # IdentitiesOnly as the block sets it: mode 1 is "yes", the
             # explicit-no flag "no", anything else not set.
@@ -3257,6 +3182,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.load_connection_data()
         finally:
             self._refresh_save_sensitivity()
+        # The lines as loaded: what differs from them later is unsaved.
+        try:
+            self._capture_effective_baseline()
+        except Exception:
+            logger.debug("Could not record the loaded lines", exc_info=True)
         # After the authored values are in place: fill unauthored rows with what
         # OpenSSH actually resolves, so the form never implies this block owns a
         # value it merely inherits.
@@ -3339,7 +3269,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # --- Identity files: this block's IdentityFile lines, in order ---
         self.key_editor = FileListEditor(
-            title=_("Identity files"),
+            title=_("Identity files set on this host"),
+            on_changed=lambda _editor: self._schedule_effective_refresh(),
             empty_placeholder=_("No identity files set for this host."),
             with_passphrase=True,
             connection_manager=cm,
@@ -3355,7 +3286,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 os.path.expanduser(path), secret
             ),
         )
-        self.key_editor.set_description(_("Keys SSH offers (IdentityFile)"))
+        # Only this block's lines: what other blocks add is listed under
+        # "Identity files OpenSSH uses", next to IdentitiesOnly.
+        self.key_editor.set_description("IdentityFile")
 
         # --- Certificates ---
         self.cert_editor = FileListEditor(
@@ -3384,7 +3317,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.key_only_row._sshpilot_own_value = lambda: (
             self._selected_identities_only() or None
         )
+        self.key_only_row.connect(
+            "notify::selected", lambda *_a: self._schedule_effective_refresh()
+        )
         self.idonly_group.add(self.key_only_row)
+        # Every identity file that applies, other blocks' included, in the
+        # order OpenSSH offers them.
+        self.idonly_group.add(self._build_effective_identity_row())
 
         self._add_keys_values = ['', 'yes', 'no', 'ask', 'confirm']
         akta_model = Gtk.StringList()
@@ -3407,13 +3346,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception:
             pass
         self._password_saved = False
-        try:
-            self.password_row.connect(
-                "notify::visibility",
-                self._on_password_visibility_changed,
-            )
-        except Exception:
-            pass
+        # Whether a password is saved is shown under the title; the password
+        # itself is read only by the Reveal button.
+        self._password_group = password_group
+        self._password_field = self._make_password_field(
+            self.password_row, self._on_password_field_changed
+        )
         password_group.add(self.password_row)
 
         # --- Agent & hardware key sources -------------------------------------
@@ -4792,6 +4730,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 row = Adw.PasswordEntryRow(title=spec.label)
                 if default:
                     row.set_text(str(default))
+                if spec.key == 'password':
+                    # The connection's saved login password: its status,
+                    # Reveal and Remove, as for an SSH connection.
+                    self._plugin_password_field = self._make_password_field(
+                        row,
+                        lambda f, r=row: r.set_tooltip_text(f.text() or None),
+                    )
                 getter = lambda r=row: r.get_text()
                 setter = lambda v, r=row: r.set_text(str(v or ''))
             elif kind == 'choice':
@@ -5105,29 +5050,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 logger.debug("Failed to load plugin field %r: %s", key, e)
 
     def _load_plugin_password(self):
-        """Fill a plugin ``password`` field from secure storage.
+        """Ask whether a plugin connection's ``password`` is saved.
 
         The field is never part of ``plugin_data``: saves route it to the
-        connection's stored login password, so an edit reads it back from
-        there. The revealed value becomes the baseline for
-        ``password_changed``; a reveal that fails leaves the field empty and
-        unchanged, which a save must not mistake for clearing it.
+        connection's stored login password. The password is not read here;
+        an empty field left alone is not a change, so a save keeps it.
         """
-        self._orig_plugin_password = ''
+        field = getattr(self, '_plugin_password_field', None)
         widget = (getattr(self, '_plugin_field_widgets', None) or {}).get('password')
-        if widget is None or not self.is_editing:
+        if field is None or widget is None or not self.is_editing:
             return
-        _spec, _row, getter, setter = widget
-
-        def _apply(value):
-            try:
-                if type(value) is str and value and not getter():
-                    setter(value)
-                    self._orig_plugin_password = value
-            except Exception as e:
-                logger.debug("Failed to load plugin password: %s", e)
-
-        self._reveal_saved_password_async(_apply)
+        field.load_status()
 
     def _generate_connection_id(self, name, protocol_id):
         """A free ID for a new non-SSH connection, derived from its name.
@@ -5199,9 +5132,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
 
         if 'password' in data:
+            field = getattr(self, '_plugin_password_field', None)
             data['password_changed'] = (
-                (data['password'] or '')
-                != (getattr(self, '_orig_plugin_password', '') or '')
+                field.operation() is not None if field is not None
+                else bool(data['password'])
             )
 
         # The live object is only mutated by the manager after a successful
@@ -5401,9 +5335,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Detect if password text was changed by user during this edit session
         try:
-            # _orig_password is unset for new connections — treat it as empty so an
-            # untouched empty field doesn't count as a change.
-            password_changed = (self.password_row.get_text() != (getattr(self, '_orig_password', None) or ''))
+            # An untouched empty field is not a change: a saved password
+            # the dialog never read stays as it is.
+            field = getattr(self, '_password_field', None)
+            if field is not None:
+                # Replace (typed), Remove (chosen), or neither.
+                password_changed = field.operation() is not None
+            else:
+                password_changed = bool(self.password_row.get_text())
         except Exception:
             password_changed = False
 
@@ -5851,12 +5790,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         or not signed in, so it should be unlocked before the secret I/O runs."""
         try:
             pw = secret_plan.get('password')
-            has_secret_operation = bool(pw and str(pw).strip())
-            # Clearing a stored password is a vault delete, which a locked
-            # session backend silently skips — unlock for it too.
-            has_secret_operation = has_secret_operation or bool(
-                secret_plan.get('password_changed')
-            )
+            # A password to store or, with the field empty, one to delete: a
+            # locked session backend silently skips both, so unlock first.
+            # A revealed password left as it is writes nothing and needs no
+            # unlock.
+            if 'password_changed' in secret_plan:
+                has_secret_operation = bool(secret_plan.get('password_changed'))
+            else:
+                has_secret_operation = bool(pw and str(pw).strip())
             editor = getattr(self, 'key_editor', None)
             has_secret_operation = has_secret_operation or bool(
                 editor is not None and editor.has_pending_passphrases()

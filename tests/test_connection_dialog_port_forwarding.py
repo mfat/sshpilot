@@ -436,7 +436,7 @@ def test_connection_loader_clears_advanced_and_forwarding_on_empty_snapshot():
     ):
         setattr(dialog, name, Mock())
     for name in (
-        "_load_shared_meta_rows", "_load_password_async",
+        "_load_shared_meta_rows",
         "_on_forward_agent_mode_changed", "_on_identity_agent_mode_changed",
         "on_key_select_changed", "_capture_editor_delta_baseline",
     ):

@@ -303,6 +303,18 @@ def test_lookup_migrates_legacy_nickname_alias(provider):
     assert manager.lookup(password_spec("bnick", "bob")) is None
 
 
+def test_asking_whether_a_password_is_saved_writes_nothing(provider):
+    """The editor asks on open; that must not store or delete anything."""
+    prov, manager, records = provider
+    records["web"] = _record(nickname="bnick", hostname="b.example", username="bob")
+    manager.store(password_spec("bnick", "bob"), "legacy")
+    manager.stored.clear()
+
+    assert prov.has_connection_password("web") is True
+    assert manager.stored == [] and manager.deleted == []
+    assert manager.lookup(password_spec("bnick", "bob")) == "legacy"
+
+
 def test_delete_clears_all_candidate_aliases(provider):
     prov, manager, records = provider
     records["web"] = _record(

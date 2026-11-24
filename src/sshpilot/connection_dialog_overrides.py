@@ -415,6 +415,10 @@ class ConnectionDialogOverridesMixin:
         parent = getattr(self, "parent_window", None)
         client = getattr(parent, "client", None)
         fallback_hook = getattr(self, "_auth_policy_set_fallback", None)
+        # The same moments call for OpenSSH's answer about the pending block.
+        refresh = getattr(self, "_schedule_effective_refresh", None)
+        if callable(refresh):
+            refresh()
 
         def builtin_fallback() -> None:
             # Nothing can say what the host inherits (yet): the
@@ -460,14 +464,18 @@ class ConnectionDialogOverridesMixin:
             if serial != getattr(self, "_earlier_fetch_serial", 0):
                 return False
             if callable(fallback_hook):
-                fallback_hook(inherited_auth if inherited_auth is not None else {})
+                # None: the lookup failed. Shown as unknown, not as a default.
+                fallback_hook(inherited_auth)
             if earlier is not None:
                 self._set_earlier_directives(earlier)
             return False
 
         def worker():
             earlier = None
-            inherited_auth = None
+            # A daemon without the lookup: nothing known to be inherited.
+            inherited_auth = None if (
+                auth_host and callable(getattr(client, "get_inherited_auth", None))
+            ) else {}
             # What the authentication section shows for a value reset after
             # loading, or for a host not saved yet: the lines it would
             # inherit without its own.
