@@ -137,28 +137,92 @@ def test_the_dropdown_switches_the_whole_window(window):
     assert window._sidebar_toolbar_clip.get_visible() and window.search_button.get_visible()
 
 
-def test_the_sections_are_to_read_and_edit_opens_the_window(window):
-    view = _sections(window)
-    assert view.read_only and view.embedded
-    for button in (view.undo_button, view.redo_button, view.save_button):
-        assert not button.get_visible()
-    assert not view.sidebar_button.get_visible()
-    card = next(c for c in view.rules.cards.values() if c.patterns is not None)
-    assert not card.patterns.get_editable()
-    assert not card.footer.get_visible()                 # Add Option
-    assert all(not b.get_visible() for b in view.rules._add_buttons)
-    assert not view.results.raw_view.get_editable()
-
-    # A block picked in the sidebar is the one Edit opens the window at.
+def _edit_user(view, value):
+    """Type a value into the User option of the *.prod block."""
     prod = next(b for b in view.editor.blocks if b.patterns == "*.prod")
-    view._block_list.select_row(view._block_rows[prod.uid])
-    assert _pump(lambda: view.selected_uid == prod.uid)
-    view.edit_button.emit("clicked")
-    lines = CONFIG.splitlines()
-    assert len(window.opened) == 1
-    assert lines[window.opened[0]["line"] - 1] == "Host *.prod"
-    assert window.opened[0]["file"] == ""
-    assert window.config_path.read_text() == CONFIG      # nothing was written
+    option = next(o for o in prod.options if o.key == "User")
+    row = view.rules.cards[prod.uid].rows[option.uid]
+    row.value.set_text(value)
+    assert _pump(lambda: view.dirty)
+    return prod
+
+
+def _labels(window):
+    model = window._sidebar_view_switcher.get_model()
+    return [model.get_string(index) for index in range(model.get_n_items())]
+
+
+def test_the_sections_are_edited_and_saved_there(window):
+    view = _sections(window)
+    assert view.embedded
+    assert view.save_button.get_visible() and not view.save_button.get_sensitive()
+    assert not view.sidebar_button.get_visible()         # the list is the main sidebar's
+    assert _labels(window) == ["Connections", "Config Sections"]
+
+    _edit_user(view, "deploy")
+    assert view.save_button.get_sensitive()
+    assert _labels(window) == ["Connections", "Config Sections •"]   # unsaved, said
+    assert window._sidebar_view_switcher.get_selected() == 1          # still this view
+    assert window.config_path.read_text() == CONFIG                   # not yet written
+
+    view.save()
+    assert _pump(lambda: "User deploy" in window.config_path.read_text(), seconds=15)
+    assert _pump(lambda: not view.dirty)
+    assert _labels(window) == ["Connections", "Config Sections"]
+
+
+def test_a_draft_is_kept_when_the_view_is_left(window):
+    from sshpilot.sidebar_views import CONNECTIONS, leave_sections, refresh_sections, show_view
+
+    view = _sections(window)
+    _edit_user(view, "deploy")
+    leave_sections(window)                    # a tab was selected
+    assert window._sidebar_view_stack.get_visible_child_name() == "connections"
+    assert _labels(window)[1] == "Config Sections •"     # said from the other view too
+    # Nothing reads the file over the draft: not a rebuild of the list...
+    refresh_sections(window)
+    # ...and not coming back.
+    show_view(window, "sections")
+    _pump(lambda: False, seconds=0.5)
+    assert view.dirty and "User deploy" in view.editor.text
+    show_view(window, CONNECTIONS)
+    assert view.dirty
+
+
+def test_openings_go_to_the_view_at_the_place_asked(window):
+    from sshpilot.sidebar_views import open_sections
+
+    view = open_sections(window, host="web1")
+    assert view is window._config_sections_view
+    assert window._sidebar_view_stack.get_visible_child_name() == "sections"
+    assert _pump(lambda: _selected_patterns(view) == "web1"), _selected_patterns(view)
+
+    # A new block is begun there, unsaved.
+    open_sections(window, new_block=("*.lab", [("User", "lab")]))
+    assert _pump(lambda: _selected_patterns(view) == "*.lab")
+    assert view.dirty and window.config_path.read_text() == CONFIG
+
+
+def test_quitting_asks_about_unsaved_changes(window, monkeypatch):
+    from sshpilot.sidebar_views import CONNECTIONS, confirm_quit, show_view
+
+    went = []
+    assert confirm_quit(window, lambda: went.append(1)) is False     # no view yet
+    view = _sections(window)
+    assert confirm_quit(window, lambda: went.append(1)) is False     # nothing unsaved
+
+    _edit_user(view, "deploy")
+    show_view(window, CONNECTIONS)
+    asked = []
+    monkeypatch.setattr(
+        view, "_confirm_discard", lambda proceed, stay=None: asked.append(proceed)
+    )
+    assert confirm_quit(window, lambda: went.append(1)) is True      # closing waits
+    assert window._sidebar_view_stack.get_visible_child_name() == "sections"  # shown what
+    assert asked and not went
+    asked[0]()                                # Discard
+    assert went == [1]
+    assert confirm_quit(window, lambda: went.append(2)) is False     # settled: closes
 
 
 def test_a_tab_selected_brings_the_connections_back(window):
@@ -195,10 +259,9 @@ def test_the_sections_follow_the_file(window):
     _sections(window)                         # shown again: read again (5 blocks)
 
 
-def test_new_host_rule_begins_a_block_in_the_window(window):
+def test_new_host_rule_asks_for_a_new_block(window):
     window.lookup_action("new-host-rule").activate(None)
     assert window.opened == [{"new_block": ("", ())}]
-    assert window._config_sections_view is None          # the view is not needed for it
 
 
 def test_without_the_background_service_the_connections_stay(window):

@@ -8,12 +8,14 @@ A dropdown at the top of the sidebar switches the whole window between them.
   block), each said to be a connection, a host pattern, a Match rule or
   options for all hosts; the content area shows the blocks and what OpenSSH
   resolves, in place of the tabs. It is Advanced Configuration
-  (``AdvancedConfigView``) to read: nothing is edited there. Its Edit button
-  opens the Advanced Configuration window, where the configuration is
-  changed.
+  (``AdvancedConfigView``): the same editor as the window, which is still
+  what opens over a dialog (the connection editor) that the main window
+  cannot be used behind.
 
 The tabs are hidden while the sections are shown, not closed: terminals keep
-running. Selecting or opening a tab brings the Connections view back.
+running. Selecting or opening a tab brings the Connections view back. The
+draft stays when the view is left: the dropdown marks unsaved changes, and
+quitting asks about them (``confirm_quit``).
 """
 
 from __future__ import annotations
@@ -70,13 +72,18 @@ def _ensure_sections_view(window):
         return None
     from .advanced_config_window import AdvancedConfigView
 
-    view = AdvancedConfigView(window, window.client)
+    def saved():
+        schedule = getattr(window, "_schedule_config_precedence_check", None)
+        if callable(schedule):
+            schedule()
+
+    view = AdvancedConfigView(window, window.client, on_saved=saved)
     view.set_vexpand(True)
     view.set_hexpand(True)
     view.set_visible(False)
     view.host_present = lambda: show_view(window, SECTIONS)
     view.host_close = lambda: show_view(window, CONNECTIONS)
-    view.host_edit = lambda line, file: _edit_in_window(window, line, file)
+    view.host_dirty = lambda dirty: _mark_unsaved(window, dirty)
     slot.append(view)
     column = view.sidebar_column
     column.set_vexpand(True)
@@ -85,10 +92,64 @@ def _ensure_sections_view(window):
     return view
 
 
-def _edit_in_window(window, line: int, file: str) -> None:
-    opener = getattr(window, "open_advanced_config", None)
-    if callable(opener):
-        opener(line=line, file=file)
+def _labels(unsaved: bool = False):
+    sections = _("Config Sections")
+    # The dot Advanced Configuration's own title carries for unsaved changes.
+    return [_("Connections"), sections + " •" if unsaved else sections]
+
+
+def _mark_unsaved(window, unsaved: bool) -> None:
+    """Say on the dropdown that the configuration has unsaved changes."""
+    switcher = getattr(window, "_sidebar_view_switcher", None)
+    if switcher is None:
+        return
+    model = switcher.get_model()
+    label = _labels(unsaved)[1]
+    if model.get_string(1) == label:
+        return
+    selected = switcher.get_selected()
+    # Renaming the entry is not choosing a view.
+    window._sidebar_switcher_syncing = True
+    try:
+        model.splice(1, 1, [label])
+        switcher.set_selected(selected)
+    finally:
+        window._sidebar_switcher_syncing = False
+
+
+def open_sections(window, *, host="", line=0, option="", file="", pin=False,
+                  new_block=None):
+    """Show the Config Sections view at a place of the configuration, as
+    ``MainWindow.open_advanced_config`` takes it. Returns the view, or None
+    when it cannot be shown here (the caller then opens the window)."""
+    view = _ensure_sections_view(window)
+    if view is None:
+        return None
+    show_view(window, SECTIONS)
+    if host or line or file:
+        view.go_to(host=host, line=line, option=option, file=file, pin=pin)
+    if new_block:
+        view.start_block(new_block[0], new_block[1])
+    return view
+
+
+def confirm_quit(window, proceed) -> bool:
+    """Ask about unsaved configuration changes before the window closes.
+
+    True when the question is up: closing waits, and *proceed* runs if the
+    changes are discarded. False when there is nothing to ask.
+    """
+    view = getattr(window, "_config_sections_view", None)
+    if view is None or not view.dirty or getattr(view, "_closing", False):
+        return False
+    show_view(window, SECTIONS)
+
+    def discard():
+        view._closing = True
+        proceed()
+
+    view._confirm_discard(discard)
+    return True
 
 
 def show_view(window, name: str) -> None:
@@ -130,7 +191,7 @@ def show_view(window, name: str) -> None:
     if overview is not None and view is not None:
         overview.set_visible(not sections)
     if sections and was != SECTIONS:
-        view.reload()
+        view.reload()                   # does nothing over unsaved changes
 
 
 def refresh_sections(window) -> None:
@@ -215,7 +276,7 @@ def sync_switcher_height(window) -> None:
 def build_sidebar_switcher(window, sidebar_box) -> None:
     """The dropdown at the top of the sidebar that picks the view."""
     _install_switcher_css()
-    dropdown = Gtk.DropDown.new_from_strings([_("Connections"), _("Config Sections")])
+    dropdown = Gtk.DropDown.new_from_strings(_labels())
     # Filled with the accent colour, as a suggested action is.
     dropdown.add_css_class("sidebar-view-switcher")
     dropdown.set_size_request(-1, _SWITCHER_HEIGHT)
@@ -224,10 +285,14 @@ def build_sidebar_switcher(window, sidebar_box) -> None:
     dropdown.set_margin_end(6)
     dropdown.set_margin_bottom(6)
     dropdown.set_tooltip_text(_("What the window shows"))
-    dropdown.connect(
-        "notify::selected",
-        lambda d, _p: show_view(window, _VIEWS[min(d.get_selected(), len(_VIEWS) - 1)]),
-    )
+
+    def chosen(d, _pspec):
+        index = d.get_selected()
+        if getattr(window, "_sidebar_switcher_syncing", False) or index >= len(_VIEWS):
+            return
+        show_view(window, _VIEWS[index])
+
+    dropdown.connect("notify::selected", chosen)
     window._sidebar_view_switcher = dropdown
     sidebar_box.append(dropdown)
 
@@ -254,7 +319,7 @@ def build_sidebar_view_stack(window, sidebar_box) -> None:
 
 
 def new_host_rule(window) -> None:
-    """Begin a new, unsaved Host block in the Advanced Configuration window."""
+    """Begin a new, unsaved Host block in Advanced Configuration."""
     opener = getattr(window, "open_advanced_config", None)
     if callable(opener):
         opener(new_block=("", ()))

@@ -2024,8 +2024,8 @@ class SshPilotApplication(Adw.Application):
     def on_advanced_ssh_config(self, action=None, param=None):
         """Open Advanced Configuration (the SSH configuration as blocks)."""
         win = self._action_window()
-        if win and hasattr(win, '_open_advanced_config'):
-            win._open_advanced_config()
+        if win and hasattr(win, 'open_advanced_config'):
+            win.open_advanced_config()
 
     def on_advanced_ssh_config_at(self, action=None, param=None):
         """Open Advanced Configuration at a place: ``app.advanced-ssh-config-at``.

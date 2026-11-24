@@ -6295,8 +6295,28 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         connection editor passes a pattern, or several names, typed where a
         connection's name goes.
 
-        Returns the window, or None when it could not be opened.
+        It is shown in the main window, as the Config Sections view
+        (``sidebar_views``), unless the call comes from a dialog that stays
+        up over it (*over* without *new_block*: the connection editor's
+        dialog closes once it has handed a new block over).
+
+        Returns the window or the view, or None when it could not be opened.
         """
+        window = None
+        if over is None or new_block:
+            try:
+                from .sidebar_views import open_sections
+                view = open_sections(
+                    self, host=host, line=line, option=option, file=file,
+                    pin=pin, new_block=new_block,
+                )
+            except Exception:
+                logger.debug("Could not show the Config Sections view", exc_info=True)
+                view = None
+            if view is not None:
+                if callable(on_saved):
+                    view.add_saved_listener(on_saved)
+                return view
         window = self._open_advanced_config()
         if window is None:
             return None
@@ -7881,6 +7901,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_close_request(self, window):
         """Handle window close request - MAIN ENTRY POINT"""
+        if not self._is_quitting:
+            # Unsaved changes of the SSH configuration (the Config Sections
+            # view) are asked about first; discarding closes again.
+            try:
+                from .sidebar_views import confirm_quit
+                if confirm_quit(self, self.close):
+                    return True
+            except Exception:
+                logger.debug("Could not ask about unsaved configuration", exc_info=True)
         if self._is_quitting:
             self._teardown_ssh_config_monitor()
             self._invalidate_api_window_callbacks()

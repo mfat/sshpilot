@@ -95,12 +95,20 @@ it; keeping them cancels the navigation.
 
 The dropdown at the top of the main sidebar switches the window between
 Connections and Config Sections (`sidebar_views`). Config Sections is
-Advanced Configuration to read: `AdvancedConfigView`, the same controller and
-widgets as the window (`AdvancedConfigBase`) with `embedded` and `read_only`
+Advanced Configuration in the main window: `AdvancedConfigView`, the same
+controller and widgets as the window (`AdvancedConfigBase`) with `embedded`
 set. Its list of blocks is shown in the main sidebar and its rules and results
 in the content area, in the tabs' place; the tabs are hidden, not closed, and
-selecting or opening one brings Connections back. Nothing is edited there:
-its Edit button calls `open_advanced_config` at the selected block, and the
-view reads the file again after a save in the window and whenever the
-connection list is rebuilt.
+selecting or opening one brings Connections back.
 
+`MainWindow.open_advanced_config` shows this view. It opens the window
+instead only when the call comes from a dialog that stays up over the main
+window (*over* without *new_block*: the connection editor), or when the view
+cannot be shown.
+
+The draft lives as long as the view: leaving it keeps unsaved changes, the
+dropdown entry carries a dot while there are some, and closing the main
+window asks about them first (`sidebar_views.confirm_quit`). The view reads
+the file again when the connection list is rebuilt and after a save in the
+window, but never over unsaved changes: a file changed under a draft is said
+at the save, as in the window.

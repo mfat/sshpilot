@@ -152,13 +152,6 @@ class OptionRow:
         remove.add_css_class("flat")
         remove.connect("clicked", lambda *_a: view.controller.delete_option(self.uid))
         self.box.append(remove)
-        if view.read_only:
-            # To read and copy: nothing here changes the line.
-            self.key.set_editable(False)
-            self.value.set_editable(False)
-            grip.set_visible(False)
-            remove.set_visible(False)
-            return
 
         source = Gtk.DragSource()
         source.set_actions(Gdk.DragAction.MOVE)
@@ -239,8 +232,7 @@ class BlockCard:
         #: Whether the card is dimmed on screen now.
         self.dimmed = False
         controller = view.controller
-        read_only = view.read_only
-        movable = block.kind != GLOBAL and not read_only
+        movable = block.kind != GLOBAL
 
         self.card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.card.add_css_class("card")
@@ -266,7 +258,6 @@ class BlockCard:
         grip = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
         grip.add_css_class("dim-label")
         grip.set_opacity(1.0 if movable else 0.3)
-        grip.set_visible(not read_only)
         header.append(grip)
         # Folding is the user's: nothing folds or opens a block on its own,
         # except a drag (the others fold while it lasts) and going to a
@@ -301,7 +292,6 @@ class BlockCard:
                 [_("Host patterns") if block.kind == HOST else _("Match criteria")],
             )
             self.patterns.connect("changed", self._on_patterns_changed)
-            self.patterns.set_editable(not read_only)
             header.append(self.patterns)
         self.status = pill()
         header.append(self.status)
@@ -319,7 +309,6 @@ class BlockCard:
         menu.add_css_class("flat")
         menu.set_tooltip_text(_("Block options"))
         menu.set_create_popup_func(self._build_block_menu)
-        menu.set_visible(not read_only)
         header.append(menu)
         self.card.append(header)
 
@@ -345,7 +334,6 @@ class BlockCard:
         presets = Gtk.MenuButton(label=_("Common Option"))
         presets.set_create_popup_func(self._build_preset_menu)
         self.footer.append(presets)
-        self.footer.set_visible(not read_only)
         self.rows_box.append(self.footer)
         #: Folded to its header line by the user (the arrow, Collapse All).
         self.folded = False
@@ -372,8 +360,6 @@ class BlockCard:
             source.connect("drag-end", lambda *_a: view.end_block_drag())
             source.connect("drag-cancel", lambda *_a: (view.end_block_drag(), False)[1])
             header.add_controller(source)       # the whole band, not only the grip
-        if read_only:
-            return
         target = Gtk.DropTarget.new(DragItem, Gdk.DragAction.MOVE)
         target.connect("motion", view.on_card_motion, self)
         target.connect("drop", self._on_drop)
@@ -468,7 +454,6 @@ class BlockCard:
             self.note.add_css_class("dim-label")
             self.note.set_hexpand(True)
             self.note.connect("changed", self._on_note_changed)
-            self.note.set_editable(not self.view.read_only)
             self._note_slot.append(self.note)
         elif not wanted and self.note is not None:
             self._note_slot.remove(self.note)
@@ -503,9 +488,6 @@ class RulesView(Gtk.Box):
     def __init__(self, controller) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.controller = controller
-        #: The cards are for reading: no field is editable and nothing
-        #: adds, moves or removes (the controller's ``read_only``).
-        self.read_only = bool(getattr(controller, "read_only", False))
         #: True while :meth:`sync` writes into fields: their "changed" is
         #: then the view's own doing, not typing.
         self.syncing = False
@@ -535,9 +517,7 @@ class RulesView(Gtk.Box):
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         header.append(spacer)
-        add_buttons = []
         self.add_global_button = Gtk.Button(label=_("Global"))
-        add_buttons.append(self.add_global_button)
         self.add_global_button.set_tooltip_text(_("Add options above every Host and Match line"))
         self.add_global_button.connect("clicked", lambda *_a: controller.add_block(GLOBAL))
         header.append(self.add_global_button)
@@ -546,12 +526,6 @@ class RulesView(Gtk.Box):
             button.set_tooltip_text(_("Add a block at the end"))
             button.connect("clicked", lambda *_a, k=kind: controller.add_block(k))
             header.append(button)
-            add_buttons.append(button)
-        #: Kept to hide: the Global button's own showing follows the draft.
-        self._add_buttons = add_buttons
-        if self.read_only:
-            for button in add_buttons:
-                button.set_visible(False)
         self.append(header)
         self.append(Gtk.Separator())
         self.scroller = Gtk.ScrolledWindow()

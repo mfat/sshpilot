@@ -142,9 +142,6 @@ class AdvancedConfigBase:
     #: True when shown inside another window (a tab): no title buttons, and
     #: the list of blocks is shown by the host, not beside the rules.
     embedded = False
-    #: True when nothing can be edited: the blocks and what OpenSSH resolves
-    #: are shown, and changes are made in the window (``host_edit``).
-    read_only = False
 
     def __init__(
         self,
@@ -270,18 +267,6 @@ class AdvancedConfigBase:
         self.save_button.add_css_class("suggested-action")
         self.save_button.connect("clicked", lambda *_a: self.save())
         header.pack_end(self.save_button)
-        if self.read_only:
-            # Nothing to undo or save here: one button leads to where the
-            # configuration is edited.
-            for button in (self.undo_button, self.redo_button, self.save_button):
-                button.set_visible(False)
-            self.edit_button = Gtk.Button(label=_("Edit"))
-            self.edit_button.add_css_class("suggested-action")
-            self.edit_button.set_tooltip_text(
-                _("Edit the configuration in the Advanced Configuration window")
-            )
-            self.edit_button.connect("clicked", lambda *_a: self._host_edit())
-            header.pack_end(self.edit_button)
         menu = Gio.Menu()
         menu.append(_("Reload from Disk"), "advcfg.reload")
         menu.append(_("Copy Configuration"), "advcfg.copy")
@@ -907,6 +892,8 @@ class AdvancedConfigBase:
         def show() -> bool:
             # Once laid out: a window just opened has no sizes yet. A folded
             # block opens: it is what the caller wanted shown.
+            if self.selected_uid != block.uid:
+                return False        # something else was selected meanwhile
             self.rules.set_folded(block.uid, False)
             self.rules.scroll_to(block.uid)
             self.rules.reveal(uid)
@@ -982,6 +969,9 @@ class AdvancedConfigBase:
     def _host_close_refused(self) -> None:
         """The user kept the unsaved changes: nothing closes."""
 
+    def _host_dirty_changed(self) -> None:
+        """The draft became unsaved, or saved: for a host that shows it."""
+
     # -- banners ------------------------------------------------------------
 
     def _show_file_banner(
@@ -1035,6 +1025,7 @@ class AdvancedConfigBase:
         self.redo_button.set_sensitive(self.editor.can_redo and not busy)
         self.save_button.set_sensitive(self.dirty and self._writable and not busy)
         self._title.set_title(_("Advanced Configuration") + (" •" if self.dirty else ""))
+        self._host_dirty_changed()
         # One editor at a time: while text typed on the Text page waits to
         # be applied, the rules are not edited beside it (the two would
         # overwrite each other).
@@ -1153,8 +1144,6 @@ class AdvancedConfigBase:
 
     def move_selected(self, delta: int) -> bool:
         """Alt+Up / Alt+Down: move the selected block one place."""
-        if self.read_only:
-            return True
         if self.selected_uid is not None and not self.results.raw_pending:
             self.move_block_by(self.selected_uid, delta)
         return True
@@ -1758,35 +1747,37 @@ class AdvancedConfigWindow(AdvancedConfigBase, Adw.Window):
 
 
 class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
-    """Advanced Configuration as a widget of the main window, to read.
+    """Advanced Configuration as a widget of the main window.
 
-    It shows the blocks and what OpenSSH resolves, and edits nothing: the
-    window is where the configuration is changed. The host puts
-    :attr:`sidebar_column` (the list of blocks) where it lists things,
-    shows this widget, and sets:
+    The same editor as the window. The host puts :attr:`sidebar_column`
+    (the list of blocks) where it lists things, shows this widget, and sets:
 
     * ``host_present``: bring the widget to the front (``present``);
-    * ``host_edit``: open the window, called with the saved line of the
-      selected block (0: none) and the file on screen;
+    * ``host_dirty``: called with True when the draft has unsaved changes
+      and False when it has none, each time that changes;
     * ``host_close``: stop showing it.
 
-    :meth:`reload` reads the configuration again: the host calls it when
-    the file may have changed.
+    The draft lives as long as the widget: the host may hide it with
+    changes unsaved and show it again. :meth:`reload` reads the
+    configuration again when that loses nothing; the host calls it when the
+    file may have changed.
     """
 
     embedded = True
-    read_only = True
 
     def _host_setup(self, parent) -> None:
         self.host_present = None
-        self.host_edit = None
+        self.host_dirty = None
         self.host_close = None
         self.host_close_refused = None
+        self._dirty_told = False
 
-    def _host_edit(self) -> None:
-        if not callable(self.host_edit):
-            return
-        self.host_edit(self._block_line(self.selected_uid), self._file)
+    def _host_dirty_changed(self) -> None:
+        dirty = bool(self.dirty)
+        if dirty != self._dirty_told:
+            self._dirty_told = dirty
+            if callable(self.host_dirty):
+                self.host_dirty(dirty)
 
     def _block_line(self, uid) -> int:
         """A line of the text that *uid*'s block owns: its header, or its
@@ -1804,8 +1795,9 @@ class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
 
     def reload(self) -> None:
         """Read the configuration again and show the block that was
-        selected, if it is still there."""
-        if not self._loaded:
+        selected, if it is still there. Not while there is a draft to
+        lose: a file changed under unsaved changes is said at the save."""
+        if not self._loaded or self._saving or self.dirty or self.results.raw_pending:
             return
         block = self.editor.find_block(self.selected_uid)
         if block is not None and self._pending_target is None:
