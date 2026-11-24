@@ -1,15 +1,15 @@
 """The authentication section's model: Host-block lines in, lines out.
 
 Both forms are read: the order line and the per-method switches. A row is
-checked when the order lists the method; switches, the block's own or
-inherited, never decide a checkbox. A listed method the block switches off
-keeps its place and reads as disabled.
+checked when OpenSSH tries the method here: the order lists it and its
+switch, the block's own or inherited, is not off. A listed method that is
+switched off shows unchecked and keeps its place in the line.
 
-Saving without an edit writes the block back exactly as authored. The
-checkbox and the moves edit only the order line; a method's own setting
-(Inherit / Enable / Disable) edits only that method's line. Like any other
-field, both edit this Host block only: an earlier block or Settings
-deciding a value never blocks or changes the edit.
+Saving without an edit writes the block back exactly as authored. Moves and
+unchecking edit only the order line; checking also turns the method's
+switch on when it is off. Like any other field, edits change this Host
+block only: an earlier block or Settings deciding a value never blocks or
+changes the edit.
 """
 
 import pytest
@@ -19,7 +19,7 @@ from sshpilot.connection_dialog_auth import (
     AuthPolicy,
     join_extra,
     split_policy_lines,
-    switch_caption,
+    restriction_caption,
 )
 
 SSH_G = {  # what `ssh -G` prints on Ubuntu with no order configured
@@ -41,17 +41,21 @@ def _policy(*lines, resolved=SSH_G, earlier=None):
 
 # -- reading: what the file says, nothing guessed ------------------------------
 
-def test_inherited_switches_do_not_decide_a_checkbox():
-    # Ubuntu turns GSSAPI on and OpenSSH leaves host-based off; neither
-    # changes what this block's order lists.
+def test_an_inherited_switch_that_is_off_unchecks_a_listed_method():
+    # Ubuntu turns GSSAPI on and OpenSSH leaves host-based off: host-based
+    # is listed here but not tried, so it is unchecked.
     policy = _policy(USER_LINE)
-    assert policy.checked() == ["gssapi-with-mic", "hostbased", "publickey"]
+    assert policy.checked() == ["gssapi-with-mic", "publickey"]
+    assert policy.shown_checked("hostbased") is False
     assert policy.shown_checked("password") is False
+    assert policy.order == ["gssapi-with-mic", "hostbased", "publickey"]
 
 
-def test_a_block_without_lines_checks_every_method_in_openssh_order():
+def test_a_block_without_lines_checks_what_openssh_tries():
     policy = _policy()
-    assert policy.checked() == list(DEFAULT_ORDER)
+    assert policy.checked() == policy.will_try() == [
+        "gssapi-with-mic", "publickey", "keyboard-interactive", "password",
+    ]
     assert policy.to_lines() == []
 
 
@@ -65,7 +69,8 @@ def test_an_inherited_order_is_shown_when_the_block_sets_none():
 
 def test_a_listed_method_the_block_switches_off_keeps_its_place():
     policy = _policy("PreferredAuthentications password,publickey", "PubkeyAuthentication no")
-    assert policy.checked() == ["password", "publickey"]
+    assert policy.checked() == ["password"]
+    assert policy.order == ["password", "publickey"]
     assert policy.disabled_here("publickey")
     assert not policy.disabled_here("password")
     assert policy.will_try() == ["password"]
@@ -118,8 +123,8 @@ def test_checking_a_method_adds_it_to_the_end_of_the_line():
 
 def test_unchecking_a_method_takes_it_out_of_the_line():
     policy = _policy(USER_LINE)
-    assert policy.set_tried("hostbased", False)
-    assert policy.to_lines() == ["PreferredAuthentications gssapi-with-mic,publickey"]
+    assert policy.set_tried("gssapi-with-mic", False)
+    assert policy.to_lines() == ["PreferredAuthentications hostbased,publickey"]
 
 
 def test_unchecking_without_an_own_order_writes_the_rest_of_it():
@@ -189,8 +194,8 @@ def test_undoing_an_edit_writes_the_authored_lines_again():
 
     lines = ("preferredauthentications  publickey", "PubkeyAuthentication yes")
     policy = _policy(*lines)
-    policy.set_tried("hostbased", True)
-    policy.set_tried("hostbased", False)
+    policy.set_tried("password", True)
+    policy.set_tried("password", False)
     assert policy.to_lines() == [line.strip() for line in lines]
 
 
@@ -233,26 +238,39 @@ def test_reordering_keeps_an_unchecked_methods_off_line():
     assert "password" not in policy.will_try()
 
 
-def test_moving_a_method_keeps_its_own_setting():
-    policy = _policy("PreferredAuthentications password,publickey", "PubkeyAuthentication no")
-    assert policy.move("publickey", 0)
+def test_moving_a_method_keeps_the_other_methods_settings():
+    policy = _policy("PreferredAuthentications password,publickey,keyboard-interactive",
+                     "PubkeyAuthentication no", "PasswordAuthentication yes")
+    assert policy.move("keyboard-interactive", 0)
     assert policy.to_lines() == [
-        "PreferredAuthentications publickey,password", "PubkeyAuthentication no",
+        "PreferredAuthentications keyboard-interactive,publickey,password",
+        "PubkeyAuthentication no", "PasswordAuthentication yes",
     ]
     assert policy.disabled_here("publickey")
 
 
-def test_checking_and_unchecking_never_touch_a_per_method_line():
+def test_unchecking_never_touches_a_per_method_line():
+    policy = _policy("PreferredAuthentications password,publickey",
+                     "PubkeyAuthentication yes", "HostbasedAuthentication yes")
+    assert policy.set_tried("publickey", False)
+    assert policy.to_lines() == [
+        "PreferredAuthentications password",
+        "HostbasedAuthentication yes",
+        "PubkeyAuthentication yes",
+    ]
+    assert policy.will_try() == ["password"]
+
+
+def test_checking_touches_only_its_own_methods_line():
     policy = _policy("PreferredAuthentications password", "PubkeyAuthentication no",
                      "HostbasedAuthentication yes")
     assert policy.set_tried("publickey", True)
-    assert policy.set_tried("password", False)
     assert policy.to_lines() == [
-        "PreferredAuthentications publickey",
+        "PreferredAuthentications password,publickey",
         "HostbasedAuthentication yes",
-        "PubkeyAuthentication no",
+        "PubkeyAuthentication yes",  # no fallback known: on is written
     ]
-    assert policy.will_try() == []
+    assert policy.will_try() == ["password", "publickey"]
 
 
 def test_a_methods_setting_never_touches_the_order():
@@ -261,7 +279,7 @@ def test_a_methods_setting_never_touches_the_order():
     assert policy.to_lines() == [
         "PreferredAuthentications password,publickey", "PasswordAuthentication no",
     ]
-    assert policy.checked() == ["password", "publickey"]
+    assert policy.checked() == ["publickey"]
     assert not policy.edited  # the order line is still the authored one
     assert policy.will_try() == ["publickey"]
 
@@ -321,13 +339,13 @@ def test_both_spellings_of_keyboard_interactive_are_one_setting():
 
 
 def test_undoing_an_order_edit_keeps_a_setting_changed_meanwhile():
-    policy = _policy("PreferredAuthentications publickey,password")
+    policy = _policy("PreferredAuthentications publickey,password,keyboard-interactive")
     assert policy.set_tried("password", False)
-    assert policy.set_switch("publickey", False)
+    assert policy.set_switch("keyboard-interactive", False)
     assert policy.set_tried("password", True)
-    assert not policy.edited
     assert policy.to_lines() == [
-        "PreferredAuthentications publickey,password", "PubkeyAuthentication no",
+        "PreferredAuthentications publickey,keyboard-interactive,password",
+        "KbdInteractiveAuthentication no",
     ]
 
 
@@ -337,8 +355,15 @@ def test_a_setting_a_linked_profile_owns_cannot_be_changed_here():
     assert not policy.set_switch("publickey", True)
     assert not policy.set_switch("publickey", None)
     assert policy.to_lines() == ["PreferredAuthentications password", "PubkeyAuthentication no"]
+    # Checking it would turn it on, which the profile decides.
+    assert not policy.set_tried("publickey", True)
     # The order is the connection's own unless the profile sets that too.
+    policy = _policy("PreferredAuthentications password", "PubkeyAuthentication yes")
+    policy.locked_methods = {"publickey"}
     assert policy.set_tried("publickey", True)
+    assert policy.to_lines() == [
+        "PreferredAuthentications password,publickey", "PubkeyAuthentication yes",
+    ]
 
 
 # -- the block is edited the same way whatever wins ---------------------------
@@ -393,7 +418,7 @@ def test_will_try_counts_inherited_switches():
 def test_a_host_not_saved_yet_shows_what_a_new_block_inherits():
     policy = AuthPolicy.from_lines([])                       # ssh -G never answers
     policy.set_fallback({"pubkeyauthentication": "no"})
-    assert policy.checked() == list(DEFAULT_ORDER)
+    assert policy.checked() == ["keyboard-interactive", "password"]
     assert policy.will_try() == ["keyboard-interactive", "password"]
 
 
@@ -440,8 +465,9 @@ def _ssh_g(path):
 @pytest.mark.parametrize("edit, expected", [
     # An edit writes one order line; the copy OpenSSH ignored must not end
     # up above it (the writer keeps unchanged lines where they were).
-    (lambda p: p.move("keyboard-interactive", 0), "keyboard-interactive,password,publickey"),
-    (lambda p: p.set_tried("publickey", False), "password,keyboard-interactive"),
+    # Keys are switched off here, so they are not moved over.
+    (lambda p: p.move("keyboard-interactive", 0), "keyboard-interactive,publickey,password"),
+    (lambda p: p.set_tried("password", False), "publickey,keyboard-interactive"),
     (lambda p: p.reset_order(), None),
     (lambda p: True, "password,publickey,keyboard-interactive"),  # no auth edit
 ])
@@ -522,7 +548,8 @@ def test_enabling_kerberos_reaches_openssh_and_reopens(tmp_path):
     resolved, reopened, text = _saved(
         tmp_path,
         "Host demo\n    HostName demo.example\n\nHost *\n    GSSAPIAuthentication no\n",
-        lambda p: p.set_switch("gssapi-with-mic", True),
+        lambda p: (p.set_fallback({"gssapiauthentication": "no"}),
+                   p.set_tried("gssapi-with-mic", True)),
     )
     assert resolved["gssapiauthentication"] == "yes"
     assert reopened.own_switch("gssapi-with-mic") is True
@@ -532,8 +559,10 @@ def test_enabling_kerberos_reaches_openssh_and_reopens(tmp_path):
 
 def test_password_is_enabled_over_a_later_wildcard_and_moved_first(tmp_path):
     def edit(policy):
-        policy.set_fallback({})
-        assert policy.set_switch("password", True)
+        # What the host inherits: the wildcard's "no".
+        policy.set_fallback({"passwordauthentication": "no"})
+        assert policy.shown_checked("password") is False
+        assert policy.set_tried("password", True)
         assert policy.move("password", 0)
 
     resolved, reopened, _text = _saved(
@@ -542,8 +571,14 @@ def test_password_is_enabled_over_a_later_wildcard_and_moved_first(tmp_path):
         edit,
     )
     assert resolved["passwordauthentication"] == "yes"
-    assert resolved["preferredauthentications"].startswith("password,")
+    # Kerberos and host-based are off, so they stay put and are not tried:
+    # password is the first method OpenSSH tries.
+    assert resolved["preferredauthentications"] == (
+        "gssapi-with-mic,hostbased,password,publickey,keyboard-interactive"
+    )
+    assert resolved["gssapiauthentication"] == resolved["hostbasedauthentication"] == "no"
     assert reopened.own_switch("password") is True
+    reopened.set_inherited(resolved)
     assert reopened.checked()[0] == "password"
 
 
@@ -568,51 +603,95 @@ def test_conflicting_duplicate_lines_become_one_setting(tmp_path, choice, expect
     assert reopened.order == ["publickey", "password"]
 
 
-def _caption(lines, method, resolved=None):
+
+# -- checked means tried --------------------------------------------------------
+
+def _host(lines, resolved=None):
     policy = AuthPolicy.from_lines(lines)
     policy.set_inherited(resolved or SSH_G)
-    return switch_caption(
-        policy.own_switch(method), policy.restriction(method),
-        policy.shown_checked(method), False,
-    )
+    policy.set_fallback(SSH_G)
+    return policy
 
 
-@pytest.mark.parametrize("lines, method, caption", [
-    # No line of its own.
-    (["PreferredAuthentications publickey,password"], "publickey", "Not set"),
-    # Enabled and listed: it is tried.
-    (["PreferredAuthentications publickey,password", "PubkeyAuthentication yes"],
-     "publickey", "Enabled for this host"),
-    # Enabled but left out of the order: ssh never offers it.
-    (["PreferredAuthentications password", "PubkeyAuthentication yes"],
-     "publickey", "Enabled for this host, but not tried (unticked)"),
-    (["PreferredAuthentications password", "PubkeyAuthentication host-bound"],
-     "publickey", "Enabled for this host (host-bound), but not tried (unticked)"),
-    (["PreferredAuthentications publickey,password", "PubkeyAuthentication host-bound"],
-     "publickey", "Enabled for this host (host-bound)"),
-    # Listed but switched off: it keeps its place and is skipped.
-    (["PreferredAuthentications publickey,password", "PubkeyAuthentication no"],
-     "publickey", "Disabled for this host, so it is skipped"),
-    (["PreferredAuthentications password", "PubkeyAuthentication no"],
-     "publickey", "Disabled for this host"),
-])
-def test_a_method_caption_reads_its_switch_with_its_tick(lines, method, caption):
-    resolved = dict(SSH_G, preferredauthentications=parse_order_line(lines))
-    assert _caption(lines, method, resolved) == caption
+def test_a_listed_method_switched_off_here_is_unchecked_and_keeps_its_place():
+    policy = _host(["PreferredAuthentications publickey,password",
+                    "PubkeyAuthentication no"])
+    assert policy.shown_checked("publickey") is False
+    assert policy.checked() == ["password"]
+    assert policy.order == ["publickey", "password"]
+    assert policy.will_try() == ["password"]
 
 
-def parse_order_line(lines):
-    return next(line.split(None, 1)[1] for line in lines
-                if line.startswith("PreferredAuthentications"))
+def test_a_method_off_by_default_is_unchecked():
+    # Nothing configured: OpenSSH lists Kerberos and host-based first but
+    # leaves both off, so they are not tried.
+    policy = _host([], dict(SSH_G, gssapiauthentication="no"))
+    assert policy.shown_checked("gssapi-with-mic") is False
+    assert policy.shown_checked("hostbased") is False
+    assert policy.checked() == policy.will_try()
 
 
-def test_a_caption_says_nothing_about_the_tick_while_the_order_is_unknown():
-    assert switch_caption(True, "", None, False) == "Enabled for this host"
-    assert switch_caption(False, "", None, True) == "Disabled in this profile"
+def test_checking_a_method_switched_off_here_drops_the_no_line():
+    policy = _host(["PreferredAuthentications publickey,password",
+                    "PubkeyAuthentication no"])
+    assert policy.set_tried("publickey", True)
+    assert policy.to_lines() == ["PreferredAuthentications publickey,password"]
+    assert policy.checked() == ["publickey", "password"]
 
 
-def test_a_profile_caption_speaks_of_the_profile():
-    assert (switch_caption(True, "", False, True)
-            == "Enabled in this profile, but not tried (unticked)")
-    assert (switch_caption(False, "", True, True)
-            == "Disabled in this profile, so it is skipped")
+def test_checking_a_method_off_by_inheritance_writes_yes_at_its_place():
+    policy = _host([], dict(SSH_G, hostbasedauthentication="no"))
+    assert policy.set_tried("hostbased", True)
+    # It was listed already, so the order is left to OpenSSH.
+    assert policy.to_lines() == ["HostbasedAuthentication yes"]
+    assert policy.shown_checked("hostbased") is True
+
+
+def test_checking_an_unlisted_method_off_here_lists_it_and_turns_it_on():
+    policy = _host(["PreferredAuthentications publickey",
+                    "PasswordAuthentication no"])
+    assert policy.set_tried("password", True)
+    assert policy.to_lines() == ["PreferredAuthentications publickey,password"]
+    assert policy.will_try() == ["publickey", "password"]
+
+
+def test_unchecking_writes_no_switch_line():
+    policy = _host(["PreferredAuthentications publickey,password"])
+    assert policy.set_tried("password", False)
+    assert policy.to_lines() == ["PreferredAuthentications publickey"]
+
+
+def test_unchecking_a_method_only_its_own_yes_turns_on_drops_that_line():
+    policy = _host(["GSSAPIAuthentication yes"], dict(SSH_G, gssapiauthentication="no"))
+    policy.set_fallback(dict(SSH_G, gssapiauthentication="no"))
+    assert policy.shown_checked("gssapi-with-mic") is True
+    assert policy.set_tried("gssapi-with-mic", False)
+    assert policy.to_lines() == []
+    assert "gssapi-with-mic" not in policy.will_try()
+
+
+def test_moving_skips_a_listed_method_that_is_switched_off():
+    policy = _host(["PreferredAuthentications publickey,password,keyboard-interactive",
+                    "PasswordAuthentication no"])
+    assert policy.checked() == ["publickey", "keyboard-interactive"]
+    assert policy.move("keyboard-interactive", 0)
+    assert policy.order == ["keyboard-interactive", "password", "publickey"]
+
+
+def test_a_switch_a_profile_sets_off_cannot_be_checked_here():
+    policy = _host(["PubkeyAuthentication no"])
+    policy.locked_methods = {"publickey"}
+    assert not policy.can_set_tried("publickey")
+    assert not policy.set_tried("publickey", True)
+
+
+def test_a_listed_method_is_unknown_until_its_switch_arrives():
+    policy = AuthPolicy.from_lines(["PreferredAuthentications publickey,password"])
+    assert policy.shown_checked("publickey") is None
+    assert not policy.set_tried("publickey", False)
+
+
+def test_only_a_restricted_switch_gets_a_caption():
+    assert restriction_caption("", False) == ""
+    assert restriction_caption("host-bound", False) == "Enabled for this host (host-bound)"
+    assert restriction_caption("unbound", True) == "Enabled in this profile (unbound)"

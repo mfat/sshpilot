@@ -5,9 +5,11 @@ This is the same rules as a grid: every way a block can already be written,
 crossed with every edit the section offers, in three positions relative to a
 ``Host *`` that has its own authentication lines. For each cell:
 
-* the edit changes only its own line: an order edit leaves every per-method
-  line as written, a method's setting leaves the order and the other
-  methods alone, and neither touches keys, certificates or agent options;
+* the edit changes only its own lines: a move or a reset leaves every
+  per-method line as written; checking or unchecking a method may change
+  that method's own line and no other; nothing touches keys, certificates
+  or agent options;
+* a checked method is tried here, an unchecked one is not;
 * the wildcard block is never touched;
 * the edited block keeps the user's choice even when an earlier block wins;
 * real ``ssh -G`` resolves what first-wins over the three blocks predicts;
@@ -94,11 +96,19 @@ for _method in METHODS:
         EDITS[f"{'check' if _value else 'uncheck'}-{_method}"] = (
             lambda p, m=_method, v=_value: p.set_tried(m, v)
         )
-    for _name, _value in (("inherit", None), ("enable", True), ("disable", False)):
-        EDITS[f"{_name}-{_method}"] = lambda p, m=_method, v=_value: p.set_switch(m, v)
 
-ORDER_EDITS = [n for n in EDITS if n.startswith(("move-", "check-", "uncheck-", "reset-"))]
-SWITCH_EDITS = [n for n in EDITS if n.startswith(("inherit-", "enable-", "disable-"))]
+ORDER_EDITS = [n for n in EDITS if n.startswith(("move-", "reset-"))]
+CHECK_EDITS = [n for n in EDITS if n.startswith("check-")]
+UNCHECK_EDITS = [n for n in EDITS if n.startswith("uncheck-")]
+
+# A method's own line, which checking writes through: not offered by the
+# section on its own, but every way of setting it must hold.
+SWITCH_EDITS = {}
+for _method in METHODS:
+    for _name, _value in (("inherit", None), ("enable", True), ("disable", False)):
+        SWITCH_EDITS[f"{_name}-{_method}"] = (
+            lambda p, m=_method, v=_value: p.set_switch(m, v)
+        )
 
 # What a default installation answers when nothing is configured.
 DEFAULTS = {
@@ -172,11 +182,57 @@ def test_an_order_edit_leaves_every_per_method_line_as_written(start, edit):
 
 
 @pytest.mark.parametrize("start", sorted(STARTS))
+@pytest.mark.parametrize("edit", CHECK_EDITS)
+def test_checking_changes_only_its_own_methods_line_and_it_is_tried(start, edit):
+    method = edit.split("-", 1)[1]
+    policy = _loaded(start)
+    changed = EDITS[edit](policy)
+    lines = policy.to_lines()
+    for other in METHODS:
+        if other != method:
+            assert _switch_lines(lines, other) == _switch_lines(STARTS[start], other)
+    assert policy.shown_checked(method) is True
+    assert method in policy.will_try()
+    if not changed:
+        assert sorted(lines) == sorted(STARTS[start]), "an edit that did nothing changed the lines"
+    assert len(_order_lines(lines)) <= max(1, len(_order_lines(STARTS[start])))
+
+
+@pytest.mark.parametrize("start", sorted(STARTS))
+@pytest.mark.parametrize("method", METHODS)
+def test_checking_then_unchecking_writes_the_authored_lines(start, method):
+    policy = _loaded(start)
+    if not policy.set_tried(method, True):
+        return
+    if policy.set_tried(method, False):
+        assert sorted(policy.to_lines()) == sorted(STARTS[start])
+
+
+@pytest.mark.parametrize("start", sorted(STARTS))
+@pytest.mark.parametrize("method", METHODS)
+def test_unchecking_means_not_tried(start, method):
+    policy = _loaded(start)
+    if policy.set_tried(method, False):
+        assert policy.shown_checked(method) is False
+        assert method not in policy.will_try()
+        lines = policy.to_lines()
+        for other in METHODS:
+            if other != method:
+                assert _switch_lines(lines, other) == _switch_lines(STARTS[start], other)
+        # Never an "off" line: at most this block's own "yes" goes.
+        own = _switch_lines(lines, method)
+        assert own == _switch_lines(STARTS[start], method) or own == []
+    else:
+        # Refused only when nothing else would be tried.
+        assert policy.shown_checked(method) is False or policy.checked() == [method]
+
+
+@pytest.mark.parametrize("start", sorted(STARTS))
 @pytest.mark.parametrize("edit", SWITCH_EDITS)
 def test_a_methods_setting_leaves_the_order_and_the_other_methods(start, edit):
     method = edit.split("-", 1)[1]
     policy = _loaded(start)
-    changed = EDITS[edit](policy)
+    changed = SWITCH_EDITS[edit](policy)
     lines = policy.to_lines()
     assert _order_lines(lines) == _order_lines(STARTS[start])
     for other in METHODS:
@@ -240,11 +296,11 @@ SAVED_EDITS = [
     "check-keyboard-interactive",
     "uncheck-publickey",
     "reset-order",
-    "enable-password",
-    "disable-publickey",
-    "inherit-password",
-    "disable-keyboard-interactive",
-    "inherit-keyboard-interactive",
+    "check-gssapi-with-mic",
+    "check-hostbased",
+    "check-password",
+    "check-publickey",
+    "uncheck-password",
 ]
 
 

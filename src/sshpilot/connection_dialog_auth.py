@@ -7,17 +7,21 @@ One set of settings, no modes. Both forms a Host block may use are read:
   ``KbdInteractiveAuthentication``, ``GSSAPIAuthentication``,
   ``HostbasedAuthentication`` -- per-method switches.
 
-The two are edited independently, each by its own control:
+OpenSSH tries a method only when the order lists it *and* its switch is
+not off, so one checkbox per row stands for both: checked means tried.
 
-* a row's checkbox lists the method in the order or leaves it out. Listed
-  means "OpenSSH may try this, at this place, if it is enabled and the
-  server offers it". The checkbox never touches a per-method line;
-* a row's menu sets the method's own line in this block: Not set (no line),
-  Enable (``yes``) or Disable (``no``). It never touches the order, so a
-  disabled method keeps its place and the row says it is disabled.
+* A row is checked when the order lists the method and its switch, this
+  block's own line or else what the block inherits (``ssh -G``, OpenSSH's
+  built-in value), is not off. A listed method that is switched off shows
+  unchecked, and keeps its place in the order line.
+* Checking adds the method to the order if it is missing and, when its
+  switch is off, turns it on: the block's own ``no`` line is removed if what
+  remains is on, else the block gets a ``yes`` line.
+* Unchecking takes the method out of the order, or, when only the block's
+  own ``yes`` line turns it on, removes that line. It never writes ``no``.
 
-Inherited or built-in switches never check or uncheck a row, so the dialog
-does not guess what OpenSSH will do; the header says what will be tried.
+The header says what will be tried, including what an earlier block or
+Settings decide.
 
 Saving without an edit writes the lines back exactly as authored. An edit
 of the order writes the checked methods as one ``PreferredAuthentications``
@@ -166,6 +170,9 @@ class AuthPolicy:
     # methods checked then, recorded by the first edit of the order so
     # returning to the same checked methods restores the authored line.
     _before_edit: Optional[tuple] = None
+    # Switches checking turned on, as they were before (method -> its
+    # value, authored text and ignored copies), so unchecking undoes them.
+    _switch_before: Dict[str, tuple] = field(default_factory=dict)
 
     # -- loading -------------------------------------------------------------
 
@@ -271,7 +278,8 @@ class AuthPolicy:
         return [m for m in METHODS if m not in shown]
 
     def _is_checked(self, method: str) -> bool:
-        return self.in_order(method)
+        """Tried: listed, and its switch is not off."""
+        return self.in_order(method) and self.shown_switch(method) is not False
 
     def own_switch(self, method: str) -> Optional[bool]:
         """This block's own line for *method*: ``None`` when it has none."""
@@ -292,6 +300,12 @@ class AuthPolicy:
     def disabled_here(self, method: str) -> bool:
         """Listed in the order, but this block's own line switches it off."""
         return self.in_order(method) and self.switches.get(method) is False
+
+    def _switch_known(self, method: str) -> bool:
+        """The switch in force is known: set here, inherited, or a profile
+        (nothing above it: a switch it does not set is not off)."""
+        return (self.standalone or self.switch_is_set(method)
+                or self.shown_switch(method) is not None)
 
     def _first_listed(self) -> List[str]:
         """The order with a repeated known method kept at its first place.
@@ -319,12 +333,15 @@ class AuthPolicy:
         return checked + [m for m in METHODS if m not in checked]
 
     def shown_checked(self, method: str) -> Optional[bool]:
-        """The row's checkbox; ``None`` while the order is not known.
+        """The row's checkbox: tried here. ``None`` while not known.
 
-        Checked when the order lists *method*. Switches, the block's own
-        or inherited, do not count: see :meth:`own_switch`.
+        Checked when the order lists *method* and its switch is not off.
+        Unknown while the order is, or while a listed method's inherited
+        switch has not arrived from OpenSSH.
         """
         if not self.order_known():
+            return None
+        if self.in_order(method) and not self._switch_known(method):
             return None
         return self._is_checked(method)
 
@@ -339,13 +356,7 @@ class AuthPolicy:
         """This block's value, else the inherited one; ``None`` when unknown."""
         if self.switch_is_set(method):
             return self.switches[method]
-        if method in self._loaded:
-            # ssh -G answered with the block's own line: what remains once
-            # an edit dropped it comes from the fallback, when known.
-            return self._fallback_switch(method)
-        if self._uses_fallback(method):
-            return self._fallback_switch(method)
-        return self.inherited_switches.get(method)
+        return self._inherited_switch(method)
 
     def _decided_elsewhere(self, keyword: str) -> Optional[str]:
         """A forced (command line) or earlier-block value, forced first."""
@@ -402,9 +413,9 @@ class AuthPolicy:
             "order" in self._unknown_after_reset,
             self.checked(),
         )
-        self.order = [
-            m for m in self._first_listed() if m not in METHODS or self._is_checked(m)
-        ]
+        # A listed method switched off stays listed: checking it again only
+        # turns it on, at its place.
+        self.order = list(self._first_listed())
         # The block gets this one order line. Later copies OpenSSH ignores
         # today must go: the writer keeps an unchanged line where it was
         # and adds the new one at the end, which would put the ignored
@@ -431,27 +442,90 @@ class AuthPolicy:
     def edited(self) -> bool:
         return self._before_edit is not None
 
-    def set_tried(self, method: str, value: bool) -> bool:
-        """The row's checkbox: list *method* in the order or leave it out.
+    def can_set_tried(self, method: str) -> bool:
+        """Checking *method* would not need a switch a linked profile sets."""
+        return method in METHODS and not (
+            method in self.locked_methods and self.shown_switch(method) is False
+        )
 
-        Checking adds it at the end; unchecking takes it out. Only the order
-        line changes: the method's own setting is :meth:`set_switch`'s. The
-        last checked method cannot be unchecked: an empty order is not valid.
+    def set_tried(self, method: str, value: bool) -> bool:
+        """The row's checkbox: whether OpenSSH tries *method* here.
+
+        Checking lists it at the end of the order if it is missing and turns
+        its switch on if it is off (:meth:`_switch_on`). Unchecking undoes a
+        switch checking turned on, else drops this block's own ``yes`` when
+        what remains is off, else takes the method out of the order; it never
+        writes a ``no`` line. The last checked method cannot be unchecked:
+        nothing would be tried.
         """
-        if method not in METHODS:
+        if method not in METHODS or not self.can_edit():
             return False
-        if not self.can_edit() or self._is_checked(method) == bool(value):
+        if self.shown_checked(method) is None or self._is_checked(method) == bool(value):
             return False
-        if not value and self.checked() == [method]:
-            return False
-        self._begin_edit()
-        if value:
-            if method not in self.order:
-                self.order.append(method)
-        else:
+        if not value:
+            if self.checked() == [method]:
+                return False
+            if method in self._switch_before:
+                # Checking turned it on: unchecking puts the line back.
+                self._restore_switch(method)
+                if not self._is_checked(method):
+                    if self.edited and method in self.order:
+                        # Checking may have listed it too: take that back
+                        # (back to the methods checked before restores the
+                        # authored order line).
+                        self.order = [m for m in self.order if m != method]
+                        self._end_edit()
+                    return True
+            if (self.own_switch(method) is True
+                    and self._inherited_switch(method) is False
+                    and self.can_set_switch(method)):
+                # Its own "yes" is all that turns it on: dropping that line
+                # stops it with no order line.
+                self.set_switch(method, None)
+                return True
+            self._begin_edit()
             self.order = [m for m in self.order if m != method]
-        self._end_edit()
+            self._end_edit()
+            return True
+        if not self.can_set_tried(method):
+            return False
+        # The switch first: the order edit's undo check compares the checked
+        # methods, and a method still off would not count as added.
+        if self.shown_switch(method) is False:
+            self._switch_on(method)
+        if not self.in_order(method):
+            self._begin_edit()
+            self.order.append(method)
+            self._end_edit()
         return True
+
+    def _inherited_switch(self, method: str) -> Optional[bool]:
+        """What *method*'s switch would be without this block's own line."""
+        if method in self._loaded:
+            # ssh -G answered with the block's own line: what remains once
+            # it is dropped comes from the fallback, when known.
+            return self._fallback_switch(method)
+        if self._uses_fallback(method):
+            return self._fallback_switch(method)
+        return self.inherited_switches.get(method)
+
+    def _switch_keywords(self, method: str) -> set:
+        return {k for k, m in METHOD_OF_KEYWORD.items() if m == method}
+
+    def _switch_on(self, method: str) -> None:
+        """Turn *method* on with the fewest lines: drop this block's ``no``
+        when what remains is on, else write ``yes``."""
+        if method not in self._switch_before:
+            keywords = self._switch_keywords(method)
+            self._switch_before[method] = (
+                self.switches.get(method),
+                self._raw.get(method),
+                [line for line in self._passthrough if _split(line)[0] in keywords],
+            )
+        if self.own_switch(method) is False and self._inherited_switch(method) is True:
+            self.set_switch(method, None)
+        else:
+            self.set_switch(method, True)
 
     def can_set_switch(self, method: str) -> bool:
         return method in METHODS and method not in self.locked_methods
@@ -467,7 +541,7 @@ class AuthPolicy:
         """
         if not self.can_set_switch(method):
             return False
-        keywords = {k for k, m in METHOD_OF_KEYWORD.items() if m == method}
+        keywords = self._switch_keywords(method)
         repeats = any(_split(line)[0] in keywords for line in self._passthrough)
         if self.switches.get(method) is value and not repeats:
             return False
@@ -480,6 +554,19 @@ class AuthPolicy:
         else:
             self.switches[method] = bool(value)
         return True
+
+    def _restore_switch(self, method: str) -> None:
+        value, raw, copies = self._switch_before.pop(method)
+        self._drop_passthrough(self._switch_keywords(method))
+        self._passthrough.extend(copies)
+        if value is None:
+            self.switches.pop(method, None)
+        else:
+            self.switches[method] = value
+        if raw is None:
+            self._raw.pop(method, None)
+        else:
+            self._raw[method] = raw
 
     def move(self, method: str, index: int) -> bool:
         """Put checked *method* at *index* among the checked rows.
@@ -497,9 +584,11 @@ class AuthPolicy:
         if rest == checked:
             return False
         self._begin_edit()
-        # Fill the known methods' places in turn; unknown tokens stay put.
+        # Fill the checked methods' places in turn; unknown tokens and
+        # listed methods that are switched off stay put.
+        places = set(checked)
         queue = iter(rest)
-        self.order = [next(queue) if m in METHODS else m for m in self.order]
+        self.order = [next(queue) if m in places else m for m in self.order]
         self._end_edit()
         return True
 
@@ -572,48 +661,15 @@ def join_extra(other: str, policy_lines: Iterable[str]) -> str:
 _DRAG_PREFIX = "sshpilot-auth-method:"
 
 
-# The row menu's choices for a method's own line -> AuthPolicy.set_switch.
-SWITCH_CHOICES: Dict[str, Optional[bool]] = {"inherit": None, "yes": True, "no": False}
-
-
-def switch_choice(value: Optional[bool]) -> str:
-    return "inherit" if value is None else ("yes" if value else "no")
-
-
-def switch_caption(
-    own: Optional[bool], value: str, ticked: Optional[bool], profile: bool
-) -> str:
-    """A method row's caption: its own on/off line, read with its tick.
-
-    A method is tried only when it is both in the order (ticked) and not
-    switched off, so an enabled but unticked method says it is not tried and
-    a ticked but disabled one says it is skipped. ``ticked`` is None while the
-    order is unknown; the caption then adds nothing about it. ``value`` is the
-    authored value of a restricted switch (e.g. host-bound), or "".
-    """
-    if own is None:
-        return _("Not set")
-    if not own:
-        if ticked:
-            return (_("Disabled in this profile, so it is skipped") if profile
-                    else _("Disabled for this host, so it is skipped"))
-        return (_("Disabled in this profile") if profile
-                else _("Disabled for this host"))
-    if ticked is False:
-        if value:
-            # {value} is the authored value, e.g. host-bound.
-            return (_("Enabled in this profile ({value}), but not tried (unticked)")
-                    if profile else
-                    _("Enabled for this host ({value}), but not tried (unticked)")
-                    ).format(value=value)
-        return (_("Enabled in this profile, but not tried (unticked)") if profile
-                else _("Enabled for this host, but not tried (unticked)"))
-    if value:
-        # {value} is the authored value, e.g. host-bound.
-        return (_("Enabled in this profile ({value})") if profile
-                else _("Enabled for this host ({value})")).format(value=value)
-    return (_("Enabled in this profile") if profile
-            else _("Enabled for this host"))
+def restriction_caption(value: str, profile: bool) -> str:
+    """A method row's caption: the authored value of a switch that is on
+    with a restriction (e.g. host-bound), so it is not hidden; else none.
+    The checkbox says whether the method is tried."""
+    if not value:
+        return ""
+    # {value} is the authored value, e.g. host-bound.
+    return (_("Enabled in this profile ({value})") if profile
+            else _("Enabled for this host ({value})")).format(value=value)
 
 
 class AuthPolicyGroup:
@@ -623,8 +679,7 @@ class AuthPolicyGroup:
 
     ``group``      the PreferencesGroup to place in the page;
     ``rows``       method -> its ``Adw.ActionRow`` (``row._check`` is the box,
-                   ``row._actions`` its menu: ``up``/``down``/``top`` and the
-                   stateful ``switch``, one of :data:`SWITCH_CHOICES`);
+                   ``row._actions`` its menu: ``up``/``down``/``top``);
     ``order_row``  the "Authentication methods" expander: its subtitle says
                    what OpenSSH will try, and it is marked when an earlier
                    block decides the order.
@@ -695,10 +750,9 @@ class AuthPolicyGroup:
         self.extra_row.set_activatable(False)
 
     def _make_row(self, method: str):
-        from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk
+        from gi.repository import Adw, Gdk, Gio, GObject, Gtk
 
         row = Adw.ActionRow(title=method_label(method))
-        row.set_subtitle(KEYWORD_OF[method])
         row._method = method
 
         # Prefixes stack right to left: the handle, added last, is leftmost.
@@ -726,12 +780,6 @@ class AuthPolicyGroup:
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
             actions.add_action(action)
-        # The method's own line in this block; a radio group in the menu.
-        switch = Gio.SimpleAction.new_stateful(
-            "switch", GLib.VariantType.new("s"), GLib.Variant("s", "inherit")
-        )
-        switch.connect("activate", self._on_switch_chosen, method)
-        actions.add_action(switch)
         row.insert_action_group("authrow", actions)
         row._actions = actions
 
@@ -739,27 +787,7 @@ class AuthPolicyGroup:
         moves.append(_("Move up"), "authrow.up")
         moves.append(_("Move down"), "authrow.down")
         moves.append(_("Move to top"), "authrow.top")
-        # "Not set" says what the block holds: no line of its own. What
-        # then decides the method (another block, or OpenSSH's default) is
-        # the header's to say.
-        choices = Gio.Menu()
-        for choice, label in (
-            ("inherit", _("Not set")),
-            ("yes", _("Enable in linked connections") if self.profile
-             else _("Enable for this host")),
-            ("no", _("Disable in linked connections") if self.profile
-             else _("Disable for this host")),
-        ):
-            item = Gio.MenuItem.new(label, None)
-            item.set_action_and_target_value(
-                "authrow.switch", GLib.Variant("s", choice)
-            )
-            choices.append_item(item)
-        menu = Gio.Menu()
-        menu.append_section(None, moves)
-        # Headed by the keyword the choice writes.
-        menu.append_section(KEYWORD_OF[method], choices)
-        button = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu)
+        button = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=moves)
         button.add_css_class("flat")
         button.set_valign(Gtk.Align.CENTER)
         button.set_tooltip_text(_("Method options"))
@@ -894,11 +922,6 @@ class AuthPolicyGroup:
                 pass
         return changed
 
-    def _on_switch_chosen(self, _action, parameter, method: str) -> None:
-        choice = parameter.get_string() if parameter is not None else ""
-        if choice in SWITCH_CHOICES:
-            self._edit(lambda: self.policy.set_switch(method, SWITCH_CHOICES[choice]))
-
     def _on_toggled(self, check, method: str) -> None:
         if self._syncing:
             return
@@ -983,17 +1006,8 @@ class AuthPolicyGroup:
         actions.lookup_action("up").set_enabled(movable and index > 0)
         actions.lookup_action("down").set_enabled(movable and index < len(checked) - 1)
         actions.lookup_action("top").set_enabled(movable and index > 0)
-        from gi.repository import GLib
-
-        own = self.policy.own_switch(method)
-        switch = actions.lookup_action("switch")
-        switch.set_state(GLib.Variant("s", switch_choice(own)))
-        switch.set_enabled(self.policy.can_set_switch(method))
-        row.set_subtitle(switch_caption(
-            own,
-            self.policy.restriction(method),
-            self.policy.shown_checked(method),
-            bool(self.profile),
+        row.set_subtitle(restriction_caption(
+            self.policy.restriction(method), bool(self.profile)
         ))
 
     def _show_switch(self, row, method: str) -> None:
@@ -1003,14 +1017,21 @@ class AuthPolicyGroup:
         check.set_inconsistent(value is None)
         check.set_active(bool(value))
         last = bool(value) and policy.checked() == [method]
-        check.set_sensitive(value is not None and self._editable() and not last)
+        # Checking would need a switch a linked profile sets.
+        locked = value is False and not policy.can_set_tried(method)
+        check.set_sensitive(
+            value is not None and self._editable() and not last and not locked
+        )
         # Never dimmed (see _show_row); the tooltip says why it cannot change.
         if value is None:
             note = _("Shown once OpenSSH has read the configuration.")
-        elif self._order_locked:
+        elif self._order_locked or locked:
             note = self._lock_note
         elif last:
             note = _("At least one method must stay checked.")
+        elif not value and policy.in_order(method):
+            # Listed in the order, but its switch is off.
+            note = _("Not tried: it is turned off. Check it to turn it on.")
         elif not value:
             note = _("Not tried. Check it to add it at the end of the login order.")
         else:

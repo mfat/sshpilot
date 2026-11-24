@@ -215,7 +215,7 @@ def test_empty_fallback_makes_the_order_known():
     policy.set_fallback({})
     assert policy.can_edit()
     assert policy.shown_order() == list(DEFAULT_ORDER)
-    assert policy.set_tried("hostbased", False)
+    assert policy.set_tried("publickey", False)
 
 
 class _Dialog:
