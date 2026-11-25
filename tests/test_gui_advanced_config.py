@@ -809,6 +809,22 @@ def test_an_unused_line_says_what_is_used_instead(gtk, tmp_path):
         _close(win)
 
 
+def test_lines_that_do_not_take_effect_are_struck_through_and_rejected_ones_red(gtk, tmp_path):
+    win = _open_on(gtk, tmp_path, "Host zoo\n    User early\n    User late\n    Port 22\n")
+    try:
+        block = win.draft.blocks[0]
+        rows = [win.structured.line_rows[o.uid] for o in block.options]
+        assert _pump(lambda: rows[1].state.get_label() == "Not used")
+        assert rows[1].value.get_attributes() is not None            # struck through
+        assert not rows[1].value.has_css_class("dim-label")          # not dimmed
+        assert rows[0].value.get_attributes() is None                # used: plain
+        rows[2].value.set_text("abc")                                # OpenSSH rejects it
+        assert _pump(lambda: rows[2].state.get_label() == "Rejected")
+        assert rows[2].value.has_css_class("error") and rows[2].state.has_css_class("error")
+    finally:
+        _close(win)
+
+
 def test_a_not_used_pill_shows_the_line_used_instead(gtk, tmp_path):
     """Structured's "Not used" pill is a link, as a source is in Effective."""
     from gi.repository import Gtk

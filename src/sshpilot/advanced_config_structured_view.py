@@ -106,6 +106,11 @@ def _instead(answer: AnswerView, uid: int, keyword: str) -> str:
     return messages.used_instead_markup(value, place)
 
 
+#: The text of a line that does not take effect (see LineRow.show).
+_STRUCK = Pango.AttrList()
+_STRUCK.insert(Pango.attr_strikethrough_new(True))
+
+
 def _state_pill(view: "StructuredView") -> Gtk.Label:
     """The pill that says what OpenSSH does with a line. A "Not used" one
     is a link: a click shows the line that is used instead, as a source
@@ -141,7 +146,7 @@ def _line_pill(label: Gtk.Label, item, error) -> bool:
     """Say what OpenSSH does with a line: only what needs saying (not used,
     overridden, rejected). Returns whether the line is unused."""
     if error is not None:
-        set_pill(label, _("Rejected"), "warning", messages.error_text(error))
+        set_pill(label, _("Rejected"), "error", messages.error_text(error))
         _set_pill_target(label, None)
         return False
     if item is not None and item.state in (State.SHADOWED, State.FORCED):
@@ -448,9 +453,16 @@ class LineRow:
     def show(self, answer: AnswerView) -> None:
         item, error = answer.line_state(self.uid)
         unused = _line_pill(self.state, item, error)
+        # A line that does not take effect is struck through, as overridden
+        # declarations are in browser developer tools: valid, just not used.
+        # Red (error) is for a line OpenSSH rejects.
+        struck = unused and error is None
         for entry in (self.key, self.value):
             set_class(entry, "error", error is not None)
-            set_class(entry, "dim-label", unused)
+            set_class(entry, "advcfg-unused", struck)
+            # GtkText ignores CSS text-decoration: a Pango attribute it is.
+            if bool(entry.get_attributes()) != struck:
+                entry.set_attributes(_STRUCK if struck else None)
         option = self.view.controller.editor.find_option(self.uid)[1]
         keyword = canonical_keyword(option.keyword) if option else ""
         # Empty: what the host gets from elsewhere, greyed in the field.
