@@ -132,13 +132,6 @@ def show_host_block(host: str) -> str:
     return _("Show the block of {host}").format(host=host)
 
 
-def rejected_count(count: int) -> str:
-    """Lines of a block OpenSSH rejects."""
-    return ngettext(
-        "{count} line rejected", "{count} lines rejected", count
-    ).format(count=count)
-
-
 def no_host_text() -> str:
     """While the block picked names no host and none is kept in question."""
     return _("Pick a block that names a host to see what OpenSSH would use for it.")
@@ -333,8 +326,36 @@ def overridden_count(count: int) -> str:
 
 
 def shadowed_count(count: int) -> str:
+    """Short, for a row's problem label (Effective)."""
     return ngettext(
         "{count} line not used", "{count} lines not used", count
+    ).format(count=count)
+
+
+def precedence_problem(count: int) -> str:
+    """The title card's Problems tile: directives an earlier one beats."""
+    return ngettext(
+        "{count} directive will not take effect due to configuration precedence.",
+        "{count} directives will not take effect due to configuration precedence.",
+        count,
+    ).format(count=count)
+
+
+def settings_problem(count: int) -> str:
+    """The title card's Problems tile: directives Settings override."""
+    return ngettext(
+        "{count} directive is overridden by Settings ▸ SSH Options.",
+        "{count} directives are overridden by Settings ▸ SSH Options.",
+        count,
+    ).format(count=count)
+
+
+def rejected_problem(count: int) -> str:
+    """The title card's Problems tile: directives OpenSSH rejects."""
+    return ngettext(
+        "{count} directive is rejected by OpenSSH.",
+        "{count} directives are rejected by OpenSSH.",
+        count,
     ).format(count=count)
 
 

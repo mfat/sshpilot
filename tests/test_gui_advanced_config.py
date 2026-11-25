@@ -483,7 +483,8 @@ def test_the_title_card_says_what_needs_attention_and_shows_it(gtk, tmp_path):
         assert not structured.applies_box.get_visible()   # it names its host: no tile
         assert _pump(lambda: structured.problems_tile.get_visible())
         assert structured.problems_label.get_label() == (
-            "1 line not used · 1 line overridden by Settings"
+            "1 directive will not take effect due to configuration precedence.\n"
+            "1 directive is overridden by Settings ▸ SSH Options."
         )
         assert structured.problems_tile.has_css_class("advcfg-attn-error")   # not used: red
         win.show_page("raw")

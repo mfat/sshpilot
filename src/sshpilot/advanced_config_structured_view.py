@@ -728,7 +728,7 @@ class StructuredView(Gtk.Box):
             "dialog-warning-symbolic", _("Problems"),
         )
         self.problems_tile.set_hexpand(True)
-        self.problems_label = Gtk.Label(xalign=0)
+        self.problems_label = Gtk.Label(xalign=0, wrap=True)
         content.append(self.problems_label)
         self.problems_tile.set_cursor_from_name("pointer")
         self.problems_tile.set_tooltip_text(_("Show the first problem"))
@@ -1077,13 +1077,14 @@ class StructuredView(Gtk.Box):
         self._first_problem = first
         parts = []
         if rejected:
-            parts.append(messages.rejected_count(rejected))
+            parts.append(messages.rejected_problem(rejected))
         if unused:
-            parts.append(messages.shadowed_count(unused))
+            parts.append(messages.precedence_problem(unused))
         if overridden:
-            parts.append(messages.overridden_count(overridden))
+            parts.append(messages.settings_problem(overridden))
         self.problems_tile.set_visible(bool(parts))
-        self.problems_label.set_label(" · ".join(parts))
+        # One sentence a line: each says what is wrong and why.
+        self.problems_label.set_label("\n".join(parts))
         style = "error" if (rejected or unused) else "purple"
         for name in ("error", "purple"):
             on = bool(parts) and name == style
