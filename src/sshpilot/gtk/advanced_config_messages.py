@@ -132,11 +132,6 @@ def show_host_block(host: str) -> str:
     return _("Show the block of {host}").format(host=host)
 
 
-def line_count(count: int) -> str:
-    """How many lines a block has (its title card)."""
-    return ngettext("{count} line", "{count} lines", count).format(count=count)
-
-
 def rejected_count(count: int) -> str:
     """Lines of a block OpenSSH rejects."""
     return ngettext(

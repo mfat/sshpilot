@@ -456,7 +456,6 @@ def test_the_title_card_says_what_needs_attention_and_shows_it(gtk, tmp_path):
         structured = win.structured
         assert structured.head_caption.get_label().startswith("Host")
         assert not structured.applies_box.get_visible()   # it names its host: no tile
-        assert structured.lines_label.get_label() == "3 lines"
         assert _pump(lambda: structured.problems_tile.get_visible())
         assert structured.problems_label.get_label() == (
             "1 line not used · 1 line overridden by Settings"
@@ -1239,7 +1238,7 @@ def test_an_included_file_is_shown_evaluated_and_saved(gtk, tmp_path):
         win.go_to(host="inc1", file=str(included))          # a connection's source file
         assert _pump(lambda: win._file == str(included) and len(win.draft.blocks) == 2)
         assert _selected(win) == "inc1"
-        assert win.structured.head_caption.get_label().endswith("hosts.conf")
+        assert win.structured.head_file.get_label() == "hosts.conf"
         assert files[""].get_activatable() and not files[str(included)].get_activatable()
         assert _pump(lambda: _command(win) == "ssh -G inc1")
         assert _effective(win, "port") == "2200"            # the root's line counts too

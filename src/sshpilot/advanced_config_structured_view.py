@@ -657,6 +657,19 @@ class StructuredView(Gtk.Box):
         self.head_caption.add_css_class("caption")
         self.head_caption.set_ellipsize(Pango.EllipsizeMode.END)
         names.append(self.head_caption)
+        # The file the block is in, on a line of its own.
+        file_line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        file_icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic")
+        file_icon.add_css_class("dim-label")
+        file_line.append(file_icon)
+        self.head_file = Gtk.Label(xalign=0)
+        self.head_file.add_css_class("dim-label")
+        self.head_file.add_css_class("caption")
+        self.head_file.add_css_class("monospace")
+        self.head_file.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        file_line.append(self.head_file)
+        names.append(file_line)
+        self.head_file_line = file_line
         line.append(names)
         self.note_button = Gtk.MenuButton(
             icon_name="document-edit-symbolic", popover=self._build_note_popover(),
@@ -720,10 +733,6 @@ class StructuredView(Gtk.Box):
         self.applies_chips.set_row_spacing(6)
         content.append(self.applies_chips)
         self.tiles.append(self.applies_box)
-        self.lines_tile, content, _dot = _card_tile("document-properties-symbolic", _("Directives"))
-        self.lines_label = Gtk.Label(xalign=0)
-        content.append(self.lines_label)
-        self.tiles.append(self.lines_tile)
         # Problems: shown only when there are some; a click shows the first.
         self.problems_tile, content, self.problems_dot = _card_tile(
             "dialog-warning-symbolic", _("Problems"),
@@ -869,7 +878,6 @@ class StructuredView(Gtk.Box):
             [_("Host patterns") if block.kind == HOST else _("Match conditions")],
         )
         self._show_heading(block)
-        self.lines_label.set_label(messages.line_count(len(block.options)))
         self.note_button.set_visible(not is_global)
         self.duplicate_button.set_visible(not is_global)
         self.syncing.set_text(self.patterns_row, block.patterns)
@@ -931,9 +939,12 @@ class StructuredView(Gtk.Box):
             block_category(block.kind, block.patterns), len(block.patterns.split()) or 1,
             block.kind,
         )
-        caption = " · ".join(part for part in (kind, self._file_name) if part)
-        if self.head_caption.get_label() != caption:
-            self.head_caption.set_label(caption)
+        if self.head_caption.get_label() != kind:
+            self.head_caption.set_label(kind)
+        if self.head_file.get_label() != self._file_name:
+            self.head_file.set_label(self._file_name)
+            self.head_file.set_tooltip_text(self._file_name or None)
+        self.head_file_line.set_visible(bool(self._file_name))
 
     def _show_status(self, answer: AnswerView) -> None:
         """Only what says something: the hosts a pattern or Match block
