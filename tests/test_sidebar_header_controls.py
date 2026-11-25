@@ -42,9 +42,12 @@ def test_sidebar_shell_is_attached_to_the_split_view(sidebar_mod, monkeypatch):
 
 
 def test_sidebar_shell_uses_adwaita_sidebar_pane_tone(sidebar_mod, monkeypatch):
-    """Docked sidebar gets Adwaita's .sidebar-pane fill, not the deprecated .sidebar."""
+    """Docked sidebar gets Adwaita's .sidebar-pane fill, not the deprecated
+    .sidebar; .secondary-pane gives it the secondary-sidebar colours, as the
+    middle of rail, list and content."""
     window, _header = _assemble(sidebar_mod, monkeypatch)
-    window._sidebar_toolbar_view.add_css_class.assert_called_once_with('sidebar-pane')
+    classes = [c.args[0] for c in window._sidebar_toolbar_view.add_css_class.call_args_list]
+    assert classes == ['sidebar-pane', 'secondary-pane']
 
 
 def test_sidebar_header_title_is_the_title_label(sidebar_mod, monkeypatch):
