@@ -637,12 +637,10 @@ class StructuredView(Gtk.Box):
         # what it applies to, how many lines, and its problems when it has
         # any. The window shows the card above all three views.
         self.block_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.block_group.add_css_class("card")
         self.block_group.add_css_class("advcfg-title-card")
-        # The band clips to the card's rounded corners.
-        self.block_group.set_overflow(Gtk.Overflow.HIDDEN)
-        # A band in the accent colour (grey while the block is off) holds
-        # the name and the actions; the rest is on the card below it.
+        # A card in the accent colour, whole (grey while the block is off),
+        # holds the name and the actions; the note, notices and tiles sit
+        # under it on the page.
         line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         line.add_css_class("advcfg-card-band")
         self.band = line
