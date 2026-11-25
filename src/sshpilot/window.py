@@ -2487,7 +2487,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
 
-        root_widget = self._content_overlay
+        # The rail that picks the window's view stays beside the sidebar,
+        # not in it: hiding the sidebar leaves it, and the sidebar popup
+        # floats beside it rather than over it.
+        from .sidebar_views import build_view_rail
+        root_widget = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        root_widget.append(build_view_rail(self))
+        root_widget.append(self._content_overlay)
 
         # The omni-search floats above the whole work UI.
         self._global_overlay = Gtk.Overlay()
@@ -3167,7 +3173,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         tab_bar = getattr(self, 'tab_bar', None)
         try:
-            if tab_bar is not None and self.has_user_tabs():
+            if tab_bar is not None and tab_bar.get_visible():
                 stack.set_visible_child(tab_bar)
             else:
                 stack.set_visible_child(self._content_empty_title)
@@ -4400,11 +4406,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # The configuration may have changed: the Configuration view, if
         # it is the one shown, reads it again.
         try:
-            from .sidebar_views import refresh_sections, sync_switcher_height
+            from .sidebar_views import refresh_sections
             refresh_sections(self)
-            # From the rows about to be replaced: the dropdown is as tall
-            # as one of them.
-            sync_switcher_height(self)
         except Exception:
             logger.debug("Could not refresh the sidebar rules", exc_info=True)
         steps = self._rebuild_connection_list_steps()

@@ -1,8 +1,8 @@
 """Advanced Configuration, Structured view: one block, as fields.
 
 The block's header (its Host patterns or Match conditions), its note and
-whether it is on; the route and tunnels it leads to; then its lines, in the
-block's order, as the file has them. A line gets a control that suits it
+whether it is on; then its lines, in the block's order, as the file has
+them. A line gets a control that suits it
 (HostName, User, Port, ProxyJump as fields, IdentitiesOnly and ForwardAgent
 as yes/no, identity files with their key check, forwards); every other
 line is a keyword and a value. Which control a line gets is decided in
@@ -28,9 +28,7 @@ from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_widgets import pill, set_class, set_pill  # noqa: E402
 from .api.models.connections import SshConfigDraftLineState as State  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
-from .i18n import N_  # noqa: E402
 from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap  # noqa: E402
-from .route_strip import JUMP, TARGET, RouteStrip, Stop  # noqa: E402
 from .ssh_option_list import OPENSSH_KEYWORDS  # noqa: E402
 
 
@@ -536,97 +534,6 @@ class _Page(Gtk.ScrolledWindow):
         self.get_vadjustment().set_value(0)
 
 
-_FORWARD_KINDS = {
-    # Translators: kinds of SSH port forward, shown on a tunnel's chip.
-    "localforward": N_("Local"),
-    "remoteforward": N_("Remote"),
-    "dynamicforward": N_("SOCKS"),
-}
-
-
-class RoutingCard:
-    """Routing and tunnels at a glance: this computer → each jump host →
-    the host, as OpenSSH resolves them for the host checked, and the port
-    forwards that open with it. The block's own forwards can be removed
-    here; forwards other blocks add are shown dimmed, with where they come
-    from. A jump host is a button that shows its block."""
-
-    def __init__(self, view: "StructuredView") -> None:
-        self.view = view
-        self.group = Adw.PreferencesGroup()
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card.add_css_class("card")
-        card.add_css_class("advcfg-routing")
-        card.append(self._caption(_("Route")))
-        self.route = RouteStrip(
-            on_hop=lambda name: view.controller.show_host(fields.hop_host(name))
-        )
-        card.append(self.route)
-        card.append(self._caption(_("Port forwards")))
-        self.tunnels = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
-        self.tunnels.set_max_children_per_line(12)
-        self.tunnels.set_column_spacing(6)
-        self.tunnels.set_row_spacing(6)
-        card.append(self.tunnels)
-        self.group.add(card)
-        self._shown: Optional[tuple] = None
-
-    @staticmethod
-    def _caption(text: str) -> Gtk.Label:
-        label = Gtk.Label(label=text, xalign=0)
-        label.add_css_class("caption-heading")
-        label.add_css_class("dim-label")
-        return label
-
-    def show(self, stops: Sequence[tuple], tunnels: Sequence[tuple]) -> None:
-        """*stops*: ``(name, endpoint, is_jump)`` from the first jump host
-        to the host itself (none: no host is checked). *tunnels*:
-        ``(keyword, value, uid or None, source)``; a uid is a line of this
-        block, which can be removed."""
-        shown = (tuple(stops), tuple(tunnels))
-        if shown == self._shown:
-            return
-        self._shown = shown
-        self.route.show_route(
-            [Stop(name, endpoint, kind=JUMP if jump else TARGET)
-             for name, endpoint, jump in stops],
-            _("Type a host to check to see its route."),
-        )
-        self.tunnels.remove_all()
-        if not tunnels:
-            self.tunnels.append(self._note(_("No port forwards.")))
-        for keyword, value, uid, source in tunnels:
-            self.tunnels.append(self._tunnel(keyword, value, uid, source))
-
-    @staticmethod
-    def _note(text: str) -> Gtk.Label:
-        label = Gtk.Label(label=text, xalign=0)
-        label.add_css_class("dim-label")
-        return label
-
-    def _tunnel(self, keyword: str, value: str, uid: Optional[int], source: str):
-        listen, target = fields.forward_parts(keyword, value)
-        chip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        chip.add_css_class("advcfg-tunnel")
-        kind = pill(_(_FORWARD_KINDS.get(keyword, keyword)), "success" if uid else "muted")
-        chip.append(kind)
-        text = f"{listen} → {target}" if target else listen
-        label = Gtk.Label(label=text)
-        label.add_css_class("monospace")
-        chip.append(label)
-        if uid is not None:
-            remove = Gtk.Button(icon_name="window-close-symbolic",
-                                tooltip_text=_("Remove this forward"))
-            remove.add_css_class("flat")
-            remove.add_css_class("circular")
-            remove.connect("clicked", lambda *_a: self.view.controller.delete_option(uid))
-            chip.append(remove)
-        else:
-            chip.add_css_class("dim-label")
-            chip.set_tooltip_text(source or None)
-        return chip
-
-
 def _boxed_list() -> Gtk.ListBox:
     listbox = Gtk.ListBox()
     listbox.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -636,7 +543,7 @@ def _boxed_list() -> Gtk.ListBox:
 
 class StructuredView(Gtk.Box):
     """One block as fields. *controller* supplies the edits (see the
-    calls), ``hop_endpoint(name)`` and ``browse_identity(uid)``."""
+    calls) and ``browse_identity(uid)``."""
 
     def __init__(self, controller) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -702,8 +609,6 @@ class StructuredView(Gtk.Box):
         block_list.append(self.error_row)
         self.block_group.add(block_list)
         self.page.add(self.block_group)
-        self.routing = RoutingCard(self)
-        self.page.add(self.routing.group)
 
         # -- the lines, in the block's order ------------------------------------
         group = Adw.PreferencesGroup()
@@ -847,61 +752,7 @@ class StructuredView(Gtk.Box):
             return
         for row in self._rows.values():
             row.show(answer)
-        self._show_routing(answer)
         self._show_status(answer)
-
-    def _show_routing(self, answer: AnswerView) -> None:
-        """The route and the tunnels, as OpenSSH resolves them for the host
-        checked; this block's own forwards even without an answer."""
-        stops = []
-        if answer.evaluation is not None and answer.host:
-            for hop in fields.jump_hops((answer.values.get("proxyjump") or [""])[0]):
-                stops.append((hop, self.controller.hop_endpoint(fields.hop_host(hop)), True))
-            endpoint = ""
-            if answer.values.get("hostname"):
-                endpoint = "{host}:{port}".format(
-                    host=answer.values["hostname"][0],
-                    port=(answer.values.get("port") or ["22"])[0],
-                )
-            stops.append((answer.host, endpoint, False))
-        block = self.controller.editor.find_block(self.uid)
-        own = [
-            (option.keyword, option.value, option.uid)
-            for option in (block.options if block is not None else ())
-            if option.uid in self._forward_rows
-        ]
-        tunnels = [(keyword, value, uid, "") for keyword, value, uid in own]
-        if answer.evaluation is not None and answer.applies is not False:
-            # OpenSSH names no source for a keyword it collects: the line
-            # behind a forward is the other block's line with that value
-            # that it read.
-            elsewhere = []
-            for other in self.controller.editor.blocks:
-                if other.uid == self.uid:
-                    continue
-                for option in other.options:
-                    if option.keyword in fields.FORWARDS:
-                        item, _error = answer.line_state(option.uid)
-                        if item is not None and item.state in (State.APPLIED, State.ACCUMULATED):
-                            elsewhere.append((option.keyword, option.value, other))
-            for keyword in fields.FORWARDS:
-                for value in answer.values.get(keyword, ()):
-                    if any(k == keyword and fields.same_forward(keyword, v, value)
-                           for k, v, _uid in own):
-                        continue
-                    found = next((block for k, v, block in elsewhere
-                                  if k == keyword and fields.same_forward(keyword, v, value)), None)
-                    if found is not None:
-                        source = _("from {block}").format(
-                            block=messages.block_title(found.kind, found.patterns)
-                        )
-                    elif answer.current:
-                        # Another file of the configuration, or Settings.
-                        source = messages.source_label(answer.sources.get(keyword))
-                    else:
-                        continue            # an answer one edit behind
-                    tunnels.append((keyword, value, None, source))
-        self.routing.show(stops, tunnels)
 
     def _show_status(self, answer: AnswerView) -> None:
         block = self.controller.editor.find_block(self.uid)

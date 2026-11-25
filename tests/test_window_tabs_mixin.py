@@ -207,6 +207,16 @@ def test_tab_overview_button_visibility_honors_headerbar_preference():
     assert button.visible is False
     assert bar.visible is False
 
+    # The Configuration view is shown in place of the tabs: they go from
+    # the header bar too.
+    stub._user_tabs = True
+    stub._sidebar_view_stack = types.SimpleNamespace(
+        get_visible_child_name=lambda: 'sections'
+    )
+    stub._update_tab_button_visibility()
+    assert button.visible is False
+    assert bar.visible is False
+
 
 def test_terminal_theme_button_visibility_honors_headerbar_preference(monkeypatch):
     from sshpilot import window_tabs

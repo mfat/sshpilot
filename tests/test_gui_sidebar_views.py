@@ -43,7 +43,7 @@ class _Capable(_Client):
 
 @pytest.fixture
 def window(gtk, tmp_path):  # noqa: F811
-    from sshpilot.sidebar_views import build_sidebar_switcher, build_sidebar_view_stack
+    from sshpilot.sidebar_views import build_sidebar_view_stack, build_view_rail
 
     path = tmp_path / "config"
     path.write_text(CONFIG)
@@ -64,7 +64,6 @@ def window(gtk, tmp_path):  # noqa: F811
     win.connection_scrolled = gtk.ScrolledWindow()
     win._sidebar_toolbar_clip = gtk.Box()
     sidebar.append(win.search_button)
-    build_sidebar_switcher(win, sidebar)
     sidebar.append(win.search_container)
     build_sidebar_view_stack(win, sidebar)
     sidebar.append(win._sidebar_toolbar_clip)
@@ -78,7 +77,10 @@ def window(gtk, tmp_path):  # noqa: F811
     paned.set_start_child(sidebar)
     paned.set_end_child(content)
     paned.set_position(260)
-    win.set_child(paned)
+    root = gtk.Box(orientation=gtk.Orientation.HORIZONTAL)
+    root.append(build_view_rail(win))
+    root.append(paned)
+    win.set_child(root)
     win.set_default_size(1400, 760)
     win.present()
     _pump(lambda: False, seconds=0.2)
@@ -107,13 +109,13 @@ def _selected_patterns(view):
     return getattr(view.editor.find_block(view.selected_uid), "patterns", None)
 
 
-def test_the_dropdown_switches_the_whole_window(window):
+def test_the_rail_switches_the_whole_window(window):
     stack = window._sidebar_view_stack
     assert stack.get_visible_child_name() == "connections"
-    assert window._sidebar_view_switcher.get_selected_item().get_string() == "Connections"
+    assert _current(window) == "connections"
     assert window._config_sections_view is None          # made on first use
 
-    window._sidebar_view_switcher.set_selected(1)
+    _click(window, "sections")
     view = window._config_sections_view
     assert stack.get_visible_child_name() == "sections"
     assert _pump(lambda: len(view.sidebar._rows) == 5)
@@ -132,7 +134,8 @@ def test_the_dropdown_switches_the_whole_window(window):
     for widget in (window._sidebar_toolbar_clip, window.search_button, window.search_container):
         assert not widget.get_visible()                  # the connections' own
 
-    window._sidebar_view_switcher.set_selected(0)
+    assert _current(window) == "sections"
+    _click(window, "connections")
     assert stack.get_visible_child_name() == "connections"
     assert window.tab_overview.get_visible() and not view.get_visible()
     assert window._sidebar_toolbar_clip.get_visible() and window.search_button.get_visible()
@@ -149,9 +152,22 @@ def _edit_user(view, value):
     return prod
 
 
-def _labels(window):
-    model = window._sidebar_view_switcher.get_model()
-    return [model.get_string(index) for index in range(model.get_n_items())]
+def _click(window, name):
+    window._view_rail_buttons[name].emit("clicked")
+
+
+def _current(window):
+    (name,) = [name for name, button in window._view_rail_buttons.items()
+               if button.has_css_class("current")]
+    return name
+
+
+def _unsaved(window):
+    """The rail says the configuration has unsaved changes."""
+    dot = window._view_rail_unsaved_dot.get_visible()
+    tooltip = window._view_rail_buttons["sections"].get_tooltip_text()
+    assert dot == ("unsaved" in tooltip)
+    return dot
 
 
 def test_the_sections_are_edited_and_saved_there(window):
@@ -159,18 +175,18 @@ def test_the_sections_are_edited_and_saved_there(window):
     assert view.embedded
     assert view.save_button.get_visible() and not view.save_button.get_sensitive()
     assert not view.sidebar_button.get_visible()         # the list is the main sidebar's
-    assert _labels(window) == ["Connections", "Configuration"]
+    assert not _unsaved(window)
 
     _edit_user(view, "deploy")
     assert view.save_button.get_sensitive()
-    assert _labels(window) == ["Connections", "Configuration •"]   # unsaved, said
-    assert window._sidebar_view_switcher.get_selected() == 1          # still this view
+    assert _unsaved(window)                                           # unsaved, said
+    assert _current(window) == "sections"                             # still this view
     assert window.config_path.read_text() == CONFIG                   # not yet written
 
     view.save()
     assert _pump(lambda: "User deploy" in window.config_path.read_text(), seconds=15)
     assert _pump(lambda: not view.dirty)
-    assert _labels(window) == ["Connections", "Configuration"]
+    assert not _unsaved(window)
 
 
 def test_a_draft_is_kept_when_the_view_is_left(window):
@@ -180,7 +196,7 @@ def test_a_draft_is_kept_when_the_view_is_left(window):
     _edit_user(view, "deploy")
     leave_sections(window)                    # a tab was selected
     assert window._sidebar_view_stack.get_visible_child_name() == "connections"
-    assert _labels(window)[1] == "Configuration •"     # said from the other view too
+    assert _unsaved(window)                            # said from the other view too
     # Nothing reads the file over the draft: not a rebuild of the list...
     refresh_sections(window)
     # ...and not coming back.
@@ -292,7 +308,7 @@ def test_a_tab_selected_brings_the_connections_back(window):
     view = _sections(window)
     leave_sections(window)                    # what selecting a tab calls
     assert current_view(window) == "connections"
-    assert window._sidebar_view_switcher.get_selected() == 0
+    assert _current(window) == "connections"
     assert window.tab_overview.get_visible() and not view.get_visible()
     leave_sections(window)                    # already there: nothing to do
     assert current_view(window) == "connections"
@@ -327,35 +343,39 @@ def test_new_host_rule_asks_for_a_new_block(window):
 
 def test_without_the_background_service_the_connections_stay(window):
     window.client = object()                  # no capabilities to ask
-    window._sidebar_view_switcher.set_selected(1)
+    _click(window, "sections")
     assert window._sidebar_view_stack.get_visible_child_name() == "connections"
-    assert window._sidebar_view_switcher.get_selected() == 0
+    assert _current(window) == "connections"
     assert window.toasts and "background service" in window.toasts[0]
     assert window.tab_overview.get_visible()
 
 
-def test_the_dropdown_is_as_tall_as_a_connection_row(window, gtk):  # noqa: F811
-    from sshpilot.sidebar_views import sync_switcher_height
+def test_the_rail_stays_with_the_sidebar_hidden(window):
+    """The view shown again hides or shows the sidebar; the other view
+    brings the sidebar back."""
+    calls = []
+    window._sidebar_visible = True
 
-    rows = gtk.ListBox()
-    for name in ("web1", "db1"):
-        row = gtk.ListBoxRow()
-        box = gtk.Box(orientation=gtk.Orientation.VERTICAL)
-        box.set_margin_top(6)
-        box.set_margin_bottom(6)
-        box.append(gtk.Label(label=name))
-        box.append(gtk.Label(label="user@192.0.2.1"))
-        row.set_child(box)
-        row.connection = object()
-        rows.append(row)
-    window.connection_scrolled.set_child(rows)
-    window.connection_list = rows
-    _pump(lambda: False, seconds=0.3)
-    sync_switcher_height(window)
-    _pump(lambda: False, seconds=0.3)
-    switcher = window._sidebar_view_switcher
-    assert switcher.has_css_class("sidebar-view-switcher")      # the accent fill
-    assert switcher.get_height() == rows.get_first_child().get_height()
+    def toggle(_button):
+        window._sidebar_visible = not window._sidebar_visible
+        calls.append(("toggle", window._sidebar_visible))
+
+    def show(visible):
+        window._sidebar_visible = visible
+        calls.append(("show", visible))
+
+    window.on_sidebar_toggle = toggle
+    window._apply_sidebar_visible = show
+    _click(window, "connections")             # the view shown: hidden
+    assert calls == [("toggle", False)] and _current(window) == "connections"
+    _click(window, "sections")                # the other: shown, with the sidebar
+    assert calls[-1] == ("show", True) and _current(window) == "sections"
+    _click(window, "sections")                # hidden again
+    assert calls[-1] == ("toggle", False)
+    _click(window, "sections")                # and shown
+    assert calls[-1] == ("toggle", True)
+    _click(window, "connections")             # the sidebar shown: left as it is
+    assert len(calls) == 4 and _current(window) == "connections"
 
 
 def test_ctrl_f_is_the_search_of_the_view_on_screen(window):

@@ -104,13 +104,6 @@ def test_jump_hops():
     )] == ["gate", "gate", "::1"]
 
 
-def test_forwards_read_as_listen_and_target():
-    assert fields.forward_parts("localforward", "5432 127.0.0.1:5432") == (":5432", "127.0.0.1:5432")
-    assert fields.forward_parts("localforward", "5432 [127.0.0.1]:5432") == (":5432", "127.0.0.1:5432")
-    assert fields.forward_parts("dynamicforward", "localhost:1080") == ("localhost:1080", "")
-    assert fields.same_forward("remoteforward", "9000 localhost:9000", "9000  [localhost]:9000")
-
-
 def test_lines_keep_the_block_order_each_with_its_control():
     block = _block(
         "    LocalForward 1 h:1\n    User a\n    Compression yes\n    IdentityFile ~/.ssh/a\n"
