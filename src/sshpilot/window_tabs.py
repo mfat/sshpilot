@@ -1719,9 +1719,11 @@ class WindowTabsMixin:
     # ── tab button visibility ─────────────────────────────────────────────────
 
     def _update_tab_button_visibility(self):
-        """Hide tab bar and overview button when only the Start tab is open."""
+        """Hide tab bar and overview button when only the Start tab is open,
+        or while the Configuration view is shown in place of the tabs."""
         try:
-            show_tabs = self.has_user_tabs()
+            from .sidebar_views import SECTIONS, current_view
+            show_tabs = self.has_user_tabs() and current_view(self) != SECTIONS
             if hasattr(self, 'tab_button'):
                 try:
                     show_button = bool(

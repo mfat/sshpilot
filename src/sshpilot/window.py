@@ -3167,7 +3167,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         tab_bar = getattr(self, 'tab_bar', None)
         try:
-            if tab_bar is not None and self.has_user_tabs():
+            if tab_bar is not None and tab_bar.get_visible():
                 stack.set_visible_child(tab_bar)
             else:
                 stack.set_visible_child(self._content_empty_title)

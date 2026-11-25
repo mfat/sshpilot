@@ -204,6 +204,10 @@ def show_view(window, name: str) -> None:
         view.set_visible(sections)
     if overview is not None and view is not None:
         overview.set_visible(not sections)
+    # The tab bar in the header bar goes with them.
+    update_tabs = getattr(window, "_update_tab_button_visibility", None)
+    if callable(update_tabs):
+        update_tabs()
     if sections and was != SECTIONS:
         view.reload()                   # does nothing over unsaved changes
 
