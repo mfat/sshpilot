@@ -57,6 +57,9 @@ def window(gtk, tmp_path):  # noqa: F811
 
     sidebar = gtk.Box(orientation=gtk.Orientation.VERTICAL)
     win.search_button = gtk.Button()
+    win._sidebar_add_button = gtk.MenuButton()
+    win._sidebar_view_button = gtk.MenuButton()
+    win._sidebar_title_label = gtk.Label(label="SSH Pilot")
     win.search_container = gtk.Box()
     win.search_container.set_visible(False)       # as in the app, until search is opened
     win.search_entry = gtk.SearchEntry()
@@ -64,6 +67,8 @@ def window(gtk, tmp_path):  # noqa: F811
     win.connection_scrolled = gtk.ScrolledWindow()
     win._sidebar_toolbar_clip = gtk.Box()
     sidebar.append(win.search_button)
+    sidebar.append(win._sidebar_add_button)
+    sidebar.append(win._sidebar_view_button)
     sidebar.append(win.search_container)
     build_sidebar_view_stack(win, sidebar)
     sidebar.append(win._sidebar_toolbar_clip)
@@ -131,14 +136,23 @@ def test_the_rail_switches_the_whole_window(window):
     # The content area shows the configuration in the tabs' place.
     assert view.get_visible() and not window.tab_overview.get_visible()
     assert view.get_parent() is window.tab_overview.get_parent()
-    for widget in (window._sidebar_toolbar_clip, window.search_button, window.search_container):
+    for widget in (
+        window._sidebar_toolbar_clip, window.search_button, window.search_container,
+        window._sidebar_add_button, window._sidebar_view_button,
+    ):
         assert not widget.get_visible()                  # the connections' own
+    assert window._sidebar_title_label.get_label() == "Configuration"
 
     assert _current(window) == "sections"
     _click(window, "connections")
     assert stack.get_visible_child_name() == "connections"
     assert window.tab_overview.get_visible() and not view.get_visible()
-    assert window._sidebar_toolbar_clip.get_visible() and window.search_button.get_visible()
+    for widget in (
+        window._sidebar_toolbar_clip, window.search_button,
+        window._sidebar_add_button, window._sidebar_view_button,
+    ):
+        assert widget.get_visible()
+    assert window._sidebar_title_label.get_label() == "SSH Pilot"
 
 
 def _edit_user(view, value):

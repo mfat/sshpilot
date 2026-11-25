@@ -164,11 +164,20 @@ def show_view(window, name: str) -> None:
     was = current_view(window)
     stack.set_visible_child_name(name)
     _sync_rail(window)
-    # The search and the buttons under the list are the connections'.
-    for attr in ("_sidebar_toolbar_clip", "search_button"):
+    # The search, the New menu, the view options (sort, tag filter,
+    # hostnames) and the buttons under the list are the connections': the
+    # list of blocks has its own search and New Block button.
+    for attr in (
+        "_sidebar_toolbar_clip", "search_button",
+        "_sidebar_add_button", "_sidebar_view_button",
+    ):
         widget = getattr(window, attr, None)
         if widget is not None:
             widget.set_visible(not sections)
+    # The sidebar's title says which view it is.
+    title = getattr(window, "_sidebar_title_label", None)
+    if title is not None:
+        title.set_label(_("Configuration") if sections else "SSH Pilot")
     # The search field goes too, and comes back as it was: a query left in
     # it still filters the connections, and must not do so out of sight.
     container = getattr(window, "search_container", None)
