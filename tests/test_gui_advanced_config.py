@@ -1439,19 +1439,6 @@ def test_the_consent_prompt_says_what_would_run_and_for_whom(window, tmp_path):
     assert not marker.exists()
 
 
-def test_copy_takes_the_raw_text_when_it_is_the_newer(window):
-    copied = []
-    window.get_clipboard = lambda: type("Clip", (), {"set": lambda _s, text: copied.append(text)})()
-    window._on_copy()
-    assert copied[-1] == CONFIG
-    buffer = _raw(window)
-    buffer.insert(buffer.get_end_iter(), "\nHost fix\n    User urgent\n")
-    assert window.raw.pending
-    window._on_copy()
-    assert copied[-1].endswith("Host fix\n    User urgent\n")
-    assert window.raw.pending and "Host fix" not in window.editor.text
-
-
 # -- where it is shown -------------------------------------------------------------------
 
 def test_embedded_the_list_of_blocks_is_left_to_the_host(window, shell):

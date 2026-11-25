@@ -323,26 +323,15 @@ class AdvancedConfigBase:
         self.save_button.add_css_class("suggested-action")
         self.save_button.connect("clicked", lambda *_a: self.save())
         header.pack_end(self.save_button)
-        menu = Gio.Menu()
-        menu.append(_("Reload from Disk"), "advcfg.reload")
-        menu.append(_("Copy Configuration"), "advcfg.copy")
-        # Embedded, the window's own main menu is in the same row: this one
-        # is the view's, and looks it (⋮, not a second ☰).
-        menu_button = Gtk.MenuButton(
-            icon_name="view-more-symbolic" if self.embedded else "open-menu-symbolic",
-            menu_model=menu, tooltip_text=_("Configuration Menu"),
+        self.reload_button = Gtk.Button(
+            icon_name="view-refresh-symbolic", tooltip_text=_("Reload from Disk")
         )
-        header.pack_end(menu_button)
-        actions = Gio.SimpleActionGroup()
-        for name, callback in (("reload", self._on_reload), ("copy", self._on_copy)):
-            action = Gio.SimpleAction.new(name, None)
-            action.connect("activate", callback)
-            actions.add_action(action)
-        self.insert_action_group("advcfg", actions)
+        self.reload_button.connect("clicked", self._on_reload)
+        header.pack_end(self.reload_button)
         if self.embedded:
             # No bar of its own under the main window's: the host shows
             # :attr:`header_widget` in its title row while the view is up.
-            self.header_widget = self._embedded_header(header, menu_button)
+            self.header_widget = self._embedded_header(header)
         else:
             self.header_widget = None
             view.add_top_bar(header)
@@ -395,11 +384,11 @@ class AdvancedConfigBase:
             narrow.add_setter(self.split, "collapsed", True)
         self.add_breakpoint(narrow)
 
-    def _embedded_header(self, header: Adw.HeaderBar, menu_button: Gtk.Widget) -> Gtk.Widget:
+    def _embedded_header(self, header: Adw.HeaderBar) -> Gtk.Widget:
         """The header's controls as one row for the host's title bar:
-        undo and redo, the view switcher centred, the menu and Save."""
+        undo and redo, the view switcher centred, Reload and Save."""
         for widget in (self.sidebar_button, self.undo_button, self.redo_button,
-                       self.save_button, menu_button):
+                       self.save_button, self.reload_button):
             header.remove(widget)
         header.set_title_widget(None)
         start = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -407,8 +396,8 @@ class AdvancedConfigBase:
             button.add_css_class("flat")
             start.append(button)
         end = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        menu_button.add_css_class("flat")
-        end.append(menu_button)
+        self.reload_button.add_css_class("flat")
+        end.append(self.reload_button)
         end.append(self.save_button)
         row = Gtk.CenterBox(start_widget=start, center_widget=self.switcher, end_widget=end)
         row.set_valign(Gtk.Align.CENTER)
@@ -914,12 +903,6 @@ class AdvancedConfigBase:
             ):
                 return block.uid
         return None
-
-    def _on_copy(self, *_args) -> None:
-        # What is on screen: text typed in the Raw view and not applied is
-        # the newer of the two. Copying leaves it as it is, unapplied.
-        self.get_clipboard().set(self.raw.text() if self.raw.pending else self.editor.text)
-        self._toasts.add_toast(Adw.Toast.new(_("Configuration copied")))
 
     def _confirm_discard(
         self, proceed: Callable[[], None], stay: Optional[Callable[[], None]] = None
