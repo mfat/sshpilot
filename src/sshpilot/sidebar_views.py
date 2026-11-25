@@ -245,7 +245,8 @@ _RAIL_CSS = """
   border-right: none;
   border-left: 1px solid @sidebar_border_color;
 }
-.view-rail button { min-width: 36px; min-height: 36px; padding: 0; border-radius: 8px; }
+.view-rail button { min-width: 44px; min-height: 44px; padding: 0; border-radius: 10px; }
+.view-rail button image { -gtk-icon-size: 20px; }
 .view-rail button.current {
   background-color: alpha(@accent_bg_color, 0.18);
   color: @accent_color;
