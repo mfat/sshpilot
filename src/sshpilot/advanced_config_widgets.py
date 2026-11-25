@@ -33,8 +33,9 @@ def lift_row(source: Gtk.DragSource, drag: Gdk.Drag, row: Gtk.Widget,
              grab_x: float, grab_y: float) -> None:
     """The drag image of a list row, as GNOME's own reorderable lists make
     it (Settings' search and input-source rows, Nautilus's sidebar): a solid
-    copy of the row at its size, in a list of its own with the drag
-    highlight, held at the point where it was grabbed (not by a corner).
+    copy of the row at its size, in a list of its own, raised by a shadow
+    (no drag-highlight outline: the user found the blue edge noisy), held
+    at the point where it was grabbed (not by a corner).
 
     The copy is a picture of the row as it is now, so the row itself can be
     hidden while it is carried. On macOS it is set with DragSource.set_icon:
@@ -56,7 +57,6 @@ def lift_row(source: Gtk.DragSource, drag: Gdk.Drag, row: Gtk.Widget,
     lifted.set_size_request(width, height)
     item = Gtk.ListBoxRow(child=picture, activatable=False)
     lifted.append(item)
-    lifted.drag_highlight_row(item)
     Gtk.DragIcon.get_for_drag(drag).set_child(lifted)
     drag.set_hotspot(int(grab_x), int(grab_y))
 
