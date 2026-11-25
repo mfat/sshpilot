@@ -53,8 +53,10 @@ def _text(value) -> str:
 
 
 def _bind_prefix(addr: str) -> str:
-    """``addr:`` for the flag, or nothing when ssh's default is meant."""
-    return f"{addr}:" if addr else ""
+    """``addr:`` for the flag, or nothing when ssh's default (localhost) is
+    meant -- the editor fills that in, and repeating it only lengthens the
+    flag."""
+    return f"{addr}:" if addr and addr != _DEFAULT_BIND else ""
 
 
 def describe_forward(rule: dict) -> Optional[ForwardView]:
@@ -135,6 +137,10 @@ _css_installed = False
 
 #: Arrow length in px: the same on every row, so the rows line up.
 ARROW_WIDTH = 36
+#: Width of the type-and-flag column. Fixed, not just size-grouped: the flag
+#: wraps, so its column could otherwise be squeezed by a different amount on
+#: each row and the strips would start at different places.
+HEADING_WIDTH = 190
 
 
 def _ensure_css() -> None:
@@ -181,7 +187,9 @@ def _draw_arrow(area: Gtk.DrawingArea, cr, width: int, height: int, outbound: bo
     cr.stroke()
 
 
-def _side(machine: str, server_name: str, side: Side, kind: str) -> Gtk.Widget:
+def _side(machine: str, server_name: str, side: Side, kind: str, shrink: bool) -> Gtk.Widget:
+    """*shrink*: let the labels ellipsize. Only the right side does, so the
+    left side keeps its natural width and its size group holds on every row."""
     box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
     icon = _image(
         "computer-symbolic" if machine == THIS_COMPUTER else "network-server-symbolic", 16
@@ -195,7 +203,8 @@ def _side(machine: str, server_name: str, side: Side, kind: str) -> Gtk.Widget:
     name = Gtk.Label(
         label=_("This computer") if machine == THIS_COMPUTER else server_name, xalign=0
     )
-    name.set_ellipsize(Pango.EllipsizeMode.END)
+    if shrink:
+        name.set_ellipsize(Pango.EllipsizeMode.END)
     text.append(name)
 
     line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -206,7 +215,8 @@ def _side(machine: str, server_name: str, side: Side, kind: str) -> Gtk.Widget:
     address = Gtk.Label(label=side.address, xalign=0)
     for name_ in ("monospace", "caption", "dim-label"):
         address.add_css_class(name_)
-    address.set_ellipsize(Pango.EllipsizeMode.END)
+    if shrink:
+        address.set_ellipsize(Pango.EllipsizeMode.END)
     line.append(address)
     text.append(line)
 
@@ -241,9 +251,10 @@ def build_forward_rule_row(
         flag.add_css_class(name)
     flag.set_wrap(True)
     flag.set_wrap_mode(Pango.WrapMode.CHAR)
-    flag.set_max_width_chars(26)
+    flag.set_max_width_chars(20)
     flag.set_selectable(True)
     heading.append(flag)
+    heading.set_size_request(HEADING_WIDTH, -1)
     if label_group is not None:
         label_group.add_widget(heading)
     row.append(heading)
@@ -252,7 +263,7 @@ def build_forward_rule_row(
     strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
     strip.add_css_class("forward-strip")
     strip.set_hexpand(True)
-    left = _side(THIS_COMPUTER, server_name, view.this_computer, view.kind)
+    left = _side(THIS_COMPUTER, server_name, view.this_computer, view.kind, shrink=False)
     if side_group is not None:
         side_group.add_widget(left)
     strip.append(left)
@@ -270,7 +281,7 @@ def build_forward_rule_row(
     )
     strip.append(arrow)
 
-    right = _side(SERVER, server_name, view.server, view.kind)
+    right = _side(SERVER, server_name, view.server, view.kind, shrink=True)
     right.set_hexpand(True)
     strip.append(right)
     row.append(strip)

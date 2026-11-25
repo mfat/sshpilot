@@ -81,6 +81,15 @@ def test_dynamic_is_a_socks_proxy_here_reaching_anything_from_the_server():
     assert view.outbound is True
 
 
+def test_flag_leaves_out_the_default_localhost_bind():
+    view = describe_forward({
+        'type': 'local', 'listen_addr': 'localhost', 'listen_port': 8080,
+        'remote_host': 'localhost', 'remote_port': 22,
+    })
+    assert view.flag == '-L 8080:localhost:22'
+    assert view.this_computer.address == 'localhost:8080'
+
+
 def test_unknown_type_is_not_shown():
     assert describe_forward({'type': 'x11', 'listen_port': 6000}) is None
     assert describe_forward({}) is None
