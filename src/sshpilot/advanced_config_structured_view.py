@@ -28,6 +28,7 @@ from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_widgets import pill, set_class, set_pill  # noqa: E402
 from .api.models.connections import SshConfigDraftLineState as State  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
+from .connection_dialog_auth import canonical_keyword  # noqa: E402
 from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap, block_category  # noqa: E402
 from .ssh_option_list import OPENSSH_KEYWORDS  # noqa: E402
 
@@ -94,6 +95,31 @@ class AnswerView:
         if not line:
             return None, None
         return self.states.get(line), self.errors.get(line)
+
+
+def _instead(answer: AnswerView, uid: int, keyword: str) -> str:
+    """While option line *uid* goes unused: markup saying what OpenSSH
+    takes instead and from where ("" when it is used, or when there is no
+    one host's answer to say it from, as for a pattern block)."""
+    item, error = answer.line_state(uid)
+    if error is not None or item is None or item.state not in (State.SHADOWED, State.FORCED):
+        return ""
+    values = answer.values.get(keyword.lower())
+    if not values:
+        return ""
+    value = ", ".join(values)
+    if item.state is State.FORCED:
+        return messages.used_instead_markup(value, "", forced=True)
+    place = messages.where(item.decided_file, item.decided_line, item.decided_block)
+    return messages.used_instead_markup(value, place)
+
+
+def _show_instead(row, answer: AnswerView, uid: int, keyword: str, description: str) -> None:
+    """The row's subtitle: what is used instead while its line is not,
+    else its usual description."""
+    text = _instead(answer, uid, keyword) or GLib.markup_escape_text(description)
+    if row.get_subtitle() != text:
+        row.set_subtitle(text)
 
 
 def _state_pill(view: "StructuredView") -> Gtk.Label:
@@ -246,6 +272,8 @@ class SingleRow:
         unused = _line_pill(self.state, item, error)
         set_class(self.entry, "error", error is not None)
         set_class(self.entry, "dim-label", unused)
+        _show_instead(self.row, answer, self.uid, self.keyword,
+                      _descriptions().get(self.keyword, ""))
 
     def _on_changed(self, entry) -> None:
         if not self.view.syncing.on:
@@ -286,6 +314,8 @@ class SwitchRow:
     def show(self, answer: AnswerView) -> None:
         item, error = answer.line_state(self.uid)
         _line_pill(self.state, item, error)
+        _show_instead(self.row, answer, self.uid, self.keyword,
+                      _descriptions().get(self.keyword, ""))
 
     def _on_selected(self, *_args) -> None:
         if self.view.syncing.on:
@@ -379,6 +409,9 @@ class ForwardRow:
         item, error = answer.line_state(self.uid)
         _line_pill(self.state, item, error)
         set_class(self.entry, "error", error is not None)
+        option = self.view.controller.editor.find_option(self.uid)[1]
+        if option is not None:
+            _show_instead(self.row, answer, self.uid, option.keyword, "")
 
     def _on_changed(self, entry) -> None:
         if not self.view.syncing.on:
@@ -528,7 +561,16 @@ class OtherRow:
                               lambda: view.controller.delete_option(self.uid))
         for widget in (self.key, self.value, self.state, remove):
             box.append(widget)
-        self.row.set_child(box)
+        # Under the fields, while the line goes unused: what is used instead.
+        self.instead = Gtk.Label(xalign=0, wrap=True, use_markup=True, visible=False)
+        self.instead.add_css_class("caption")
+        self.instead.add_css_class("dim-label")
+        self.instead.set_margin_start(14)
+        self.instead.set_margin_bottom(6)
+        column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        column.append(box)
+        column.append(self.instead)
+        self.row.set_child(column)
         self.suggestions = _Suggestions(self.key, self._take_keyword)
 
     def bind(self, option) -> None:
@@ -541,6 +583,11 @@ class OtherRow:
         for entry in (self.key, self.value):
             set_class(entry, "error", error is not None)
             set_class(entry, "dim-label", unused)
+        option = self.view.controller.editor.find_option(self.uid)[1]
+        text = _instead(answer, self.uid, canonical_keyword(option.keyword)) if option else ""
+        if self.instead.get_label() != text:
+            self.instead.set_label(text)
+        self.instead.set_visible(bool(text))
 
     def _on_changed(self, entry, field: str) -> None:
         if self.view.syncing.on:

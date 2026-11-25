@@ -747,6 +747,27 @@ def test_effective_marks_what_needs_attention_by_severity(gtk, tmp_path):
         _close(win)
 
 
+def test_an_unused_line_says_what_is_used_instead(gtk, tmp_path):
+    win = _open_on(gtk, tmp_path, (
+        "Host zoo\n    User early\n\nHost zoo\n    HostName 10.0.0.5\n"
+        "    HostName google.com\n    User late\n    ConnectTimeout 30\n"
+    ))
+    try:
+        win.select_block(win.draft.blocks[1].uid)
+        assert _settled(win)
+        structured = win.structured
+        user = _field(win, "user")
+        assert _pump(lambda: user.row.get_subtitle() == "OpenSSH uses <tt>early</tt> from line 2 (Host zoo)")
+        others = {row.key.get_text(): row for row in structured._other_rows.values()}
+        assert _pump(lambda: others["HostName"].instead.get_label()
+                     == "OpenSSH uses <tt>10.0.0.5</tt> from line 5 (Host zoo)")
+        assert others["ConnectTimeout"].instead.get_label() == "Settings ▸ SSH Options use <tt>7</tt>"
+        hostname = _field(win, "hostname")                  # used: its description
+        assert hostname.row.get_subtitle() == "The real host name or IP address to connect to"
+    finally:
+        _close(win)
+
+
 def test_a_not_used_pill_shows_the_line_used_instead(gtk, tmp_path):
     """Structured's "Not used" pill is a link, as a source is in Effective."""
     from gi.repository import Gtk

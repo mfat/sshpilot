@@ -242,6 +242,20 @@ def pending_exec_many_hosts_text() -> str:
     )
 
 
+def used_instead_markup(value: str, place: str, forced: bool = False) -> str:
+    """Pango markup, in place of a row's description while its line goes
+    unused: the value OpenSSH takes, and where it takes it from."""
+    from xml.sax.saxutils import escape
+
+    shown = f"<tt>{escape(value)}</tt>"
+    if forced:
+        # Translators: {value} is an option's value, e.g. "Settings ▸ SSH Options use 7".
+        return escape(_("Settings ▸ SSH Options use {value}")).replace("{value}", shown)
+    # Translators: e.g. "OpenSSH uses 10.0.0.5 from line 3 (Host zoo)".
+    return escape(_("OpenSSH uses {value} from {place}")).replace(
+        "{value}", shown).replace("{place}", escape(place))
+
+
 def show_line_hint() -> str:
     """Under a "Not used" pill's reason: the pill is a link to that line."""
     return _("Click to show that line.")
