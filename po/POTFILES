@@ -35,6 +35,7 @@ src/sshpilot/file_manager/permissions.py
 src/sshpilot/file_manager/properties_dialog.py
 src/sshpilot/file_manager_window.py
 src/sshpilot/file_manager_integration.py
+src/sshpilot/forward_rule_row.py
 src/sshpilot/forwarding_only_ui.py
 src/sshpilot/gtk/asbru_import_messages.py
 src/sshpilot/gtk/host_info_failure_messages.py
