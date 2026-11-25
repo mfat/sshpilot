@@ -88,6 +88,12 @@ def _ensure_sections_view(window):
     view.host_close = lambda: show_view(window, CONNECTIONS)
     view.host_dirty = lambda dirty: _mark_unsaved(window, dirty)
     slot.append(view)
+    # Its controls (undo, the view switcher, Save) go in the window's own
+    # title row while the view is shown: one bar, not two stacked.
+    title = getattr(window, "_content_title_stack", None)
+    header = getattr(view, "header_widget", None)
+    if title is not None and header is not None:
+        title.add_named(header, "config")
     column = view.sidebar_column
     column.set_vexpand(True)
     window._sidebar_sections_holder.append(column)

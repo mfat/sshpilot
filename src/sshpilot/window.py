@@ -3167,13 +3167,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return GLib.SOURCE_REMOVE
 
     def _move_title_to_content_header(self) -> None:
-        """Select the tab bar or the empty drag region in the content title."""
+        """Select the tab bar, the Configuration view's controls, or the
+        empty drag region in the content title."""
         stack = getattr(self, '_content_title_stack', None)
         if stack is None:
             return
         tab_bar = getattr(self, 'tab_bar', None)
         try:
-            if tab_bar is not None and tab_bar.get_visible():
+            from .sidebar_views import SECTIONS, current_view
+            if current_view(self) == SECTIONS and stack.get_child_by_name('config'):
+                stack.set_visible_child_name('config')
+            elif tab_bar is not None and tab_bar.get_visible():
                 stack.set_visible_child(tab_bar)
             else:
                 stack.set_visible_child(self._content_empty_title)

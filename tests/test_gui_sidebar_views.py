@@ -135,6 +135,10 @@ def test_the_rail_switches_the_whole_window(window):
     # The content area shows the configuration in the tabs' place.
     assert view.get_visible() and not window.tab_overview.get_visible()
     assert view.get_parent() is window.tab_overview.get_parent()
+    # Its controls are in the window's own title row: one bar, not two.
+    title = window._content_title_stack
+    assert title.get_visible_child() is view.header_widget
+    assert view.switcher.get_ancestor(type(title)) is title
     for widget in (
         window._sidebar_toolbar_clip, window.search_button, window.search_container,
         window._sidebar_add_button, window._sidebar_view_button,
@@ -145,6 +149,7 @@ def test_the_rail_switches_the_whole_window(window):
     _click(window, "connections")
     assert stack.get_visible_child_name() == "connections"
     assert window.tab_overview.get_visible() and not view.get_visible()
+    assert title.get_visible_child() is not view.header_widget
     for widget in (
         window._sidebar_toolbar_clip, window.search_button,
         window._sidebar_add_button, window._sidebar_view_button,

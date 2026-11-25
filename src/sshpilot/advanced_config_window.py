@@ -297,10 +297,6 @@ class AdvancedConfigBase:
         self._effective_left = False
 
         header = Adw.HeaderBar()
-        if self.embedded:
-            # A bar of the main window's content: its buttons are its own.
-            header.set_show_start_title_buttons(False)
-            header.set_show_end_title_buttons(False)
         self.switcher = Adw.ViewSwitcher(stack=self.stack)
         self.switcher.set_policy(Adw.ViewSwitcherPolicy.WIDE)
         header.set_title_widget(self.switcher)
@@ -330,14 +326,26 @@ class AdvancedConfigBase:
         menu = Gio.Menu()
         menu.append(_("Reload from Disk"), "advcfg.reload")
         menu.append(_("Copy Configuration"), "advcfg.copy")
-        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
+        # Embedded, the window's own main menu is in the same row: this one
+        # is the view's, and looks it (⋮, not a second ☰).
+        menu_button = Gtk.MenuButton(
+            icon_name="view-more-symbolic" if self.embedded else "open-menu-symbolic",
+            menu_model=menu, tooltip_text=_("Configuration Menu"),
+        )
+        header.pack_end(menu_button)
         actions = Gio.SimpleActionGroup()
         for name, callback in (("reload", self._on_reload), ("copy", self._on_copy)):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
             actions.add_action(action)
         self.insert_action_group("advcfg", actions)
-        view.add_top_bar(header)
+        if self.embedded:
+            # No bar of its own under the main window's: the host shows
+            # :attr:`header_widget` in its title row while the view is up.
+            self.header_widget = self._embedded_header(header, menu_button)
+        else:
+            self.header_widget = None
+            view.add_top_bar(header)
 
         # Two banners, so that one never hides the other: what happened to
         # the file (read-only, changed on disk, could not be saved), and
@@ -386,6 +394,27 @@ class AdvancedConfigBase:
         if self.split is not None:
             narrow.add_setter(self.split, "collapsed", True)
         self.add_breakpoint(narrow)
+
+    def _embedded_header(self, header: Adw.HeaderBar, menu_button: Gtk.Widget) -> Gtk.Widget:
+        """The header's controls as one row for the host's title bar:
+        undo and redo, the view switcher centred, the menu and Save."""
+        for widget in (self.sidebar_button, self.undo_button, self.redo_button,
+                       self.save_button, menu_button):
+            header.remove(widget)
+        header.set_title_widget(None)
+        start = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        for button in (self.undo_button, self.redo_button):
+            button.add_css_class("flat")
+            start.append(button)
+        end = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        menu_button.add_css_class("flat")
+        end.append(menu_button)
+        end.append(self.save_button)
+        row = Gtk.CenterBox(start_widget=start, center_widget=self.switcher, end_widget=end)
+        row.set_valign(Gtk.Align.CENTER)
+        row.set_margin_start(6)
+        row.set_margin_end(6)
+        return row
 
     def _build_context_bar(self) -> Gtk.Widget:
         """The block on screen and its file."""
