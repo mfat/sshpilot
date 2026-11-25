@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 13:58+0330\n"
+"POT-Creation-Date: 2026-11-25 14:38+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -2883,12 +2883,12 @@ msgstr "Do início da configuração SSH"
 msgid "Identity files OpenSSH uses"
 msgstr "Ficheiros de identidade que o OpenSSH utiliza"
 
-#: src/sshpilot/connection_dialog_route.py:118
+#: src/sshpilot/connection_dialog_route.py:131
 #: src/sshpilot/advanced_config_structured_view.py:560
 msgid "Route"
 msgstr "Rota"
 
-#: src/sshpilot/connection_dialog_route.py:171
+#: src/sshpilot/connection_dialog_route.py:201
 msgid "Type a host name to see its route."
 msgstr "Escreva um nome de anfitrião para ver a sua rota."
 
@@ -18693,12 +18693,16 @@ msgstr ""
 "Escreva acima um anfitrião a verificar para ver o que o OpenSSH usaria para "
 "ele."
 
-#: src/sshpilot/route_strip.py:93
+#: src/sshpilot/route_strip.py:200
 msgid "This computer"
 msgstr "Este computador"
 
+#: src/sshpilot/route_strip.py:235
+msgid "Drag to change the order of the jump hosts"
+msgstr "Arraste para alterar a ordem dos anfitriões de salto"
+
 #. A jump host: its own block is a click away.
-#: src/sshpilot/route_strip.py:124
+#: src/sshpilot/route_strip.py:304
 msgid "Show this host's block"
 msgstr "Mostrar o bloco deste anfitrião"
 

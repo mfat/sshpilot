@@ -103,6 +103,19 @@ def route_stops(
     return stops
 
 
+def reorder(hops: List[str], index: int, position: int) -> Optional[List[str]]:
+    """*hops* with the one at *index* moved to *position* (counted before
+    it moves); None when that changes nothing or is out of range."""
+    if not 0 <= index < len(hops) or not 0 <= position <= len(hops):
+        return None
+    if position in (index, index + 1):
+        return None
+    moved = list(hops)
+    hop = moved.pop(index)
+    moved.insert(position - 1 if position > index else position, hop)
+    return moved
+
+
 class ConnectionDialogRouteMixin:
     """The Routing page's picture of the route."""
 
@@ -119,7 +132,7 @@ class ConnectionDialogRouteMixin:
         caption.add_css_class("caption-heading")
         caption.add_css_class("dim-label")
         inner.append(caption)
-        self.route_strip = RouteStrip()
+        self.route_strip = RouteStrip(on_reorder=self._reorder_jump_hosts)
         inner.append(self.route_strip)
         card.append(inner)
         group.add(card)
@@ -130,6 +143,23 @@ class ConnectionDialogRouteMixin:
                 row.connect("changed", lambda *_a: self._schedule_route_update())
         self._update_route()
         return group
+
+    def _reorder_jump_hosts(self, index: int, position: int) -> None:
+        """A jump host card dropped elsewhere: the Jump hosts row is
+        written in the new order (an inherited chain becomes this host's
+        own, as any edit of the row makes it)."""
+        row = getattr(self, "proxy_jump_row", None)
+        if row is None:
+            return
+        hops = reorder(fields.jump_hops(row.get_text()), index, position)
+        if hops is None:
+            return
+        text = ",".join(hops)
+        setter = getattr(self, "_set_text_without_completion", None)
+        if callable(setter):
+            setter(row, text)
+        else:
+            row.set_text(text)
 
     def _schedule_route_update(self) -> None:
         # Several rows change at once when a connection is loaded or an

@@ -1,6 +1,6 @@
 """The route the connection editor's Routing page draws, from its fields."""
 
-from sshpilot.connection_dialog_route import COMMAND, JUMP, TARGET, route_stops
+from sshpilot.connection_dialog_route import COMMAND, JUMP, TARGET, reorder, route_stops
 
 
 def _stops(**fields):
@@ -40,3 +40,12 @@ def test_an_inherited_jump_host_is_dimmed_with_where_it_comes_from():
         inherited={"proxy_jump_row"}, source="Inherited",
     )
     assert hop.inherited and hop.source == "Inherited"
+
+
+def test_a_jump_host_moves_to_where_it_is_dropped():
+    hops = ["a", "b", "c"]
+    assert reorder(hops, 0, 3) == ["b", "c", "a"]        # dropped after the last
+    assert reorder(hops, 2, 0) == ["c", "a", "b"]        # before the first
+    assert reorder(hops, 0, 2) == ["b", "a", "c"]        # after the second
+    assert reorder(hops, 1, 1) is None and reorder(hops, 1, 2) is None   # its own place
+    assert reorder(hops, 5, 0) is None and hops == ["a", "b", "c"]
