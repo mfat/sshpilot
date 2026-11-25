@@ -438,6 +438,15 @@ def install_sidebar_css():
            draws the trailing inset border, so suppress the paned separator's
            own stroke to avoid a double line. GTK keeps a wider input area
            than it paints, so the divider stays grabbable. */
+        /* The drag grip at a row's start (_set_child_with_grip): hidden
+           until the row is hovered, as in Advanced Configuration's list
+           of blocks; not shown in the compact layout. */
+        .navigation-sidebar row .sidebar-drag-grip { opacity: 0; }
+        .navigation-sidebar.sidebar-grips row .sidebar-row-main { margin-left: 16px; }
+        .navigation-sidebar.sidebar-grips row:hover .sidebar-drag-grip { opacity: 0.45; }
+        .navigation-sidebar.sidebar-grips row .sidebar-drag-grip:hover { opacity: 0.9; }
+        .navigation-sidebar.sidebar-compact row .sidebar-drag-grip { opacity: 0; }
+
         paned.sidebar-paned > separator {
           box-shadow: none;
           background: none;
@@ -1061,7 +1070,7 @@ def _show_row_drop_indicator(row: Gtk.ListBoxRow, top: bool) -> None:
     attr = "drop_indicator_top" if top else "drop_indicator_bottom"
     indicator = getattr(row, attr)
     if indicator is None:
-        box = row.get_child()
+        box = getattr(row, "_main_box", None) or row.get_child()
         if box is None:
             return
         indicator = DragIndicator()
@@ -1263,6 +1272,33 @@ class SectionHeaderRow(Gtk.ListBoxRow):
         self.apply_descendant_visibility()
         self.emit("section-toggled", self.section_id, self._expanded)
 
+def _set_child_with_grip(row: Gtk.ListBoxRow, main_box: Gtk.Box) -> None:
+    """Give *row* its main box, with a drag grip floating at the row's
+    start: a hint only, shown on hover (CSS ``.sidebar-drag-grip``). Its
+    column is reserved only while the sidebar is wide enough (the list's
+    ``.sidebar-grips``, set with the row actions in
+    ``MainWindow._apply_sidebar_row_actions``): narrower, the grip goes, as
+    the row buttons do, and the names keep their width. The row's own
+    whole-row drag is unchanged: pressing the grip starts it, as pressing
+    anywhere else on the row does. ``row._main_box`` is the box (drop
+    indicators and indentation work on it)."""
+    from sshpilot import icon_utils
+
+    row._main_box = main_box
+    main_box.add_css_class("sidebar-row-main")
+    grip = icon_utils.new_image_from_icon_name("list-drag-handle-symbolic")
+    grip.add_css_class("sidebar-drag-grip")
+    grip.set_halign(Gtk.Align.START)
+    grip.set_valign(Gtk.Align.CENTER)
+    grip.set_margin_start(1)
+    grip.set_cursor_from_name("grab")
+    grip.set_tooltip_text(_("Drag to reorder"))
+    row.drag_grip = grip
+    overlay = Gtk.Overlay(child=main_box)
+    overlay.add_overlay(grip)
+    row.set_child(overlay)
+
+
 class GroupRow(Gtk.ListBoxRow):
     """Row widget for group headers."""
 
@@ -1424,7 +1460,7 @@ class GroupRow(Gtk.ListBoxRow):
         main_box.append(content)
         main_box.append(self.drop_target_indicator)
 
-        self.set_child(main_box)
+        _set_child_with_grip(self, main_box)
         self.set_selectable(True)
         self.set_can_focus(True)
 
@@ -2038,8 +2074,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Now add the content to main_box
         main_box.append(content)
 
-        # Set the main box as the child directly (no pulse overlay)
-        self.set_child(main_box)
+        # The main box, with the hover grip floating at the row's start.
+        _set_child_with_grip(self, main_box)
 
         self.set_selectable(True)
 
@@ -2245,7 +2281,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         content = getattr(self, '_content_box', None)
         if not content:
-            main_box = self.get_child()
+            main_box = getattr(self, "_main_box", None) or self.get_child()
             if not main_box:
                 return
 
