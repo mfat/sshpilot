@@ -246,6 +246,8 @@ _RAIL_CSS = """
   border-left: 1px solid @sidebar_border_color;
 }
 .view-rail button { min-width: 44px; min-height: 44px; padding: 0; border-radius: 10px; }
+/* 20px icons, drawn with thinner lines (the *-rail-symbolic ones) so they
+   look as light as the 16px icons elsewhere. */
 .view-rail button image { -gtk-icon-size: 20px; }
 .view-rail button.current {
   background-color: alpha(@accent_bg_color, 0.18);
@@ -282,9 +284,9 @@ def _rail_items():
     """(view, accessible name, tooltip, icon) of each rail button."""
     return (
         (CONNECTIONS, _("Connections"), _("Connections and groups"),
-         "connections-symbolic"),
+         "connections-rail-symbolic"),
         (SECTIONS, _("Configuration"), _("Advanced SSH configuration"),
-         "document-properties-symbolic"),
+         "document-properties-rail-symbolic"),
     )
 
 
