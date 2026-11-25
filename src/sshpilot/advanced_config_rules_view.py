@@ -23,7 +23,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Graphene, Gtk  # noqa: E402
 
 from .api.models.connections import (  # noqa: E402
     SshConfigDraftEvaluation,
@@ -177,7 +177,9 @@ class OptionRow:
             self.view.controller.option_typed(self.uid, field, entry.get_text())
 
     def _on_drop(self, _target, value, _x, y) -> bool:
-        self.view.hide_drop_marks()
+        landed = self.view.drop_at_mark(value)
+        if landed is not None:
+            return landed
         kind, uid = _drag_payload(value)
         if kind != _OPTION_DRAG or uid == self.uid:
             return False
@@ -423,7 +425,9 @@ class BlockCard:
             self.view.controller.note_typed(self.uid, entry.get_text())
 
     def _on_drop(self, _target, value, _x, y) -> bool:
-        self.view.hide_drop_marks()
+        landed = self.view.drop_at_mark(value)
+        if landed is not None:
+            return landed
         kind, uid = _drag_payload(value)
         if kind == _OPTION_DRAG:
             return self.view.controller.drop_option_on_block(uid, self.uid)
@@ -542,6 +546,12 @@ class RulesView(Gtk.Box):
         self.empty.set_visible(False)
         self.box.append(self.empty)
         self.scroller.set_child(self.box)
+        # The bar opens a gap of its own under the pointer, and the gap is
+        # no card or option: a drop released there is caught here, by the
+        # list, and lands where the bar is.
+        gap_target = Gtk.DropTarget.new(DragItem, Gdk.DragAction.MOVE)
+        gap_target.connect("drop", lambda _t, value, _x, _y: bool(self.drop_at_mark(value)))
+        self.box.add_controller(gap_target)
         self.scroller.get_vadjustment().connect("notify::page-size", self._sync_scroll_room)
         self.append(self.scroller)
 
@@ -583,8 +593,47 @@ class RulesView(Gtk.Box):
         for mark in self._drop_marks.values():
             mark.set_visible(False)
 
+    def drop_at_mark(self, value) -> Optional[bool]:
+        """Land a drop where the bar shows it will, wherever in the list the
+        pointer was let go: on a card, on an option or in the bar's own gap.
+        None when no bar is shown (nothing was dragged over the list)."""
+        kind, uid = _drag_payload(value)
+        mark = next((m for m in self._drop_marks.values() if m.get_visible()), None)
+        self.hide_drop_marks()
+        if mark is None or kind != self._drag_kind:
+            return None
+        container = mark.get_parent()
+        if kind == _BLOCK_DRAG and container is self.box:
+            by_widget = {card.card: other for other, card in self.cards.items()}
+            after = mark.get_next_sibling()
+            if after in by_widget:
+                return self.controller.drop_block(uid, by_widget[after], True)
+            before = mark.get_prev_sibling()
+            if before in by_widget:
+                return self.controller.drop_block(uid, by_widget[before], False)
+            return False
+        if kind == _OPTION_DRAG:
+            card = next((c for c in self.cards.values() if c.rows_box is container), None)
+            if card is None:
+                return False
+            after = mark.get_next_sibling()
+            by_widget = {row.box: other for other, row in card.rows.items()}
+            if after in by_widget:
+                if by_widget[after] == uid:
+                    return False
+                return self.controller.drop_option(uid, by_widget[after], True)
+            return self.controller.drop_option_on_block(uid, card.uid)
+        return False
+
     def on_card_motion(self, _target, _x, y, card: "BlockCard"):
         if self._drag_kind == _OPTION_DRAG:
+            mark = self._drop_marks.get(card.rows_box)
+            if mark is not None and mark.get_visible() and self._among_rows(card, y):
+                # Over the options or the gaps between them (the bar's own
+                # among them): the option rows place the bar there. Sending
+                # it to the end here would part the rows anew under the
+                # pointer, and the bar would flicker between the two.
+                return Gdk.DragAction.MOVE
             # Onto the block as a whole: it becomes its last option.
             last = card.footer.get_prev_sibling()
             self._place_drop_mark(card.rows_box, last)
@@ -594,6 +643,16 @@ class RulesView(Gtk.Box):
                 self.box, card.card.get_prev_sibling() if before else card.card
             )
         return Gdk.DragAction.MOVE
+
+    @staticmethod
+    def _among_rows(card: "BlockCard", y: float) -> bool:
+        """Whether *y* (on the card) is within its option rows, above the
+        add buttons."""
+        ok, point = card.card.compute_point(card.rows_box, Graphene.Point().init(0, y))
+        found, footer = card.footer.compute_bounds(card.rows_box)
+        if not ok or not found:
+            return False
+        return 0 <= point.y < footer.get_y()
 
     def on_row_motion(self, _target, _x, y, row: "OptionRow"):
         if self._drag_kind == _OPTION_DRAG:

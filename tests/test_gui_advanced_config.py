@@ -1122,6 +1122,43 @@ def test_where_a_drop_lands_is_shown_as_the_connection_list_shows_it(window):
     assert window.editor.text == CONFIG                           # showing moved nothing
 
 
+def test_a_drop_lands_where_the_bar_is_even_in_the_bar_s_own_gap(window):
+    """The bar parts the list under the pointer, so the button is usually
+    let go over the gap, which is no card and no option: the drop was
+    refused there and nothing moved, while the arrows worked. (Measured
+    with xdotool on Xvfb: the drag was cancelled with NO_TARGET.) The list
+    takes such a drop now, and every drop lands where the bar shows."""
+    from gi.repository import Gtk
+
+    from sshpilot.advanced_config_rules_view import DragItem
+
+    rules = window.rules
+    glob, web, star = window.draft.blocks
+    cards = {block.uid: rules.cards[block.uid] for block in window.draft.blocks}
+    (gap,) = [c for c in rules.box.observe_controllers() if isinstance(c, Gtk.DropTarget)]
+    assert list(gap.get_formats().get_gtypes()) == [DragItem.__gtype__]
+
+    rules.begin_block_drag(star.uid)
+    rules.on_card_motion(None, 0, -1, cards[web.uid])             # bar before web
+    assert rules.drop_at_mark(DragItem("block", star.uid))
+    rules.end_block_drag()
+    assert [b.patterns for b in window.draft.blocks] == ["", "*", "web1 web2"]
+
+    # An option: the bar is put before the first option, and the pointer
+    # then lies in the bar's gap, on the block, among its options: the
+    # block leaves the bar where it is, and the drop lands there.
+    web = window.draft.blocks[2]
+    card = rules.cards[web.uid]
+    first, _port, last = web.options
+    rules.begin_option_drag()
+    rules.on_row_motion(None, 0, -1, card.rows[first.uid])
+    rules._among_rows = lambda _card, _y: True
+    rules.on_card_motion(None, 0, 0, card)
+    assert rules.drop_at_mark(DragItem("option", last.uid))
+    rules.end_option_drag()
+    assert [o.key for o in window.draft.blocks[2].options] == ["IdentityFile", "User", "Port"]
+
+
 def test_undo_and_redo_have_keys_wherever_the_keyboard_is(window):
     """Ctrl+Z is the window's undo, not the field's it was pressed in; on
     the Raw page it is left to the text typed there."""
