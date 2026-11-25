@@ -1865,9 +1865,9 @@ class ConnectionDialog(
     #: (icon_utils falls back to the icon theme).
     _PAGE_ICONS = {
         "connection": "network-server-symbolic",
-        "routing": "mail-forward-symbolic",
+        "routing": "connector-symbolic",
         "authentication": "dialog-password-symbolic",
-        "forwarding": "network-transmit-receive-symbolic",
+        "forwarding": "arrows-pipe-symbolic",
         "commands": "utilities-terminal-symbolic",
         "advanced": "preferences-system-symbolic",
         "wol": "system-shutdown-symbolic",

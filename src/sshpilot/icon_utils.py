@@ -124,6 +124,9 @@ _ICON_RESOURCE_MAP = {
     'wired-lock-none-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-none-symbolic.svg',
     # Port-forwarding indicator (sidebar connection rows).
     'mail-forward-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/mail-forward-symbolic.svg',
+    # Connection editor pages: Routing and Port Forwarding.
+    'connector-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/connector-symbolic.svg',
+    'arrows-pipe-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/arrows-pipe-symbolic.svg',
     'network-shield-dots-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-dots-symbolic.svg',
     'network-shield-crossed-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-crossed-symbolic.svg',
     'text-editor-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/text-editor-symbolic.svg',
