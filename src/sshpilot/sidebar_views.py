@@ -286,7 +286,7 @@ def _rail_items():
         (CONNECTIONS, _("Connections"), _("Connections and groups"),
          "connections-rail-symbolic"),
         (SECTIONS, _("Configuration"), _("Advanced SSH configuration"),
-         "document-properties-rail-symbolic"),
+         "document-config-rail-symbolic"),
     )
 
 
