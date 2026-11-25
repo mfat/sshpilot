@@ -281,7 +281,7 @@ def _rail_items():
     """(view, accessible name, tooltip, icon) of each rail button."""
     return (
         (CONNECTIONS, _("Connections"), _("Connections and groups"),
-         "server-symbolic"),
+         "connections-symbolic"),
         (SECTIONS, _("Configuration"), _("Advanced SSH configuration"),
          "document-properties-symbolic"),
     )
