@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 20:22+0330\n"
+"POT-Creation-Date: 2026-11-25 20:36+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -177,7 +177,7 @@ msgstr "Открыть подключения?"
 #: src/sshpilot/resources/ui/scp_download_window.ui:25
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:21
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
-#: src/sshpilot/advanced_config_window.py:680
+#: src/sshpilot/advanced_config_window.py:681
 #: src/sshpilot/advanced_config_window.py:946
 msgid "Cancel"
 msgstr "Отмена"
@@ -2872,7 +2872,7 @@ msgstr "Задано для этого узла"
 
 #: src/sshpilot/connection_dialog_effective.py:67
 #: src/sshpilot/gtk/advanced_config_messages.py:219
-#: src/sshpilot/advanced_config_effective_view.py:293
+#: src/sshpilot/advanced_config_effective_view.py:352
 msgid "OpenSSH default"
 msgstr "По умолчанию в OpenSSH"
 
@@ -7413,7 +7413,7 @@ msgid "Could not save known hosts"
 msgstr "Не удалось сохранить known_hosts"
 
 #: src/sshpilot/log_viewer.py:496
-#: src/sshpilot/advanced_config_effective_view.py:287
+#: src/sshpilot/advanced_config_effective_view.py:346
 msgid "All"
 msgstr "Все"
 
@@ -8241,8 +8241,8 @@ msgstr "Редактор конфигурации SSH"
 #: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
 #: src/sshpilot/sidebar.py:5161 src/sshpilot/window.py:4270
 #: src/sshpilot/resources/ui/connection_dialog.ui:120
-#: src/sshpilot/advanced_config_window.py:1900
-#: src/sshpilot/advanced_config_window.py:1913
+#: src/sshpilot/advanced_config_window.py:1893
+#: src/sshpilot/advanced_config_window.py:1906
 msgid "Advanced Configuration"
 msgstr "Расширенная конфигурация"
 
@@ -13870,7 +13870,7 @@ msgstr "Сеанс завершен."
 #. Dismiss button to hide the banner manually
 #: src/sshpilot/terminal.py:623 src/sshpilot/terminal.py:697
 #: src/sshpilot/window.py:2213 src/sshpilot/window.py:2239
-#: src/sshpilot/advanced_config_window.py:736
+#: src/sshpilot/advanced_config_window.py:737
 msgid "Dismiss"
 msgstr "Закрыть"
 
@@ -14541,7 +14541,7 @@ msgstr "Следовать стилю системы"
 
 #. Through the menu's Reload: it asks before dropping the
 #. draft this save was meant to keep.
-#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:726
+#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:727
 msgid "Reload"
 msgstr "Перезагрузить"
 
@@ -18214,7 +18214,7 @@ msgstr ""
 "Хост, о котором спрашивают OpenSSH. Пусто: хост, названный выбранным блоком."
 
 #: src/sshpilot/advanced_config_window.py:400
-#: src/sshpilot/advanced_config_window.py:1072
+#: src/sshpilot/advanced_config_window.py:1071
 msgid "Host to check"
 msgstr "Проверяемый хост"
 
@@ -18222,21 +18222,21 @@ msgstr "Проверяемый хост"
 msgid "Test Connection"
 msgstr "Проверить подключение"
 
-#: src/sshpilot/advanced_config_window.py:581
+#: src/sshpilot/advanced_config_window.py:583
 msgid "The SSH configuration could not be read."
 msgstr "Не удалось прочитать конфигурацию SSH."
 
-#: src/sshpilot/advanced_config_window.py:603
-#: src/sshpilot/advanced_config_window.py:731
+#: src/sshpilot/advanced_config_window.py:604
+#: src/sshpilot/advanced_config_window.py:732
 msgid "This SSH configuration is read-only: changes cannot be saved."
 msgstr ""
 "Эта конфигурация SSH доступна только для чтения: изменения нельзя сохранить."
 
-#: src/sshpilot/advanced_config_window.py:674
+#: src/sshpilot/advanced_config_window.py:675
 msgid "Save a configuration OpenSSH rejects?"
 msgstr "Сохранить конфигурацию, которую OpenSSH отклоняет?"
 
-#: src/sshpilot/advanced_config_window.py:676
+#: src/sshpilot/advanced_config_window.py:677
 msgid ""
 "OpenSSH refuses the whole configuration over one such line, so no SSH "
 "connection starts until it is corrected."
@@ -18244,24 +18244,24 @@ msgstr ""
 "Из-за одной такой строки OpenSSH отклоняет всю конфигурацию, и ни одно SSH-"
 "подключение не запустится, пока она не исправлена."
 
-#: src/sshpilot/advanced_config_window.py:681
+#: src/sshpilot/advanced_config_window.py:682
 msgid "Save Anyway"
 msgstr "Всё равно сохранить"
 
-#: src/sshpilot/advanced_config_window.py:723
+#: src/sshpilot/advanced_config_window.py:724
 msgid "The SSH configuration changed on disk since it was opened."
 msgstr "Конфигурация SSH изменилась на диске с момента открытия."
 
-#: src/sshpilot/advanced_config_window.py:736
+#: src/sshpilot/advanced_config_window.py:737
 msgid "The SSH configuration could not be saved."
 msgstr "Не удалось сохранить конфигурацию SSH."
 
 #. an earlier failure is history
-#: src/sshpilot/advanced_config_window.py:743
+#: src/sshpilot/advanced_config_window.py:744
 msgid "SSH configuration saved"
 msgstr "Конфигурация SSH сохранена"
 
-#: src/sshpilot/advanced_config_window.py:774
+#: src/sshpilot/advanced_config_window.py:775
 msgid "The config file this block is in"
 msgstr "Файл конфигурации, в котором находится этот блок"
 
@@ -18282,26 +18282,26 @@ msgstr "Отменить несохранённые изменения?"
 msgid "The changes made here have not been saved to the SSH configuration."
 msgstr "Сделанные здесь изменения не сохранены в конфигурации SSH."
 
-#: src/sshpilot/advanced_config_window.py:1081
-#: src/sshpilot/advanced_config_window.py:1301
+#: src/sshpilot/advanced_config_window.py:1080
+#: src/sshpilot/advanced_config_window.py:1288
 msgid "Testing…"
 msgstr "Проверка…"
 
-#: src/sshpilot/advanced_config_window.py:1083
+#: src/sshpilot/advanced_config_window.py:1082
 msgid "Choose a block that names a host, or type one to check"
 msgstr "Выберите блок, который называет хост, или введите хост для проверки"
 
-#: src/sshpilot/advanced_config_window.py:1085
+#: src/sshpilot/advanced_config_window.py:1084
 msgid "Allow the Match exec command first: the test would run it"
 msgstr "Сначала разрешите команду Match exec: проверка выполнит её"
 
-#: src/sshpilot/advanced_config_window.py:1087
+#: src/sshpilot/advanced_config_window.py:1086
 #, python-brace-format
 msgid "Connect to {host} with the configuration shown here, saved or not"
 msgstr ""
 "Подключиться к {host} с показанной здесь конфигурацией, сохранённой или нет"
 
-#: src/sshpilot/advanced_config_window.py:1105
+#: src/sshpilot/advanced_config_window.py:1102
 msgid ""
 "Global options must stay above every Host and Match block: OpenSSH reads an "
 "option below a Host line as that host's."
@@ -18309,30 +18309,30 @@ msgstr ""
 "Глобальные параметры должны оставаться выше всех блоков Host и Match: "
 "параметр под строкой Host OpenSSH читает как параметр этого хоста."
 
-#: src/sshpilot/advanced_config_window.py:1236
+#: src/sshpilot/advanced_config_window.py:1223
 msgid "Choose a Key File"
 msgstr "Выбор файла ключа"
 
-#: src/sshpilot/advanced_config_window.py:1258
+#: src/sshpilot/advanced_config_window.py:1245
 #, python-brace-format
 msgid "Only you can read {path} now."
 msgstr "Теперь только вы можете читать {path}."
 
-#: src/sshpilot/advanced_config_window.py:1260
+#: src/sshpilot/advanced_config_window.py:1247
 #, python-brace-format
 msgid "The permissions of {path} could not be changed."
 msgstr "Не удалось изменить права доступа к {path}."
 
-#: src/sshpilot/advanced_config_window.py:1273
+#: src/sshpilot/advanced_config_window.py:1260
 #, python-brace-format
 msgid "Copied “{command}”"
 msgstr "Скопировано: «{command}»"
 
-#: src/sshpilot/advanced_config_window.py:1715
+#: src/sshpilot/advanced_config_window.py:1717
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "Не удалось запросить OpenSSH об этой конфигурации."
 
-#: src/sshpilot/advanced_config_window.py:1846
+#: src/sshpilot/advanced_config_window.py:1848
 msgid "Run and Evaluate"
 msgstr "Выполнить и оценить"
 
@@ -18788,32 +18788,44 @@ msgstr "Удалить промежуточный хост {name}"
 msgid "Show this line"
 msgstr "Показать эту строку"
 
-#: src/sshpilot/advanced_config_effective_view.py:221
+#: src/sshpilot/advanced_config_effective_view.py:248
 msgid "Search options or values"
 msgstr "Поиск параметров или значений"
 
+#: src/sshpilot/advanced_config_effective_view.py:302
+msgid "Directive"
+msgstr "Директива"
+
+#: src/sshpilot/advanced_config_effective_view.py:303
+msgid "Effective Value"
+msgstr "Действующее значение"
+
+#: src/sshpilot/advanced_config_effective_view.py:308
+msgid "Comes From"
+msgstr "Источник"
+
 #. Translators: a filter: values this block sets itself.
-#: src/sshpilot/advanced_config_effective_view.py:289
+#: src/sshpilot/advanced_config_effective_view.py:348
 msgid "Explicit"
 msgstr "Явные"
 
 #. Translators: a filter: values set by another block or file
 #. (Host *, an included file, Settings), not by this block.
-#: src/sshpilot/advanced_config_effective_view.py:292
+#: src/sshpilot/advanced_config_effective_view.py:351
 msgid "Inherited"
 msgstr "Унаследованные"
 
 #. Translators: a filter and how many options it keeps, e.g. "All 84".
-#: src/sshpilot/advanced_config_effective_view.py:297
+#: src/sshpilot/advanced_config_effective_view.py:356
 #, python-brace-format
 msgid "{name} {count}"
 msgstr "{name} {count}"
 
-#: src/sshpilot/advanced_config_effective_view.py:333
+#: src/sshpilot/advanced_config_effective_view.py:392
 msgid "No Host Checked"
 msgstr "Хост не проверяется"
 
-#: src/sshpilot/advanced_config_effective_view.py:335
+#: src/sshpilot/advanced_config_effective_view.py:394
 msgid ""
 "Choose a block that names a host, or type a host to check, to see what "
 "OpenSSH would use for it."
@@ -18821,11 +18833,11 @@ msgstr ""
 "Выберите блок, который называет хост, или введите хост для проверки, чтобы "
 "увидеть, что OpenSSH использовал бы для него."
 
-#: src/sshpilot/advanced_config_effective_view.py:339
+#: src/sshpilot/advanced_config_effective_view.py:398
 msgid "Waiting for Consent"
 msgstr "Ожидание согласия"
 
-#: src/sshpilot/advanced_config_effective_view.py:344
+#: src/sshpilot/advanced_config_effective_view.py:403
 msgid "OpenSSH Rejects This Configuration"
 msgstr "OpenSSH отклоняет эту конфигурацию"
 

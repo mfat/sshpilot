@@ -614,6 +614,28 @@ def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
     assert key.problems and "File not found" in key.problems[-1]
 
 
+def test_effective_column_titles_sit_over_their_columns(window):
+    window.show_page("effective")
+    effective = window.effective
+    assert _pump(lambda: any(item.cell for item in effective._items.values()))
+    _pump(lambda: False, seconds=0.3)                  # laid out
+    header = effective.table.get_first_child().get_row_at_index(0).get_child()
+    titles = []
+    child = header.get_first_child()
+    while child is not None:
+        titles.append(child)
+        child = child.get_next_sibling()
+    cell = next(item.cell for item in effective._items.values() if item.cell)
+
+    def x(widget):
+        found, bounds = widget.compute_bounds(effective.table)
+        assert found
+        return round(bounds.get_x())
+
+    assert [x(w) for w in titles] == [x(w) for w in (cell.warning, cell.key, cell.value, cell.source)]
+    assert x(titles[-1].get_visible_child().get_child()) == x(cell.label)
+
+
 def test_only_the_view_on_screen_is_filled(window):
     window.show_page("structured")
     _field(window, "user").entry.set_text("other")

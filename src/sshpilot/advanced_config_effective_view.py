@@ -119,6 +119,29 @@ class EffectiveItem(GObject.Object):
             self.cell.bind(self)
 
 
+#: Widths of the fixed columns, in characters, shared by the rows and the
+#: header above them so the titles sit over their columns.
+_KEY_CHARS = 24
+_SOURCE_CHARS = 34
+
+
+def _header_over(template: Gtk.Widget, title: str, *, in_button: bool = False) -> Gtk.Widget:
+    """*title* in a column as wide as *template*, a widget built like the
+    rows' (never shown: a stack is as wide as its widest page). In a flat
+    button when the rows' text is in one, so the title starts where it does."""
+    stack = Gtk.Stack(hhomogeneous=True)
+    stack.add_child(template)
+    label = Gtk.Label(label=title, xalign=0)
+    label.add_css_class("heading")
+    shown: Gtk.Widget = label
+    if in_button:
+        shown = Gtk.Button(child=label, can_target=False, focusable=False)
+        shown.add_css_class("flat")
+    stack.add_child(shown)
+    stack.set_visible_child(shown)
+    return stack
+
+
 class _EffectiveCell:
     """The widgets of one visible row; bound to whichever item scrolls in."""
 
@@ -134,8 +157,8 @@ class _EffectiveCell:
         self.box.append(self.warning)
         self.key = Gtk.Label(xalign=0)
         self.key.add_css_class("monospace")
-        self.key.set_width_chars(24)
-        self.key.set_max_width_chars(24)
+        self.key.set_width_chars(_KEY_CHARS)
+        self.key.set_max_width_chars(_KEY_CHARS)
         self.key.set_ellipsize(Pango.EllipsizeMode.END)
         self.key.set_valign(Gtk.Align.START)
         self.box.append(self.key)
@@ -154,9 +177,10 @@ class _EffectiveCell:
         self.source.add_css_class("flat")
         self.source.add_css_class("caption")
         self.source.set_valign(Gtk.Align.CENTER)
-        self.label = Gtk.Label()
+        self.label = Gtk.Label(xalign=0)
         self.label.set_ellipsize(Pango.EllipsizeMode.START)
-        self.label.set_max_width_chars(34)
+        self.label.set_width_chars(_SOURCE_CHARS)
+        self.label.set_max_width_chars(_SOURCE_CHARS)
         self.source.set_child(self.label)
         self.source.connect("clicked", self._on_source_clicked)
         self.box.append(self.source)
@@ -253,13 +277,45 @@ class EffectiveView(Gtk.Box):
         self.scroller = Gtk.ScrolledWindow()
         self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroller.set_vexpand(True)
-        self.scroller.add_css_class("card")
         self.scroller.set_child(self.list)
-        self.append(self.scroller)
+        # The table: column titles over the list, in one card.
+        self.table = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.table.add_css_class("card")
+        self.table.set_vexpand(True)
+        self.table.append(self._build_header())
+        self.table.append(Gtk.Separator())
+        self.table.append(self.scroller)
+        self.append(self.table)
         self.note = Adw.StatusPage(icon_name="system-search-symbolic")
         self.note.set_vexpand(True)
         self.append(self.note)
         self._set_chip_labels({ALL: 0, THIS_BLOCK: 0, OTHER: 0, DEFAULT: 0})
+
+    def _build_header(self) -> Gtk.Widget:
+        """Titles over the columns of the rows: each laid out as a row's is."""
+        cell = _EffectiveCell(self.controller)
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        cell.box.remove(cell.warning)
+        cell.warning.set_opacity(0)
+        header.append(cell.warning)                     # the icon's column
+        cell.box.remove(cell.key)
+        header.append(_header_over(cell.key, _("Directive")))
+        value = Gtk.Label(label=_("Effective Value"), xalign=0, hexpand=True)
+        value.add_css_class("heading")
+        header.append(value)
+        cell.box.remove(cell.source)
+        cell.source.set_can_target(False)
+        header.append(_header_over(cell.source, _("Comes From"), in_button=True))
+        # In a list styled as the rows' list, so the theme spaces and pads
+        # the titles exactly as it does the columns under them.
+        holder = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        holder.add_css_class("rich-list")
+        holder.add_css_class("advcfg-table-header")
+        holder.set_can_target(False)
+        row = Gtk.ListBoxRow(activatable=False, selectable=False, focusable=False)
+        row.set_child(header)
+        holder.append(row)
+        return holder
 
     def _setup_row(self, _factory, list_item) -> None:
         cell = _EffectiveCell(self.controller)
@@ -328,7 +384,7 @@ class EffectiveView(Gtk.Box):
         evaluation = answer.evaluation
         command = "ssh -G " + (f"-l {answer.user} " if answer.user else "") + answer.host
         self.command.set_label(command if answer.host else "ssh -G")
-        for widget in (self.chips, self.scroller):
+        for widget in (self.chips, self.table):
             widget.set_visible(answer.answered)
         self.note.set_visible(not answer.answered)
         if not answer.answered:

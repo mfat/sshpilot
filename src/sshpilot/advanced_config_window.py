@@ -113,6 +113,7 @@ _CSS = """
 row:hover .advcfg-drag-handle { opacity: 0.9; }
 .advcfg-chip { padding: 2px 10px; border-radius: 999px; font-size: 0.9em; }
 .advcfg-command-bar { padding: 6px 6px 6px 14px; }
+.advcfg-table-header { background: none; }
 entry.warning { color: @warning_color; }
 """
 _css_installed = False
