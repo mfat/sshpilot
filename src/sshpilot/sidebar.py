@@ -438,15 +438,11 @@ def install_sidebar_css():
            draws the trailing inset border, so suppress the paned separator's
            own stroke to avoid a double line. GTK keeps a wider input area
            than it paints, so the divider stays grabbable. */
-        /* The drag grip at a row's start (_set_child_with_grip): always
-           shown, faint, and brighter on the hovered row, exactly as in
-           Advanced Configuration's list of blocks (.advcfg-drag-handle);
-           only while its column is reserved, and not in the compact layout. */
-        .navigation-sidebar row .sidebar-drag-grip { opacity: 0; }
-        .navigation-sidebar.sidebar-grips row .sidebar-row-main { margin-left: 16px; }
-        .navigation-sidebar.sidebar-grips row .sidebar-drag-grip { opacity: 0.45; }
-        .navigation-sidebar.sidebar-grips row:hover .sidebar-drag-grip { opacity: 0.9; }
-        .navigation-sidebar.sidebar-compact row .sidebar-drag-grip { opacity: 0; }
+        /* The drag grip, a row's first item (_set_child_with_grip): faint,
+           brighter on the hovered row, exactly as in Advanced
+           Configuration's list of blocks (.advcfg-drag-handle). */
+        .navigation-sidebar row .sidebar-drag-grip { opacity: 0.45; }
+        .navigation-sidebar row:hover .sidebar-drag-grip { opacity: 0.9; }
 
         paned.sidebar-paned > separator {
           box-shadow: none;
@@ -1274,31 +1270,28 @@ class SectionHeaderRow(Gtk.ListBoxRow):
         self.emit("section-toggled", self.section_id, self._expanded)
 
 def _set_child_with_grip(row: Gtk.ListBoxRow, main_box: Gtk.Box) -> None:
-    """Give *row* its main box, with a drag grip floating at the row's
-    start: a hint only, faint and brighter on hover (CSS
-    ``.sidebar-drag-grip``, as Advanced Configuration's blocks). Its
-    column is reserved only while the sidebar is wide enough (the list's
-    ``.sidebar-grips``, set with the row actions in
-    ``MainWindow._apply_sidebar_row_actions``): narrower, the grip goes, as
-    the row buttons do, and the names keep their width. The row's own
-    whole-row drag is unchanged: pressing the grip starts it, as pressing
-    anywhere else on the row does. ``row._main_box`` is the box (drop
-    indicators and indentation work on it)."""
+    """Give *row* its main box, with a drag grip as the first item of its
+    content, so it gets the row's own spacing whatever follows it (a group
+    dot, a connection icon) and however deep the row is indented. Faint,
+    brighter on hover (CSS ``.sidebar-drag-grip``), as Advanced
+    Configuration's blocks. Shown only while the sidebar is wide enough and
+    not compact (``MainWindow._apply_sidebar_row_actions``), as the row
+    buttons are. A hint only: the row's own whole-row drag is unchanged,
+    and pressing the grip starts it as pressing the row does.
+    ``row._main_box`` is the box (drop indicators and indentation)."""
     from sshpilot import icon_utils
 
     row._main_box = main_box
-    main_box.add_css_class("sidebar-row-main")
     grip = icon_utils.new_image_from_icon_name("list-drag-handle-symbolic")
     grip.add_css_class("sidebar-drag-grip")
-    grip.set_halign(Gtk.Align.START)
     grip.set_valign(Gtk.Align.CENTER)
-    grip.set_margin_start(1)
     grip.set_cursor_from_name("grab")
     grip.set_tooltip_text(_("Drag to reorder"))
     row.drag_grip = grip
-    overlay = Gtk.Overlay(child=main_box)
-    overlay.add_overlay(grip)
-    row.set_child(overlay)
+    content = main_box.get_first_child()
+    if content is not None:
+        content.prepend(grip)
+    row.set_child(main_box)
 
 
 class GroupRow(Gtk.ListBoxRow):

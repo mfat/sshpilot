@@ -344,12 +344,14 @@ def test_update_forwarding_indicators_noops_when_shed():
     row.indicator_box.append.assert_not_called()
 
 
-def test_the_drag_grips_column_goes_with_the_row_actions():
-    """The grips' column (.sidebar-grips) is reserved only while the sidebar
-    is wide enough, as the row buttons are: narrower, names keep the room."""
-    win, mod, _rows = _window(250)
-    mod.MainWindow._apply_sidebar_row_actions(win)
-    win.connection_list.add_css_class.assert_called_with('sidebar-grips')
-    win, mod, _rows = _window(220)
-    mod.MainWindow._apply_sidebar_row_actions(win)
-    win.connection_list.remove_css_class.assert_called_with('sidebar-grips')
+def test_the_drag_grips_go_with_the_row_actions():
+    """A row's grip shows only while the sidebar is wide enough and not
+    compact, as the row buttons are: narrower, names keep the room."""
+    for width, compact, shown in ((250, False, True), (220, False, False), (250, True, False)):
+        win, mod, rows = _window(width)
+        win.connection_list.has_css_class.side_effect = lambda name, c=compact: c and name == 'sidebar-compact'
+        for row in rows:
+            row.drag_grip = MagicMock()
+        mod.MainWindow._apply_sidebar_row_actions(win)
+        for row in rows:
+            row.drag_grip.set_visible.assert_called_once_with(shown)

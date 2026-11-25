@@ -3205,14 +3205,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not force and reserved == getattr(self, '_sidebar_row_actions_reserved', None):
             return
         self._sidebar_row_actions_reserved = reserved
-        # The drag grips' column goes with the row actions (sidebar.py's
-        # _set_child_with_grip): only while the sidebar is wide enough.
-        if reserved:
-            lb.add_css_class('sidebar-grips')
-        else:
-            lb.remove_css_class('sidebar-grips')
+        # The drag grips go with the row actions (sidebar.py's
+        # _set_child_with_grip): only while the sidebar is wide enough, and
+        # not in the compact layout, where every pixel is the point.
+        grips = reserved and not lb.has_css_class('sidebar-compact')
         row = lb.get_first_child()
         while row is not None:
+            grip = getattr(row, 'drag_grip', None)
+            if grip is not None:
+                grip.set_visible(grips)
             setter = getattr(row, 'set_actions_reserved', None)
             if setter is not None:
                 try:
