@@ -1,6 +1,8 @@
 """The route the connection editor's Routing page draws, from its fields."""
 
-from sshpilot.connection_dialog_route import COMMAND, JUMP, TARGET, reorder, route_stops
+from sshpilot.connection_dialog_route import (
+    COMMAND, JUMP, TARGET, command_wins, reorder, route_stops, unused_setting,
+)
 
 
 def _stops(**fields):
@@ -26,7 +28,7 @@ def test_jump_hosts_come_first_with_the_address_of_a_saved_connection():
     assert _stops(jump="unknown")[0] == ("unknown", "", JUMP, False)
 
 
-def test_a_proxy_command_is_one_stop_and_a_jump_host_wins_over_it():
+def test_a_proxy_command_is_one_stop_and_by_default_jump_hosts_win():
     assert _stops(command="ssh -W %h:%p gate")[0] == (
         "Proxy command", "ssh -W %h:%p gate", COMMAND, False,
     )
@@ -90,3 +92,17 @@ def test_the_last_inherited_jump_host_leaves_none():
     dialog = _dialog("gate, edge", inherited=True)
     dialog._remove_jump_host(0)
     assert dialog.proxy_jump_row.text == "edge"
+
+
+def test_the_setting_openssh_obtains_first_is_the_one_drawn():
+    # ssh -G reports only the one in force.
+    assert command_wins({"proxycommand": "nc %h %p"})
+    assert not command_wins({"proxyjump": "gate", "proxycommand": "nc %h %p"})
+    assert not command_wins({"proxycommand": "none"}) and not command_wins(None)
+    both = dict(jump="gate", command="nc %h %p")
+    assert unused_setting(both["jump"], both["command"], False) == "command"
+    assert unused_setting(both["jump"], both["command"], True) == "jump"
+    assert unused_setting("gate", "", True) is None
+    assert unused_setting("none", "nc %h %p", False) is None
+    assert [s[2] for s in _stops(command_first=True, **both)] == [COMMAND, TARGET]
+    assert [s[2] for s in _stops(command_first=False, **both)] == [JUMP, TARGET]

@@ -293,7 +293,7 @@ class RouteStrip(Gtk.Widget):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.set_valign(Gtk.Align.CENTER)
         title = Gtk.Label(label=stop.name, xalign=0)
-        if stop.kind != "local":
+        if stop.kind in (JUMP, TARGET):           # host names, not words
             title.add_css_class("monospace")
         title.set_ellipsize(Pango.EllipsizeMode.END)
         title.set_max_width_chars(24)

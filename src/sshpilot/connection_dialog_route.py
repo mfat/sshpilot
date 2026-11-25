@@ -72,14 +72,19 @@ def route_stops(
     inherited=frozenset(),
     saved=None,
     source: str = "",
+    command_first: bool = False,
 ) -> List[Stop]:
     """The stops after this computer, from the first jump host to the
     destination. *inherited*: the route rows (``proxy_jump_row``...) whose
     value is OpenSSH's rather than the block's. *saved*: hop host ->
-    ``(hostname, port)`` of a saved connection of that name."""
+    ``(hostname, port)`` of a saved connection of that name.
+    *command_first*: OpenSSH obtains the proxy command before the jump
+    hosts (see :func:`unused_setting`)."""
     saved = saved or {}
     stops: List[Stop] = []
     hops = fields.jump_hops(jump)
+    if unused_setting(jump, command, command_first) == "jump":
+        hops = []
     if hops:
         from_block = "proxy_jump_row" in inherited
         for hop in hops:
@@ -101,6 +106,28 @@ def route_stops(
         ))
     stops.append(Stop(host or hostname, _endpoint(hostname or host, port), TARGET))
     return stops
+
+
+def _set(value: str) -> bool:
+    return bool(value.strip()) and value.strip().lower() != "none"
+
+
+def unused_setting(jump: str, command: str, command_first: bool) -> Optional[str]:
+    """Which of the two settings OpenSSH ignores when both are set:
+    ``"jump"``, ``"command"``, or None. They compete for one slot and the
+    first OpenSSH obtains wins; a new block writes the jump hosts first."""
+    if not (fields.jump_hops(jump) and _set(command)):
+        return None
+    return "jump" if command_first else "command"
+
+
+def command_wins(resolved) -> bool:
+    """Whether OpenSSH's answer (``ssh -G``, keyword -> value) uses a proxy
+    command rather than jump hosts: it reports only the one in force."""
+    resolved = resolved or {}
+    return _set(str(resolved.get("proxycommand") or "")) and not _set(
+        str(resolved.get("proxyjump") or "")
+    )
 
 
 def reorder(hops: List[str], index: int, position: int) -> Optional[List[str]]:
@@ -136,6 +163,12 @@ class ConnectionDialogRouteMixin:
             on_reorder=self._reorder_jump_hosts, on_remove=self._remove_jump_host,
         )
         inner.append(self.route_strip)
+        # When both settings are set, the one OpenSSH ignores.
+        self.route_note = Gtk.Label(xalign=0, wrap=True)
+        self.route_note.add_css_class("caption")
+        self.route_note.add_css_class("warning")
+        self.route_note.set_visible(False)
+        inner.append(self.route_note)
         card.append(inner)
         group.add(card)
         self._route_update_pending = 0
@@ -145,6 +178,19 @@ class ConnectionDialogRouteMixin:
                 row.connect("changed", lambda *_a: self._schedule_route_update())
         self._update_route()
         return group
+
+    def _show_route_note(self, unused: Optional[str]) -> None:
+        note = getattr(self, "route_note", None)
+        if note is None:
+            return
+        if unused == "jump":
+            text = _("The jump hosts are not used: the proxy command comes first, and OpenSSH uses only one of the two.")
+        elif unused == "command":
+            text = _("The proxy command is not used: the jump hosts come first, and OpenSSH uses only one of the two.")
+        else:
+            text = ""
+        note.set_label(text)
+        note.set_visible(bool(text))
 
     def _reorder_jump_hosts(self, index: int, position: int) -> None:
         """A jump host card dropped elsewhere: the Jump hosts row is
@@ -217,18 +263,26 @@ class ConnectionDialogRouteMixin:
             hostname = self._row_text("hostname_row")
             if not host and not hostname:
                 strip.show_route((), _("Type a host name to see its route."))
+                self._show_route_note(None)
                 return False
             inherited = set(getattr(self, "_inherited_row_handlers", None) or ())
+            jump = self._row_text("proxy_jump_row")
+            command = self._row_text("proxy_command_row")
+            # Which one OpenSSH used when the dialog asked it: the order of
+            # the two lines is kept when the block is saved.
+            first = command_wins(getattr(self, "_effective_resolved", None))
             strip.show_route(route_stops(
                 host=host,
                 hostname=hostname,
                 port=self._row_text("port_row"),
-                jump=self._row_text("proxy_jump_row"),
-                command=self._row_text("proxy_command_row"),
+                jump=jump,
+                command=command,
                 inherited=inherited,
                 saved=self._saved_hops(),
                 source=inherited_note_text(),
+                command_first=first,
             ))
+            self._show_route_note(unused_setting(jump, command, first))
         except Exception:
             logger.debug("Could not draw the route", exc_info=True)
         return False

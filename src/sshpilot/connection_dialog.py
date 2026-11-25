@@ -2813,6 +2813,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         }
 
         def _apply(resolved):
+            # The Routing page's picture: which of ProxyJump and
+            # ProxyCommand OpenSSH uses when a block sets both.
+            self._effective_resolved = resolved or {}
+            redraw = getattr(self, '_schedule_route_update', None)
+            if callable(redraw):
+                redraw()
             section = getattr(self, 'auth_policy', None)
             if section is not None:
                 # None: OpenSSH could not be asked; the section says so.
@@ -3945,9 +3951,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Routing / jump hosts: on the Routing page, under the route they
         # draw (see _build_route_group).
+        # No heading: the page is called Routing already.
         proxy_group = Adw.PreferencesGroup(
-            title=_("Routing"),
-            description=_("Optional SSH path settings used before authentication."),
+            description=_("Specify one or more jump proxies."),
         )
         # Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
         self.proxy_jump_row = Adw.EntryRow(title=_("Jump hosts (comma-separated)"))
