@@ -5746,10 +5746,9 @@ def build_sidebar(window):
     sidebar_box.set_vexpand(True)
     window._sidebar_box = sidebar_box
 
-    from .sidebar_views import build_sidebar_switcher, build_sidebar_view_stack
+    from .sidebar_views import build_sidebar_view_stack
 
     _build_sidebar_header(window, sidebar_box)
-    build_sidebar_switcher(window, sidebar_box)
     _build_sidebar_search(window, sidebar_box)
     _create_sidebar_connection_list(window, sidebar_box)
     _attach_connection_list_context_menu(window)

@@ -1,6 +1,9 @@
 """The window's two views: Connections, and the sections of the SSH configuration.
 
-A dropdown at the top of the sidebar switches the whole window between them.
+A rail at the window's leading edge switches the whole window between them.
+It is outside the sidebar, so it stays when the sidebar is hidden: choosing
+the other view shows the sidebar again, and choosing the view already shown
+hides or shows the sidebar, as F9 does.
 
 * **Connections**: the connection list, and the tabs and terminals beside it.
 * **Configuration**: the sidebar lists every block of the configuration in
@@ -14,7 +17,7 @@ A dropdown at the top of the sidebar switches the whole window between them.
 
 The tabs are hidden while the sections are shown, not closed: terminals keep
 running. Selecting or opening a tab brings the Connections view back. The
-draft stays when the view is left: the dropdown marks unsaved changes, and
+draft stays when the view is left: the rail marks unsaved changes, and
 quitting asks about them (``confirm_quit``).
 """
 
@@ -27,7 +30,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk
+from gi.repository import Gio, Gtk
 
 logger = logging.getLogger(__name__)
 
@@ -92,29 +95,10 @@ def _ensure_sections_view(window):
     return view
 
 
-def _labels(unsaved: bool = False):
-    sections = _("Configuration")
-    # The dot Advanced Configuration's own title carries for unsaved changes.
-    return [_("Connections"), sections + " •" if unsaved else sections]
-
-
 def _mark_unsaved(window, unsaved: bool) -> None:
-    """Say on the dropdown that the configuration has unsaved changes."""
-    switcher = getattr(window, "_sidebar_view_switcher", None)
-    if switcher is None:
-        return
-    model = switcher.get_model()
-    label = _labels(unsaved)[1]
-    if model.get_string(1) == label:
-        return
-    selected = switcher.get_selected()
-    # Renaming the entry is not choosing a view.
-    window._sidebar_switcher_syncing = True
-    try:
-        model.splice(1, 1, [label])
-        switcher.set_selected(selected)
-    finally:
-        window._sidebar_switcher_syncing = False
+    """Say on the rail that the configuration has unsaved changes."""
+    window._config_unsaved = bool(unsaved)
+    _sync_rail(window)
 
 
 def open_sections(window, *, host="", line=0, option="", file="", pin=False,
@@ -179,9 +163,7 @@ def show_view(window, name: str) -> None:
         sections, name = False, CONNECTIONS
     was = current_view(window)
     stack.set_visible_child_name(name)
-    switcher = getattr(window, "_sidebar_view_switcher", None)
-    if switcher is not None and switcher.get_selected() != _VIEWS.index(name):
-        switcher.set_selected(_VIEWS.index(name))
+    _sync_rail(window)
     # The search and the buttons under the list are the connections'.
     for attr in ("_sidebar_toolbar_clip", "search_button"):
         widget = getattr(window, attr, None)
@@ -241,92 +223,130 @@ def leave_sections(window) -> None:
 
 _VIEWS = (CONNECTIONS, SECTIONS)
 
-#: The dropdown's height until a connection row has been measured.
-_SWITCHER_HEIGHT = 46
-
-_SWITCHER_CSS = """
-dropdown.sidebar-view-switcher > button {
+_RAIL_CSS = """
+.view-rail {
+  background-color: @sidebar_bg_color;
+  border-right: 1px solid @sidebar_border_color;
+  padding: 6px;
+}
+.view-rail:backdrop { background-color: @sidebar_backdrop_color; }
+.view-rail:dir(rtl) {
+  border-right: none;
+  border-left: 1px solid @sidebar_border_color;
+}
+.view-rail button { min-width: 36px; min-height: 36px; padding: 0; border-radius: 8px; }
+.view-rail button.current {
+  background-color: alpha(@accent_bg_color, 0.18);
+  color: @accent_color;
+}
+.view-rail .unsaved-dot {
+  min-width: 8px;
+  min-height: 8px;
+  margin: 4px;
+  border-radius: 999px;
   background-color: @accent_bg_color;
-  color: @accent_fg_color;
-  font-weight: bold;
-  border-radius: 8px;
-  box-shadow: none;
-}
-dropdown.sidebar-view-switcher > button:hover {
-  background-image: image(alpha(currentColor, 0.1));
-}
-dropdown.sidebar-view-switcher > button:active,
-dropdown.sidebar-view-switcher > button:checked {
-  background-image: image(alpha(black, 0.15));
 }
 """
 
 
-def _install_switcher_css() -> None:
+def _install_rail_css() -> None:
     from gi.repository import Gdk
 
     display = Gdk.Display.get_default()
-    if display is None or getattr(display, "_sidebar_switcher_css", False):
+    if display is None or getattr(display, "_view_rail_css", False):
         return
     provider = Gtk.CssProvider()
     try:
-        provider.load_from_string(_SWITCHER_CSS)
+        provider.load_from_string(_RAIL_CSS)
     except (AttributeError, TypeError):         # GTK before 4.12
-        provider.load_from_data(_SWITCHER_CSS.encode("utf-8"))
+        provider.load_from_data(_RAIL_CSS.encode("utf-8"))
     Gtk.StyleContext.add_provider_for_display(
         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
-    display._sidebar_switcher_css = True
+    display._view_rail_css = True
 
 
-def sync_switcher_height(window) -> None:
-    """Make the dropdown as tall as a connection row.
+def _rail_items():
+    return (
+        (CONNECTIONS, _("Connections"), "network-server-symbolic"),
+        (SECTIONS, _("Configuration"), "document-properties-symbolic"),
+    )
 
-    The rows' height follows the sidebar mode and the font, so it is
-    measured from the first connection row there is.
-    """
-    switcher = getattr(window, "_sidebar_view_switcher", None)
-    listbox = getattr(window, "connection_list", None)
-    if switcher is None or listbox is None:
+
+def _sync_rail(window) -> None:
+    """Mark the view shown, and the configuration's unsaved changes."""
+    buttons = getattr(window, "_view_rail_buttons", None)
+    if not buttons:
         return
-    row = listbox.get_first_child()
-    while row is not None:
-        if getattr(row, "connection", None) is not None and row.get_visible():
-            # As drawn, once it has a size; what it asks for before that.
-            height = row.get_height()
-            if height <= 0:
-                try:
-                    height = row.measure(Gtk.Orientation.VERTICAL, -1)[1]
-                except Exception:
-                    return
-            if height > 0:
-                switcher.set_size_request(-1, height)
-            return
-        row = row.get_next_sibling()
+    shown = current_view(window)
+    unsaved = bool(getattr(window, "_config_unsaved", False))
+    for name, title, _icon in _rail_items():
+        button = buttons[name]
+        if name == shown:
+            button.add_css_class("current")
+        else:
+            button.remove_css_class("current")
+        if name == SECTIONS:
+            # The dot Advanced Configuration's own title carries.
+            window._view_rail_unsaved_dot.set_visible(unsaved)
+            button.set_tooltip_text(
+                _("{view} (unsaved changes)").format(view=title) if unsaved else title
+            )
 
 
-def build_sidebar_switcher(window, sidebar_box) -> None:
-    """The dropdown at the top of the sidebar that picks the view."""
-    _install_switcher_css()
-    dropdown = Gtk.DropDown.new_from_strings(_labels())
-    # Filled with the accent colour, as a suggested action is.
-    dropdown.add_css_class("sidebar-view-switcher")
-    dropdown.set_size_request(-1, _SWITCHER_HEIGHT)
-    dropdown.set_hexpand(True)
-    dropdown.set_margin_start(6)
-    dropdown.set_margin_end(6)
-    dropdown.set_margin_bottom(6)
-    dropdown.set_tooltip_text(_("What the window shows"))
+def choose_view(window, name: str) -> None:
+    """A click on the rail: *name* is shown, with the sidebar; the view
+    already shown hides or shows the sidebar instead."""
+    if current_view(window) == name:
+        toggle = getattr(window, "on_sidebar_toggle", None)
+        if callable(toggle):
+            toggle(None)
+        return
+    show_view(window, name)
+    if current_view(window) == name and not getattr(window, "_sidebar_visible", True):
+        show = getattr(window, "_apply_sidebar_visible", None)
+        if callable(show):
+            show(True)
 
-    def chosen(d, _pspec):
-        index = d.get_selected()
-        if getattr(window, "_sidebar_switcher_syncing", False) or index >= len(_VIEWS):
-            return
-        show_view(window, _VIEWS[index])
 
-    dropdown.connect("notify::selected", chosen)
-    window._sidebar_view_switcher = dropdown
-    sidebar_box.append(dropdown)
+def build_view_rail(window) -> Gtk.Widget:
+    """The rail that picks the view, at the window's leading edge. Its
+    empty part moves the window, as a header bar's does."""
+    from . import icon_utils
+
+    _install_rail_css()
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    buttons = {}
+    for name, title, icon in _rail_items():
+        button = Gtk.Button()
+        button.add_css_class("flat")
+        button.set_can_focus(False)
+        icon_utils.set_button_icon(button, icon)
+        button.set_tooltip_text(title)
+        button.update_property([Gtk.AccessibleProperty.LABEL], [title])
+        button.connect("clicked", lambda _b, n=name: choose_view(window, n))
+        buttons[name] = button
+        if name != SECTIONS:
+            box.append(button)
+            continue
+        overlay = Gtk.Overlay()
+        overlay.set_child(button)
+        dot = Gtk.Box()
+        dot.add_css_class("unsaved-dot")
+        dot.set_halign(Gtk.Align.END)
+        dot.set_valign(Gtk.Align.START)
+        dot.set_can_target(False)
+        dot.set_visible(False)
+        overlay.add_overlay(dot)
+        window._view_rail_unsaved_dot = dot
+        box.append(overlay)
+    rail = Gtk.WindowHandle()
+    rail.add_css_class("view-rail")
+    rail.set_child(box)
+    window._view_rail_buttons = buttons
+    window.view_rail = rail
+    _sync_rail(window)
+    return rail
 
 
 def build_sidebar_view_stack(window, sidebar_box) -> None:
@@ -342,8 +362,7 @@ def build_sidebar_view_stack(window, sidebar_box) -> None:
     window._sidebar_view_stack = stack
     window._config_sections_view = None
     sidebar_box.append(stack)
-    # Once the first rows are on screen; later rebuilds keep it in step.
-    GLib.timeout_add(1500, lambda: (sync_switcher_height(window), False)[1])
+    _sync_rail(window)
     if window.lookup_action("new-host-rule") is None:
         action = Gio.SimpleAction.new("new-host-rule", None)
         action.connect("activate", lambda *_a: new_host_rule(window))
