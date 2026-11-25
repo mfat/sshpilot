@@ -1867,7 +1867,7 @@ class ConnectionDialog(
         "connection": "network-server-symbolic",
         "routing": "connector-symbolic",
         "authentication": "dialog-password-symbolic",
-        "forwarding": "arrows-pipe-symbolic",
+        "forwarding": "mail-forward-symbolic",
         "commands": "utilities-terminal-symbolic",
         "advanced": "preferences-system-symbolic",
         "wol": "system-shutdown-symbolic",
