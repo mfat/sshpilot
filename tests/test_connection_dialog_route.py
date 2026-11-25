@@ -106,3 +106,11 @@ def test_the_setting_openssh_obtains_first_is_the_one_drawn():
     assert unused_setting("none", "nc %h %p", False) is None
     assert [s[2] for s in _stops(command_first=True, **both)] == [COMMAND, TARGET]
     assert [s[2] for s in _stops(command_first=False, **both)] == [JUMP, TARGET]
+
+
+def test_an_ssh_uri_hop_is_a_saved_connection_like_any_other():
+    saved = {"gate": ("gate.example.org", 22)}
+    assert _stops(jump="ssh://admin@gate:2222/", saved=saved)[0] == (
+        "ssh://admin@gate:2222/", "gate.example.org:2222", JUMP, False,
+    )
+    assert _stops(jump="ssh://gate/", saved=saved)[0][1] == "gate.example.org:22"

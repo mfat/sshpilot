@@ -55,8 +55,11 @@ def _endpoint(host: str, port: str) -> str:
 
 
 def _hop_port(hop: str) -> str:
-    """The port a ``[user@]host[:port]`` hop names; empty when none."""
-    hop = hop.split("://", 1)[-1].rpartition("@")[2]
+    """The port a ``[user@]host[:port]`` or ``ssh://[user@]host[:port][/]``
+    hop names; empty when none."""
+    if "://" in hop:
+        hop = hop.split("://", 1)[1].rstrip("/")
+    hop = hop.rpartition("@")[2]
     if hop.startswith("["):
         return hop.partition("]")[2].lstrip(":")
     return hop.partition(":")[2]

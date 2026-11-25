@@ -480,7 +480,7 @@ def _jump_host_names(block_lines: List[str]) -> List[str]:
             for hop in rest.split(','):
                 hop = hop.strip()
                 if hop.startswith('ssh://'):
-                    hop = hop[len('ssh://'):]
+                    hop = hop[len('ssh://'):].rstrip('/')
                 hop = hop.rsplit('@', 1)[-1]
                 hop = hop[1:].split(']', 1)[0] if hop.startswith('[') else hop.split(':', 1)[0]
                 if hop:

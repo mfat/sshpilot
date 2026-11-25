@@ -97,6 +97,11 @@ def test_jump_hops():
     assert [fields.hop_host(h) for h in (
         "admin@bastion:2222", "ssh://u@h:22", "[::1]:22", "plain",
     )] == ["bastion", "h", "::1", "plain"]
+    # ssh_config(5): a hop is [user@]host[:port] or an ssh URI, which may
+    # end in a slash.
+    assert [fields.hop_host(h) for h in (
+        "ssh://gate/", "ssh://admin@gate:2222/", "ssh://admin@[::1]:22",
+    )] == ["gate", "gate", "::1"]
 
 
 def test_forwards_read_as_listen_and_target():

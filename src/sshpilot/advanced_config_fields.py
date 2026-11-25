@@ -199,7 +199,8 @@ def hop_host(hop: str) -> str:
     """The host a hop names, without its user and port, as OpenSSH is
     asked about it (``admin@bastion:2222`` -> ``bastion``)."""
     hop = hop.strip()
-    hop = hop.split("://", 1)[-1]           # ssh://user@host:port
+    if "://" in hop:                        # ssh://user@host:port/
+        hop = hop.split("://", 1)[1].rstrip("/")
     hop = hop.rpartition("@")[2]
     if hop.startswith("["):
         return hop[1:].partition("]")[0]
