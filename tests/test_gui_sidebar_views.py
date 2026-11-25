@@ -59,7 +59,6 @@ def window(gtk, tmp_path):  # noqa: F811
     win.search_button = gtk.Button()
     win._sidebar_add_button = gtk.MenuButton()
     win._sidebar_view_button = gtk.MenuButton()
-    win._sidebar_title_label = gtk.Label(label="SSH Pilot")
     win.search_container = gtk.Box()
     win.search_container.set_visible(False)       # as in the app, until search is opened
     win.search_entry = gtk.SearchEntry()
@@ -141,7 +140,6 @@ def test_the_rail_switches_the_whole_window(window):
         window._sidebar_add_button, window._sidebar_view_button,
     ):
         assert not widget.get_visible()                  # the connections' own
-    assert window._sidebar_title_label.get_label() == "Configuration"
 
     assert _current(window) == "sections"
     _click(window, "connections")
@@ -152,7 +150,6 @@ def test_the_rail_switches_the_whole_window(window):
         window._sidebar_add_button, window._sidebar_view_button,
     ):
         assert widget.get_visible()
-    assert window._sidebar_title_label.get_label() == "SSH Pilot"
 
 
 def _edit_user(view, value):

@@ -174,10 +174,6 @@ def show_view(window, name: str) -> None:
         widget = getattr(window, attr, None)
         if widget is not None:
             widget.set_visible(not sections)
-    # The sidebar's title says which view it is.
-    title = getattr(window, "_sidebar_title_label", None)
-    if title is not None:
-        title.set_label(_("Configuration") if sections else "SSH Pilot")
     # The search field goes too, and comes back as it was: a query left in
     # it still filters the connections, and must not do so out of sight.
     container = getattr(window, "search_container", None)
