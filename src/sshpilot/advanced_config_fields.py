@@ -104,6 +104,21 @@ def value_file_problems(key: str, values: List[str], *, default: bool,
     return found
 
 
+def fix_key_permissions(path: str) -> bool:
+    """Make *path* readable and writable by its owner only, as OpenSSH
+    requires of a private key. False when it could not be done."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        return False
+    return True
+
+
+#: Keywords whose value is a key or certificate file (Browse, its status);
+#: True for a private key, which others must not be able to read.
+KEY_FILE_KEYWORDS = {"identityfile": True, "certificatefile": False}
+
+
 def home_relative(path: str, home: Optional[str] = None) -> str:
     """*path* written as a configuration usually writes it: ``~/...`` under
     the home directory, and quoted when it holds a space."""

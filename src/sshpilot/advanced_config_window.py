@@ -34,6 +34,8 @@ asks the daemon, and hands each answer to the views.
 """
 from __future__ import annotations
 
+import os
+
 import logging
 import threading
 from gettext import gettext as _
@@ -43,7 +45,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_effective_view import Answer, EffectiveView  # noqa: E402
@@ -141,6 +143,7 @@ flowboxchild { padding: 0; border-radius: 8px; }
 .advcfg-tile.advcfg-attn-purple { color: inherit; background-color: alpha(@purple_3, 0.07);
   box-shadow: inset 0 0 0 1px alpha(@purple_3, 0.22); }
 .advcfg-dot { min-width: 8px; min-height: 8px; border-radius: 999px; }
+button.advcfg-fix { min-height: 22px; padding: 0 10px; font-size: 0.85em; border-radius: 999px; }
 .advcfg-dot.advcfg-attn-error { background-color: @error_color; }
 .advcfg-dot.advcfg-attn-purple { background-color: @purple_3; }
 .advcfg-row-flash { background-color: alpha(@accent_bg_color, 0.18); }
@@ -1212,6 +1215,39 @@ class AdvancedConfigBase:
         if option is None:
             return
         self._after_structure(self.editor.move_option(uid, block.uid, index))
+
+    # -- key files ---------------------------------------------------------------
+
+    def browse_identity(self, uid: int) -> None:
+        """Choose the file of a key (IdentityFile, CertificateFile) line."""
+        dialog = Gtk.FileDialog(title=_("Choose a Key File"))
+        folder = os.path.expanduser("~/.ssh")
+        if os.path.isdir(folder):
+            dialog.set_initial_folder(Gio.File.new_for_path(folder))
+        root = self.get_root() if hasattr(self, "get_root") else None
+
+        def chosen(source, result) -> None:
+            try:
+                file = source.open_finish(result)
+            except GLib.Error:
+                return                      # dismissed
+            path = file.get_path() if file is not None else None
+            if not path:
+                return
+            if self.editor.set_option(uid, "value", fields.home_relative(path)):
+                self.editor.commit_typing()
+                self._after_structure()
+
+        dialog.open(root if isinstance(root, Gtk.Window) else None, None, chosen)
+
+    def fix_key(self, path: str) -> None:
+        if fields.fix_key_permissions(path):
+            text = _("Only you can read {path} now.").format(path=fields.home_relative(path))
+        else:
+            text = _("The permissions of {path} could not be changed.").format(
+                path=fields.home_relative(path)
+            )
+        self._toasts.add_toast(Adw.Toast.new(text))
 
     def delete_option(self, uid: int) -> None:
         self._after_structure(self.editor.delete_option(uid))

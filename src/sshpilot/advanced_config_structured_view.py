@@ -353,12 +353,16 @@ class LineRow:
         self.value.update_property([Gtk.AccessibleProperty.LABEL], [_("Value")])
         self.value.connect("changed", self._on_changed, "value")
         self.state = _state_pill(view)
+        # A key or certificate line: choose its file (see _check_key).
+        self.browse = _icon_button("document-open-symbolic", _("Choose a key file"),
+                                   lambda: view.controller.browse_identity(self.uid))
+        self.browse.set_visible(False)
         # Up and down: the line one place earlier or later in the block.
         self.up = _icon_button("go-up-symbolic", _("Move Up"), lambda: view.move_line(self.uid, -1))
         self.down = _icon_button("go-down-symbolic", _("Move Down"), lambda: view.move_line(self.uid, 1))
         remove = _icon_button("user-trash-symbolic", _("Remove option"),
                               lambda: view.controller.delete_option(self.uid))
-        for widget in (self.key, self.value, self.state, self.up, self.down, remove):
+        for widget in (self.key, self.value, self.browse, self.state, self.up, self.down, remove):
             box.append(widget)
         # Under the fields, while the line goes unused: what is used instead.
         self.instead = Gtk.Label(xalign=0, wrap=True, use_markup=True, visible=False)
@@ -366,8 +370,25 @@ class LineRow:
         self.instead.add_css_class("dim-label")
         self.instead.set_margin_start(14)
         self.instead.set_margin_bottom(6)
+        # Under the fields, for a key file OpenSSH will not use: what is
+        # wrong with it, and for a private key others can read, Fix.
+        self.key_line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, visible=False)
+        self.key_line.set_margin_start(14)
+        self.key_line.set_margin_bottom(6)
+        self.key_status = Gtk.Label(xalign=0)
+        self.key_status.set_ellipsize(Pango.EllipsizeMode.END)
+        self.key_status.add_css_class("caption")
+        self.key_status.add_css_class("error")
+        self.key_line.append(self.key_status)
+        self.fix = Gtk.Button(label=_("Fix"), valign=Gtk.Align.CENTER, visible=False)
+        self.fix.add_css_class("advcfg-fix")
+        self.fix.set_tooltip_text(_("Make the key readable by you only (0600), as OpenSSH requires"))
+        self.fix.connect("clicked", lambda *_a: self._on_fix())
+        self.key_line.append(self.fix)
+        self._key_file = None
         column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         column.append(box)
+        column.append(self.key_line)
         column.append(self.instead)
         self.row.set_child(column)
         self.suggestions = _Suggestions(self.key, self._take_keyword)
@@ -375,6 +396,27 @@ class LineRow:
     def bind(self, option) -> None:
         self.view.syncing.set_text(self.key, option.key)
         self.view.syncing.set_text(self.value, option.value)
+        self._check_key(option.key, option.value)
+
+    def _check_key(self, key: str, value: str) -> None:
+        """For a key or certificate line: Browse, and what the file on disk
+        says about itself (missing; a private key others can read)."""
+        private = fields.KEY_FILE_KEYWORDS.get(key.strip().lower())
+        self.browse.set_visible(private is not None)
+        status = fields.key_file_status(value) if private is not None and value.strip() else None
+        problem = status is not None and (
+            status.state == fields.KEY_MISSING or (private and status.state == fields.KEY_OPEN)
+        )
+        self._key_file = status.path if problem else None
+        self.key_line.set_visible(problem)
+        if problem:
+            self.key_status.set_label(messages.key_status_text(status.state, status.mode))
+        self.fix.set_visible(problem and status.state == fields.KEY_OPEN)
+
+    def _on_fix(self) -> None:
+        if self._key_file:
+            self.view.controller.fix_key(self._key_file)
+            self._check_key(self.key.get_text(), self.value.get_text())
 
     def show(self, answer: AnswerView) -> None:
         item, error = answer.line_state(self.uid)
@@ -409,6 +451,7 @@ class LineRow:
         if self.view.syncing.on:
             return
         self.view.controller.option_typed(self.uid, field, entry.get_text())
+        self._check_key(self.key.get_text(), self.value.get_text())
         if field == "key":
             self.suggestions.typed()
 

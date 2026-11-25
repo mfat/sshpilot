@@ -628,6 +628,28 @@ def test_a_line_dropped_by_its_grip_lands_where_the_gap_opened(window):
     assert structured._gap.get_parent() is None
 
 
+def test_key_lines_have_browse_and_say_what_the_file_on_disk_is(window, tmp_path):
+    import os
+
+    web = window.draft.blocks[1]
+    key = tmp_path / "id_test"
+    key.write_text("key")
+    os.chmod(key, 0o644)
+    identity = _field(window, "identityfile")
+    user = _field(window, "user")
+    assert identity.browse.get_visible() and not user.browse.get_visible()
+    identity.value.set_text("~/.ssh/missing")
+    assert identity.key_line.get_visible() and identity.key_status.get_label() == "File not found"
+    assert not identity.fix.get_visible()
+    identity.value.set_text(str(key))
+    assert "0644" in identity.key_status.get_label() and identity.fix.get_visible()
+    identity.fix.emit("clicked")
+    assert os.stat(key).st_mode & 0o777 == 0o600
+    assert not identity.key_line.get_visible()
+    assert f"    IdentityFile {key}\n" in window.editor.text
+    assert web.options[2].value == str(key)
+
+
 def test_a_common_yes_no_option_is_added_as_yes(window):
     window.structured._add_common("identitiesonly")
     assert "    IdentitiesOnly yes\n" in window.editor.text
