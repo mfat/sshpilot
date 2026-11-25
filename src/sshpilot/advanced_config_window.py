@@ -129,11 +129,9 @@ row:hover .advcfg-drag-handle { opacity: 0.9; }
 .advcfg-dimmed { opacity: 0.55; }
 button.advcfg-host-chip { padding: 1px 10px; min-height: 24px; border-radius: 999px;
   font-family: monospace; font-size: 0.9em; }
-/* Effective's info card: the card's own colour with a faint accent wash and
-   edge, so it stands apart from the page; its tiles carry their own tint. */
-.card.advcfg-summary { padding: 14px 16px;
-  background-image: linear-gradient(alpha(@accent_bg_color, 0.06), alpha(@accent_bg_color, 0.06));
-  box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.18), 0 1px 3px alpha(black, 0.06); }
+/* Effective's summary: no card of its own; its line and tiles sit on the
+   page, as the tiles under the title card do on the Directives view. */
+.advcfg-summary { padding: 0; }
 .advcfg-tile { padding: 8px 12px; border-radius: 8px;
   background-color: alpha(@accent_bg_color, 0.07); box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.14); }
 flowboxchild:hover .advcfg-tile { background-color: alpha(@accent_bg_color, 0.13); }

@@ -414,8 +414,8 @@ class EffectiveView(Gtk.Box):
     def _build_summary(self) -> Gtk.Widget:
         """What the answer comes to: what OpenSSH was asked, and a tile per
         thing that matters."""
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        card.add_css_class("card")
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        # No card of its own: the line and the tiles sit on the page.
         card.add_css_class("advcfg-summary")
         asked = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.asked = Gtk.Label(xalign=0)
