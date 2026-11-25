@@ -100,7 +100,16 @@ _CSS = """
 .advcfg-pill.advcfg-pill-link:hover { text-decoration: underline; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
 .advcfg-context { padding: 12px 16px 0 16px; }
-.advcfg-title-card { padding: 14px 16px; }
+.advcfg-title-card { padding: 0; }
+.advcfg-card-band { padding: 10px 12px 10px 16px;
+  background-color: @accent_bg_color; color: @accent_fg_color; }
+.advcfg-card-band.advcfg-band-off { background-color: @dark_1; color: white; }
+.advcfg-card-band .dim-label { opacity: 0.8; }
+.advcfg-card-band button.flat:hover { background-color: alpha(currentColor, 0.15); }
+.advcfg-card-band switch { background-color: alpha(white, 0.3); }
+.advcfg-card-band switch:checked { background-color: alpha(white, 0.45); }
+.advcfg-card-band switch slider { background-color: white; }
+.advcfg-card-body { padding: 12px 16px 14px 16px; }
 .advcfg-card-title { font-size: 1.3em; font-weight: bold; }
 .advcfg-block-list > row.advcfg-drop-above { box-shadow: inset 0 2px 0 0 @accent_bg_color; }
 .advcfg-block-list > row.advcfg-drop-below { box-shadow: inset 0 -2px 0 0 @accent_bg_color; }

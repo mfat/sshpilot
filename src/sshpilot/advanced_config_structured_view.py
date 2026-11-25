@@ -636,10 +636,16 @@ class StructuredView(Gtk.Box):
         # on/off and the actions; the note as the comment it is; and tiles:
         # what it applies to, how many lines, and its problems when it has
         # any. The window shows the card above all three views.
-        self.block_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.block_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.block_group.add_css_class("card")
         self.block_group.add_css_class("advcfg-title-card")
+        # The band clips to the card's rounded corners.
+        self.block_group.set_overflow(Gtk.Overflow.HIDDEN)
+        # A band in the accent colour (grey while the block is off) holds
+        # the name and the actions; the rest is on the card below it.
         line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        line.add_css_class("advcfg-card-band")
+        self.band = line
         # The name, and under it what kind of block and its file.
         names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
         names.set_valign(Gtk.Align.CENTER)
@@ -680,22 +686,25 @@ class StructuredView(Gtk.Box):
         line.append(self.duplicate_button)
         line.append(self.delete_button)
         self.block_group.append(line)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        body.add_css_class("advcfg-card-body")
+        self.block_group.append(body)
 
         # The note, read only, as the comment it is in the file.
         self.note_label = Gtk.Label(xalign=0, wrap=True, selectable=True)
         self.note_label.add_css_class("advcfg-comment")
-        self.block_group.append(self.note_label)
+        body.append(self.note_label)
         # Off: one line that says so (the tiles and lines are dimmed with it).
         self.disabled_label = Gtk.Label(
             label=_("Disabled: written as comments, which OpenSSH ignores."), xalign=0,
         )
         self.disabled_label.add_css_class("advcfg-disabled-note")
-        self.block_group.append(self.disabled_label)
+        body.append(self.disabled_label)
         #: What is wrong with the block's own line, or that it does not
         #: apply to a host kept in question.
         self.error_row = Gtk.Label(xalign=0, wrap=True)
         self.error_row.add_css_class("error")
-        self.block_group.append(self.error_row)
+        body.append(self.error_row)
 
         self.tiles = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         # Applies To: the hosts of a pattern or Match block, each a link;
@@ -729,7 +738,7 @@ class StructuredView(Gtk.Box):
         self.problems_tile.add_controller(click)
         self._first_problem: Optional[int] = None
         self.tiles.append(self.problems_tile)
-        self.block_group.append(self.tiles)
+        body.append(self.tiles)
         self._file_name = ""
 
         # -- the lines, in the block's order ------------------------------------
@@ -873,6 +882,7 @@ class StructuredView(Gtk.Box):
             finally:
                 self.syncing.on = False
         self.disabled_label.set_visible(block.disabled)
+        set_class(self.band, "advcfg-band-off", block.disabled)
         set_class(self.options_group, "advcfg-dimmed", block.disabled)
         set_class(self.tiles, "advcfg-dimmed", block.disabled)
 
