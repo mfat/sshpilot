@@ -39,7 +39,7 @@ import os
 import logging
 import threading
 from gettext import gettext as _
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 import gi
 
@@ -270,6 +270,11 @@ class AdvancedConfigBase:
         self._selected_index = 0
         self._saving = False
         self._closing = False
+        #: Places left by following a link (see _remember), and places
+        #: gone back from.
+        self._back: List[dict] = []
+        self._forward: List[dict] = []
+        self._jump_toast: Optional[Adw.Toast] = None
 
         self._build()
         keys = Gtk.ShortcutController()
@@ -280,6 +285,18 @@ class AdvancedConfigBase:
                 Gtk.CallbackAction.new(lambda *_a, d=delta: self.move_selected(d)),
             ))
         self.add_controller(keys)
+        # Back and forward through the places links jumped to: taken on the
+        # way down, as undo is, so the Raw view's text view (which moves its
+        # cursor with Alt+arrows) does not take them first.
+        jump_keys = Gtk.ShortcutController()
+        jump_keys.set_scope(Gtk.ShortcutScope.LOCAL)
+        jump_keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        for trigger, step in (("<Alt>Left", self.go_back), ("<Alt>Right", self.go_forward)):
+            jump_keys.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(trigger),
+                Gtk.CallbackAction.new(lambda *_a, s=step: s()),
+            ))
+        self.add_controller(jump_keys)
         # Undo and redo are the window's, wherever the keyboard is: a field
         # has an undo of its own for what was typed into it, which knows
         # nothing of a block deleted or moved, and would answer Ctrl+Z
@@ -1490,19 +1507,22 @@ class AdvancedConfigBase:
     def reveal_source(self, path: str, line: int) -> None:
         """Show line *line* of another file of the configuration (a source
         in the Effective view). Unsaved changes are asked about first, as
-        for any other file."""
+        for any other file. A jump: Back returns."""
         file = self.source_file(path)
         if file is None:
             return
+        self._remember()
         host = self.target_text()       # the host being read about stays
         self.go_to(file=file, line=line, host=host, pin=bool(host))
+        self._jumped(messages.where(path, line, ""))
 
     def reveal_line(self, line: int) -> None:
         """Show the option or block the draft has at *line* (a source in
-        the Effective view)."""
+        the Effective view, a No effect label). A jump: Back returns."""
         uid = self.editor.owner_of_line(line, self._evaluated_lines)
         if uid is None:
             return
+        self._remember()
         owner, _option = self.editor.find_option(uid)
         # The line belongs to the answer on screen: the host it is about
         # stays the one checked, as a typed one, whichever block the line
@@ -1512,6 +1532,98 @@ class AdvancedConfigBase:
         self.show_page("structured")
         self.select_block(owner.uid if owner is not None else uid)
         GLib.idle_add(lambda: (self.structured.reveal(uid), False)[1])
+        block = owner if owner is not None else self.editor.find_block(uid)
+        self._jumped(messages.where(
+            "", line, messages.block_title(block.kind, block.patterns) if block else ""
+        ))
+
+    def follow_host(self, host: str) -> None:
+        """Show the block of *host* (an Applies To chip). A jump."""
+        self._remember()
+        self.go_to(host=host)
+        block = self.editor.find_block(self.selected_uid)
+        if block is not None:
+            self._jumped(messages.block_title(block.kind, block.patterns))
+
+    def reveal_option(self, uid: int) -> None:
+        """Show option *uid* of the block on screen in Directives (the
+        Problems tile). A jump."""
+        self._remember()
+        self.show_page("structured")
+        GLib.idle_add(lambda: (self.structured.reveal(uid), False)[1])
+        line = self.editor.lines.options.get(uid, 0)
+        block = self.editor.find_block(self.selected_uid)
+        self._jumped(messages.where(
+            "", line, messages.block_title(block.kind, block.patterns) if block else ""
+        ))
+
+    # -- back and forward ------------------------------------------------------
+
+    def _place(self) -> dict:
+        """Where the person is: the file, the block (and its line, should
+        the block be gone), the view, the host in question, the scroll."""
+        uid = self.selected_uid
+        return {
+            "file": self._file,
+            "uid": uid,
+            "line": self.editor.lines.headers.get(uid, 0) if uid is not None else 0,
+            "page": self.stack.get_visible_child_name(),
+            "pinned": self._pinned_host,
+            "scroll": self.structured.page.get_vadjustment().get_value(),
+        }
+
+    def _remember(self) -> None:
+        """A link is followed: the place it leaves can be gone back to."""
+        self._back.append(self._place())
+        del self._back[:-50]
+        self._forward.clear()
+
+    def _restore(self, place: dict) -> None:
+        if place["file"] != self._file:
+            self.go_to(file=place["file"], line=place["line"])
+            return
+        uid = place["uid"]
+        if self.editor.find_block(uid) is None and place["line"]:
+            uid = self.editor.owner_of_line(place["line"], self.editor.lines)
+        if self.editor.find_block(uid) is not None:
+            self.select_block(uid)
+        if place["pinned"] != self._pinned_host:
+            self._set_typed(place["pinned"])
+            self._target_changed()
+        self.show_page(place["page"])
+        scroll = place["scroll"]
+        GLib.idle_add(lambda: (self.structured.page.get_vadjustment().set_value(scroll), False)[1])
+
+    def go_back(self) -> bool:
+        """Alt+Left, or the toast's Back: the place before the last jump."""
+        if not self._back:
+            return False
+        self._forward.append(self._place())
+        self._dismiss_jump_toast()
+        self._restore(self._back.pop())
+        return True
+
+    def go_forward(self) -> bool:
+        """Alt+Right: the place a Back left."""
+        if not self._forward:
+            return False
+        self._back.append(self._place())
+        self._dismiss_jump_toast()
+        self._restore(self._forward.pop())
+        return True
+
+    def _jumped(self, place: str) -> None:
+        """Say where a link went, with Back (one toast at a time)."""
+        self._dismiss_jump_toast()
+        toast = Adw.Toast(title=messages.jump_text(place), button_label=_("Back"))
+        toast.connect("button-clicked", lambda *_a: self.go_back())
+        self._jump_toast = toast
+        self._toasts.add_toast(toast)
+
+    def _dismiss_jump_toast(self) -> None:
+        if self._jump_toast is not None:
+            self._jump_toast.dismiss()
+            self._jump_toast = None
 
     # ------------------------------------------------------------------
     # asking OpenSSH

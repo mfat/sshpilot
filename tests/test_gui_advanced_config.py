@@ -826,6 +826,20 @@ def test_lines_that_do_not_take_effect_are_struck_through_and_rejected_ones_red(
         _close(win)
 
 
+def test_back_and_forward_return_to_the_place_a_link_left(window):
+    glob, web, star = window.draft.blocks
+    window.select_block(star.uid)
+    window.show_page("effective")
+    window.reveal_line(window._evaluated_lines.headers[web.uid])      # a source followed
+    assert window.selected_uid == web.uid and window.stack.get_visible_child_name() == "structured"
+    assert window._jump_toast is not None and window._jump_toast.get_button_label() == "Back"
+    assert window.go_back()
+    assert window.selected_uid == star.uid and window.stack.get_visible_child_name() == "effective"
+    assert window.go_forward()
+    assert window.selected_uid == web.uid
+    assert window.go_back() and not window.go_back()                   # nothing further back
+
+
 def test_a_not_used_pill_shows_the_line_used_instead(gtk, tmp_path):
     """Structured's "No effect" pill is a link, as a source is in Effective."""
     from gi.repository import Gtk

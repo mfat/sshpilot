@@ -1095,8 +1095,7 @@ class StructuredView(Gtk.Box):
     def _show_first_problem(self) -> None:
         if self._first_problem is None:
             return
-        self.controller.show_page("structured")
-        self.reveal(self._first_problem)
+        self.controller.reveal_option(self._first_problem)
 
     #: Hosts named before the rest are counted ("+3").
     _APPLIES_SHOWN = 8
@@ -1124,7 +1123,7 @@ class StructuredView(Gtk.Box):
         for name in shown[:self._APPLIES_SHOWN]:
             chip = Gtk.Button(label=name, tooltip_text=messages.show_host_block(name))
             chip.add_css_class("advcfg-host-chip")
-            chip.connect("clicked", lambda *_a, n=name: self.controller.go_to(host=n))
+            chip.connect("clicked", lambda *_a, n=name: self.controller.follow_host(n))
             self.applies_chips.append(chip)
         if len(shown) > self._APPLIES_SHOWN:
             rest = shown[self._APPLIES_SHOWN:]

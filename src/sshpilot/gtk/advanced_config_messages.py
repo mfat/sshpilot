@@ -249,6 +249,12 @@ def used_instead_markup(value: str, place: str, forced: bool = False) -> str:
         "{value}", shown).replace("{place}", escape(place))
 
 
+def jump_text(place: str) -> str:
+    """The toast after following a link: where it went (Back returns)."""
+    # Translators: e.g. "Showing line 2 (Host zoo)".
+    return _("Showing {place}").format(place=place)
+
+
 def show_line_hint() -> str:
     """Under a "No effect" pill's reason: the pill is a link to that line."""
     return _("Click to show that line.")

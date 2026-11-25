@@ -114,3 +114,14 @@ window asks about them first (`sidebar_views.confirm_quit`). The view reads
 the file again when the connection list is rebuilt and after a save in the
 window, but never over unsaved changes: a file changed under a draft is said
 at the save, as in the window.
+
+## Back and forward
+
+Links inside the window (a **No effect** label, a source in Effective, a host
+chip under **Applies To**, the **Problems** tile) go through `reveal_line`,
+`reveal_source`, `follow_host` and `reveal_option`. Each records the place it
+leaves (file, block, view, host in question, scroll) before jumping and shows
+a toast, "Showing …", whose **Back** returns there. `go_back` / `go_forward`
+(Alt+Left / Alt+Right, taken in the CAPTURE phase so the Raw view's text view
+does not take them) walk that history. `go_to` from outside the window (the
+connection editor, the `app.advanced-ssh-config-at` action) is not recorded.
