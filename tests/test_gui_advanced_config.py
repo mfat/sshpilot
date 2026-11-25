@@ -486,6 +486,26 @@ def test_the_title_card_says_what_needs_attention_and_shows_it(gtk, tmp_path):
         _close(win)
 
 
+def test_escape_puts_a_field_back_as_it_was(window):
+    from gi.repository import Gdk, Gtk
+
+    entry = _field(window, "user").entry
+    focus = [c for c in _controllers(entry) if isinstance(c, Gtk.EventControllerFocus)]
+    keys = [c for c in _controllers(entry) if isinstance(c, Gtk.EventControllerKey)]
+    for controller in focus:
+        controller.emit("enter")                       # the field is clicked into
+    entry.set_text("someone-else")
+    assert "User someone-else" in window.editor.text and window.dirty
+    assert any(k.emit("key-pressed", Gdk.KEY_Escape, 0, 0) for k in keys)
+    assert entry.get_text() == "deploy"
+    assert "    User deploy\n" in window.editor.text and not window.dirty
+
+
+def _controllers(widget):
+    found = widget.observe_controllers()
+    return [found.get_item(index) for index in range(found.get_n_items())]
+
+
 def test_disabling_a_block_writes_comments_and_openssh_skips_it(window):
     web = window.draft.blocks[1]
     window.structured.enabled_row.set_active(False)          # the switch

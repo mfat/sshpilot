@@ -168,6 +168,7 @@ class _Syncing:
 def _entry(placeholder: str = "", width: int = 0, mono: bool = True) -> Gtk.Entry:
     entry = Gtk.Entry()
     entry.set_valign(Gtk.Align.CENTER)
+    _escape_reverts(entry)
     if placeholder:
         entry.set_placeholder_text(placeholder)
     if width:
@@ -175,6 +176,34 @@ def _entry(placeholder: str = "", width: int = 0, mono: bool = True) -> Gtk.Entr
     if mono:
         entry.add_css_class("monospace")
     return entry
+
+
+def _escape_reverts(entry: Gtk.Entry) -> None:
+    """Esc puts the field back as it was when the focus came into it.
+
+    A field's text goes into the draft as it is typed, so the edit is
+    undone by typing the old text back: the line, the views and undo all
+    follow as for any other typing. Leaving the field keeps what was
+    typed, as everywhere else. (A keyword field's suggestions, open, take
+    the Esc first: their controller is added later, so it runs before.)"""
+    entry._text_before = entry.get_text()
+
+    def entered(*_args) -> None:
+        entry._text_before = entry.get_text()
+
+    def pressed(_controller, keyval, _code, _state) -> bool:
+        if keyval != Gdk.KEY_Escape or entry.get_text() == entry._text_before:
+            return False
+        entry.set_text(entry._text_before)
+        entry.set_position(-1)
+        return True
+
+    focus = Gtk.EventControllerFocus()
+    focus.connect("enter", entered)
+    entry.add_controller(focus)
+    keys = Gtk.EventControllerKey()
+    keys.connect("key-pressed", pressed)
+    entry.add_controller(keys)
 
 
 def _icon_button(icon: str, tooltip: str, callback: Callable[[], None]) -> Gtk.Button:
