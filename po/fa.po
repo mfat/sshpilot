@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 19:54+0330\n"
+"POT-Creation-Date: 2026-11-25 20:13+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -120,7 +120,7 @@ msgstr "اتصالات باز شود؟"
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
 #: src/sshpilot/connection_dialog_auth.py:1407
-#: src/sshpilot/connection_dialog_port_forwarding.py:241
+#: src/sshpilot/connection_dialog_port_forwarding.py:239
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
 #: src/sshpilot/file_manager/pane.py:1009
@@ -378,7 +378,7 @@ msgstr "نام جلسه"
 
 #. Save button
 #: src/sshpilot/actions.py:866
-#: src/sshpilot/connection_dialog_port_forwarding.py:245
+#: src/sshpilot/connection_dialog_port_forwarding.py:243
 #: src/sshpilot/login_profile_dialogs.py:165 src/sshpilot/rbw_setup.py:167
 #: src/sshpilot/terminal_theme_editor.py:88 src/sshpilot/text_editor.py:379
 #: src/sshpilot/text_editor.py:1767 src/sshpilot/window_dialogs.py:3462
@@ -2070,7 +2070,7 @@ msgstr "کتابخانه ارائه دهنده کلید امنیتی FIDO را �
 
 #: src/sshpilot/connection_dialog.py:3821
 #: src/sshpilot/connection_dialog.py:4881
-#: src/sshpilot/connection_dialog_port_forwarding.py:215
+#: src/sshpilot/connection_dialog_port_forwarding.py:213
 #: src/sshpilot/host_info_tab.py:103 src/sshpilot/host_info_tab.py:569
 #: src/sshpilot/machine_info_dialog.py:2705
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:46
@@ -2105,8 +2105,8 @@ msgstr "نام میزبان / آدرس IP"
 #. plugin protocols' fields take, and the familiar host/port/user one.
 #. Title: Port and protocol
 #: src/sshpilot/connection_dialog.py:3885
-#: src/sshpilot/connection_dialog_port_forwarding.py:217
-#: src/sshpilot/connection_dialog_port_forwarding.py:598
+#: src/sshpilot/connection_dialog_port_forwarding.py:215
+#: src/sshpilot/connection_dialog_port_forwarding.py:596
 #: src/sshpilot/machine_info_dialog.py:2535
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:314
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:41
@@ -2840,7 +2840,7 @@ msgstr "تنظیم‌شده برای این میزبان"
 
 #: src/sshpilot/connection_dialog_effective.py:67
 #: src/sshpilot/gtk/advanced_config_messages.py:219
-#: src/sshpilot/advanced_config_effective_view.py:263
+#: src/sshpilot/advanced_config_effective_view.py:266
 msgid "OpenSSH default"
 msgstr "پیش‌فرض OpenSSH"
 
@@ -3133,17 +3133,17 @@ msgstr "پورت باید بین 1 تا 65535 باشد."
 msgid "Unsupported forwarding type: {type}"
 msgstr "نوع هدایت پشتیبانی‌نشده: {type}"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:153
+#: src/sshpilot/connection_dialog_port_forwarding.py:151
 #: src/sshpilot/scp_window.py:334 src/sshpilot/sshcopyid_window.py:127
 #: src/sshpilot/window_dialogs.py:1197 src/sshpilot/window_dialogs.py:2509
 msgid "Server"
 msgstr "سرور"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:186
+#: src/sshpilot/connection_dialog_port_forwarding.py:184
 msgid "Port Forwarding Rule Editor"
 msgstr "ویرایشگر قوانین حمل و نقل پورت"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:196
+#: src/sshpilot/connection_dialog_port_forwarding.py:194
 #: src/sshpilot/file_manager/pane.py:436 src/sshpilot/forward_rule_row.py:90
 #: src/sshpilot/plugins/builtin/docker_manager/__init__.py:50
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:769
@@ -3151,41 +3151,41 @@ msgstr "ویرایشگر قوانین حمل و نقل پورت"
 msgid "Local"
 msgstr "محلی"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:197
+#: src/sshpilot/connection_dialog_port_forwarding.py:195
 #: src/sshpilot/file_manager/pane.py:435 src/sshpilot/forward_rule_row.py:114
 #: src/sshpilot/preferences.py:3207
 msgid "Remote"
 msgstr "از راه دور"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:198
+#: src/sshpilot/connection_dialog_port_forwarding.py:196
 #: src/sshpilot/forward_rule_row.py:124
 msgid "Dynamic"
 msgstr "پویا"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:200
+#: src/sshpilot/connection_dialog_port_forwarding.py:198
 #: src/sshpilot/file_manager/pane_controls.py:148
 msgid "Type"
 msgstr "تایپ کنید"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:203
+#: src/sshpilot/connection_dialog_port_forwarding.py:201
 msgid "Bind address (optional)"
 msgstr "آدرس اتصال (اختیاری)"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:205
+#: src/sshpilot/connection_dialog_port_forwarding.py:203
 msgid "Local port"
 msgstr "پورت محلی"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:420
+#: src/sshpilot/connection_dialog_port_forwarding.py:418
 #, python-brace-format
 msgid "Port {port} is already in use"
 msgstr "پورت {port} در حال حاضر در حال استفاده است"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:422
+#: src/sshpilot/connection_dialog_port_forwarding.py:420
 #, python-brace-format
 msgid " by {process} (PID: {pid})"
 msgstr " توسط {process} (PID: {pid})"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:430
+#: src/sshpilot/connection_dialog_port_forwarding.py:428
 #, python-brace-format
 msgid ""
 "\n"
@@ -3196,35 +3196,35 @@ msgstr ""
 "\n"
 "جایگزین پیشنهادی: پورت {alt_port}"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:529
+#: src/sshpilot/connection_dialog_port_forwarding.py:527
 msgid "Port Information"
 msgstr "اطلاعات پورت"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:547
+#: src/sshpilot/connection_dialog_port_forwarding.py:545
 msgid "Currently Listening Ports"
 msgstr "پورت‌های در حال گوش دادن"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:555
+#: src/sshpilot/connection_dialog_port_forwarding.py:553
 msgid "Refresh port information"
 msgstr "بازخوانی اطلاعات پورت"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:586
+#: src/sshpilot/connection_dialog_port_forwarding.py:584
 msgid "No listening ports found"
 msgstr "هیچ پورت شنونده‌ای یافت نشد"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:587
+#: src/sshpilot/connection_dialog_port_forwarding.py:585
 msgid "All ports appear to be available"
 msgstr "به نظر می‌رسد همه پورت‌ها در دسترس هستند"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:611
+#: src/sshpilot/connection_dialog_port_forwarding.py:609
 msgid "Unknown process"
 msgstr "فرآیند ناشناخته"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:619
+#: src/sshpilot/connection_dialog_port_forwarding.py:617
 msgid "System port (requires root)"
 msgstr "پورت سیستم (نیاز به روت است)"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:629
+#: src/sshpilot/connection_dialog_port_forwarding.py:627
 msgid "Error loading port information"
 msgstr "خطا در بارگیری اطلاعات پورت"
 
@@ -4862,15 +4862,15 @@ msgstr "هر میزبانی"
 msgid "SOCKS {address}"
 msgstr "SOCKS {address}"
 
-#: src/sshpilot/forward_rule_row.py:225 src/sshpilot/route_strip.py:205
+#: src/sshpilot/forward_rule_row.py:221 src/sshpilot/route_strip.py:205
 msgid "This computer"
 msgstr "این رایانه"
 
-#: src/sshpilot/forward_rule_row.py:234
+#: src/sshpilot/forward_rule_row.py:230
 msgid "Listens here"
 msgstr "اینجا گوش می‌دهد"
 
-#: src/sshpilot/forward_rule_row.py:234 src/sshpilot/scp_window.py:655
+#: src/sshpilot/forward_rule_row.py:230 src/sshpilot/scp_window.py:655
 msgid "Destination"
 msgstr "مقصد"
 
@@ -4884,11 +4884,11 @@ msgstr "به {server}"
 msgid "From {server}"
 msgstr "از {server}"
 
-#: src/sshpilot/forward_rule_row.py:314
+#: src/sshpilot/forward_rule_row.py:315
 msgid "Edit Rule"
 msgstr "ویرایش قانون"
 
-#: src/sshpilot/forward_rule_row.py:319
+#: src/sshpilot/forward_rule_row.py:320
 msgid "Delete Rule"
 msgstr "حذف قانون"
 
@@ -17976,8 +17976,8 @@ msgid "SSH configuration saved"
 msgstr "پیکربندی SSH ذخیره شد"
 
 #: src/sshpilot/advanced_config_window.py:749
-msgid "The file of the configuration on screen"
-msgstr "پرونده‌ای از پیکربندی که روی صفحه است"
+msgid "The config file this block is in"
+msgstr "فایل پیکربندی‌ای که این بلوک در آن است"
 
 #: src/sshpilot/advanced_config_window.py:875
 #, python-brace-format
@@ -18480,25 +18480,28 @@ msgstr "نمایش این خط"
 msgid "Search options or values"
 msgstr "جستجوی گزینه‌ها یا مقدارها"
 
-#: src/sshpilot/advanced_config_effective_view.py:261
-msgid "This block"
-msgstr "این بلوک"
-
+#. Translators: a filter: values this block sets itself.
 #: src/sshpilot/advanced_config_effective_view.py:262
-msgid "Other blocks"
-msgstr "بلوک‌های دیگر"
+msgid "Explicit"
+msgstr "صریح"
+
+#. Translators: a filter: values set by another block or file
+#. (Host *, an included file, Settings), not by this block.
+#: src/sshpilot/advanced_config_effective_view.py:265
+msgid "Inherited"
+msgstr "به‌ارث‌رسیده"
 
 #. Translators: a filter and how many options it keeps, e.g. "All 84".
-#: src/sshpilot/advanced_config_effective_view.py:267
+#: src/sshpilot/advanced_config_effective_view.py:270
 #, python-brace-format
 msgid "{name} {count}"
 msgstr "{name} {count}"
 
-#: src/sshpilot/advanced_config_effective_view.py:303
+#: src/sshpilot/advanced_config_effective_view.py:306
 msgid "No Host Checked"
 msgstr "هیچ میزبانی بررسی نشده"
 
-#: src/sshpilot/advanced_config_effective_view.py:305
+#: src/sshpilot/advanced_config_effective_view.py:308
 msgid ""
 "Choose a block that names a host, or type a host to check, to see what "
 "OpenSSH would use for it."
@@ -18506,11 +18509,11 @@ msgstr ""
 "بلوکی را انتخاب کنید که میزبانی را نام می‌برد، یا میزبانی برای بررسی بنویسید، "
 "تا ببینید OpenSSH برای آن چه به کار می‌برد."
 
-#: src/sshpilot/advanced_config_effective_view.py:309
+#: src/sshpilot/advanced_config_effective_view.py:312
 msgid "Waiting for Consent"
 msgstr "در انتظار موافقت"
 
-#: src/sshpilot/advanced_config_effective_view.py:314
+#: src/sshpilot/advanced_config_effective_view.py:317
 msgid "OpenSSH Rejects This Configuration"
 msgstr "OpenSSH این پیکربندی را رد می‌کند"
 
@@ -18564,6 +18567,15 @@ msgstr "برای تغییر ترتیب بکشید"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · خاموش"
+
+#~ msgid "The file of the configuration on screen"
+#~ msgstr "پرونده‌ای از پیکربندی که روی صفحه است"
+
+#~ msgid "This block"
+#~ msgstr "این بلوک"
+
+#~ msgid "Other blocks"
+#~ msgstr "بلوک‌های دیگر"
 
 #~ msgid "Local Port Forwarding"
 #~ msgstr "هدایت پورت محلی"
@@ -19214,9 +19226,6 @@ msgstr "{kind} · خاموش"
 
 #~ msgid "A port given on the command line, as ssh -p. Empty: none."
 #~ msgstr "درگاهی که در خط فرمان داده می‌شود، مانند ssh -p. خالی: هیچ."
-
-#~ msgid "Inherit"
-#~ msgstr "به ارث ببر"
 
 #~ msgid "Move this method"
 #~ msgstr "جابه‌جا کردن این روش"

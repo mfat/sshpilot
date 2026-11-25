@@ -258,8 +258,11 @@ class EffectiveView(Gtk.Box):
     def _set_chip_labels(self, counts: Dict[str, int]) -> None:
         names = {
             ALL: _("All"),
-            THIS_BLOCK: _("This block"),
-            OTHER: _("Other blocks"),
+            # Translators: a filter: values this block sets itself.
+            THIS_BLOCK: _("Explicit"),
+            # Translators: a filter: values set by another block or file
+            # (Host *, an included file, Settings), not by this block.
+            OTHER: _("Inherited"),
             DEFAULT: _("OpenSSH default"),
         }
         for kind, chip in self._chips.items():

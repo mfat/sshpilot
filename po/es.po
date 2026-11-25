@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 19:54+0330\n"
+"POT-Creation-Date: 2026-11-25 20:13+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -118,7 +118,7 @@ msgstr "¿Conexiones abiertas?"
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
 #: src/sshpilot/connection_dialog_auth.py:1407
-#: src/sshpilot/connection_dialog_port_forwarding.py:241
+#: src/sshpilot/connection_dialog_port_forwarding.py:239
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
 #: src/sshpilot/file_manager/pane.py:1009
@@ -374,7 +374,7 @@ msgstr "Nombre de la sesión"
 
 #. Save button
 #: src/sshpilot/actions.py:866
-#: src/sshpilot/connection_dialog_port_forwarding.py:245
+#: src/sshpilot/connection_dialog_port_forwarding.py:243
 #: src/sshpilot/login_profile_dialogs.py:165 src/sshpilot/rbw_setup.py:167
 #: src/sshpilot/terminal_theme_editor.py:88 src/sshpilot/text_editor.py:379
 #: src/sshpilot/text_editor.py:1767 src/sshpilot/window_dialogs.py:3462
@@ -2060,7 +2060,7 @@ msgstr "Seleccione la biblioteca del proveedor de claves de seguridad FIDO"
 
 #: src/sshpilot/connection_dialog.py:3821
 #: src/sshpilot/connection_dialog.py:4881
-#: src/sshpilot/connection_dialog_port_forwarding.py:215
+#: src/sshpilot/connection_dialog_port_forwarding.py:213
 #: src/sshpilot/host_info_tab.py:103 src/sshpilot/host_info_tab.py:569
 #: src/sshpilot/machine_info_dialog.py:2705
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:46
@@ -2096,8 +2096,8 @@ msgstr "Nombre de host/dirección IP"
 #. plugin protocols' fields take, and the familiar host/port/user one.
 #. Title: Port and protocol
 #: src/sshpilot/connection_dialog.py:3885
-#: src/sshpilot/connection_dialog_port_forwarding.py:217
-#: src/sshpilot/connection_dialog_port_forwarding.py:598
+#: src/sshpilot/connection_dialog_port_forwarding.py:215
+#: src/sshpilot/connection_dialog_port_forwarding.py:596
 #: src/sshpilot/machine_info_dialog.py:2535
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:314
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:41
@@ -2840,7 +2840,7 @@ msgstr "Definido en este host"
 
 #: src/sshpilot/connection_dialog_effective.py:67
 #: src/sshpilot/gtk/advanced_config_messages.py:219
-#: src/sshpilot/advanced_config_effective_view.py:263
+#: src/sshpilot/advanced_config_effective_view.py:266
 msgid "OpenSSH default"
 msgstr "Predeterminado de OpenSSH"
 
@@ -3132,17 +3132,17 @@ msgstr "El puerto debe estar entre 1 y 65535."
 msgid "Unsupported forwarding type: {type}"
 msgstr "Tipo de reenvío no compatible: {type}"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:153
+#: src/sshpilot/connection_dialog_port_forwarding.py:151
 #: src/sshpilot/scp_window.py:334 src/sshpilot/sshcopyid_window.py:127
 #: src/sshpilot/window_dialogs.py:1197 src/sshpilot/window_dialogs.py:2509
 msgid "Server"
 msgstr "Servidor"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:186
+#: src/sshpilot/connection_dialog_port_forwarding.py:184
 msgid "Port Forwarding Rule Editor"
 msgstr "Editor de reglas de reenvío de puertos"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:196
+#: src/sshpilot/connection_dialog_port_forwarding.py:194
 #: src/sshpilot/file_manager/pane.py:436 src/sshpilot/forward_rule_row.py:90
 #: src/sshpilot/plugins/builtin/docker_manager/__init__.py:50
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:769
@@ -3150,41 +3150,41 @@ msgstr "Editor de reglas de reenvío de puertos"
 msgid "Local"
 msgstr "Local"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:197
+#: src/sshpilot/connection_dialog_port_forwarding.py:195
 #: src/sshpilot/file_manager/pane.py:435 src/sshpilot/forward_rule_row.py:114
 #: src/sshpilot/preferences.py:3207
 msgid "Remote"
 msgstr "Remoto"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:198
+#: src/sshpilot/connection_dialog_port_forwarding.py:196
 #: src/sshpilot/forward_rule_row.py:124
 msgid "Dynamic"
 msgstr "Dinámica"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:200
+#: src/sshpilot/connection_dialog_port_forwarding.py:198
 #: src/sshpilot/file_manager/pane_controls.py:148
 msgid "Type"
 msgstr "Tipo"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:203
+#: src/sshpilot/connection_dialog_port_forwarding.py:201
 msgid "Bind address (optional)"
 msgstr "Dirección de enlace (opcional)"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:205
+#: src/sshpilot/connection_dialog_port_forwarding.py:203
 msgid "Local port"
 msgstr "Puerto local"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:420
+#: src/sshpilot/connection_dialog_port_forwarding.py:418
 #, python-brace-format
 msgid "Port {port} is already in use"
 msgstr "El puerto{port}ya está en uso"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:422
+#: src/sshpilot/connection_dialog_port_forwarding.py:420
 #, python-brace-format
 msgid " by {process} (PID: {pid})"
 msgstr "por{process}(PID:{pid})"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:430
+#: src/sshpilot/connection_dialog_port_forwarding.py:428
 #, python-brace-format
 msgid ""
 "\n"
@@ -3195,35 +3195,35 @@ msgstr ""
 "\n"
 "Alternativa sugerida: puerto{alt_port}"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:529
+#: src/sshpilot/connection_dialog_port_forwarding.py:527
 msgid "Port Information"
 msgstr "Información del puerto"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:547
+#: src/sshpilot/connection_dialog_port_forwarding.py:545
 msgid "Currently Listening Ports"
 msgstr "Puertos de escucha actuales"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:555
+#: src/sshpilot/connection_dialog_port_forwarding.py:553
 msgid "Refresh port information"
 msgstr "Actualizar información del puerto"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:586
+#: src/sshpilot/connection_dialog_port_forwarding.py:584
 msgid "No listening ports found"
 msgstr "No se encontraron puertos de escucha"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:587
+#: src/sshpilot/connection_dialog_port_forwarding.py:585
 msgid "All ports appear to be available"
 msgstr "Todos los puertos parecen estar disponibles"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:611
+#: src/sshpilot/connection_dialog_port_forwarding.py:609
 msgid "Unknown process"
 msgstr "Proceso desconocido"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:619
+#: src/sshpilot/connection_dialog_port_forwarding.py:617
 msgid "System port (requires root)"
 msgstr "Puerto del sistema (requiere root)"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:629
+#: src/sshpilot/connection_dialog_port_forwarding.py:627
 msgid "Error loading port information"
 msgstr "Error al cargar la información del puerto"
 
@@ -4863,15 +4863,15 @@ msgstr "cualquier host"
 msgid "SOCKS {address}"
 msgstr "SOCKS {address}"
 
-#: src/sshpilot/forward_rule_row.py:225 src/sshpilot/route_strip.py:205
+#: src/sshpilot/forward_rule_row.py:221 src/sshpilot/route_strip.py:205
 msgid "This computer"
 msgstr "Este equipo"
 
-#: src/sshpilot/forward_rule_row.py:234
+#: src/sshpilot/forward_rule_row.py:230
 msgid "Listens here"
 msgstr "Escucha aquí"
 
-#: src/sshpilot/forward_rule_row.py:234 src/sshpilot/scp_window.py:655
+#: src/sshpilot/forward_rule_row.py:230 src/sshpilot/scp_window.py:655
 msgid "Destination"
 msgstr "Destino"
 
@@ -4885,11 +4885,11 @@ msgstr "Hacia {server}"
 msgid "From {server}"
 msgstr "Desde {server}"
 
-#: src/sshpilot/forward_rule_row.py:314
+#: src/sshpilot/forward_rule_row.py:315
 msgid "Edit Rule"
 msgstr "Editar regla"
 
-#: src/sshpilot/forward_rule_row.py:319
+#: src/sshpilot/forward_rule_row.py:320
 msgid "Delete Rule"
 msgstr "Eliminar regla"
 
@@ -18219,8 +18219,8 @@ msgid "SSH configuration saved"
 msgstr "Configuración SSH guardada"
 
 #: src/sshpilot/advanced_config_window.py:749
-msgid "The file of the configuration on screen"
-msgstr "El archivo de la configuración en pantalla"
+msgid "The config file this block is in"
+msgstr "El archivo de configuración que contiene este bloque"
 
 #: src/sshpilot/advanced_config_window.py:875
 #, python-brace-format
@@ -18725,25 +18725,28 @@ msgstr "Mostrar esta línea"
 msgid "Search options or values"
 msgstr "Buscar opciones o valores"
 
-#: src/sshpilot/advanced_config_effective_view.py:261
-msgid "This block"
-msgstr "Este bloque"
-
+#. Translators: a filter: values this block sets itself.
 #: src/sshpilot/advanced_config_effective_view.py:262
-msgid "Other blocks"
-msgstr "Otros bloques"
+msgid "Explicit"
+msgstr "Explícito"
+
+#. Translators: a filter: values set by another block or file
+#. (Host *, an included file, Settings), not by this block.
+#: src/sshpilot/advanced_config_effective_view.py:265
+msgid "Inherited"
+msgstr "Heredado"
 
 #. Translators: a filter and how many options it keeps, e.g. "All 84".
-#: src/sshpilot/advanced_config_effective_view.py:267
+#: src/sshpilot/advanced_config_effective_view.py:270
 #, python-brace-format
 msgid "{name} {count}"
 msgstr "{name} {count}"
 
-#: src/sshpilot/advanced_config_effective_view.py:303
+#: src/sshpilot/advanced_config_effective_view.py:306
 msgid "No Host Checked"
 msgstr "Ningún host comprobado"
 
-#: src/sshpilot/advanced_config_effective_view.py:305
+#: src/sshpilot/advanced_config_effective_view.py:308
 msgid ""
 "Choose a block that names a host, or type a host to check, to see what "
 "OpenSSH would use for it."
@@ -18751,11 +18754,11 @@ msgstr ""
 "Elija un bloque que nombre un host, o escriba un host que comprobar, para "
 "ver qué usaría OpenSSH para él."
 
-#: src/sshpilot/advanced_config_effective_view.py:309
+#: src/sshpilot/advanced_config_effective_view.py:312
 msgid "Waiting for Consent"
 msgstr "Esperando consentimiento"
 
-#: src/sshpilot/advanced_config_effective_view.py:314
+#: src/sshpilot/advanced_config_effective_view.py:317
 msgid "OpenSSH Rejects This Configuration"
 msgstr "OpenSSH rechaza esta configuración"
 
@@ -18810,6 +18813,15 @@ msgstr "Arrastre para reordenar"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · desactivado"
+
+#~ msgid "The file of the configuration on screen"
+#~ msgstr "El archivo de la configuración en pantalla"
+
+#~ msgid "This block"
+#~ msgstr "Este bloque"
+
+#~ msgid "Other blocks"
+#~ msgstr "Otros bloques"
 
 #~ msgid "Local Port Forwarding"
 #~ msgstr "Reenvío de puertos locales"
@@ -19473,9 +19485,6 @@ msgstr "{kind} · desactivado"
 #~ msgid "A port given on the command line, as ssh -p. Empty: none."
 #~ msgstr ""
 #~ "Un puerto indicado en la línea de órdenes, como ssh -p. Vacío: ninguno."
-
-#~ msgid "Inherit"
-#~ msgstr "Heredar"
 
 #~ msgid "Move this method"
 #~ msgstr "Mover este método"

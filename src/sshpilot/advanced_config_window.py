@@ -746,7 +746,7 @@ class AdvancedConfigBase:
         self.sidebar.select(self.selected_uid)
         self.raw.set_files(self._files, self._file)
         set_pill(self.file_pill, self._display_name, "muted",
-                 _("The file of the configuration on screen"))
+                 _("The config file this block is in"))
 
     def open_file(self, file: str) -> None:
         """Put another file of the configuration on screen: *file* as the
