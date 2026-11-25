@@ -486,19 +486,17 @@ def test_the_title_card_says_what_needs_attention_and_shows_it(gtk, tmp_path):
         _close(win)
 
 
-def test_escape_puts_a_field_back_as_it_was(window):
+def test_escape_leaves_a_field_and_keeps_what_was_typed(window):
     from gi.repository import Gdk, Gtk
 
     entry = _field(window, "user").entry
-    focus = [c for c in _controllers(entry) if isinstance(c, Gtk.EventControllerFocus)]
     keys = [c for c in _controllers(entry) if isinstance(c, Gtk.EventControllerKey)]
-    for controller in focus:
-        controller.emit("enter")                       # the field is clicked into
+    entry.grab_focus()
     entry.set_text("someone-else")
-    assert "User someone-else" in window.editor.text and window.dirty
     assert any(k.emit("key-pressed", Gdk.KEY_Escape, 0, 0) for k in keys)
-    assert entry.get_text() == "deploy"
-    assert "    User deploy\n" in window.editor.text and not window.dirty
+    assert entry.get_text() == "someone-else"
+    assert "User someone-else" in window.editor.text
+    assert window.get_focus() is None
 
 
 def _controllers(widget):

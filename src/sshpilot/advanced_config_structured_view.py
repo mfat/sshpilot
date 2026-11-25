@@ -168,7 +168,7 @@ class _Syncing:
 def _entry(placeholder: str = "", width: int = 0, mono: bool = True) -> Gtk.Entry:
     entry = Gtk.Entry()
     entry.set_valign(Gtk.Align.CENTER)
-    _escape_reverts(entry)
+    _escape_leaves(entry)
     if placeholder:
         entry.set_placeholder_text(placeholder)
     if width:
@@ -178,29 +178,24 @@ def _entry(placeholder: str = "", width: int = 0, mono: bool = True) -> Gtk.Entr
     return entry
 
 
-def _escape_reverts(entry: Gtk.Entry) -> None:
-    """Esc puts the field back as it was when the focus came into it.
+def _leave_field(widget: Gtk.Widget) -> None:
+    """Take the keyboard focus out of a field: what was typed stays."""
+    root = widget.get_root()
+    if root is not None:
+        root.set_focus(None)
 
-    A field's text goes into the draft as it is typed, so the edit is
-    undone by typing the old text back: the line, the views and undo all
-    follow as for any other typing. Leaving the field keeps what was
-    typed, as everywhere else. (A keyword field's suggestions, open, take
-    the Esc first: their controller is added later, so it runs before.)"""
-    entry._text_before = entry.get_text()
 
-    def entered(*_args) -> None:
-        entry._text_before = entry.get_text()
+def _escape_leaves(entry: Gtk.Entry) -> None:
+    """Esc leaves the field, keeping what was typed, as in other GNOME
+    apps. (A keyword field's suggestions, open, take the Esc first: their
+    controller is added later, so it runs before.)"""
 
     def pressed(_controller, keyval, _code, _state) -> bool:
-        if keyval != Gdk.KEY_Escape or entry.get_text() == entry._text_before:
+        if keyval != Gdk.KEY_Escape:
             return False
-        entry.set_text(entry._text_before)
-        entry.set_position(-1)
+        _leave_field(entry)
         return True
 
-    focus = Gtk.EventControllerFocus()
-    focus.connect("enter", entered)
-    entry.add_controller(focus)
     keys = Gtk.EventControllerKey()
     keys.connect("key-pressed", pressed)
     entry.add_controller(keys)
@@ -657,6 +652,11 @@ class StructuredView(Gtk.Box):
         )
         self.stack.add_named(empty, "empty")
         self.page = _Page()
+        # A click on the page around the fields (not on one, nor on a
+        # button: those take the click) leaves the field being edited.
+        click = Gtk.GestureClick()
+        click.connect("pressed", lambda *_a: _leave_field(self.page))
+        self.page.add_controller(click)
         self.stack.add_named(self.page, "block")
 
         # -- the block itself: the title card --------------------------------------
