@@ -573,22 +573,18 @@ _COMMON = (
 
 
 class _Page(Gtk.ScrolledWindow):
-    """The block's groups, one under the other, as wide as reads well: a
-    preferences page keeps to a narrow column that leaves most of a wide
-    window empty."""
+    """The block's groups, one under the other, the full width of the view
+    with the Effective view's margins, so the lines line up with the title
+    card above them as Effective's list does."""
 
     def __init__(self) -> None:
         super().__init__()
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.set_vexpand(True)
-        clamp = Adw.Clamp(maximum_size=1100, tightening_threshold=900)
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
-        for side in ("top", "bottom"):
-            getattr(self.box, f"set_margin_{side}")(24)
-        for side in ("start", "end"):
-            getattr(self.box, f"set_margin_{side}")(12)
-        clamp.set_child(self.box)
-        self.set_child(clamp)
+        for side in ("top", "bottom", "start", "end"):
+            getattr(self.box, f"set_margin_{side}")(16)
+        self.set_child(self.box)
 
     def add(self, widget: Gtk.Widget) -> None:
         self.box.append(widget)
