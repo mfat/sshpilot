@@ -323,16 +323,18 @@ def test_filtering_by_a_host_shows_openssh_s_answer(window):
     assert _effective(window, "connecttimeout") == "7"      # Settings beat the file
 
 
-def test_an_empty_field_shows_what_openssh_uses_and_where_from(window):
+def test_lines_are_listed_in_the_block_order(window):
     glob, web, star = window.draft.blocks
+    rows = window.structured.options_list
+    order = [rows.get_row_at_index(index) for index in range(len(web.options))]
+    shown = {row.row: uid for uid, row in window.structured._rows.items()}
+    assert [shown[row] for row in order] == [o.uid for o in web.options]
+    assert rows.get_row_at_index(len(web.options)) is window.structured.add_option_row
     window.select_block(star.uid)                           # web1 is still the host
-    assert _pump(lambda: _field(window, "port").entry.get_placeholder_text() == "2222")
-    port = _field(window, "port")
-    assert port.uid is None and port.entry.get_text() == ""
-    assert port.source.get_label() == "from Host web1 web2"
+    assert "port" not in window.structured.typed             # Host * sets none
     user = _field(window, "user")
-    assert user.entry.get_text() == "fallback" and not user.source.get_visible()
-    assert user.state.get_label() == "Not used"             # web's block set it first
+    assert user.entry.get_text() == "fallback"
+    assert _pump(lambda: user.state.get_label() == "Not used")   # web's block set it first
     assert "Host web1 web2" in user.state._tooltip
 
 
@@ -459,21 +461,22 @@ def test_a_file_changed_on_disk_is_not_overwritten(window):
     assert client.saves == 0 and "edited elsewhere" in client.path.read_text()
 
 
-# -- the fields of the Structured view ------------------------------------------------
+# -- the lines of the Structured view ------------------------------------------------
 
-def test_a_field_adds_edits_and_removes_its_line(window):
+def test_a_common_option_is_added_at_the_end_and_edited_in_its_field(window):
     web = window.draft.blocks[1]
+    window.structured._add_common("hostname")
+    assert web.options[-1].key == "HostName"
     hostname = _field(window, "hostname")
-    hostname.entry.set_text("10.0.0.5")                      # the first character adds it
+    assert hostname.uid == web.options[-1].uid
+    hostname.entry.set_text("10.0.0.5")
     assert "    HostName 10.0.0.5\n" in window.editor.text
-    uid = hostname.uid
-    assert uid is not None and hostname.reset.get_visible()
-    hostname.entry.set_text("10.0.0.6")                      # then it is edited in place
-    assert hostname.uid == uid and window.editor.text.count("HostName") == 1
-    assert _pump(lambda: _effective(window, "hostname") == "10.0.0.6")
-    hostname.entry.set_text("")                              # emptied: the line goes
-    assert "HostName" not in window.editor.text and hostname.uid is None
-    _field(window, "port").reset.emit("clicked")             # Reset removes a line too
+    assert _pump(lambda: _effective(window, "hostname") == "10.0.0.5")
+    hostname.entry.set_text("")                              # emptied: the row stays
+    assert _field(window, "hostname") is hostname and "HostName" in window.editor.text
+    hostname.reset.emit("clicked")                           # removed with its button
+    assert "HostName" not in window.editor.text and "hostname" not in window.structured.typed
+    _field(window, "port").reset.emit("clicked")
     assert "Port 2222" not in window.editor.text
     window.undo()
     assert "Port 2222" in window.editor.text
@@ -481,27 +484,24 @@ def test_a_field_adds_edits_and_removes_its_line(window):
     assert [o.key for o in web.options][:3] == ["User", "Port", "IdentityFile"]
 
 
-def test_a_switch_is_not_set_yes_or_no(window):
+def test_a_switch_is_yes_or_no(window):
+    window.structured._add_common("identitiesonly")
+    assert "    IdentitiesOnly yes\n" in window.editor.text
     switch = window.structured.switches["identitiesonly"]
     assert switch.row.get_selected() == 0
-    assert _pump(lambda: switch.model.get_string(0).startswith("Not set (no"))
     switch.row.set_selected(1)
-    assert "    IdentitiesOnly yes\n" in window.editor.text
-    switch.row.set_selected(2)
-    assert "    IdentitiesOnly no\n" in window.editor.text and "yes" not in (
-        window.editor.text.split("IdentitiesOnly")[1].split("\n")[0]
-    )
+    assert "    IdentitiesOnly no\n" in window.editor.text
     window.undo()                                            # one choice, one step
     assert "    IdentitiesOnly yes\n" in window.editor.text
-    switch.row.set_selected(0)
+    window.delete_option(switch.uid)
     assert "IdentitiesOnly" not in window.editor.text
 
 
-def test_a_value_a_switch_cannot_show_stays_in_the_table(gtk, tmp_path):
+def test_a_value_a_switch_cannot_show_stays_a_plain_line(gtk, tmp_path):
     win = _open_on(gtk, tmp_path, "Host a\n    ForwardAgent $SSH_AUTH_SOCK\n")
     try:
         block = win.draft.blocks[0]
-        assert win.structured.switches["forwardagent"].uid is None
+        assert "forwardagent" not in win.structured.switches
         assert list(win.structured._other_rows) == [block.options[0].uid]
         row = win.structured._other_rows[block.options[0].uid]
         assert (row.key.get_text(), row.value.get_text()) == ("ForwardAgent", "$SSH_AUTH_SOCK")
@@ -509,16 +509,27 @@ def test_a_value_a_switch_cannot_show_stays_in_the_table(gtk, tmp_path):
         _close(win)
 
 
-def test_a_line_added_from_the_table_stays_there_whatever_its_keyword(window):
+def test_a_line_added_with_add_option_stays_plain_whatever_its_keyword(window):
     web = window.draft.blocks[1]
-    window.add_option(web.uid, keep=True)
+    window.structured.add_option_row.emit("activated")
     uid = web.options[-1].uid
     row = window.structured._other_rows[uid]
     row.key.set_text("Port")
     row.value.set_text("2")
-    assert window.structured._other_rows[uid] is row          # not moved to a field
+    assert window.structured._other_rows[uid] is row          # not turned into a field
     assert _field(window, "port").uid == web.options[1].uid
     assert _pump(lambda: _status(window, web.options[-1]) == "Not used")
+
+
+def test_a_line_takes_its_field_when_the_one_above_goes(gtk, tmp_path):
+    win = _open_on(gtk, tmp_path, "Host a\n    User one\n    Compression no\n    User two\n")
+    try:
+        first, _compression, second = win.draft.blocks[0].options
+        assert _field(win, "user").uid == first.uid and second.uid in win.structured._other_rows
+        win.delete_option(first.uid)
+        assert _field(win, "user").uid == second.uid and not win.structured._other_rows.get(second.uid)
+    finally:
+        _close(win)
 
 
 def test_identity_files_say_what_the_file_on_disk_is(window, tmp_path):
@@ -531,26 +542,24 @@ def test_identity_files_say_what_the_file_on_disk_is(window, tmp_path):
     rows = window.structured._identity_rows
     (first,) = rows.values()
     assert "not found" in first.row.get_subtitle()             # ~/.ssh/a
-    window.add_identity(web.uid)
+    window.structured._add_common("identityfile")
     uid = web.options[-1].uid
-    row = rows[uid]
+    row = window.structured._identity_rows[uid]
     row.entry.set_text(str(key))
     assert "0644" in row.row.get_subtitle() and row.fix.get_visible()
     row.fix.emit("clicked")
     assert os.stat(key).st_mode & 0o777 == 0o600
     assert row.row.get_subtitle() == "" and not row.fix.get_visible()
     assert f"    IdentityFile {key}\n" in window.editor.text
-    assert not window.structured.identity_hint.get_visible()
 
 
 def test_forwards_are_added_and_removed(window):
     structured = window.structured
-    structured.forward_kind.set_selected(2)                  # DynamicForward
-    structured.forward_spec.set_text("1080")
-    structured._on_add_forward()
-    assert "    DynamicForward 1080\n" in window.editor.text
+    structured._add_common("dynamicforward")
     (row,) = structured._forward_rows.values()
-    assert row.row.get_title() == "DynamicForward" and structured.forward_spec.get_text() == ""
+    assert row.row.get_title() == "DynamicForward" and row.entry.get_placeholder_text() == "1080"
+    row.entry.set_text("1080")
+    assert "    DynamicForward 1080\n" in window.editor.text
     window.delete_option(row.uid)
     assert "DynamicForward" not in window.editor.text and not structured._forward_rows
 

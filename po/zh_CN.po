@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 11:17+0330\n"
+"POT-Creation-Date: 2026-11-25 13:37+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1741,7 +1741,6 @@ msgstr "编辑连接"
 msgid "New Connection"
 msgstr "新建连接"
 
-#. -- connection ------------------------------------------------------
 #: src/sshpilot/connection_dialog.py:1849
 #: src/sshpilot/connection_dialog.py:2173
 #: src/sshpilot/forwarding_only_ui.py:236
@@ -1752,14 +1751,11 @@ msgstr "新建连接"
 #: src/sshpilot/resources/ui/connection_dialog.ui:27
 #: src/sshpilot/resources/ui/connection_dialog.ui:138
 #: src/sshpilot/resources/ui/connection_dialog.ui:148
-#: src/sshpilot/advanced_config_structured_view.py:746
 msgid "Connection"
 msgstr "连接"
 
-#. -- authentication -------------------------------------------------
 #: src/sshpilot/connection_dialog.py:1850
 #: src/sshpilot/gtk/login_profile_messages.py:32
-#: src/sshpilot/advanced_config_structured_view.py:756
 msgid "Authentication"
 msgstr "认证"
 
@@ -3047,13 +3043,13 @@ msgstr "端口转发规则编辑器"
 #: src/sshpilot/plugins/builtin/docker_manager/__init__.py:50
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:769
 #: src/sshpilot/preferences.py:3207
-#: src/sshpilot/advanced_config_structured_view.py:534
+#: src/sshpilot/advanced_config_structured_view.py:540
 msgid "Local"
 msgstr "本地"
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:203
 #: src/sshpilot/file_manager/pane.py:435 src/sshpilot/preferences.py:3207
-#: src/sshpilot/advanced_config_structured_view.py:535
+#: src/sshpilot/advanced_config_structured_view.py:541
 msgid "Remote"
 msgstr "远程"
 
@@ -7139,8 +7135,6 @@ msgstr "SSH 提供的密钥（IdentityFile）"
 #: src/sshpilot/login_profile_dialogs.py:280
 #: src/sshpilot/login_profile_dialogs.py:316 src/sshpilot/preferences.py:2877
 #: src/sshpilot/preferences.py:2908
-#: src/sshpilot/advanced_config_structured_view.py:216
-#: src/sshpilot/advanced_config_structured_view.py:249
 msgid "Not set"
 msgstr "未设置"
 
@@ -7790,8 +7784,8 @@ msgstr "SSH 配置编辑器"
 #: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
 #: src/sshpilot/sidebar.py:5161 src/sshpilot/window.py:4264
 #: src/sshpilot/resources/ui/connection_dialog.ui:120
-#: src/sshpilot/advanced_config_window.py:1930
-#: src/sshpilot/advanced_config_window.py:1943
+#: src/sshpilot/advanced_config_window.py:1900
+#: src/sshpilot/advanced_config_window.py:1913
 msgid "Advanced Configuration"
 msgstr "高级配置"
 
@@ -13012,14 +13006,14 @@ msgid "Choose a keyword"
 msgstr "选择关键字"
 
 #: src/sshpilot/ssh_option_list.py:159 src/sshpilot/ssh_option_list.py:161
-#: src/sshpilot/advanced_config_structured_view.py:467
-#: src/sshpilot/advanced_config_structured_view.py:469
+#: src/sshpilot/advanced_config_structured_view.py:460
+#: src/sshpilot/advanced_config_structured_view.py:462
 msgid "Value"
 msgstr "值"
 
 #. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
 #: src/sshpilot/ssh_option_list.py:273 src/sshpilot/ssh_option_list.py:277
-#: src/sshpilot/advanced_config_structured_view.py:816
+#: src/sshpilot/advanced_config_structured_view.py:748
 msgid "Add Option"
 msgstr "添加选项"
 
@@ -17422,7 +17416,7 @@ msgid "The changes made here have not been saved to the SSH configuration."
 msgstr "此处所做的更改尚未保存到 SSH 配置。"
 
 #: src/sshpilot/advanced_config_window.py:1065
-#: src/sshpilot/advanced_config_window.py:1315
+#: src/sshpilot/advanced_config_window.py:1285
 msgid "Testing…"
 msgstr "正在测试…"
 
@@ -17447,30 +17441,30 @@ msgstr ""
 "全局选项必须位于所有 Host 和 Match 块之上：OpenSSH 会把 Host 行下方的选项当作"
 "该主机的选项。"
 
-#: src/sshpilot/advanced_config_window.py:1250
+#: src/sshpilot/advanced_config_window.py:1220
 msgid "Choose a Key File"
 msgstr "选择密钥文件"
 
-#: src/sshpilot/advanced_config_window.py:1272
+#: src/sshpilot/advanced_config_window.py:1242
 #, python-brace-format
 msgid "Only you can read {path} now."
 msgstr "现在只有您可以读取 {path}。"
 
-#: src/sshpilot/advanced_config_window.py:1274
+#: src/sshpilot/advanced_config_window.py:1244
 #, python-brace-format
 msgid "The permissions of {path} could not be changed."
 msgstr "无法更改 {path} 的权限。"
 
-#: src/sshpilot/advanced_config_window.py:1287
+#: src/sshpilot/advanced_config_window.py:1257
 #, python-brace-format
 msgid "Copied “{command}”"
 msgstr "已复制“{command}”"
 
-#: src/sshpilot/advanced_config_window.py:1746
+#: src/sshpilot/advanced_config_window.py:1716
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "无法就此配置询问 OpenSSH。"
 
-#: src/sshpilot/advanced_config_window.py:1876
+#: src/sshpilot/advanced_config_window.py:1846
 msgid "Run and Evaluate"
 msgstr "运行并求值"
 
@@ -17676,7 +17670,7 @@ msgstr[0] "{count} 行未使用"
 
 #. The block's header as written, e.g. "from Host *".
 #: src/sshpilot/gtk/advanced_config_messages.py:249
-#: src/sshpilot/advanced_config_structured_view.py:988
+#: src/sshpilot/advanced_config_structured_view.py:932
 #, python-brace-format
 msgid "from {block}"
 msgstr "来自 {block}"
@@ -17747,115 +17741,96 @@ msgstr "新建块"
 msgid "Add a block to this file"
 msgstr "向此文件添加块"
 
-#: src/sshpilot/advanced_config_structured_view.py:41
+#: src/sshpilot/advanced_config_structured_view.py:38
 msgid "The real host name or IP address to connect to"
 msgstr "要连接的真实主机名或 IP 地址"
 
-#: src/sshpilot/advanced_config_structured_view.py:42
+#: src/sshpilot/advanced_config_structured_view.py:39
 msgid "The user name to log in as"
 msgstr "登录所用的用户名"
 
-#: src/sshpilot/advanced_config_structured_view.py:43
+#: src/sshpilot/advanced_config_structured_view.py:40
 msgid "The port the SSH server listens on"
 msgstr "SSH 服务器监听的端口"
 
-#: src/sshpilot/advanced_config_structured_view.py:44
+#: src/sshpilot/advanced_config_structured_view.py:41
 msgid "Connect through these jump hosts, in order"
 msgstr "依次经由这些跳板主机连接"
 
-#: src/sshpilot/advanced_config_structured_view.py:45
+#: src/sshpilot/advanced_config_structured_view.py:42
 msgid "Offer only the identity files set in the configuration"
 msgstr "仅提供配置中设置的身份文件"
 
-#: src/sshpilot/advanced_config_structured_view.py:46
+#: src/sshpilot/advanced_config_structured_view.py:43
 msgid "Let the remote host use your local SSH agent"
 msgstr "允许远程主机使用您的本地 SSH 代理"
 
-#: src/sshpilot/advanced_config_structured_view.py:107
+#: src/sshpilot/advanced_config_structured_view.py:104
 msgid "Rejected"
 msgstr "被拒绝"
 
-#: src/sshpilot/advanced_config_structured_view.py:110
+#: src/sshpilot/advanced_config_structured_view.py:107
 msgid "Not used"
 msgstr "未使用"
 
 #: src/sshpilot/advanced_config_structured_view.py:171
-#: src/sshpilot/advanced_config_structured_view.py:282
+#: src/sshpilot/advanced_config_structured_view.py:210
+#: src/sshpilot/advanced_config_structured_view.py:258
 msgid "Remove this line from the block"
 msgstr "从块中删除此行"
 
-#. Translators: the "not set" choice of a yes/no option, with what
-#. OpenSSH uses instead, e.g. "Not set (no, OpenSSH default)".
-#: src/sshpilot/advanced_config_structured_view.py:246
-#, python-brace-format
-msgid "Not set ({value}, {source})"
-msgstr "未设置（{value}，{source}）"
-
-#: src/sshpilot/advanced_config_structured_view.py:247
-#, python-brace-format
-msgid "Not set ({value})"
-msgstr "未设置（{value}）"
-
-#: src/sshpilot/advanced_config_structured_view.py:275
+#: src/sshpilot/advanced_config_structured_view.py:251
 msgid "Fix"
 msgstr "修复"
 
-#: src/sshpilot/advanced_config_structured_view.py:277
+#: src/sshpilot/advanced_config_structured_view.py:253
 msgid "Make the key readable by you only (0600), as OpenSSH requires"
 msgstr "使密钥仅对您可读（0600），这是 OpenSSH 的要求"
 
-#: src/sshpilot/advanced_config_structured_view.py:280
+#: src/sshpilot/advanced_config_structured_view.py:256
 msgid "Choose a key file"
 msgstr "选择密钥文件"
 
-#: src/sshpilot/advanced_config_structured_view.py:325
-#: src/sshpilot/advanced_config_structured_view.py:655
+#: src/sshpilot/advanced_config_structured_view.py:303
+#: src/sshpilot/advanced_config_structured_view.py:656
 msgid "Remove this forward"
 msgstr "删除此转发"
 
-#: src/sshpilot/advanced_config_structured_view.py:464
-#: src/sshpilot/advanced_config_structured_view.py:465
+#: src/sshpilot/advanced_config_structured_view.py:457
+#: src/sshpilot/advanced_config_structured_view.py:458
 msgid "Option"
 msgstr "选项"
 
-#: src/sshpilot/advanced_config_structured_view.py:472
+#: src/sshpilot/advanced_config_structured_view.py:465
 msgid "Remove option"
 msgstr "移除选项"
 
-#: src/sshpilot/advanced_config_structured_view.py:536
+#: src/sshpilot/advanced_config_structured_view.py:542
 msgid "SOCKS"
 msgstr "SOCKS"
 
-#: src/sshpilot/advanced_config_structured_view.py:549
-msgid "Routing and Tunnels"
-msgstr "路由与隧道"
-
-#: src/sshpilot/advanced_config_structured_view.py:551
-msgid "Add Tunnel"
-msgstr "添加隧道"
-
-#: src/sshpilot/advanced_config_structured_view.py:558
+#: src/sshpilot/advanced_config_structured_view.py:559
 msgid "Route"
 msgstr "路由"
 
-#: src/sshpilot/advanced_config_structured_view.py:564
+#: src/sshpilot/advanced_config_structured_view.py:565
 msgid "Port forwards"
 msgstr "端口转发"
 
-#: src/sshpilot/advanced_config_structured_view.py:591
+#: src/sshpilot/advanced_config_structured_view.py:592
 msgid "Type a host to check to see its route."
 msgstr "输入要检查的主机以查看其路由。"
 
-#: src/sshpilot/advanced_config_structured_view.py:593
+#: src/sshpilot/advanced_config_structured_view.py:594
 msgid "This computer"
 msgstr "本机"
 
-#: src/sshpilot/advanced_config_structured_view.py:603
+#: src/sshpilot/advanced_config_structured_view.py:604
 msgid "No port forwards."
 msgstr "没有端口转发。"
 
 #. A jump host: its own block is a click away.
-#: src/sshpilot/advanced_config_structured_view.py:631
+#: src/sshpilot/advanced_config_structured_view.py:632
 msgid "Show this host's block"
 msgstr "显示此主机的块"
 
@@ -17887,72 +17862,28 @@ msgstr "关闭时，该块写为注释，OpenSSH 会忽略它"
 msgid "Host checked"
 msgstr "已检查的主机"
 
-#: src/sshpilot/advanced_config_structured_view.py:762
-msgid "Add Identity File"
-msgstr "添加身份文件"
+#: src/sshpilot/advanced_config_structured_view.py:773
+msgid "Add a Common Option"
+msgstr "添加常用选项"
 
-#. -- networking ------------------------------------------------------
-#: src/sshpilot/advanced_config_structured_view.py:776
-msgid "Networking"
-msgstr "网络"
-
-#: src/sshpilot/advanced_config_structured_view.py:788
-msgid "Port Forwards"
-msgstr "端口转发"
-
-#: src/sshpilot/advanced_config_structured_view.py:789
-msgid "Tunnels opened with every connection this block applies to"
-msgstr "每个适用此块的连接都会打开的隧道"
-
-#: src/sshpilot/advanced_config_structured_view.py:792
-#: src/sshpilot/advanced_config_structured_view.py:800
-msgid "Add Forward"
-msgstr "添加转发"
-
-#: src/sshpilot/advanced_config_structured_view.py:812
-msgid "Other Options"
-msgstr "其他选项"
-
-#: src/sshpilot/advanced_config_structured_view.py:813
-msgid "Lines no field above shows, in the block's order"
-msgstr "上方字段未显示的行，按块中的顺序"
-
-#: src/sshpilot/advanced_config_structured_view.py:821
-msgid "No other options."
-msgstr "没有其他选项。"
-
-#: src/sshpilot/advanced_config_structured_view.py:870
+#: src/sshpilot/advanced_config_structured_view.py:848
 msgid "Host patterns"
 msgstr "主机模式"
 
-#: src/sshpilot/advanced_config_structured_view.py:870
+#: src/sshpilot/advanced_config_structured_view.py:848
 msgid "Match conditions"
 msgstr "Match 条件"
 
-#: src/sshpilot/advanced_config_structured_view.py:937
-#, python-brace-format
-msgid "Not set here. OpenSSH tries: {files} ({source})"
-msgstr "此处未设置。OpenSSH 尝试：{files}（{source}）"
-
-#: src/sshpilot/advanced_config_structured_view.py:939
-#, python-brace-format
-msgid "Not set here. OpenSSH tries: {files}"
-msgstr "此处未设置。OpenSSH 尝试：{files}"
-
-#: src/sshpilot/advanced_config_structured_view.py:941
-msgid "Not set here."
-msgstr "此处未设置。"
-
-#: src/sshpilot/advanced_config_structured_view.py:1006
+#: src/sshpilot/advanced_config_structured_view.py:947
 msgid "Off: OpenSSH does not read this block."
 msgstr "已关闭：OpenSSH 不读取此块。"
 
-#: src/sshpilot/advanced_config_structured_view.py:1013
+#: src/sshpilot/advanced_config_structured_view.py:954
 #, python-brace-format
 msgid "Asking OpenSSH about {host}…"
 msgstr "正在向 OpenSSH 询问 {host}…"
 
-#: src/sshpilot/advanced_config_structured_view.py:1015
+#: src/sshpilot/advanced_config_structured_view.py:956
 msgid "Type a host to check above to see what OpenSSH would use for it."
 msgstr "在上方输入要检查的主机，即可查看 OpenSSH 会为它使用什么。"
 
@@ -18037,6 +17968,55 @@ msgstr "拖动以重新排序"
 msgid "{kind} · off"
 msgstr "{kind} · 已关闭"
 
+#, python-brace-format
+#~ msgid "Not set ({value}, {source})"
+#~ msgstr "未设置（{value}，{source}）"
+
+#, python-brace-format
+#~ msgid "Not set ({value})"
+#~ msgstr "未设置（{value}）"
+
+#~ msgid "Routing and Tunnels"
+#~ msgstr "路由与隧道"
+
+#~ msgid "Add Tunnel"
+#~ msgstr "添加隧道"
+
+#~ msgid "Add Identity File"
+#~ msgstr "添加身份文件"
+
+#~ msgid "Networking"
+#~ msgstr "网络"
+
+#~ msgid "Port Forwards"
+#~ msgstr "端口转发"
+
+#~ msgid "Tunnels opened with every connection this block applies to"
+#~ msgstr "每个适用此块的连接都会打开的隧道"
+
+#~ msgid "Add Forward"
+#~ msgstr "添加转发"
+
+#~ msgid "Other Options"
+#~ msgstr "其他选项"
+
+#~ msgid "Lines no field above shows, in the block's order"
+#~ msgstr "上方字段未显示的行，按块中的顺序"
+
+#~ msgid "No other options."
+#~ msgstr "没有其他选项。"
+
+#, python-brace-format
+#~ msgid "Not set here. OpenSSH tries: {files} ({source})"
+#~ msgstr "此处未设置。OpenSSH 尝试：{files}（{source}）"
+
+#, python-brace-format
+#~ msgid "Not set here. OpenSSH tries: {files}"
+#~ msgstr "此处未设置。OpenSSH 尝试：{files}"
+
+#~ msgid "Not set here."
+#~ msgstr "此处未设置。"
+
 #~ msgid "Save first: the test connects with the saved configuration"
 #~ msgstr "请先保存：测试使用已保存的配置进行连接"
 
@@ -18086,9 +18066,6 @@ msgstr "{kind} · 已关闭"
 
 #~ msgid "Block options"
 #~ msgstr "块选项"
-
-#~ msgid "Common Option"
-#~ msgstr "常用选项"
 
 #~ msgid "Expand"
 #~ msgstr "展开"

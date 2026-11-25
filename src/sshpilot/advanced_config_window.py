@@ -1167,8 +1167,8 @@ class AdvancedConfigBase:
 
     def add_option(self, block_uid: int, key: str = "", value: str = "", *,
                    keep: bool = False) -> None:
-        """Add a line to a block. *keep*: added from the Other Options
-        table, where it stays whatever its keyword."""
+        """Add a line to a block. *keep*: added with Add Option, a plain
+        line whatever its keyword."""
         option = self.editor.add_option(block_uid, key, value)
         if option is None:
             return
@@ -1177,19 +1177,6 @@ class AdvancedConfigBase:
         self._kept_visible.add(block_uid)
         self._after_structure()
         GLib.idle_add(lambda: (self.structured.focus_option(option.uid, key=not key), False)[1])
-
-    def add_identity(self, block_uid: int) -> None:
-        option = self.editor.add_option(block_uid, fields.SPELLING[fields.IDENTITY], "")
-        if option is None:
-            return
-        self._kept_visible.add(block_uid)
-        self._after_structure()
-        GLib.idle_add(lambda: (self.structured.focus_option(option.uid), False)[1])
-
-    def add_forward(self, block_uid: int, keyword: str, spec: str) -> None:
-        if self.editor.add_option(block_uid, fields.SPELLING[keyword], spec) is not None:
-            self._kept_visible.add(block_uid)
-            self._after_structure()
 
     def delete_option(self, uid: int) -> None:
         self._after_structure(self.editor.delete_option(uid))
@@ -1207,23 +1194,6 @@ class AdvancedConfigBase:
         if owner is not None:
             self._kept_visible.add(owner.uid)
         self._after_typing(self.editor.set_option(uid, field, text))
-
-    def field_typed(self, block_uid: Optional[int], keyword: str, uid: Optional[int],
-                    text: str) -> None:
-        """Typing in a field of one value (HostName, User, Port, ProxyJump).
-        The first character adds the line, emptying the field removes it."""
-        if self.editor.find_block(block_uid) is None:
-            return
-        self._kept_visible.add(block_uid)
-        if uid is None:
-            if text.strip():
-                self.editor.add_option(block_uid, fields.SPELLING[keyword], text)
-                self._after_structure()
-            return
-        if not text.strip():
-            self._after_structure(self.editor.delete_option(uid))
-            return
-        self._after_typing(self.editor.set_option(uid, "value", text))
 
     def choice_made(self, block_uid: Optional[int], keyword: str, uid: Optional[int],
                     value: Optional[str]) -> None:

@@ -1,23 +1,23 @@
 """Which option lines of a block the Structured view shows as typed fields
 (GTK-free).
 
-The Structured view shows a few keywords as fields of their own (HostName,
-User, Port, the identity files, ProxyJump, the yes/no switches, the
-forwards) and every other line in a table. Nothing is ever dropped or
-rewritten to fit a field: a line a field cannot show as it is stays in the
-table. So:
+The Structured view lists a block's lines in the block's order. A few
+keywords get a control of their own (HostName, User, Port, the identity
+files, ProxyJump, the yes/no switches, the forwards); every other line is a
+keyword and a value. Nothing is ever dropped or rewritten to fit a control:
+a line a control cannot show as it is stays a plain line. So:
 
 * a keyword with one value is shown by its field only for its **first**
   line in the block: OpenSSH keeps the first value it obtains, and a second
-  line of the same keyword is a line of its own (not used), shown in the
-  table where it can be seen and removed;
+  line of the same keyword is a line of its own (not used), shown as a
+  plain line where it can be seen and removed;
 * a yes/no field takes its keyword's first line only when its value is
   ``yes`` or ``no``: an agent socket written after ``ForwardAgent`` stays
-  in the table, as text, and the field shows nothing rather than a later
-  line OpenSSH does not use;
-* lines added from the table stay in the table while the block is on
+  a plain line, as text;
+* lines added with Add Option stay plain lines while the block is on
   screen, even when their keyword is one a field shows: otherwise the row
-  being typed into would jump to a field under the pointer (*keep*).
+  being typed into would turn into another control under the pointer
+  (*keep*).
 
 Also here: what a key file on disk says about itself, for the identity
 file rows (missing, readable by others).
@@ -98,6 +98,27 @@ def claim(options: Iterable, keep: Iterable[int] = ()) -> Claims:
         else:
             claims.other.append(option.uid)
     return claims
+
+
+#: The kinds of control a line is shown with (see :func:`line_kinds`).
+SINGLE_KIND = "single"
+SWITCH_KIND = "switch"
+IDENTITY_KIND = "identity"
+FORWARD_KIND = "forward"
+OTHER_KIND = "other"
+
+
+def line_kinds(options: Iterable, keep: Iterable[int] = ()) -> List[tuple]:
+    """``(uid, kind)`` of every line of a block, in the block's order: the
+    Structured view lists them as the file does, each with the control
+    :func:`claim` gives it."""
+    options = list(options)
+    claims = claim(options, keep)
+    kinds: Dict[int, str] = {uid: SINGLE_KIND for uid in claims.single.values()}
+    kinds.update({uid: SWITCH_KIND for uid in claims.switches.values()})
+    kinds.update({uid: IDENTITY_KIND for uid in claims.identities})
+    kinds.update({uid: FORWARD_KIND for uid in claims.forwards})
+    return [(option.uid, kinds.get(option.uid, OTHER_KIND)) for option in options]
 
 
 # -- key files ---------------------------------------------------------------

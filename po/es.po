@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 11:17+0330\n"
+"POT-Creation-Date: 2026-11-25 13:37+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -1782,7 +1782,6 @@ msgstr "Editar conexión"
 msgid "New Connection"
 msgstr "Nueva conexión"
 
-#. -- connection ------------------------------------------------------
 #: src/sshpilot/connection_dialog.py:1849
 #: src/sshpilot/connection_dialog.py:2173
 #: src/sshpilot/forwarding_only_ui.py:236
@@ -1793,14 +1792,11 @@ msgstr "Nueva conexión"
 #: src/sshpilot/resources/ui/connection_dialog.ui:27
 #: src/sshpilot/resources/ui/connection_dialog.ui:138
 #: src/sshpilot/resources/ui/connection_dialog.ui:148
-#: src/sshpilot/advanced_config_structured_view.py:746
 msgid "Connection"
 msgstr "Conexión"
 
-#. -- authentication -------------------------------------------------
 #: src/sshpilot/connection_dialog.py:1850
 #: src/sshpilot/gtk/login_profile_messages.py:32
-#: src/sshpilot/advanced_config_structured_view.py:756
 msgid "Authentication"
 msgstr "Autenticación"
 
@@ -3156,13 +3152,13 @@ msgstr "Editor de reglas de reenvío de puertos"
 #: src/sshpilot/plugins/builtin/docker_manager/__init__.py:50
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:769
 #: src/sshpilot/preferences.py:3207
-#: src/sshpilot/advanced_config_structured_view.py:534
+#: src/sshpilot/advanced_config_structured_view.py:540
 msgid "Local"
 msgstr "Local"
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:203
 #: src/sshpilot/file_manager/pane.py:435 src/sshpilot/preferences.py:3207
-#: src/sshpilot/advanced_config_structured_view.py:535
+#: src/sshpilot/advanced_config_structured_view.py:541
 msgid "Remote"
 msgstr "Remoto"
 
@@ -7440,8 +7436,6 @@ msgstr "Claves que ofrece SSH (IdentityFile)"
 #: src/sshpilot/login_profile_dialogs.py:280
 #: src/sshpilot/login_profile_dialogs.py:316 src/sshpilot/preferences.py:2877
 #: src/sshpilot/preferences.py:2908
-#: src/sshpilot/advanced_config_structured_view.py:216
-#: src/sshpilot/advanced_config_structured_view.py:249
 msgid "Not set"
 msgstr "Sin establecer"
 
@@ -8113,8 +8107,8 @@ msgstr "Editor de configuración SSH"
 #: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
 #: src/sshpilot/sidebar.py:5161 src/sshpilot/window.py:4264
 #: src/sshpilot/resources/ui/connection_dialog.ui:120
-#: src/sshpilot/advanced_config_window.py:1930
-#: src/sshpilot/advanced_config_window.py:1943
+#: src/sshpilot/advanced_config_window.py:1900
+#: src/sshpilot/advanced_config_window.py:1913
 msgid "Advanced Configuration"
 msgstr "Configuración avanzada"
 
@@ -13522,14 +13516,14 @@ msgid "Choose a keyword"
 msgstr "Elegir una palabra clave"
 
 #: src/sshpilot/ssh_option_list.py:159 src/sshpilot/ssh_option_list.py:161
-#: src/sshpilot/advanced_config_structured_view.py:467
-#: src/sshpilot/advanced_config_structured_view.py:469
+#: src/sshpilot/advanced_config_structured_view.py:460
+#: src/sshpilot/advanced_config_structured_view.py:462
 msgid "Value"
 msgstr "Valor"
 
 #. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
 #: src/sshpilot/ssh_option_list.py:273 src/sshpilot/ssh_option_list.py:277
-#: src/sshpilot/advanced_config_structured_view.py:816
+#: src/sshpilot/advanced_config_structured_view.py:748
 msgid "Add Option"
 msgstr "Añadir opción"
 
@@ -18208,7 +18202,7 @@ msgid "The changes made here have not been saved to the SSH configuration."
 msgstr "Los cambios hechos aquí no se han guardado en la configuración SSH."
 
 #: src/sshpilot/advanced_config_window.py:1065
-#: src/sshpilot/advanced_config_window.py:1315
+#: src/sshpilot/advanced_config_window.py:1285
 msgid "Testing…"
 msgstr "Probando…"
 
@@ -18234,30 +18228,30 @@ msgstr ""
 "Las opciones globales deben quedar por encima de todos los bloques Host y "
 "Match: OpenSSH lee una opción bajo una línea Host como de ese host."
 
-#: src/sshpilot/advanced_config_window.py:1250
+#: src/sshpilot/advanced_config_window.py:1220
 msgid "Choose a Key File"
 msgstr "Elegir un archivo de clave"
 
-#: src/sshpilot/advanced_config_window.py:1272
+#: src/sshpilot/advanced_config_window.py:1242
 #, python-brace-format
 msgid "Only you can read {path} now."
 msgstr "Ahora solo usted puede leer {path}."
 
-#: src/sshpilot/advanced_config_window.py:1274
+#: src/sshpilot/advanced_config_window.py:1244
 #, python-brace-format
 msgid "The permissions of {path} could not be changed."
 msgstr "No se pudieron cambiar los permisos de {path}."
 
-#: src/sshpilot/advanced_config_window.py:1287
+#: src/sshpilot/advanced_config_window.py:1257
 #, python-brace-format
 msgid "Copied “{command}”"
 msgstr "Se copió «{command}»"
 
-#: src/sshpilot/advanced_config_window.py:1746
+#: src/sshpilot/advanced_config_window.py:1716
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "No se pudo consultar a OpenSSH sobre esta configuración."
 
-#: src/sshpilot/advanced_config_window.py:1876
+#: src/sshpilot/advanced_config_window.py:1846
 msgid "Run and Evaluate"
 msgstr "Ejecutar y evaluar"
 
@@ -18480,7 +18474,7 @@ msgstr[1] "{count} líneas sin usar"
 
 #. The block's header as written, e.g. "from Host *".
 #: src/sshpilot/gtk/advanced_config_messages.py:249
-#: src/sshpilot/advanced_config_structured_view.py:988
+#: src/sshpilot/advanced_config_structured_view.py:932
 #, python-brace-format
 msgid "from {block}"
 msgstr "de {block}"
@@ -18551,115 +18545,96 @@ msgstr "Bloque nuevo"
 msgid "Add a block to this file"
 msgstr "Añadir un bloque a este archivo"
 
-#: src/sshpilot/advanced_config_structured_view.py:41
+#: src/sshpilot/advanced_config_structured_view.py:38
 msgid "The real host name or IP address to connect to"
 msgstr "El nombre de host real o la dirección IP a la que conectarse"
 
-#: src/sshpilot/advanced_config_structured_view.py:42
+#: src/sshpilot/advanced_config_structured_view.py:39
 msgid "The user name to log in as"
 msgstr "El nombre de usuario con el que iniciar sesión"
 
-#: src/sshpilot/advanced_config_structured_view.py:43
+#: src/sshpilot/advanced_config_structured_view.py:40
 msgid "The port the SSH server listens on"
 msgstr "El puerto en el que escucha el servidor SSH"
 
-#: src/sshpilot/advanced_config_structured_view.py:44
+#: src/sshpilot/advanced_config_structured_view.py:41
 msgid "Connect through these jump hosts, in order"
 msgstr "Conectar a través de estos hosts de salto, en orden"
 
-#: src/sshpilot/advanced_config_structured_view.py:45
+#: src/sshpilot/advanced_config_structured_view.py:42
 msgid "Offer only the identity files set in the configuration"
 msgstr "Ofrecer solo los archivos de identidad definidos en la configuración"
 
-#: src/sshpilot/advanced_config_structured_view.py:46
+#: src/sshpilot/advanced_config_structured_view.py:43
 msgid "Let the remote host use your local SSH agent"
 msgstr "Permitir que el host remoto use su agente SSH local"
 
-#: src/sshpilot/advanced_config_structured_view.py:107
+#: src/sshpilot/advanced_config_structured_view.py:104
 msgid "Rejected"
 msgstr "Rechazada"
 
-#: src/sshpilot/advanced_config_structured_view.py:110
+#: src/sshpilot/advanced_config_structured_view.py:107
 msgid "Not used"
 msgstr "No se usa"
 
 #: src/sshpilot/advanced_config_structured_view.py:171
-#: src/sshpilot/advanced_config_structured_view.py:282
+#: src/sshpilot/advanced_config_structured_view.py:210
+#: src/sshpilot/advanced_config_structured_view.py:258
 msgid "Remove this line from the block"
 msgstr "Quitar esta línea del bloque"
 
-#. Translators: the "not set" choice of a yes/no option, with what
-#. OpenSSH uses instead, e.g. "Not set (no, OpenSSH default)".
-#: src/sshpilot/advanced_config_structured_view.py:246
-#, python-brace-format
-msgid "Not set ({value}, {source})"
-msgstr "Sin definir ({value}, {source})"
-
-#: src/sshpilot/advanced_config_structured_view.py:247
-#, python-brace-format
-msgid "Not set ({value})"
-msgstr "Sin definir ({value})"
-
-#: src/sshpilot/advanced_config_structured_view.py:275
+#: src/sshpilot/advanced_config_structured_view.py:251
 msgid "Fix"
 msgstr "Corregir"
 
-#: src/sshpilot/advanced_config_structured_view.py:277
+#: src/sshpilot/advanced_config_structured_view.py:253
 msgid "Make the key readable by you only (0600), as OpenSSH requires"
 msgstr "Hacer que solo usted pueda leer la clave (0600), como exige OpenSSH"
 
-#: src/sshpilot/advanced_config_structured_view.py:280
+#: src/sshpilot/advanced_config_structured_view.py:256
 msgid "Choose a key file"
 msgstr "Elegir un archivo de clave"
 
-#: src/sshpilot/advanced_config_structured_view.py:325
-#: src/sshpilot/advanced_config_structured_view.py:655
+#: src/sshpilot/advanced_config_structured_view.py:303
+#: src/sshpilot/advanced_config_structured_view.py:656
 msgid "Remove this forward"
 msgstr "Quitar este reenvío"
 
-#: src/sshpilot/advanced_config_structured_view.py:464
-#: src/sshpilot/advanced_config_structured_view.py:465
+#: src/sshpilot/advanced_config_structured_view.py:457
+#: src/sshpilot/advanced_config_structured_view.py:458
 msgid "Option"
 msgstr "Opción"
 
-#: src/sshpilot/advanced_config_structured_view.py:472
+#: src/sshpilot/advanced_config_structured_view.py:465
 msgid "Remove option"
 msgstr "Quitar opción"
 
-#: src/sshpilot/advanced_config_structured_view.py:536
+#: src/sshpilot/advanced_config_structured_view.py:542
 msgid "SOCKS"
 msgstr "SOCKS"
 
-#: src/sshpilot/advanced_config_structured_view.py:549
-msgid "Routing and Tunnels"
-msgstr "Rutas y túneles"
-
-#: src/sshpilot/advanced_config_structured_view.py:551
-msgid "Add Tunnel"
-msgstr "Añadir túnel"
-
-#: src/sshpilot/advanced_config_structured_view.py:558
+#: src/sshpilot/advanced_config_structured_view.py:559
 msgid "Route"
 msgstr "Ruta"
 
-#: src/sshpilot/advanced_config_structured_view.py:564
+#: src/sshpilot/advanced_config_structured_view.py:565
 msgid "Port forwards"
 msgstr "Reenvíos de puertos"
 
-#: src/sshpilot/advanced_config_structured_view.py:591
+#: src/sshpilot/advanced_config_structured_view.py:592
 msgid "Type a host to check to see its route."
 msgstr "Escriba un host que comprobar para ver su ruta."
 
-#: src/sshpilot/advanced_config_structured_view.py:593
+#: src/sshpilot/advanced_config_structured_view.py:594
 msgid "This computer"
 msgstr "Este equipo"
 
-#: src/sshpilot/advanced_config_structured_view.py:603
+#: src/sshpilot/advanced_config_structured_view.py:604
 msgid "No port forwards."
 msgstr "No hay reenvíos de puertos."
 
 #. A jump host: its own block is a click away.
-#: src/sshpilot/advanced_config_structured_view.py:631
+#: src/sshpilot/advanced_config_structured_view.py:632
 msgid "Show this host's block"
 msgstr "Mostrar el bloque de este host"
 
@@ -18691,72 +18666,28 @@ msgstr "Desactivado, el bloque se escribe como comentarios, que OpenSSH ignora"
 msgid "Host checked"
 msgstr "Host comprobado"
 
-#: src/sshpilot/advanced_config_structured_view.py:762
-msgid "Add Identity File"
-msgstr "Añadir archivo de identidad"
+#: src/sshpilot/advanced_config_structured_view.py:773
+msgid "Add a Common Option"
+msgstr "Añadir una opción común"
 
-#. -- networking ------------------------------------------------------
-#: src/sshpilot/advanced_config_structured_view.py:776
-msgid "Networking"
-msgstr "Red"
-
-#: src/sshpilot/advanced_config_structured_view.py:788
-msgid "Port Forwards"
-msgstr "Reenvíos de puertos"
-
-#: src/sshpilot/advanced_config_structured_view.py:789
-msgid "Tunnels opened with every connection this block applies to"
-msgstr "Túneles que se abren con cada conexión a la que se aplica este bloque"
-
-#: src/sshpilot/advanced_config_structured_view.py:792
-#: src/sshpilot/advanced_config_structured_view.py:800
-msgid "Add Forward"
-msgstr "Añadir reenvío"
-
-#: src/sshpilot/advanced_config_structured_view.py:812
-msgid "Other Options"
-msgstr "Otras opciones"
-
-#: src/sshpilot/advanced_config_structured_view.py:813
-msgid "Lines no field above shows, in the block's order"
-msgstr "Líneas que ningún campo de arriba muestra, en el orden del bloque"
-
-#: src/sshpilot/advanced_config_structured_view.py:821
-msgid "No other options."
-msgstr "No hay otras opciones."
-
-#: src/sshpilot/advanced_config_structured_view.py:870
+#: src/sshpilot/advanced_config_structured_view.py:848
 msgid "Host patterns"
 msgstr "Patrones de host"
 
-#: src/sshpilot/advanced_config_structured_view.py:870
+#: src/sshpilot/advanced_config_structured_view.py:848
 msgid "Match conditions"
 msgstr "Condiciones de Match"
 
-#: src/sshpilot/advanced_config_structured_view.py:937
-#, python-brace-format
-msgid "Not set here. OpenSSH tries: {files} ({source})"
-msgstr "No definido aquí. OpenSSH prueba: {files} ({source})"
-
-#: src/sshpilot/advanced_config_structured_view.py:939
-#, python-brace-format
-msgid "Not set here. OpenSSH tries: {files}"
-msgstr "No definido aquí. OpenSSH prueba: {files}"
-
-#: src/sshpilot/advanced_config_structured_view.py:941
-msgid "Not set here."
-msgstr "No definido aquí."
-
-#: src/sshpilot/advanced_config_structured_view.py:1006
+#: src/sshpilot/advanced_config_structured_view.py:947
 msgid "Off: OpenSSH does not read this block."
 msgstr "Desactivado: OpenSSH no lee este bloque."
 
-#: src/sshpilot/advanced_config_structured_view.py:1013
+#: src/sshpilot/advanced_config_structured_view.py:954
 #, python-brace-format
 msgid "Asking OpenSSH about {host}…"
 msgstr "Preguntando a OpenSSH por {host}…"
 
-#: src/sshpilot/advanced_config_structured_view.py:1015
+#: src/sshpilot/advanced_config_structured_view.py:956
 msgid "Type a host to check above to see what OpenSSH would use for it."
 msgstr ""
 "Escriba arriba un host que comprobar para ver qué usaría OpenSSH para él."
@@ -18846,6 +18777,56 @@ msgstr "Arrastre para reordenar"
 msgid "{kind} · off"
 msgstr "{kind} · desactivado"
 
+#, python-brace-format
+#~ msgid "Not set ({value}, {source})"
+#~ msgstr "Sin definir ({value}, {source})"
+
+#, python-brace-format
+#~ msgid "Not set ({value})"
+#~ msgstr "Sin definir ({value})"
+
+#~ msgid "Routing and Tunnels"
+#~ msgstr "Rutas y túneles"
+
+#~ msgid "Add Tunnel"
+#~ msgstr "Añadir túnel"
+
+#~ msgid "Add Identity File"
+#~ msgstr "Añadir archivo de identidad"
+
+#~ msgid "Networking"
+#~ msgstr "Red"
+
+#~ msgid "Port Forwards"
+#~ msgstr "Reenvíos de puertos"
+
+#~ msgid "Tunnels opened with every connection this block applies to"
+#~ msgstr ""
+#~ "Túneles que se abren con cada conexión a la que se aplica este bloque"
+
+#~ msgid "Add Forward"
+#~ msgstr "Añadir reenvío"
+
+#~ msgid "Other Options"
+#~ msgstr "Otras opciones"
+
+#~ msgid "Lines no field above shows, in the block's order"
+#~ msgstr "Líneas que ningún campo de arriba muestra, en el orden del bloque"
+
+#~ msgid "No other options."
+#~ msgstr "No hay otras opciones."
+
+#, python-brace-format
+#~ msgid "Not set here. OpenSSH tries: {files} ({source})"
+#~ msgstr "No definido aquí. OpenSSH prueba: {files} ({source})"
+
+#, python-brace-format
+#~ msgid "Not set here. OpenSSH tries: {files}"
+#~ msgstr "No definido aquí. OpenSSH prueba: {files}"
+
+#~ msgid "Not set here."
+#~ msgstr "No definido aquí."
+
 #~ msgid "Save first: the test connects with the saved configuration"
 #~ msgstr "Guarde primero: la prueba se conecta con la configuración guardada"
 
@@ -18898,9 +18879,6 @@ msgstr "{kind} · desactivado"
 
 #~ msgid "Block options"
 #~ msgstr "Opciones del bloque"
-
-#~ msgid "Common Option"
-#~ msgstr "Opción habitual"
 
 #~ msgid "Expand"
 #~ msgstr "Expandir"

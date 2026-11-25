@@ -1,17 +1,14 @@
 """Advanced Configuration, Structured view: one block, as fields.
 
 The block's header (its Host patterns or Match conditions), its note and
-whether it is on; then the options as fields where a field suits them
-(HostName, User, Port, the identity files, ProxyJump, ForwardAgent,
-IdentitiesOnly, the forwards) and every other line in a table. Which lines
-the fields show is decided in :mod:`advanced_config_fields`: no line is
-dropped or rewritten to fit a field.
-
-A field the block leaves empty shows, in grey, what OpenSSH will use for
-the host being checked and where that comes from ("22 · from Host *",
-"OpenSSH default"): the answer comes from OpenSSH (``ssh -G``) like every
-other answer here. A line an earlier block (or Settings) overrides says so
-beside it; it is never refused or rewritten.
+whether it is on; the route and tunnels it leads to; then its lines, in the
+block's order, as the file has them. A line gets a control that suits it
+(HostName, User, Port, ProxyJump as fields, IdentitiesOnly and ForwardAgent
+as yes/no, identity files with their key check, forwards); every other
+line is a keyword and a value. Which control a line gets is decided in
+:mod:`advanced_config_fields`: no line is dropped or rewritten to fit one.
+A line an earlier block (or Settings) overrides says so beside it; it is
+never refused or rewritten.
 
 Everything is updated in place: the widgets of a block are made when it is
 selected and only relabelled after that, so typing never loses the focus.
@@ -150,86 +147,72 @@ def _icon_button(icon: str, tooltip: str, callback: Callable[[], None]) -> Gtk.B
     return button
 
 
-class TypedField:
-    """A keyword of one value (HostName, User, Port, ProxyJump): its first
-    line in the block, edited in a field. Empty when the block does not set
-    it, with OpenSSH's value for the host being checked in grey."""
+class SingleRow:
+    """The first line of a keyword of one value (HostName, User, Port,
+    ProxyJump), edited in a field. Emptied, the line stays (OpenSSH says
+    it is missing its value) until it is removed: the row never vanishes
+    under the pointer."""
 
-    def __init__(self, view: "StructuredView", keyword: str, description: str) -> None:
+    kind = fields.SINGLE_KIND
+
+    def __init__(self, view: "StructuredView", uid: int, keyword: str) -> None:
         self.view = view
+        self.uid = uid
         self.keyword = keyword
-        self.uid: Optional[int] = None
-        self.row = Adw.ActionRow(title=fields.SPELLING[keyword], subtitle=description)
+        self.row = Adw.ActionRow(title=fields.SPELLING[keyword],
+                                 subtitle=_descriptions().get(keyword, ""))
         self.row.set_title_selectable(False)
         self.entry = _entry(width=34)
         self.entry.set_hexpand(False)
         self.entry.update_property([Gtk.AccessibleProperty.LABEL], [fields.SPELLING[keyword]])
         self.entry.connect("changed", self._on_changed)
-        self.source = pill(style="accent")
         self.state = pill(style="warning")
         self.reset = _icon_button(
-            "edit-clear-symbolic", _("Remove this line from the block"), self._on_reset
+            "user-trash-symbolic", _("Remove this line from the block"),
+            lambda: view.controller.delete_option(self.uid),
         )
-        for widget in (self.state, self.source, self.entry, self.reset):
+        for widget in (self.state, self.entry, self.reset):
             self.row.add_suffix(widget)
 
     def bind(self, option) -> None:
-        self.uid = option.uid if option is not None else None
-        self.view.syncing.set_text(self.entry, option.value if option is not None else "")
-        self.reset.set_visible(option is not None)
+        self.view.syncing.set_text(self.entry, option.value)
 
     def show(self, answer: AnswerView) -> None:
-        value, source = answer.inherited(self.keyword)
+        value, _source = answer.inherited(self.keyword)
         self.entry.set_placeholder_text(value)
-        set_pill(self.source, source if self.uid is None else "", "accent")
-        item, error = answer.line_state(self.uid) if self.uid is not None else (None, None)
+        item, error = answer.line_state(self.uid)
         unused = _line_pill(self.state, item, error)
         set_class(self.entry, "error", error is not None)
         set_class(self.entry, "dim-label", unused)
 
     def _on_changed(self, entry) -> None:
         if not self.view.syncing.on:
-            self.view.controller.field_typed(self.view.uid, self.keyword, self.uid, entry.get_text())
-
-    def _on_reset(self) -> None:
-        if self.uid is not None:
-            self.view.controller.delete_option(self.uid)
+            self.view.controller.option_typed(self.uid, "value", entry.get_text())
 
 
-class SwitchField:
-    """A yes/no keyword (IdentitiesOnly, ForwardAgent): not set, yes or no.
-    "Not set" says what OpenSSH will use instead."""
+class SwitchRow:
+    """The first line of a yes/no keyword (IdentitiesOnly, ForwardAgent)."""
 
-    _VALUES = (None, "yes", "no")
+    kind = fields.SWITCH_KIND
+    _VALUES = ("yes", "no")
 
-    def __init__(self, view: "StructuredView", keyword: str, description: str) -> None:
+    def __init__(self, view: "StructuredView", uid: int, keyword: str) -> None:
         self.view = view
+        self.uid = uid
         self.keyword = keyword
-        self.uid: Optional[int] = None
-        self._not_set = ""
-        self.model = Gtk.StringList.new(["", "yes", "no"])
-        self.row = Adw.ComboRow(title=fields.SPELLING[keyword], subtitle=description)
-        self.row.set_model(self.model)
+        self.row = Adw.ComboRow(title=fields.SPELLING[keyword],
+                                subtitle=_descriptions().get(keyword, ""))
+        self.row.set_model(Gtk.StringList.new(list(self._VALUES)))
         self.row.connect("notify::selected", self._on_selected)
         self.state = pill(style="warning")
         self.row.add_suffix(self.state)
-        self._set_not_set(_("Not set"))
-
-    def _set_not_set(self, text: str) -> None:
-        if text == self._not_set:
-            return
-        self._not_set = text
-        selected = self.row.get_selected()
-        self.view.syncing.on = True
-        try:
-            self.model.splice(0, 1, [text])
-            self.row.set_selected(selected)
-        finally:
-            self.view.syncing.on = False
+        self.row.add_suffix(_icon_button(
+            "user-trash-symbolic", _("Remove this line from the block"),
+            lambda: view.controller.delete_option(self.uid),
+        ))
 
     def bind(self, option) -> None:
-        self.uid = option.uid if option is not None else None
-        value = option.value.strip().strip('"').lower() if option is not None else None
+        value = option.value.strip().strip('"').lower()
         index = self._VALUES.index(value) if value in self._VALUES else 0
         if self.row.get_selected() != index:
             self.view.syncing.on = True
@@ -239,16 +222,7 @@ class SwitchField:
                 self.view.syncing.on = False
 
     def show(self, answer: AnswerView) -> None:
-        value, source = answer.inherited(self.keyword)
-        if value:
-            # Translators: the "not set" choice of a yes/no option, with what
-            # OpenSSH uses instead, e.g. "Not set (no, OpenSSH default)".
-            text = _("Not set ({value}, {source})").format(value=value, source=source) \
-                if source else _("Not set ({value})").format(value=value)
-        else:
-            text = _("Not set")
-        self._set_not_set(text)
-        item, error = answer.line_state(self.uid) if self.uid is not None else (None, None)
+        item, error = answer.line_state(self.uid)
         _line_pill(self.state, item, error)
 
     def _on_selected(self, *_args) -> None:
@@ -262,7 +236,9 @@ class IdentityRow:
     """One IdentityFile line: the path, what the file on disk says about
     itself, Browse, and a fix for a key others can read."""
 
-    def __init__(self, view: "StructuredView", uid: int) -> None:
+    kind = fields.IDENTITY_KIND
+
+    def __init__(self, view: "StructuredView", uid: int, _keyword: str = "") -> None:
         self.view = view
         self.uid = uid
         self.status = None
@@ -315,7 +291,9 @@ class IdentityRow:
 class ForwardRow:
     """One LocalForward, RemoteForward or DynamicForward line."""
 
-    def __init__(self, view: "StructuredView", uid: int) -> None:
+    kind = fields.FORWARD_KIND
+
+    def __init__(self, view: "StructuredView", uid: int, _keyword: str = "") -> None:
         self.view = view
         self.uid = uid
         self.row = Adw.ActionRow()
@@ -332,6 +310,7 @@ class ForwardRow:
         if self.row.get_title() != title:
             self.row.set_title(title)
         self.entry.update_property([Gtk.AccessibleProperty.LABEL], [title])
+        self.entry.set_placeholder_text(_FORWARD_HINTS.get(option.keyword, ""))
         self.view.syncing.set_text(self.entry, option.value)
 
     def show(self, answer: AnswerView) -> None:
@@ -342,6 +321,18 @@ class ForwardRow:
     def _on_changed(self, entry) -> None:
         if not self.view.syncing.on:
             self.view.controller.option_typed(self.uid, "value", entry.get_text())
+
+
+_FORWARD_HINTS = {
+    "localforward": "8080 localhost:80",
+    "remoteforward": "9000 localhost:9000",
+    "dynamicforward": "1080",
+}
+
+_ROWS = {
+    fields.SINGLE_KIND: SingleRow,
+    fields.SWITCH_KIND: SwitchRow,
+}
 
 
 class _Suggestions:
@@ -451,7 +442,9 @@ class _Suggestions:
 class OtherRow:
     """A line no field shows: keyword, value, what OpenSSH does with it."""
 
-    def __init__(self, view: "StructuredView", uid: int) -> None:
+    kind = fields.OTHER_KIND
+
+    def __init__(self, view: "StructuredView", uid: int, _keyword: str = "") -> None:
         self.view = view
         self.uid = uid
         self.row = Gtk.ListBoxRow()
@@ -502,6 +495,19 @@ class OtherRow:
 
     def destroy(self) -> None:
         self.suggestions.destroy()
+
+
+_ROWS.update({
+    fields.IDENTITY_KIND: IdentityRow,
+    fields.FORWARD_KIND: ForwardRow,
+    fields.OTHER_KIND: OtherRow,
+})
+
+#: The keywords Add Option offers at a click, in the order it lists them.
+_COMMON = (
+    "hostname", "user", "port", "identityfile", "identitiesonly", "proxyjump",
+    "forwardagent", "localforward", "remoteforward", "dynamicforward",
+)
 
 
 class _Page(Gtk.ScrolledWindow):
@@ -675,13 +681,12 @@ class StructuredView(Gtk.Box):
         self.syncing = _Syncing()
         self.uid: Optional[int] = None
         self.kind = ""
-        #: Lines added from the table: they stay there (see advanced_config_fields).
+        #: Lines added with Add Option: they stay plain lines (see
+        #: advanced_config_fields).
         self._keep: set = set()
         self._answer = AnswerView()
-        self._identity_rows: Dict[int, IdentityRow] = {}
-        self._forward_rows: Dict[int, ForwardRow] = {}
-        self._other_rows: Dict[int, OtherRow] = {}
-        descriptions = _descriptions()
+        #: The row of each line of the block on screen, by uid.
+        self._rows: Dict[int, object] = {}
 
         self.stack = Gtk.Stack()
         self.stack.set_vexpand(True)
@@ -737,86 +742,82 @@ class StructuredView(Gtk.Box):
         self.routing = RoutingCard(self)
         self.page.add(self.routing.group)
 
-        # -- connection ------------------------------------------------------
+        # -- the lines, in the block's order ------------------------------------
         group = Adw.PreferencesGroup()
-        connection = _boxed_list()
-        self.typed: Dict[str, TypedField] = {}
-        for keyword in ("hostname", "user", "port"):
-            field = self.typed[keyword] = TypedField(self, keyword, descriptions[keyword])
-            connection.append(field.row)
-        group.add(connection)
-        self.page.add(group)
-
-        # -- authentication -------------------------------------------------
-        group = Adw.PreferencesGroup()
-        self.auth_list = _boxed_list()
-        self.identity_hint = Adw.ActionRow(title="IdentityFile")
-        self.identity_hint.set_subtitle_lines(3)
-        self.identity_hint.set_activatable(False)
-        self.auth_list.append(self.identity_hint)
-        self.add_identity_row = Adw.ActionRow(title=_("Add Identity File"))
-        self.add_identity_row.add_prefix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
-        self.add_identity_row.set_activatable(True)
-        self.add_identity_row.connect("activated", lambda *_a: controller.add_identity(self.uid))
-        self.auth_list.append(self.add_identity_row)
-        self.switches: Dict[str, SwitchField] = {}
-        field = self.switches["identitiesonly"] = SwitchField(
-            self, "identitiesonly", descriptions["identitiesonly"]
-        )
-        self.auth_list.append(field.row)
-        group.add(self.auth_list)
-        self.page.add(group)
-
-        # -- networking ------------------------------------------------------
-        group = Adw.PreferencesGroup()
-        network = _boxed_list()
-        field = self.typed["proxyjump"] = TypedField(self, "proxyjump", descriptions["proxyjump"])
-        network.append(field.row)
-        field = self.switches["forwardagent"] = SwitchField(
-            self, "forwardagent", descriptions["forwardagent"]
-        )
-        network.append(field.row)
-        group.add(network)
-        self.page.add(group)
-
-        group = Adw.PreferencesGroup()
-        self.forward_list = _boxed_list()
-        self.add_forward_row = Adw.ActionRow(title=_("Add Forward"))
-        self.forward_kind = Gtk.DropDown.new_from_strings(
-            ["LocalForward", "RemoteForward", "DynamicForward"]
-        )
-        self.forward_kind.set_valign(Gtk.Align.CENTER)
-        self.forward_kind.connect("notify::selected", lambda *_a: self._sync_forward_hint())
-        self.forward_spec = _entry(width=22)
-        self.forward_spec.connect("activate", lambda *_a: self._on_add_forward())
-        add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text=_("Add Forward"))
-        add.set_valign(Gtk.Align.CENTER)
-        add.connect("clicked", lambda *_a: self._on_add_forward())
-        for widget in (self.forward_kind, self.forward_spec, add):
-            self.add_forward_row.add_suffix(widget)
-        self.forward_list.append(self.add_forward_row)
-        self._sync_forward_hint()
-        group.add(self.forward_list)
-        self.page.add(group)
-
-        # -- everything else ----------------------------------------------------
-        self.other_group = Adw.PreferencesGroup()
-        self.other_list = _boxed_list()
+        self.options_list = _boxed_list()
         self.add_option_row = Adw.ActionRow(title=_("Add Option"))
         self.add_option_row.add_prefix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
         self.add_option_row.set_activatable(True)
         self.add_option_row.connect(
             "activated", lambda *_a: controller.add_option(self.uid, keep=True)
         )
-        self.other_list.append(self.add_option_row)
-        self.other_group.add(self.other_list)
-        self.page.add(self.other_group)
+        self.add_option_row.add_suffix(self._common_menu())
+        self.options_list.append(self.add_option_row)
+        group.add(self.options_list)
+        self.page.add(group)
+
+    def _common_menu(self) -> Gtk.MenuButton:
+        """The options most blocks set, a click away."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        popover = Gtk.Popover(child=box)
+        popover.add_css_class("menu")
+        for keyword in _COMMON:
+            button = Gtk.Button(label=fields.SPELLING[keyword])
+            button.add_css_class("flat")
+            button.get_child().set_xalign(0)
+            button.connect("clicked", lambda *_a, k=keyword: (
+                popover.popdown(), self._add_common(k)
+            ))
+            box.append(button)
+        menu = Gtk.MenuButton(icon_name="view-more-symbolic", popover=popover,
+                              tooltip_text=_("Add a Common Option"))
+        menu.add_css_class("flat")
+        menu.set_valign(Gtk.Align.CENTER)
+        return menu
+
+    def _add_common(self, keyword: str) -> None:
+        if self.uid is None:
+            return
+        value = "yes" if keyword in fields.SWITCHES else ""
+        self.controller.add_option(self.uid, fields.SPELLING[keyword], value)
+
+    # -- the rows, by kind (for the controller and the tests) --------------------
+
+    def _of_kind(self, kind: str) -> Dict[int, object]:
+        return {uid: row for uid, row in self._rows.items() if row.kind == kind}
+
+    @property
+    def typed(self) -> Dict[str, SingleRow]:
+        """The field of each keyword of one value the block sets."""
+        return {row.keyword: row for row in self._of_kind(fields.SINGLE_KIND).values()}
+
+    @property
+    def switches(self) -> Dict[str, SwitchRow]:
+        return {row.keyword: row for row in self._of_kind(fields.SWITCH_KIND).values()}
+
+    @property
+    def _identity_rows(self) -> Dict[int, IdentityRow]:
+        return self._of_kind(fields.IDENTITY_KIND)
+
+    @property
+    def _forward_rows(self) -> Dict[int, ForwardRow]:
+        return self._of_kind(fields.FORWARD_KIND)
+
+    @property
+    def _other_rows(self) -> Dict[int, OtherRow]:
+        return self._of_kind(fields.OTHER_KIND)
 
     # -- showing a block -------------------------------------------------------
 
     def keep(self, uid: int) -> None:
-        """Keep a line added from the table in the table."""
+        """Keep a line added with Add Option a plain line."""
         self._keep.add(uid)
+
+    def _drop_row(self, uid: int) -> None:
+        row = self._rows.pop(uid)
+        self.options_list.remove(row.row)
+        if hasattr(row, "destroy"):
+            row.destroy()
 
     def show(self, block: Optional[Block]) -> None:
         """Show *block* (None: none), in place when it is the one shown."""
@@ -827,16 +828,8 @@ class StructuredView(Gtk.Box):
         if block.uid != self.uid:
             self.uid = block.uid
             self._keep = set()
-            for rows, listbox in (
-                (self._identity_rows, self.auth_list),
-                (self._forward_rows, self.forward_list),
-                (self._other_rows, self.other_list),
-            ):
-                for row in rows.values():
-                    listbox.remove(row.row)
-                    if hasattr(row, "destroy"):
-                        row.destroy()
-                rows.clear()
+            for uid in list(self._rows):
+                self._drop_row(uid)
             self.page.scroll_to_top()
         self.stack.set_visible_child_name("block")
         self._sync(block)
@@ -845,7 +838,6 @@ class StructuredView(Gtk.Box):
     def _sync(self, block: Block) -> None:
         self.kind = block.kind
         options = {option.uid: option for option in block.options}
-        claims = fields.claim(block.options, self._keep)
         is_global = block.kind == GLOBAL
         self.block_group.set_title(GLib.markup_escape_text(
             messages.block_title(block.kind, block.patterns)
@@ -865,46 +857,24 @@ class StructuredView(Gtk.Box):
             finally:
                 self.syncing.on = False
 
-        for keyword, field in self.typed.items():
-            uid = claims.single.get(keyword)
-            field.bind(options.get(uid) if uid is not None else None)
-        for keyword, field in self.switches.items():
-            uid = claims.switches.get(keyword)
-            field.bind(options.get(uid) if uid is not None else None)
-
-        self._sync_rows(self._identity_rows, claims.identities, options, IdentityRow,
-                        self.auth_list, first_index=0)
-        self.identity_hint.set_visible(not claims.identities)
-        self._sync_rows(self._forward_rows, claims.forwards, options, ForwardRow,
-                        self.forward_list, first_index=0)
-        self._sync_rows(self._other_rows, claims.other, options, OtherRow,
-                        self.other_list, first_index=0)
-
-    def _sync_rows(self, rows: Dict[int, object], uids: List[int], options, factory,
-                   listbox: Gtk.ListBox, first_index: int) -> None:
-        for uid in [uid for uid in rows if uid not in uids]:
-            row = rows.pop(uid)
-            listbox.remove(row.row)
-            if hasattr(row, "destroy"):
-                row.destroy()
-        for position, uid in enumerate(uids):
-            row = rows.get(uid)
-            index = first_index + position
+        # Every line in the block's order, each with its control. A row is
+        # made again only when its line changes kind (a line above went).
+        kinds = fields.line_kinds(block.options, self._keep)
+        wanted = {uid: kind for uid, kind in kinds}
+        for uid in [uid for uid, row in self._rows.items()
+                    if wanted.get(uid) != row.kind
+                    or getattr(row, "keyword", options[uid].keyword) != options[uid].keyword]:
+            self._drop_row(uid)
+        for index, (uid, kind) in enumerate(kinds):
+            option = options[uid]
+            row = self._rows.get(uid)
             if row is None:
-                row = rows[uid] = factory(self, uid)
-                listbox.insert(row.row, index)
+                row = self._rows[uid] = _ROWS[kind](self, uid, option.keyword)
+                self.options_list.insert(row.row, index)
             elif row.row.get_index() != index:
-                listbox.remove(row.row)
-                listbox.insert(row.row, index)
-            row.bind(options[uid])
-
-    def _sync_forward_hint(self) -> None:
-        hints = {
-            0: "8080 localhost:80",
-            1: "9000 localhost:9000",
-            2: "1080",
-        }
-        self.forward_spec.set_placeholder_text(hints.get(self.forward_kind.get_selected(), ""))
+                self.options_list.remove(row.row)
+                self.options_list.insert(row.row, index)
+            row.bind(option)
 
     # -- OpenSSH's answer -------------------------------------------------------
 
@@ -912,20 +882,8 @@ class StructuredView(Gtk.Box):
         self._answer = answer
         if self.uid is None:
             return
-        for field in (*self.typed.values(), *self.switches.values()):
-            field.show(answer)
-        for rows in (self._identity_rows, self._forward_rows, self._other_rows):
-            for row in rows.values():
-                row.show(answer)
-        # The identity files OpenSSH will offer when this block sets none.
-        value, source = answer.inherited("identityfile")
-        if value:
-            hint = _("Not set here. OpenSSH tries: {files} ({source})").format(
-                files=value, source=source
-            ) if source else _("Not set here. OpenSSH tries: {files}").format(files=value)
-        else:
-            hint = _("Not set here.")
-        self.identity_hint.set_subtitle(GLib.markup_escape_text(hint))
+        for row in self._rows.values():
+            row.show(answer)
         self._show_routing(answer)
         self._show_status(answer)
 
@@ -1020,16 +978,6 @@ class StructuredView(Gtk.Box):
         if block is not None and block.disabled == row.get_active():
             self.controller.toggle_block(self.uid)
 
-    def _on_add_forward(self) -> None:
-        spec = self.forward_spec.get_text().strip()
-        if not spec or self.uid is None:
-            return
-        keyword = ("localforward", "remoteforward", "dynamicforward")[
-            self.forward_kind.get_selected()
-        ]
-        self.syncing.set_text(self.forward_spec, "")
-        self.controller.add_forward(self.uid, keyword, spec)
-
     # -- focus, for the controller -------------------------------------------------
 
     def focus_patterns(self) -> None:
@@ -1038,30 +986,22 @@ class StructuredView(Gtk.Box):
 
     def option_widget(self, uid: int) -> Optional[Gtk.Widget]:
         """The field showing option *uid*, to focus or flash."""
-        for field in self.typed.values():
-            if field.uid == uid:
-                return field.entry
-        for field in self.switches.values():
-            if field.uid == uid:
-                return field.row
-        for rows in (self._identity_rows, self._forward_rows):
-            if uid in rows:
-                return rows[uid].entry
-        if uid in self._other_rows:
-            return self._other_rows[uid].value
-        return None
+        row = self._rows.get(uid)
+        if row is None:
+            return None
+        if row.kind == fields.SWITCH_KIND:
+            return row.row
+        if row.kind == fields.OTHER_KIND:
+            return row.value
+        return row.entry
 
     def line_status(self, uid: int) -> Optional[str]:
         """What is said beside option *uid* (Not used, Overridden,
         Rejected), or None: nothing needs saying, or it is not shown."""
-        pills = [field.state for field in (*self.typed.values(), *self.switches.values())
-                 if field.uid == uid]
-        for rows in (self._identity_rows, self._forward_rows, self._other_rows):
-            if uid in rows:
-                pills.append(rows[uid].state)
-        for label in pills:
-            return label.get_label() if label.get_visible() else None
-        return None
+        row = self._rows.get(uid)
+        if row is None:
+            return None
+        return row.state.get_label() if row.state.get_visible() else None
 
     def focus_option(self, uid: int, *, key: bool = False) -> None:
         if key and uid in self._other_rows:
