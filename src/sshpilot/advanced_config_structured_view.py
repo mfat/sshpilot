@@ -609,26 +609,14 @@ class StructuredView(Gtk.Box):
         self.page = _Page()
         self.stack.add_named(self.page, "block")
 
-        # -- the block itself: a heading, not a card ------------------------
-        # One line as the file has it (keyword, names, on/off, actions); the
-        # note as the comment it is; what the block applies to, or what is
-        # wrong with it, only when there is something to say.
+        # -- the block itself ---------------------------------------------------
+        # Above the lines: the note as the comment it is, on/off and the
+        # actions; what the block applies to, or what is wrong with it,
+        # only when there is something to say. Its Host or Match line is
+        # the first row of the lines, a field like the others.
         self.block_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.block_group.add_css_class("advcfg-block-head")
         line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.keyword = Gtk.Label()
-        self.keyword.add_css_class("advcfg-keyword")
-        self.keyword.add_css_class("monospace")
-        self.keyword.set_valign(Gtk.Align.CENTER)
-        line.append(self.keyword)
-        self.head_title = Gtk.Label(xalign=0, hexpand=True)
-        self.head_title.add_css_class("title-3")
-        line.append(self.head_title)
-        self.patterns_row = Gtk.Entry(hexpand=True)
-        self.patterns_row.add_css_class("advcfg-head-entry")
-        self.patterns_row.add_css_class("monospace")
-        self.patterns_row.connect("changed", self._on_patterns_changed)
-        line.append(self.patterns_row)
         self.enabled_row = Gtk.Switch(valign=Gtk.Align.CENTER)
         self.enabled_row.set_tooltip_text(
             _("On: OpenSSH reads this block. Off: it is written as comments, which OpenSSH ignores.")
@@ -651,7 +639,7 @@ class StructuredView(Gtk.Box):
         self.block_group.append(line)
 
         # The note: "+ Add note" until there is one, then a "# ..." line.
-        self.note_stack = Gtk.Stack(hhomogeneous=False, vhomogeneous=False)
+        self.note_stack = Gtk.Stack(hhomogeneous=False, vhomogeneous=False, hexpand=True)
         self.add_note_button = Gtk.Button(label=_("Add Note"), halign=Gtk.Align.START)
         self.add_note_button.add_css_class("flat")
         self.add_note_button.add_css_class("advcfg-add-note")
@@ -678,7 +666,7 @@ class StructuredView(Gtk.Box):
         self.note_row.add_controller(focus)
         note_line.append(self.note_row)
         self.note_stack.add_named(note_line, "note")
-        self.block_group.append(self.note_stack)
+        line.prepend(self.note_stack)
 
         # Off: one line that says so (the lines below are dimmed with it).
         self.disabled_label = Gtk.Label(
@@ -710,6 +698,20 @@ class StructuredView(Gtk.Box):
         #: The lines, dimmed while the block is off.
         self.options_group = group
         self.options_list = _boxed_list()
+        # The block's Host or Match line: a row like the others, first.
+        self.header_row = Adw.ActionRow()
+        self.header_row.set_title_selectable(False)
+        self.patterns_row = _entry(width=34)
+        self.patterns_row.set_hexpand(False)
+        self.patterns_row.connect("changed", self._on_patterns_changed)
+        self.header_row.add_suffix(self.patterns_row)
+        # Where the others have Remove: kept empty, so the fields line up.
+        spacer = _icon_button("user-trash-symbolic", "", lambda: None)
+        spacer.set_opacity(0)
+        spacer.set_can_target(False)
+        spacer.set_can_focus(False)
+        self.header_row.add_suffix(spacer)
+        self.options_list.append(self.header_row)
         self.add_option_row = Adw.ActionRow(title=_("Add Option"))
         self.add_option_row.add_prefix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
         self.add_option_row.set_activatable(True)
@@ -804,12 +806,15 @@ class StructuredView(Gtk.Box):
         self.kind = block.kind
         options = {option.uid: option for option in block.options}
         is_global = block.kind == GLOBAL
-        # Global options have no line of their own: a title stands in.
-        self.keyword.set_visible(not is_global)
-        self.patterns_row.set_visible(not is_global)
-        self.head_title.set_visible(is_global)
-        self.head_title.set_label(messages.block_title(block.kind, block.patterns))
-        self.keyword.set_label("Host" if block.kind == HOST else "Match")
+        # Global options have no Host or Match line.
+        self.header_row.set_visible(not is_global)
+        keyword = "Host" if block.kind == HOST else "Match"
+        if self.header_row.get_title() != keyword:
+            self.header_row.set_title(keyword)
+            self.header_row.set_subtitle(
+                _("The names and patterns this block is for") if block.kind == HOST
+                else _("The conditions this block is for")
+            )
         self.patterns_row.update_property(
             [Gtk.AccessibleProperty.LABEL],
             [_("Host patterns") if block.kind == HOST else _("Match conditions")],
@@ -836,7 +841,7 @@ class StructuredView(Gtk.Box):
                     if wanted.get(uid) != row.kind
                     or getattr(row, "keyword", options[uid].keyword) != options[uid].keyword]:
             self._drop_row(uid)
-        for index, (uid, kind) in enumerate(kinds):
+        for index, (uid, kind) in enumerate(kinds, start=1):     # after the Host line
             option = options[uid]
             row = self._rows.get(uid)
             if row is None:
@@ -940,7 +945,7 @@ class StructuredView(Gtk.Box):
     # -- focus, for the controller -------------------------------------------------
 
     def focus_patterns(self) -> None:
-        if self.patterns_row.get_visible():
+        if self.header_row.get_visible():
             self.patterns_row.grab_focus()
 
     def option_widget(self, uid: int) -> Optional[Gtk.Widget]:
@@ -974,7 +979,7 @@ class StructuredView(Gtk.Box):
         """Bring the field of option or block *uid* into view and flash it."""
         widget = self.option_widget(uid)
         if widget is None:
-            widget = self.patterns_row if self.patterns_row.get_visible() else self.head_title
+            widget = self.header_row if self.header_row.get_visible() else self.block_group
             self.page.scroll_to_top()
         else:
             # The row holding the field: the one a boxed list scrolls to.

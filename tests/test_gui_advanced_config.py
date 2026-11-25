@@ -340,10 +340,11 @@ def test_filtering_by_a_host_shows_openssh_s_answer(window):
 def test_lines_are_listed_in_the_block_order(window):
     glob, web, star = window.draft.blocks
     rows = window.structured.options_list
-    order = [rows.get_row_at_index(index) for index in range(len(web.options))]
+    assert rows.get_row_at_index(0) is window.structured.header_row   # the Host line first
+    order = [rows.get_row_at_index(index) for index in range(1, len(web.options) + 1)]
     shown = {row.row: uid for uid, row in window.structured._rows.items()}
     assert [shown[row] for row in order] == [o.uid for o in web.options]
-    assert rows.get_row_at_index(len(web.options)) is window.structured.add_option_row
+    assert rows.get_row_at_index(len(web.options) + 1) is window.structured.add_option_row
     window.select_block(star.uid)                           # web1 is still the host
     assert "port" not in window.structured.typed             # Host * sets none
     user = _field(window, "user")
