@@ -438,13 +438,14 @@ def install_sidebar_css():
            draws the trailing inset border, so suppress the paned separator's
            own stroke to avoid a double line. GTK keeps a wider input area
            than it paints, so the divider stays grabbable. */
-        /* The drag grip at a row's start (_set_child_with_grip): hidden
-           until the row is hovered, as in Advanced Configuration's list
-           of blocks; not shown in the compact layout. */
+        /* The drag grip at a row's start (_set_child_with_grip): always
+           shown, faint, and brighter on the hovered row, exactly as in
+           Advanced Configuration's list of blocks (.advcfg-drag-handle);
+           only while its column is reserved, and not in the compact layout. */
         .navigation-sidebar row .sidebar-drag-grip { opacity: 0; }
         .navigation-sidebar.sidebar-grips row .sidebar-row-main { margin-left: 16px; }
-        .navigation-sidebar.sidebar-grips row:hover .sidebar-drag-grip { opacity: 0.45; }
-        .navigation-sidebar.sidebar-grips row .sidebar-drag-grip:hover { opacity: 0.9; }
+        .navigation-sidebar.sidebar-grips row .sidebar-drag-grip { opacity: 0.45; }
+        .navigation-sidebar.sidebar-grips row:hover .sidebar-drag-grip { opacity: 0.9; }
         .navigation-sidebar.sidebar-compact row .sidebar-drag-grip { opacity: 0; }
 
         paned.sidebar-paned > separator {
@@ -1274,7 +1275,8 @@ class SectionHeaderRow(Gtk.ListBoxRow):
 
 def _set_child_with_grip(row: Gtk.ListBoxRow, main_box: Gtk.Box) -> None:
     """Give *row* its main box, with a drag grip floating at the row's
-    start: a hint only, shown on hover (CSS ``.sidebar-drag-grip``). Its
+    start: a hint only, faint and brighter on hover (CSS
+    ``.sidebar-drag-grip``, as Advanced Configuration's blocks). Its
     column is reserved only while the sidebar is wide enough (the list's
     ``.sidebar-grips``, set with the row actions in
     ``MainWindow._apply_sidebar_row_actions``): narrower, the grip goes, as
