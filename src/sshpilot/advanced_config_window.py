@@ -1,35 +1,42 @@
 """Advanced Configuration: the SSH configuration as OpenSSH reads it.
 
-Sidebar: the blocks as a list (the same selection as the cards), and a field
-for a host. Middle: the configuration as ordered blocks (the global options,
-then every ``Host`` and ``Match`` block), editable and reorderable. The
-selected block says which host OpenSSH is asked about, unless one is typed
-in the field; the blocks that do not apply are dimmed, in place. Right: what
-OpenSSH resolves for the host, which line supplies each value, the order the
-blocks are read in, the text itself, and the files ``Include`` lines read.
+Sidebar: the blocks of the configuration in file order (the order OpenSSH
+reads them in), grouped by file; dragged to reorder. Content: the block
+selected, in one of three views:
+
+* **Structured**: the block's options as fields, each empty one showing in
+  grey what OpenSSH will use instead and where that comes from;
+* **Effective**: what OpenSSH uses for the host being checked (``ssh -G``),
+  and the line behind each value;
+* **Raw**: the text of the file, the block's lines marked.
+
+The host being checked is the one typed above the views, else the host the
+selected block names. Copy Command and Test Connection are about it.
 
 Nothing here decides what applies. Every answer comes from the daemon, which
 asks OpenSSH (``ssh -G``) about the draft in the context a connection would
 read the saved file in: see :mod:`sshpilot.core.ssh_config_draft`. The window
-never touches the file: it loads and saves text through the daemon, like the
-SSH Config Editor, which stays available beside it.
+never touches the file: it loads and saves text through the daemon.
 
-The window is three parts with one job each:
+The window is a few parts with one job each:
 
 * :class:`~sshpilot.advanced_config_model.DraftEditor` (no GTK): the draft,
   its text, every edit and the undo history;
-* :class:`~sshpilot.advanced_config_rules_view.RulesView`: the cards on the
-  left, updated in place;
-* :class:`~sshpilot.advanced_config_results_view.ResultsView`: the pages on
-  the right, filled only when on screen.
+* :class:`~sshpilot.advanced_config_sidebar.BlockSidebar`: the blocks;
+* :class:`~sshpilot.advanced_config_structured_view.StructuredView`,
+  :class:`~sshpilot.advanced_config_effective_view.EffectiveView` and
+  :class:`~sshpilot.advanced_config_raw_view.RawView`: the three views,
+  updated in place.
 
 This module is the controller between them: it turns gestures into edits,
-asks the daemon, and hands each answer to the two views.
+asks the daemon, and hands each answer to the views.
 """
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 from gettext import gettext as _
 from typing import Callable, Optional
 
@@ -37,9 +44,10 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
-from .advanced_config_block_row import BlockRow  # noqa: E402
+from . import advanced_config_fields as fields  # noqa: E402
+from .advanced_config_effective_view import Answer, EffectiveView  # noqa: E402
 from .advanced_config_model import (  # noqa: E402
     first_host_name,
     plain_host_names,
@@ -48,8 +56,10 @@ from .advanced_config_model import (  # noqa: E402
     Refusal,
     can_place,  # noqa: F401 - re-exported for callers and tests
 )
-from .advanced_config_results_view import Answer, ResultsView  # noqa: E402
-from .advanced_config_rules_view import RulesView  # noqa: E402
+from .advanced_config_raw_view import RawView  # noqa: E402
+from .advanced_config_sidebar import BlockSidebar, block_matches  # noqa: E402
+from .advanced_config_structured_view import AnswerView, StructuredView  # noqa: E402
+from .advanced_config_widgets import pill, set_pill  # noqa: E402
 from .api.errors import ErrorCode, SshPilotError  # noqa: E402
 from .api.models.connections import (  # noqa: E402
     EvaluateSshConfigDraftRequest,
@@ -68,45 +78,42 @@ _HISTORY_DELAY_MS = 700
 #: name no block mentions is enough to learn whether it accepts the text.
 _CHECK_HOST = "sshpilot-config-check"
 
+#: Below this width the sidebar folds away and the view switcher moves to
+#: the bottom of the window.
+_NARROW_BELOW = 760
+_MIN_WIDTH, _MIN_HEIGHT = 360, 420
+
 #: How long the draft must have stood before its hosts are asked about ahead
 #: of time, and how many of them are: beyond that, a host is asked about
 #: when it is selected.
-#: Below these widths the window has no room for the sidebar beside the two
-#: panes, and for the two panes beside each other; and its own least size.
-_NARROW_BELOW = 1100
-_SINGLE_BELOW = 900
-_MIN_WIDTH, _MIN_HEIGHT = 720, 480
-
 _PREFETCH_DELAY_MS = 350
 _PREFETCH_HOSTS = 150
+
+#: How long Test Connection waits for the host, in seconds.
+_TEST_TIMEOUT = 45
+
+PAGES = ("structured", "effective", "raw")
 
 _CSS = """
 .advcfg-pill { font-size: 0.82em; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
 .advcfg-pill.success { background-color: alpha(@success_color, 0.16); color: @success_color; }
 .advcfg-pill.warning { background-color: alpha(@warning_color, 0.18); color: @warning_color; }
+.advcfg-pill.error { background-color: alpha(@error_color, 0.16); color: @error_color; }
 .advcfg-pill.accent { background-color: alpha(@accent_color, 0.15); color: @accent_color; }
 .advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
-.advcfg-block { padding: 0; }
-.advcfg-header { padding: 7px 10px; background-color: alpha(currentColor, 0.07);
-  border-radius: 12px 12px 0 0; border-bottom: 1px solid alpha(currentColor, 0.10); }
-.advcfg-header.movable:hover { background-color: alpha(currentColor, 0.11); }
-.advcfg-body { padding: 8px 12px 10px 12px; }
-.advcfg-options { margin-left: 28px; }
-.advcfg-options:dir(rtl) { margin-left: 0; margin-right: 28px; }
-.advcfg-footer { margin-top: 4px; }
-.advcfg-block.selected { outline: 2px solid @accent_color; outline-offset: -1px; }
-.advcfg-block.selected > .advcfg-header { background-color: alpha(@accent_color, 0.16); }
-.advcfg-block.disabled { opacity: 0.6; }
-.advcfg-block.folded > .advcfg-header { border-radius: 12px; border-bottom-color: transparent; }
-.advcfg-block { transition: opacity 90ms ease-out; }
-.advcfg-block.skipped { opacity: 0.45; }
-.advcfg-unused entry { opacity: 0.6; }
+.advcfg-context { padding: 6px 12px; }
+.advcfg-block-list > row.advcfg-skipped { opacity: 0.5; }
+.advcfg-block-list > row.advcfg-drop-above { box-shadow: inset 0 2px 0 0 @accent_bg_color; }
+.advcfg-block-list > row.advcfg-drop-below { box-shadow: inset 0 -2px 0 0 @accent_bg_color; }
+.advcfg-block-list:drop(active) { box-shadow: none; }
+.advcfg-block-list > row.advcfg-file-row { min-height: 0; }
 .advcfg-flash { outline: 2px solid @accent_color; outline-offset: 2px; }
-/* Where a drop lands is shown by the bar alone: not by the theme's outline
-   around whatever the pointer is over, which on the list drew its two
-   edges as long vertical lines. */
-.advcfg-list:drop(active), .advcfg-row:drop(active) { box-shadow: none; }
+.advcfg-hop { padding: 4px 10px; border-radius: 8px; background-color: alpha(currentColor, 0.07); }
+.advcfg-hop.advcfg-hop-target { background-color: alpha(@success_color, 0.14); }
+.advcfg-chip { padding: 2px 10px; border-radius: 999px; font-size: 0.9em; }
+.advcfg-command-bar { padding: 6px 6px 6px 14px; }
+entry.warning { color: @warning_color; }
 """
 _css_installed = False
 
@@ -136,15 +143,15 @@ class AdvancedConfigBase:
 
     The controller and its widgets, without a place on screen of their own:
     :class:`AdvancedConfigWindow` is it as a window, and
-    :class:`AdvancedConfigView` as a widget for a tab of the main window,
-    with the list of blocks handed to the main sidebar. The few things that
-    differ between the two are the ``_host_*`` methods and ``embedded``.
+    :class:`AdvancedConfigView` as a widget for the main window, with the
+    list of blocks handed to the main sidebar. The few things that differ
+    between the two are the ``_host_*`` methods and ``embedded``.
 
     *client* is the daemon client; *on_saved* runs after each save.
     """
 
-    #: True when shown inside another window (a tab): no title buttons, and
-    #: the list of blocks is shown by the host, not beside the rules.
+    #: True when shown inside another window: no title buttons, and the
+    #: list of blocks is shown by the host, not beside the views.
     embedded = False
 
     def __init__(
@@ -158,8 +165,6 @@ class AdvancedConfigBase:
         _ensure_css()
         self._client = client
         self._on_saved = on_saved
-        #: Called after each save, besides *on_saved*: see
-        #: :meth:`add_saved_listener`.
         self._saved_listeners: list = []
         self._closed_listeners: list = []
         self._told_closed = False
@@ -179,8 +184,15 @@ class AdvancedConfigBase:
         self._ask_lock = threading.Lock()
         self._prefetching = False
         self._prefetch_source = 0
-        #: True while a move of the Raw page's cursor is selecting a block.
+        #: True while a move of the Raw view's cursor is selecting a block.
         self._selecting_from_raw = False
+        #: The host typed above the views: the one OpenSSH is asked about,
+        #: whichever block is selected. Empty: the selected block's own.
+        self._pinned_host = ""
+        self._check_syncing = False
+        #: The host to check was put there by the search (an exact name).
+        self._check_from_search = False
+        self._testing = False
         self._host_setup(parent)
 
         self.editor = DraftEditor()
@@ -200,11 +212,13 @@ class AdvancedConfigBase:
         self._evaluate_source = 0
         self._history_source = 0
         self._allowed_exec: set = set()
-        self._notes_open: set = set()
-        #: Blocks added or edited for the host in question: they stay open
-        #: even when they do not apply to it.
+        #: Blocks added or edited for the host being checked: they are not
+        #: dimmed even when they do not apply to it.
         self._kept_visible: set = set()
         self.selected_uid: Optional[int] = None
+        #: Where the selected block stood: a draft read anew (Apply, Reload)
+        #: selects the block at the same place.
+        self._selected_index = 0
         self._saving = False
         self._closing = False
 
@@ -221,8 +235,8 @@ class AdvancedConfigBase:
         # has an undo of its own for what was typed into it, which knows
         # nothing of a block deleted or moved, and would answer Ctrl+Z
         # first. So the keys are taken on the way down, before any field
-        # sees them. (The Raw page keeps its own: text typed there is not
-        # in the rules until it is applied.)
+        # sees them. (The Raw view keeps its own: text typed there is not
+        # in the draft until it is applied.)
         history_keys = Gtk.ShortcutController()
         history_keys.set_scope(Gtk.ShortcutScope.LOCAL)
         history_keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -248,13 +262,34 @@ class AdvancedConfigBase:
         view = Adw.ToolbarView()
         self._toasts.set_child(view)
 
+        self.structured = StructuredView(self)
+        self.effective = EffectiveView(self)
+        self.raw = RawView(self)
+        self.stack = Adw.ViewStack()
+        self.stack.set_vexpand(True)
+        for name, widget, title, icon in (
+            ("structured", self.structured, _("Structured"), "document-properties-symbolic"),
+            ("effective", self.effective, _("Effective"), "emblem-ok-symbolic"),
+            ("raw", self.raw, _("Raw"), "text-x-generic-symbolic"),
+        ):
+            self.stack.add_titled_with_icon(widget, name, title, icon)
+        self.stack.connect("notify::visible-child-name", self._on_page_shown)
+
         header = Adw.HeaderBar()
         if self.embedded:
-            # A bar of the tab: the window's buttons are the window's.
+            # A bar of the main window's content: its buttons are its own.
             header.set_show_start_title_buttons(False)
             header.set_show_end_title_buttons(False)
-        self._title = Adw.WindowTitle(title=_("Advanced Configuration"), subtitle="")
-        header.set_title_widget(self._title)
+        self.switcher = Adw.ViewSwitcher(stack=self.stack)
+        self.switcher.set_policy(Adw.ViewSwitcherPolicy.WIDE)
+        header.set_title_widget(self.switcher)
+        self.sidebar_button = Gtk.ToggleButton(
+            icon_name="sidebar-show-symbolic", active=True,
+            tooltip_text=_("Toggle Sidebar"),
+        )
+        # Embedded, the list of blocks is in the host's sidebar.
+        self.sidebar_button.set_visible(not self.embedded)
+        header.pack_start(self.sidebar_button)
         # The keys are named beside the words: the buttons are small, and
         # an undo nobody finds is no undo.
         self.undo_button = Gtk.Button(
@@ -274,17 +309,9 @@ class AdvancedConfigBase:
         menu = Gio.Menu()
         menu.append(_("Reload from Disk"), "advcfg.reload")
         menu.append(_("Copy Configuration"), "advcfg.copy")
-        folding = Gio.Menu()
-        folding.append(_("Collapse All"), "advcfg.collapse-all")
-        folding.append(_("Expand All"), "advcfg.expand-all")
-        menu.append_section(None, folding)
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
         actions = Gio.SimpleActionGroup()
-        for name, callback in (
-            ("reload", self._on_reload), ("copy", self._on_copy),
-            ("collapse-all", lambda *_a: self.rules.fold_all(True)),
-            ("expand-all", lambda *_a: self.rules.fold_all(False)),
-        ):
+        for name, callback in (("reload", self._on_reload), ("copy", self._on_copy)):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
             actions.add_action(action)
@@ -305,197 +332,86 @@ class AdvancedConfigBase:
         self.banner.connect("button-clicked", self._on_answer_banner_button)
         self._answer_banner_action: Optional[Callable[[], None]] = None
         view.add_top_bar(self.banner)
+        view.add_top_bar(self._build_context_bar())
 
-        self.rules = RulesView(self)
-        self.results = ResultsView(self)
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, wide_handle=True)
-        paned.set_shrink_start_child(False)
-        paned.set_shrink_end_child(False)
-        paned.set_position(620)
-        paned.set_start_child(self.rules)
-        paned.set_end_child(self.results)
-        paned.set_hexpand(True)
-        self.sidebar = self._build_sidebar()
-        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        if not self.embedded:
-            content.append(self.sidebar)
-        content.append(paned)
-        view.set_content(content)
-        self.sidebar_button = Gtk.ToggleButton(
-            icon_name="sidebar-show-symbolic", active=True,
-            tooltip_text=_("Toggle Sidebar"),
-        )
-        self.sidebar_button.connect("toggled", lambda *_a: self._apply_layout())
-        # Embedded, the list of blocks is in the host's sidebar.
-        self.sidebar_button.set_visible(not self.embedded)
-        header.pack_start(self.sidebar_button)
-        # Shown when the window is too narrow for the rules and the results
-        # side by side: one of them at a time.
-        self.rules_tab = Gtk.ToggleButton(label=_("Rules"), active=True)
-        self.results_tab = Gtk.ToggleButton(label=_("Results"), group=self.rules_tab)
-        self.rules_tab.connect("toggled", self._on_pane_chosen)
-        self.pane_switch = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        self.pane_switch.add_css_class("linked")
-        self.pane_switch.append(self.rules_tab)
-        self.pane_switch.append(self.results_tab)
-        self.pane_switch.set_visible(False)
-        header.pack_start(self.pane_switch)
-        self._build_layouts()
+        self.switcher_bar = Adw.ViewSwitcherBar(stack=self.stack)
+        view.add_bottom_bar(self.switcher_bar)
 
-    # ------------------------------------------------------------------
-    # layouts: three columns, two, or one, by the window's width
-    # ------------------------------------------------------------------
-    #
-    # Side by side the three need some 1100 pixels. Narrower, the sidebar
-    # closes on its own and is opened in the results' place; narrower
-    # still, the rules and the results take turns. The window itself can
-    # then be far smaller than the three columns' own minimum.
-
-    def _build_layouts(self) -> None:
-        #: "wide", "narrow" (no room for the sidebar beside both panes) or
-        #: "single" (no room for both panes).
-        self._layout = "wide"
-        self._single_pane = "rules"
-        #: The sidebar as the user had it while there was room for it.
-        self._sidebar_wanted = True
-        self.set_size_request(*self._host_min_size())
-        # The last one that holds is the one applied: the narrowest last.
-        for name, condition in (
-            ("narrow", f"max-width: {_NARROW_BELOW}px"),
-            ("single", f"max-width: {_SINGLE_BELOW}px"),
-        ):
-            breakpoint_ = Adw.Breakpoint.new(Adw.BreakpointCondition.parse(condition))
-            breakpoint_.connect("apply", lambda *_a, n=name: self._set_layout(n))
-            breakpoint_.connect("unapply", lambda *_a, n=name: self._leave_layout(n))
-            self.add_breakpoint(breakpoint_)
-        self._apply_layout()
-
-    def _leave_layout(self, name: str) -> None:
-        if self._layout == name:
-            self._set_layout("wide")
-
-    def _set_layout(self, name: str) -> None:
-        previous, self._layout = self._layout, name
-        if previous == "wide" and name != "wide":
-            self._sidebar_wanted = self.sidebar_button.get_active()
-            self.sidebar_button.set_active(False)
-        elif name == "wide" and previous != "wide":
-            self.sidebar_button.set_active(self._sidebar_wanted)
-        self._apply_layout()
-
-    def _on_pane_chosen(self, *_args) -> None:
-        self._single_pane = "rules" if self.rules_tab.get_active() else "results"
-        self._apply_layout()
-
-    def _apply_layout(self) -> None:
-        # Embedded, the list of blocks takes no room here.
-        side = self.sidebar_button.get_active() and not self.embedded
-        rules = results = True
-        if self._layout == "narrow":
-            results = not side              # the sidebar opens in their place
-        elif self._layout == "single":
-            if self._single_pane == "results":
-                rules, side = False, False
-            else:
-                results = False
-        if not self.embedded:
-            self.sidebar.set_visible(side)
-        self.rules.set_visible(rules)
-        self.results.set_visible(results)
-        self.pane_switch.set_visible(self._layout == "single")
-        # The sidebar goes with the rules: there is no room for it beside
-        # the results alone.
-        self.sidebar_button.set_sensitive(
-            not (self._layout == "single" and self._single_pane == "results")
-        )
-
-    def show_pane(self, name: str) -> None:
-        """Make the rules or the results the pane on screen, when only one
-        of them is (something in it was asked to be shown)."""
-        if self._layout == "single":
-            (self.rules_tab if name == "rules" else self.results_tab).set_active(True)
-        elif self._layout == "narrow" and name == "results":
-            self.sidebar_button.set_active(False)
-
-    def _build_sidebar(self) -> Gtk.Widget:
-        # The blocks, in the file's order: the same selection as the cards
-        # of the rules, seen as a list. The selected block says which host
-        # OpenSSH is asked about: the one it names (the first plain name on
-        # its Host line), or, for a pattern or a Match rule, the hosts it
-        # applies to.
-        #
-        # The field above the list is a search: it keeps the blocks whose
-        # name or address (HostName) holds what is typed, and selects
-        # the best of them, so its configuration and what OpenSSH resolves
-        # for it are shown. What no block holds finds nothing and changes
-        # nothing. The exact name of a host the configuration names is the
-        # host asked about (_typed_host): the second name of "Host a b"
-        # shows what OpenSSH resolves for b, not for a.
-        self.target_entry = Gtk.SearchEntry()
-        self.target_entry.set_placeholder_text(_("Search blocks"))
-        self.target_entry.set_tooltip_text(_("Find blocks by name, hostname or IP address"))
-        for side in ("top", "bottom", "start", "end"):
-            getattr(self.target_entry, f"set_margin_{side}")(8)
-        self.target_entry.connect("search-changed", self._on_target_typed)
-        self._block_list = Gtk.ListBox()
-        self._block_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self._block_list.add_css_class("navigation-sidebar")
-        self._block_list.connect("row-selected", self._on_block_picked)
-        self._block_list.set_filter_func(self._block_row_shown)
-        nothing = Gtk.Label(
-            label=_("No block matches."), wrap=True, xalign=0,
-        )
-        nothing.add_css_class("dim-label")
-        for side in ("top", "bottom", "start", "end"):
-            getattr(nothing, f"set_margin_{side}")(12)
-        self._block_list.set_placeholder(nothing)
-        self._all_row = BlockRow()
-        self._all_row.set_plain(_("All Blocks"), "view-list-symbolic")
-        self._all_row._uid = None
-        self._block_list.append(self._all_row)
-        self._block_rows: dict = {}
-        #: True while the window itself moves the list's selection.
-        self._target_syncing = False
-        #: The field's text as last acted on. "search-changed" arrives a
-        #: moment after the text changes, so text the window put there
-        #: itself is told apart by this, not by a flag.
-        self._typed_seen = ""
-        #: The host asked about whichever block is selected: _typed_host.
-        self._pinned_host = ""
-        #: Text the window itself put in the field (_set_typed), and True
-        #: while it is doing so.
-        self._window_text = None
-        self._setting_typed = False
-        self._block_list.select_row(self._all_row)
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_vexpand(True)
-        scroller.set_child(self._block_list)
-        # The files of the configuration: the root and what it includes.
-        # Hidden while there is only one.
-        self.file_switcher = Gtk.DropDown()
-        self.file_switcher.set_tooltip_text(_("The file of the configuration shown here"))
-        self.file_switcher.set_margin_top(8)
-        self.file_switcher.set_margin_start(8)
-        self.file_switcher.set_margin_end(8)
-        self.file_switcher.set_visible(False)
-        self.file_switcher.connect("notify::selected", self._on_file_chosen)
-        self._file_syncing = False
-        self._file_names_shown: Optional[list] = None
-        column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        column.append(self.file_switcher)
-        column.append(self.target_entry)
-        column.append(scroller)
-        #: The list of blocks with its fields, without the separator that
-        #: divides it from the rules: what a host puts in a sidebar of its own.
-        self.sidebar_column = column
+        self.sidebar = BlockSidebar(self)
+        self.target_entry = self.sidebar.target_entry
+        #: The list of blocks: what a host puts in a sidebar of its own.
+        self.sidebar_column = self.sidebar
         if self.embedded:
-            return column
-        column.set_size_request(210, -1)
-        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        outer.append(column)
-        outer.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
-        return outer
+            view.set_content(self.stack)
+            self.split = None
+        else:
+            self.split = Adw.OverlaySplitView()
+            self.split.set_sidebar(self.sidebar)
+            self.split.set_content(self.stack)
+            self.split.set_min_sidebar_width(220)
+            self.split.set_max_sidebar_width(300)
+            self.split.bind_property(
+                "show-sidebar", self.sidebar_button, "active",
+                GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE,
+            )
+            view.set_content(self.split)
+
+        self.set_size_request(*self._host_min_size())
+        narrow = Adw.Breakpoint.new(
+            Adw.BreakpointCondition.parse(f"max-width: {_NARROW_BELOW}px")
+        )
+        narrow.add_setter(self.switcher, "visible", False)
+        narrow.add_setter(self.switcher_bar, "reveal", True)
+        if self.split is not None:
+            narrow.add_setter(self.split, "collapsed", True)
+        self.add_breakpoint(narrow)
+
+    def _build_context_bar(self) -> Gtk.Widget:
+        """The block on screen, the host being checked, and what can be
+        done with that host."""
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bar.add_css_class("advcfg-context")
+        self.block_title = Gtk.Label(xalign=0)
+        self.block_title.add_css_class("title-4")
+        self.block_title.add_css_class("monospace")
+        self.block_title.set_ellipsize(Pango.EllipsizeMode.END)
+        bar.append(self.block_title)
+        self.file_pill = pill(style="muted")
+        bar.append(self.file_pill)
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        bar.append(spacer)
+        self.check_entry = Gtk.Entry()
+        self.check_entry.set_width_chars(16)
+        self.check_entry.set_valign(Gtk.Align.CENTER)
+        self.check_entry.set_icon_from_icon_name(
+            Gtk.EntryIconPosition.PRIMARY, "network-server-symbolic"
+        )
+        self.check_entry.set_tooltip_text(_(
+            "The host OpenSSH is asked about. Empty: the host the selected block names."
+        ))
+        self.check_entry.update_property(
+            [Gtk.AccessibleProperty.LABEL], [_("Host to check")]
+        )
+        self.check_entry.connect("changed", self._on_check_typed)
+        self.check_entry.connect("icon-release", self._on_check_icon)
+        bar.append(self.check_entry)
+        self.test_status = pill(style="muted")
+        bar.append(self.test_status)
+        self.copy_command_button = Gtk.Button(
+            icon_name="edit-copy-symbolic", tooltip_text=_("Copy SSH Command")
+        )
+        self.copy_command_button.set_valign(Gtk.Align.CENTER)
+        self.copy_command_button.connect("clicked", lambda *_a: self.copy_command())
+        bar.append(self.copy_command_button)
+        self.test_button = Gtk.Button()
+        self.test_button.set_child(Adw.ButtonContent(
+            icon_name="media-playback-start-symbolic", label=_("Test Connection"),
+        ))
+        self.test_button.set_valign(Gtk.Align.CENTER)
+        self.test_button.connect("clicked", lambda *_a: self.test_connection())
+        bar.append(self.test_button)
+        return bar
 
     # ------------------------------------------------------------------
     # convenience for callers and tests
@@ -507,65 +423,55 @@ class AdvancedConfigBase:
 
     @property
     def raw_pending(self) -> bool:
-        return self.results.raw_pending
+        return self.raw.pending
 
     @property
     def dirty(self) -> bool:
-        return self.editor.dirty or self.results.raw_pending
+        return self.editor.dirty or self.raw.pending
 
     def target_text(self) -> str:
-        """The host OpenSSH is asked about: the one typed in the sidebar,
+        """The host OpenSSH is asked about: the one typed above the views,
         else the one the selected block names. Empty: none."""
         return self._typed_host() or first_host_name(
             self.editor.find_block(self.selected_uid)
         )
 
-    # -- the search field ------------------------------------------------
-
-    def _search_words(self) -> list:
-        return self.target_entry.get_text().casefold().split()
-
-    def _block_matches(self, block, words) -> bool:
-        """Whether *block* is found by every word: in its name (what its
-        row in the list reads) or in its address (HostName). Its other
-        options are not searched: a host is not found by a directive that
-        happens to mention it."""
-        text = " ".join([
-            messages.block_list_title(block.kind, block.patterns),
-            *(option.value for option in block.options
-              if option.key.strip().lower() == "hostname"),
-        ]).casefold()
-        return all(word in text for word in words)
-
-    def _matching_blocks(self) -> list:
-        words = self._search_words()
-        if not words:
-            return []
-        return [block for block in self.editor.blocks if self._block_matches(block, words)]
-
     def _typed_host(self) -> str:
         """The host asked about whichever block is selected, if there is
-        one: the exact name of a host typed in the search field, or a host
-        a caller asked to keep in question (``go_to`` with *pin*, a source
-        line followed from the Effective page). Empty otherwise: the
-        selected block then says."""
+        one: typed above the views, or one a caller asked to keep in
+        question (``go_to`` with *pin*, a source followed from Effective).
+        Empty otherwise: the selected block then says."""
         return self._pinned_host
 
-    def _block_row_shown(self, row) -> bool:
-        words = self._search_words()
-        if not words:
-            return True
-        block = self.editor.find_block(getattr(row, "_uid", None))
-        # "All Blocks" is not something found.
-        return block is not None and self._block_matches(block, words)
+    def show_page(self, name: str) -> None:
+        """Make one of the three views the one on screen."""
+        if name in PAGES and self.stack.get_visible_child_name() != name:
+            self.stack.set_visible_child_name(name)
 
-    def _select_found_block(self) -> None:
-        """Select the block the search is most likely about: the one that
-        names the host typed, else the first that holds the words."""
-        found = self._matching_blocks()
+    # -- the search field ------------------------------------------------
+
+    def search_changed(self) -> None:
+        """The sidebar's search: keep the blocks found, and select the one
+        the search is most likely about (the one that names the host typed,
+        else the first found)."""
+        self.sidebar.refilter()
+        words = self.sidebar.search_words()
+        typed = self.target_entry.get_text().strip()
+        # The exact name of a host the configuration names is the host
+        # checked: the second name of "Host a b" shows what OpenSSH
+        # resolves for b, not for a. Anything else typed is a search only,
+        # and a host the search put there goes with it.
+        named = typed if typed in plain_host_names(self.editor.blocks) else ""
+        if named or self._check_from_search:
+            self._check_from_search = bool(named)
+            if named != self._pinned_host:
+                self._set_typed(named)
+                self._target_changed()
+        if not words:
+            return
+        found = [block for block in self.editor.blocks if block_matches(block, words)]
         if not found:
             return
-        typed = self.target_entry.get_text().strip()
         best = next(
             (block for block in found
              if block.kind == HOST and typed in block.patterns.split()),
@@ -574,7 +480,41 @@ class AdvancedConfigBase:
         if self.editor.find_block(self.selected_uid) in found and best is found[0]:
             return                      # what is selected is among the found
         self.select_block(best.uid)
-        self.rules.scroll_to(best.uid)
+
+    # -- the host being checked -------------------------------------------
+
+    def _set_typed(self, text: str) -> None:
+        """Put a host to check above the views, as the window's own doing."""
+        self._check_syncing = True
+        try:
+            if self.check_entry.get_text() != text:
+                self.check_entry.set_text(text)
+        finally:
+            self._check_syncing = False
+        self._pinned_host = text.strip()
+        self._sync_context()
+
+    def _on_check_typed(self, entry) -> None:
+        self._sync_check_icon()
+        if self._check_syncing:
+            return
+        host = entry.get_text().strip()
+        self._check_from_search = False     # typed here: the user's own
+        if host == self._pinned_host:
+            return
+        self._pinned_host = host
+        self._sync_context()
+        self._target_changed()
+
+    def _sync_check_icon(self) -> None:
+        has_text = bool(self.check_entry.get_text())
+        self.check_entry.set_icon_from_icon_name(
+            Gtk.EntryIconPosition.SECONDARY, "edit-clear-symbolic" if has_text else None
+        )
+
+    def _on_check_icon(self, entry, position) -> None:
+        if position == Gtk.EntryIconPosition.SECONDARY:
+            entry.set_text("")
 
     # ------------------------------------------------------------------
     # background work
@@ -611,23 +551,24 @@ class AdvancedConfigBase:
             logger.debug("Advanced Configuration could not load", exc_info=error)
             self._show_file_banner(_("The SSH configuration could not be read."))
             self._pending_target = None
-            self._sync_file_switcher()
+            self._sync_files()
             return
+        same_file = self._loaded and str(getattr(result, "file", "") or "") == self._file
         self._file = str(getattr(result, "file", "") or "")
         self._files = tuple(getattr(result, "files", ()) or ())
-        self._sync_file_switcher()
         self._revision = result.revision
         self._display_name = result.display_name
         self._writable = bool(result.writable)
-        self._title.set_subtitle(result.display_name)
         self.editor.load(result.text)
         self._forget_answers()      # another text, whatever its serial says
         self._loaded_lines = self.editor.lines
         self._loaded = True
         self._allowed_exec.clear()
-        self._notes_open.clear()
         self._kept_visible.clear()
-        self.results.discard_raw()
+        self.raw.discard()
+        if not same_file:
+            self._selected_index = self._first_index()
+        self.selected_uid = None            # the blocks are new: chosen again
         self._show_file_banner(
             "" if self._writable
             else _("This SSH configuration is read-only: changes cannot be saved.")
@@ -637,11 +578,17 @@ class AdvancedConfigBase:
         self._apply_pending_target()
         self._apply_pending_block()
 
-    def _check_at_open(self) -> None:
-        """Ask OpenSSH about the file as it is, before any host is looked at.
+    def _first_index(self) -> int:
+        """The block selected when a file opens: its first Host block (the
+        global options say little on their own), else its first block."""
+        for index, block in enumerate(self.editor.blocks):
+            if block.kind != GLOBAL:
+                return index
+        return 0
 
-        A configuration OpenSSH already rejects is said so at once.
-        """
+    def _check_at_open(self) -> None:
+        """Ask OpenSSH about the file as it is, before any host is looked
+        at: a configuration OpenSSH already rejects is said so at once."""
         serial = self.editor.serial
         try:
             request = EvaluateSshConfigDraftRequest(
@@ -662,8 +609,8 @@ class AdvancedConfigBase:
         """Save what is on screen, after asking OpenSSH whether it accepts it."""
         if self._saving or not self.dirty or not self._writable:
             return
-        if self.results.raw_pending:
-            # The rules are locked while text is being typed, so the text
+        if self.raw.pending:
+            # The other views wait while text is being typed, so the text
             # is the newer of the two: it is what gets saved.
             self.apply_raw()
             if not self.dirty:
@@ -672,8 +619,7 @@ class AdvancedConfigBase:
         self._update_chrome()
         # The text, the file it is of and the revision it was loaded at are
         # taken together, now: the save is of this document, whatever is on
-        # screen by the time OpenSSH has been asked. (Another file cannot be
-        # opened while a save is under way either: see open_file.)
+        # screen by the time OpenSSH has been asked.
         text, file, revision = self.editor.text, self._file, self._revision
         try:
             # No agreed Match exec command goes with this question: it is
@@ -685,9 +631,6 @@ class AdvancedConfigBase:
             return
 
         def checked(result, error) -> None:
-            # A draft with a Match exec command nobody agreed to run cannot
-            # be checked without running it; and when the check itself
-            # fails, the save is not held hostage to it.
             if error is None and result is not None and result.errors:
                 self._confirm_rejected(text, file, revision, result)
             else:
@@ -738,7 +681,7 @@ class AdvancedConfigBase:
         """A save has ended, written or not: what waited for it goes on."""
         self._saving = False
         self._update_chrome()
-        self._sync_file_switcher()
+        self._sync_files()
         self._apply_pending_target()
 
     def _on_saved_result(self, text: str, result, error) -> None:
@@ -770,7 +713,7 @@ class AdvancedConfigBase:
         self._show_file_banner("")          # an earlier failure is history
         self._toasts.add_toast(Adw.Toast.new(_("SSH configuration saved")))
         self._update_chrome()
-        self._sync_file_switcher()
+        self._sync_files()
         self._apply_pending_target()         # a place asked for during the save
         self._schedule_evaluation(now=True)  # Match exec commands are saved now
         for listener in [self._on_saved, *self._saved_listeners]:
@@ -793,30 +736,13 @@ class AdvancedConfigBase:
     # the files of the configuration
     # ------------------------------------------------------------------
 
-    def _sync_file_switcher(self) -> None:
-        """Offer the files the configuration reads; show the one on screen.
-        A configuration of one file has nothing to switch between."""
-        names = [ref.display_name for ref in self._files]
-        self._file_syncing = True
-        try:
-            if names != self._file_names_shown:
-                self._file_names_shown = names
-                self.file_switcher.set_model(Gtk.StringList.new(names))
-            current = next(
-                (index for index, ref in enumerate(self._files) if ref.file == self._file), 0
-            )
-            if names and self.file_switcher.get_selected() != current:
-                self.file_switcher.set_selected(current)
-        finally:
-            self._file_syncing = False
-        self.file_switcher.set_visible(len(names) > 1)
-
-    def _on_file_chosen(self, *_args) -> None:
-        if self._file_syncing:
-            return
-        index = self.file_switcher.get_selected()
-        if 0 <= index < len(self._files):
-            self.open_file(self._files[index].file)
+    def _sync_files(self) -> None:
+        """Show which file is on screen, in the sidebar and the Raw view."""
+        self.sidebar.sync(self.editor.blocks, self._files, self._file, self._display_name)
+        self.sidebar.select(self.selected_uid)
+        self.raw.set_files(self._files, self._file)
+        set_pill(self.file_pill, self._display_name, "muted",
+                 _("The file of the configuration on screen"))
 
     def open_file(self, file: str) -> None:
         """Put another file of the configuration on screen: *file* as the
@@ -827,12 +753,12 @@ class AdvancedConfigBase:
         if self._saving:
             # Not while a save is under way: it is of the file on screen. A
             # place asked for (go_to) is gone to when the save is over.
-            self._sync_file_switcher()
+            self._sync_files()
             return
 
         def stay() -> None:
             self._pending_target = None
-            self._sync_file_switcher()
+            self._sync_files()
 
         if self.dirty:
             self._confirm_discard(lambda: self._load(file), stay)
@@ -868,16 +794,6 @@ class AdvancedConfigBase:
     ) -> None:
         """Show a place of the configuration. See
         ``docs/architecture/advanced-configuration-navigation.md``.
-
-        *file*: the file it is in, as a connection reports its source (a
-        path); empty, or a path the configuration does not read, is the
-        root. *line*: a line of that file **as saved**; the block or option
-        it belongs to is shown, wherever unsaved edits have moved it, or the
-        line itself on the Text page when no block owns it. *host*: the
-        block that declares the host, when no line is given or it finds
-        nothing. *option*: within that block, the option to show (its
-        keyword). *pin*: make *host* the host OpenSSH is asked about,
-        whichever block is selected afterwards.
 
         May be called before the window has loaded: it goes there once the
         file is on screen.
@@ -924,8 +840,9 @@ class AdvancedConfigBase:
                 self.editor.add_option(block.uid, key, value)
         self._kept_visible.add(block.uid)
         self.selected_uid = block.uid
+        self.show_page("structured")
         self._after_structure()
-        GLib.idle_add(lambda: (self.rules.focus_block(block.uid), False)[1])
+        GLib.idle_add(lambda: (self.structured.focus_patterns(), False)[1])
 
     def _apply_pending_target(self) -> None:
         target = self._pending_target
@@ -947,8 +864,8 @@ class AdvancedConfigBase:
             if line:
                 # No block owns the line (a comment, a line OpenSSH cannot
                 # place): it is shown as text.
-                self.show_pane("results")
-                self.results.show_text_line(line)
+                self.show_page("raw")
+                self.raw.show_line(line)
             elif host:
                 self._toasts.add_toast(Adw.Toast.new(
                     _("No Host block names “{host}” in this file.").format(host=host)
@@ -961,21 +878,17 @@ class AdvancedConfigBase:
         if option:
             wanted_key = option.lower()
             uid = next(
-                (item.uid for item in block.options if item.key.strip().lower() == wanted_key),
+                (item.uid for item in block.options if item.keyword == wanted_key),
                 uid,
             )
-        self.show_pane("rules")
+        if self.stack.get_visible_child_name() == "raw":
+            self.show_page("structured")
         self.select_block(block.uid)
 
         def show() -> bool:
-            # Once laid out: a window just opened has no sizes yet. A folded
-            # block opens: it is what the caller wanted shown.
-            if self.selected_uid != block.uid:
-                return False        # something else was selected meanwhile
-            self.rules.set_folded(block.uid, False)
-            self.rules.scroll_to(block.uid)
-            self.rules.reveal(uid)
-            self._level_raw_with_rules()
+            # Once laid out: a window just opened has no sizes yet.
+            if self.selected_uid == block.uid:
+                self.structured.reveal(uid)
             return False
 
         GLib.timeout_add(150, show)
@@ -989,11 +902,9 @@ class AdvancedConfigBase:
         return None
 
     def _on_copy(self, *_args) -> None:
-        # What is on screen: text typed on the Raw page and not applied is
-        # the newer of the two, and it is what "the configuration" means to
-        # whoever is looking at it. Copying leaves it as it is, unapplied.
-        pending = self.results.raw_pending
-        self.get_clipboard().set(self.results.raw_text() if pending else self.editor.text)
+        # What is on screen: text typed in the Raw view and not applied is
+        # the newer of the two. Copying leaves it as it is, unapplied.
+        self.get_clipboard().set(self.raw.text() if self.raw.pending else self.editor.text)
         self._toasts.add_toast(Adw.Toast.new(_("Configuration copied")))
 
     def _confirm_discard(
@@ -1085,14 +996,23 @@ class AdvancedConfigBase:
 
     def _show_draft(self, *, evaluate_now: bool = False) -> None:
         """Put the editor's draft on screen (in place) and ask about it."""
+        blocks = self.editor.blocks
         if self.editor.find_block(self.selected_uid) is None:
+            # The block selected is gone (deleted, or the draft read anew):
+            # the one at its place is selected, so there always is one.
             self.selected_uid = None
-        self._kept_visible &= {block.uid for block in self.editor.blocks}
-        self.rules.sync(self.editor.blocks, self._notes_open, self.editor.has_global)
-        self.rules.select(self.selected_uid)
-        self.results.set_text(self.editor.text)
+            if blocks:
+                index = min(max(self._selected_index, 0), len(blocks) - 1)
+                self.selected_uid = blocks[index].uid
+        block = self.editor.find_block(self.selected_uid)
+        if block is not None:
+            self._selected_index = blocks.index(block)
+        self._kept_visible &= {item.uid for item in blocks}
+        self._sync_files()
+        self.structured.show(block)
+        self.raw.set_text(self.editor.text)
         self._mark_selection_in_raw(scroll=False)
-        self._sync_block_list()
+        self._sync_context()
         self._update_chrome()
         self._show_answer()                     # the last answer, until the new one
         self._schedule_evaluation(now=evaluate_now)
@@ -1102,110 +1022,50 @@ class AdvancedConfigBase:
         self.undo_button.set_sensitive(self.editor.can_undo and not busy)
         self.redo_button.set_sensitive(self.editor.can_redo and not busy)
         self.save_button.set_sensitive(self.dirty and self._writable and not busy)
-        self._title.set_title(_("Advanced Configuration") + (" •" if self.dirty else ""))
         self._host_dirty_changed()
-        # One editor at a time: while text typed on the Text page waits to
-        # be applied, the rules are not edited beside it (the two would
+        # One editor at a time: while text typed in the Raw view waits to
+        # be applied, the blocks are not edited beside it (the two would
         # overwrite each other).
-        self.rules.set_sensitive(not self.results.raw_pending)
+        pending = self.raw.pending
+        self.structured.set_sensitive(not pending)
+        self.sidebar.list.set_sensitive(not pending)
+        self.sidebar.new_button.set_sensitive(not pending)
+        self._sync_test_button()
 
-    def _sync_block_list(self) -> None:
-        """Make the sidebar's rows match the blocks, in place: a row is
-        kept for as long as its block exists, and only relabelled."""
-        blocks = self.editor.blocks
-        rows = self._block_rows
-        wanted = {block.uid for block in blocks}
-        self._target_syncing = True
-        try:
-            for uid in [uid for uid in rows if uid not in wanted]:
-                self._block_list.remove(rows.pop(uid))
-            for index, block in enumerate(blocks):
-                row = rows.get(block.uid)
-                if row is None:
-                    row = rows[block.uid] = BlockRow()
-                    row._uid = block.uid
-                    self._block_list.insert(row, index + 1)
-                elif row.get_index() != index + 1:
-                    self._block_list.remove(row)
-                    self._block_list.insert(row, index + 1)
-                # An icon, the name, and what the block is for.
-                row.update(block.kind, block.patterns, block.disabled)
-            self._block_list.invalidate_filter()
-        finally:
-            self._target_syncing = False
-        self._mirror_selection()
+    def _sync_context(self) -> None:
+        """The bar above the views: the block, and the host it is checked
+        with (typed, or the block's own name in grey)."""
+        block = self.editor.find_block(self.selected_uid)
+        title = messages.block_list_title(block.kind, block.patterns) if block else ""
+        if self.block_title.get_label() != title:
+            self.block_title.set_label(title)
+        own = first_host_name(block)
+        self.check_entry.set_placeholder_text(own or _("Host to check"))
+        host = split_target(self.target_text())[1]
+        self.copy_command_button.set_sensitive(bool(host))
+        self._sync_test_button()
 
-    def _mirror_selection(self) -> None:
-        """Show the selected block as the sidebar's selected row."""
-        chosen = self._block_rows.get(self.selected_uid, self._all_row)
-        if self._block_list.get_selected_row() is chosen:
-            return
-        self._target_syncing = True
-        try:
-            self._block_list.select_row(chosen)
-        finally:
-            self._target_syncing = False
+    def _sync_test_button(self) -> None:
+        host = split_target(self.target_text())[1]
+        if self._testing:
+            ready, tip = False, _("Testing…")
+        elif not host:
+            ready, tip = False, _("Choose a block that names a host, or type one to check")
+        elif self.dirty:
+            ready, tip = False, _("Save first: the test connects with the saved configuration")
+        else:
+            ready, tip = True, _("Connect to {host} with the saved configuration").format(host=host)
+        self.test_button.set_sensitive(ready)
+        self.test_button.set_tooltip_text(tip)
 
     def _target_changed(self, *, idle: bool = False) -> None:
         # A command can depend on the host (%h, %r): agreement to run it
-        # was for the host in question at the time. Blocks kept open were
-        # worked on for that host too.
+        # was for the host in question at the time. Blocks kept bright
+        # were worked on for that host too.
         self._allowed_exec.clear()
         self._kept_visible.clear()
+        set_pill(self.test_status, "", "muted")
         self._schedule_evaluation(idle=idle, now=not idle and self._answer_ready())
-
-    def _on_block_picked(self, _listbox, row) -> None:
-        if self._target_syncing or row is None:
-            return
-        self.select_block(row._uid)
-        if row._uid is not None:
-            self.rules.scroll_to(row._uid)
-            self._level_raw_with_rules()    # the card has moved
-
-    def _set_typed(self, text: str) -> None:
-        """Put *text* in the field as the window's own doing."""
-        self._typed_seen = text
-        # The field reports a change at once when it is emptied and a
-        # moment later otherwise, and replacing its text does both: neither
-        # is typing. The first is let pass here, the second by the text
-        # being the one the window put.
-        self._window_text = text
-        self._setting_typed = True
-        try:
-            if self.target_entry.get_text() != text:
-                self.target_entry.set_text(text)
-        finally:
-            self._setting_typed = False
-        # Kept in question as it is: a caller's host need not be one the
-        # file names.
-        self._pinned_host = text.strip()
-        self._block_list.invalidate_filter()
-
-    def _on_target_typed(self, *_args) -> None:
-        typed = self.target_entry.get_text().strip()
-        self._block_list.invalidate_filter()
-        if self._setting_typed:
-            return
-        if self._window_text is not None and typed == self._window_text.strip():
-            self._typed_seen = typed
-            return
-        self._window_text = None
-        if typed == self._typed_seen:
-            return
-        self._typed_seen = typed
-        # The user's own typing finds a block; text the window put there
-        # (a host kept in question) leaves the selection alone.
-        selected = self.selected_uid
-        # The exact name of a host the configuration names is the host in
-        # question; anything else typed is a search and no host at all.
-        host = self._pinned_host
-        self._pinned_host = typed if typed in plain_host_names(self.editor.blocks) else ""
-        self._select_found_block()
-        # A selection the search moved has asked for itself.
-        if host != self._pinned_host:
-            self._target_changed(
-                idle=self.selected_uid != selected and not self._answer_ready()
-            )
 
     def _toast_refusal(self, refusal) -> None:
         if refusal is Refusal.GLOBAL_ORDER:
@@ -1232,8 +1092,11 @@ class AdvancedConfigBase:
     def _after_typing(self, changed: bool) -> None:
         if not changed:
             return
-        self.results.set_text(self.editor.text)
+        self.raw.set_text(self.editor.text)
         self._mark_selection_in_raw(scroll=False)
+        # The sidebar names blocks by their patterns, user and address.
+        self.sidebar.sync(self.editor.blocks, self._files, self._file, self._display_name)
+        self._sync_context()
         self._schedule_history()
         self._update_chrome()
         self._schedule_evaluation()
@@ -1244,8 +1107,9 @@ class AdvancedConfigBase:
             return
         self._kept_visible.add(block.uid)
         self.selected_uid = block.uid
+        self.show_page("structured")
         self._after_structure()
-        GLib.idle_add(lambda: (self.rules.focus_block(block.uid), False)[1])
+        GLib.idle_add(lambda: (self.structured.focus_patterns(), False)[1])
 
     def move_block(self, uid: int, index: int) -> bool:
         return self._after_structure(self.editor.move_block(uid, index))
@@ -1255,13 +1119,25 @@ class AdvancedConfigBase:
 
     def move_selected(self, delta: int) -> bool:
         """Alt+Up / Alt+Down: move the selected block one place."""
-        if self.selected_uid is not None and not self.results.raw_pending:
+        if self.selected_uid is not None and not self.raw.pending:
             self.move_block_by(self.selected_uid, delta)
         return True
 
+    def drop_block(self, uid: int, onto_uid: int, before: bool) -> bool:
+        """A block dropped beside another in the sidebar."""
+        blocks = self.editor.blocks
+        source, target = self.editor.find_block(uid), self.editor.find_block(onto_uid)
+        if source is None or target is None:
+            return False
+        index = blocks.index(target) + (0 if before else 1)
+        if blocks.index(source) < index:
+            index -= 1
+        return self.move_block(uid, index)
+
     def toggle_block(self, uid: int) -> None:
         self._kept_visible.add(uid)
-        self._after_structure(self.editor.toggle_block(uid))
+        if not self._after_structure(self.editor.toggle_block(uid)):
+            self._show_draft()              # refused: the switch goes back
 
     def duplicate_block(self, uid: int) -> None:
         copy = self.editor.duplicate_block(uid)
@@ -1273,31 +1149,38 @@ class AdvancedConfigBase:
     def delete_block(self, uid: int) -> None:
         self._after_structure(self.editor.delete_block(uid))
 
-    def open_note(self, uid: int) -> None:
-        self._notes_open.add(uid)
-        self._show_draft()
-        self.rules.focus_note(uid)
-
-    def add_option(self, block_uid: int, key: str = "", value: str = "") -> None:
+    def add_option(self, block_uid: int, key: str = "", value: str = "", *,
+                   keep: bool = False) -> None:
+        """Add a line to a block. *keep*: added from the Other Options
+        table, where it stays whatever its keyword."""
         option = self.editor.add_option(block_uid, key, value)
+        if option is None:
+            return
+        if keep:
+            self.structured.keep(option.uid)
+        self._kept_visible.add(block_uid)
+        self._after_structure()
+        GLib.idle_add(lambda: (self.structured.focus_option(option.uid, key=not key), False)[1])
+
+    def add_identity(self, block_uid: int) -> None:
+        option = self.editor.add_option(block_uid, fields.SPELLING[fields.IDENTITY], "")
         if option is None:
             return
         self._kept_visible.add(block_uid)
         self._after_structure()
-        GLib.idle_add(lambda: (self.rules.focus_option(option.uid, bool(key)), False)[1])
+        GLib.idle_add(lambda: (self.structured.focus_option(option.uid), False)[1])
+
+    def add_forward(self, block_uid: int, keyword: str, spec: str) -> None:
+        if self.editor.add_option(block_uid, fields.SPELLING[keyword], spec) is not None:
+            self._kept_visible.add(block_uid)
+            self._after_structure()
 
     def delete_option(self, uid: int) -> None:
         self._after_structure(self.editor.delete_option(uid))
 
-    def move_option(self, uid: int, block_uid: int, index: Optional[int]) -> bool:
-        return self._after_structure(self.editor.move_option(uid, block_uid, index))
-
     def patterns_typed(self, uid: int, text: str) -> None:
         self._kept_visible.add(uid)
-        changed = self.editor.set_patterns(uid, text)
-        self._after_typing(changed)
-        if changed:
-            self._sync_block_list()
+        self._after_typing(self.editor.set_patterns(uid, text))
 
     def note_typed(self, uid: int, text: str) -> None:
         self._kept_visible.add(uid)
@@ -1309,40 +1192,179 @@ class AdvancedConfigBase:
             self._kept_visible.add(owner.uid)
         self._after_typing(self.editor.set_option(uid, field, text))
 
-    # -- drops ---------------------------------------------------------------
+    def field_typed(self, block_uid: Optional[int], keyword: str, uid: Optional[int],
+                    text: str) -> None:
+        """Typing in a field of one value (HostName, User, Port, ProxyJump).
+        The first character adds the line, emptying the field removes it."""
+        if self.editor.find_block(block_uid) is None:
+            return
+        self._kept_visible.add(block_uid)
+        if uid is None:
+            if text.strip():
+                self.editor.add_option(block_uid, fields.SPELLING[keyword], text)
+                self._after_structure()
+            return
+        if not text.strip():
+            self._after_structure(self.editor.delete_option(uid))
+            return
+        self._after_typing(self.editor.set_option(uid, "value", text))
 
-    def drop_block(self, uid: int, onto_uid: int, before: bool) -> bool:
-        blocks = self.editor.blocks
-        source, target = self.editor.find_block(uid), self.editor.find_block(onto_uid)
-        if source is None or target is None:
-            return False
-        index = blocks.index(target) + (0 if before else 1)
-        if blocks.index(source) < index:
-            index -= 1
-        return self.move_block(uid, index)
+    def choice_made(self, block_uid: Optional[int], keyword: str, uid: Optional[int],
+                    value: Optional[str]) -> None:
+        """A yes/no field set to yes, no, or not set (None: the line goes)."""
+        if self.editor.find_block(block_uid) is None:
+            return
+        self._kept_visible.add(block_uid)
+        if value is None:
+            if uid is not None:
+                self._after_structure(self.editor.delete_option(uid))
+            return
+        if uid is None:
+            self.editor.add_option(block_uid, fields.SPELLING[keyword], value)
+            self._after_structure()
+            return
+        if self.editor.set_option(uid, "value", value):
+            self.editor.commit_typing()         # one choice, one undo step
+            self._after_structure()
 
-    def drop_option(self, uid: int, onto_uid: int, before: bool) -> bool:
-        block, option = self.editor.find_option(onto_uid)
-        if option is None:
-            return False
-        return self.move_option(uid, block.uid, block.options.index(option) + (0 if before else 1))
+    # -- key files ---------------------------------------------------------------
 
-    def drop_option_on_block(self, uid: int, block_uid: int) -> bool:
-        return self.move_option(uid, block_uid, None)
+    def browse_identity(self, uid: int) -> None:
+        """Choose the key file of an IdentityFile line."""
+        dialog = Gtk.FileDialog(title=_("Choose a Key File"))
+        folder = os.path.expanduser("~/.ssh")
+        if os.path.isdir(folder):
+            dialog.set_initial_folder(Gio.File.new_for_path(folder))
+        root = self.get_root() if hasattr(self, "get_root") else None
 
-    # -- the Text page -------------------------------------------------------
+        def chosen(source, result) -> None:
+            try:
+                file = source.open_finish(result)
+            except GLib.Error:
+                return                      # dismissed
+            path = file.get_path() if file is not None else None
+            if not path:
+                return
+            if self.editor.set_option(uid, "value", fields.home_relative(path)):
+                self.editor.commit_typing()
+                self._after_structure()
+
+        dialog.open(root if isinstance(root, Gtk.Window) else None, None, chosen)
+
+    def fix_key(self, path: str) -> None:
+        if fields.fix_key_permissions(path):
+            text = _("Only you can read {path} now.").format(path=fields.home_relative(path))
+        else:
+            text = _("The permissions of {path} could not be changed.").format(
+                path=fields.home_relative(path)
+            )
+        self._toasts.add_toast(Adw.Toast.new(text))
+
+    # -- the host being checked: copy, test, the route -------------------------
+
+    def copy_command(self) -> None:
+        user, host = split_target(self.target_text())
+        if not host:
+            return
+        command = "ssh " + (f"{user}@" if user else "") + host
+        self.get_clipboard().set(command)
+        self._toasts.add_toast(Adw.Toast.new(_("Copied “{command}”").format(command=command)))
+
+    def test_connection(self) -> None:
+        """Connect to the host being checked with the saved configuration,
+        through the app's own path for one-shot commands (the saved
+        connection of that name runs ``true``)."""
+        user, host = split_target(self.target_text())
+        if not host or self.dirty or self._testing:
+            return
+        self._testing = True
+        set_pill(self.test_status, _("Testing…"), "accent")
+        self._sync_test_button()
+        client = self._client
+
+        def work():
+            from .api.models.broadcast import (
+                BroadcastCommandRequest,
+                BroadcastExecutionPolicy,
+                HostCommandState,
+            )
+
+            connection = next(
+                (item for item in client.list_connections() if item.nickname == host), None
+            )
+            if connection is None:
+                return ("missing", "")
+            request = BroadcastCommandRequest(
+                (connection.id,), "true",
+                BroadcastExecutionPolicy(concurrency_limit=1, timeout_seconds=float(_TEST_TIMEOUT)),
+            )
+            summary = client.start_broadcast_command(request)
+            deadline = time.monotonic() + _TEST_TIMEOUT + 15
+            finished = {"succeeded", "failed", "cancelled"}
+            while summary.operation.state.value not in finished:
+                if time.monotonic() >= deadline or self._closing:
+                    client.cancel_broadcast_command(summary.operation.operation_id)
+                    return ("failed", "")
+                time.sleep(0.1)
+                summary = client.get_broadcast_command(summary.operation.operation_id)
+            target = summary.targets[0] if summary.targets else None
+            if target is not None and target.state is HostCommandState.SUCCEEDED \
+                    and target.exit_code == 0:
+                return ("ok", "")
+            detail = ""
+            if target is not None:
+                # OpenSSH's own last word, as it said it.
+                lines = [line.strip() for line in target.stderr.splitlines() if line.strip()]
+                detail = lines[-1] if lines else ""
+            return ("failed", detail)
+
+        def done(result, error) -> None:
+            self._testing = False
+            if error is not None:
+                logger.debug("connection test failed", exc_info=error)
+                result = ("failed", "")
+            state, detail = result
+            if state == "missing":
+                set_pill(self.test_status, "", "muted")
+                self._toasts.add_toast(Adw.Toast.new(_(
+                    "“{host}” is not a saved connection: only saved connections "
+                    "can be tested here."
+                ).format(host=host)))
+            elif state == "ok":
+                set_pill(self.test_status, messages.test_result_text(True), "success")
+            else:
+                text = messages.test_result_text(False, detail)
+                set_pill(self.test_status, messages.test_result_text(False), "error", text)
+                self._toasts.add_toast(Adw.Toast.new(text))
+            self._sync_test_button()
+
+        self._run(work, done)
+
+    def hop_endpoint(self, name: str) -> str:
+        """``hostname:port`` OpenSSH resolves for a jump host, when its
+        answer is already had (the hosts the configuration names are asked
+        about ahead of time); empty otherwise."""
+        answer = self._answer_cache().get((name, None))
+        if answer is None or not answer.evaluated:
+            return ""
+        values = {}
+        for item in answer.values:
+            values.setdefault(item.key, item.value)
+        if "hostname" not in values:
+            return ""
+        return f"{values['hostname']}:{values.get('port', '22')}"
+
+    # -- the Raw view -------------------------------------------------------
 
     def raw_text_changed(self) -> None:
         self._update_chrome()
 
-    # -- the Raw page and the rules are one place ---------------------------
-
-    def _selected_lines(self) -> tuple:
+    def _selected_lines(self, lines: Optional[LineMap] = None) -> tuple:
         """The first and last line the selected block has in the text."""
         block = self.editor.find_block(self.selected_uid)
         if block is None:
             return (0, 0)
-        lines = self.editor.lines
+        lines = lines or self.editor.lines
         owned = [lines.headers.get(block.uid, 0)] + [
             lines.options.get(option.uid, 0) for option in block.options
         ]
@@ -1350,49 +1372,13 @@ class AdvancedConfigBase:
         return (min(owned), max(owned)) if owned else (0, 0)
 
     def _mark_selection_in_raw(self, *, scroll: bool = True) -> None:
-        """Make the selected block's lines stand out on the Raw page and,
-        when the selection moved, stand level with the block's card."""
-        self.results.mark_block(*self._selected_lines())
-        if scroll and not self._selecting_from_raw:
-            self._level_raw_with_rules()
-
-    def _edge(self, widget) -> Optional[float]:
-        """The top edge of *widget*, in the window."""
-        found, bounds = widget.compute_bounds(self)
-        return bounds.get_y() if found else None
-
-    def _level_raw_with_rules(self) -> bool:
-        """Scroll the Raw page so that the selected block's first line is
-        at the height of its card's top in the rules: the two show the
-        same thing, and the eye crosses over on a level."""
-        first, _last = self._selected_lines()
-        if not first or not self.results.raw_shown():
-            return False
-        top = self.rules.card_top(self.selected_uid)
-        rules_edge, raw_edge = self._edge(self.rules.scroller), self._edge(self.results.raw_scroller)
-        if None in (top, rules_edge, raw_edge):
-            return False
-        self.results.put_raw_line_at(first, top + rules_edge - raw_edge)
-        return False
-
-    def _level_rules_with_raw(self) -> None:
-        """The other way round: the card comes level with its first line
-        in the text, which is where the cursor (and the eye) is."""
-        first, _last = self._selected_lines()
-        top = self.results.raw_line_top(first) if first else None
-        rules_edge, raw_edge = self._edge(self.rules.scroller), self._edge(self.results.raw_scroller)
-        if None in (top, rules_edge, raw_edge):
-            return
-        self.rules.put_card_at(self.selected_uid, top + raw_edge - rules_edge)
-
-    def results_page_shown(self, name: str) -> None:
-        if name == "raw":
-            # Once the page has its size.
-            GLib.idle_add(self._level_raw_with_rules)
+        self.raw.mark_block(
+            *self._selected_lines(), scroll=scroll and not self._selecting_from_raw
+        )
 
     def raw_cursor_moved(self, line: int) -> None:
-        """The cursor is on *line* of the Raw page: the block that line
-        belongs to is the selected one, and its card comes level with it."""
+        """The cursor is on *line* of the Raw view: the block that line
+        belongs to is the selected one."""
         uid = self.editor.owner_of_line(line)
         if uid is None:
             return
@@ -1405,18 +1391,23 @@ class AdvancedConfigBase:
             self.select_block(block_uid)
         finally:
             self._selecting_from_raw = False
-        self._level_rules_with_raw()
 
     def apply_raw(self) -> None:
-        text = self.results.raw_text()
-        self.results.discard_raw()
+        text = self.raw.text()
+        self.raw.discard()
         self.editor.replace_text(text)
-        self._notes_open.clear()
         self._after_structure()
 
     def discard_raw(self) -> None:
-        self.results.discard_raw()
+        self.raw.discard()
         self._update_chrome()
+
+    def _on_page_shown(self, *_args) -> None:
+        name = self.stack.get_visible_child_name()
+        self.effective.set_shown(name == "effective")
+        self.raw.set_shown(name == "raw")
+        if name == "raw":
+            self._mark_selection_in_raw()
 
     # -- history -------------------------------------------------------------
 
@@ -1439,10 +1430,8 @@ class AdvancedConfigBase:
 
     def _history_key(self, step: Callable[[], None]) -> bool:
         """Ctrl+Z and its kin. False leaves the key to whoever has it: the
-        Raw page's text, which has an undo of its own."""
-        focus = self.get_focus()
-        raw = self.results.raw_view
-        if focus is not None and (focus is raw or focus.is_ancestor(raw)):
+        Raw view's text, which has an undo of its own."""
+        if self.raw.owns_focus(self.get_focus()):
             return False
         step()
         return True
@@ -1462,21 +1451,27 @@ class AdvancedConfigBase:
     # ------------------------------------------------------------------
 
     def select_block(self, uid: Optional[int]) -> None:
-        """Select a block, from its card or from the sidebar: the one
-        Alt+arrows move, and, unless a host is typed in the sidebar, the
-        one that says which host OpenSSH is asked about."""
+        """Select a block, from the sidebar or the Raw view: the one shown,
+        the one Alt+arrows move, and, unless a host is typed above the
+        views, the one that says which host OpenSSH is asked about."""
         if uid == self.selected_uid:
             return
         before = self._question()
-        self.selected_uid = uid if self.editor.find_block(uid) is not None else None
-        self.rules.select(self.selected_uid)
-        self._mirror_selection()
+        block = self.editor.find_block(uid)
+        self.selected_uid = block.uid if block is not None else None
+        if block is not None:
+            self._selected_index = self.editor.blocks.index(block)
+        self.sidebar.select(self.selected_uid)
+        self.structured.show(block)
         self._mark_selection_in_raw()
+        self._sync_context()
         if self._question() != before:
             # An answer had already is shown with the selection, in the same
             # frame. One that must be asked for is asked from the idle
-            # loop, so the highlight is painted first.
+            # loop, so the selection is painted first.
             self._target_changed(idle=not self._answer_ready())
+        else:
+            self._show_answer()             # the block's own lines and status
 
     def source_file(self, path: str) -> Optional[str]:
         """The file of the configuration a source names, as the daemon
@@ -1496,9 +1491,9 @@ class AdvancedConfigBase:
         return None
 
     def reveal_source(self, path: str, line: int) -> None:
-        """Show line *line* of another file of the configuration (from a
-        source on the Effective page, or a file on the Includes page).
-        Unsaved changes are asked about first, as for any other file."""
+        """Show line *line* of another file of the configuration (a source
+        in the Effective view). Unsaved changes are asked about first, as
+        for any other file."""
         file = self.source_file(path)
         if file is None:
             return
@@ -1506,20 +1501,20 @@ class AdvancedConfigBase:
         self.go_to(file=file, line=line, host=host, pin=bool(host))
 
     def reveal_line(self, line: int) -> None:
-        """Show the option or block the draft has at *line* (from a source
-        on the Effective page)."""
+        """Show the option or block the draft has at *line* (a source in
+        the Effective view)."""
         uid = self.editor.owner_of_line(line, self._evaluated_lines)
         if uid is None:
             return
         owner, _option = self.editor.find_option(uid)
         # The line belongs to the answer on screen: the host it is about
-        # stays the one in question, as a typed one, whichever block the
-        # line turns out to be in.
+        # stays the one checked, as a typed one, whichever block the line
+        # turns out to be in.
         if not self._typed_host():
             self._set_typed(self.target_text())
-        self.show_pane("rules")
+        self.show_page("structured")
         self.select_block(owner.uid if owner is not None else uid)
-        self.rules.reveal(uid)
+        GLib.idle_add(lambda: (self.structured.reveal(uid), False)[1])
 
     # ------------------------------------------------------------------
     # asking OpenSSH
@@ -1552,10 +1547,10 @@ class AdvancedConfigBase:
 
     # -- answers already had ------------------------------------------------
     #
-    # Asking OpenSSH takes a moment, and a selection must show at once which
-    # blocks apply. So an answer is kept for as long as the draft it is
-    # about stands, and the hosts the configuration names are asked about
-    # ahead of time, in the background: a selection then finds its answer
+    # Asking OpenSSH takes a moment, and a selection must show at once what
+    # applies. So an answer is kept for as long as the draft it is about
+    # stands, and the hosts the configuration names are asked about ahead
+    # of time, in the background: a selection then finds its answer
     # waiting. One question is put to the daemon at a time, since a newer
     # one from this window would make it drop the one before.
 
@@ -1604,8 +1599,6 @@ class AdvancedConfigBase:
         # was given for the host on screen, and these are other hosts (and
         # made-up names). A draft that needs one run stops this at once.
         allowed: tuple = ()
-        # The hosts the blocks spell out, and for each pattern block the
-        # made-up name it is tried with: what any selection will ask.
         wanted = list(plain_host_names(self.editor.blocks))
         for block in self.editor.blocks:
             if not block.disabled:
@@ -1632,6 +1625,8 @@ class AdvancedConfigBase:
                 logger.debug("prefetch stopped", exc_info=True)
             finally:
                 self._prefetching = False
+            # The route through jump hosts names hosts asked about here.
+            GLib.idle_add(lambda: (None if self._closing else self._show_answer(), False)[1])
 
         threading.Thread(
             target=work, daemon=True, name="sshpilot-advanced-config-prefetch"
@@ -1801,7 +1796,7 @@ class AdvancedConfigBase:
         self._schedule_evaluation(now=True)
 
     def _show_answer(self) -> None:
-        """Hand OpenSSH's answer (or its absence) to the two views."""
+        """Hand OpenSSH's answer (or its absence) to the views."""
         evaluation = self._evaluation
         related = self._related if evaluation is None else None
         lines = self._evaluated_lines if evaluation is not None else self.editor.lines
@@ -1823,18 +1818,43 @@ class AdvancedConfigBase:
                 self._show_answer_banner(messages.error_text(evaluation.errors[0]))
             else:
                 self._show_answer_banner("")
-        matched = self.rules.show_answer(
-            self.editor.blocks, evaluation, lines, keep_open=self._kept_visible,
-            related=related[0] if related is not None else None,
-        )
+        answered = bool(evaluation and evaluation.evaluated)
+        matched = set(evaluation.matched_blocks) if answered else set()
+        if related is not None:
+            answered, matched = True, related[0]
+        # Blocks that do not apply to the host being checked are dimmed in
+        # the sidebar (never hidden, never moved), unless worked on for it.
+        dimmed = set()
+        applies_selected = None
+        for block in self.editor.blocks:
+            if not answered or block.disabled:
+                continue
+            applies = block.kind == GLOBAL or lines.headers.get(block.uid, 0) in matched
+            if block.uid == self.selected_uid:
+                applies_selected = applies
+            # The block in hand is at full strength, whatever applies.
+            if not applies and block.uid not in self._kept_visible \
+                    and block.uid != self.selected_uid:
+                dimmed.add(block.uid)
+        self.sidebar.show_dimmed(dimmed)
         user, host = split_target(self.target_text())
-        self.results.show(
-            Answer(
-                evaluation, list(self.editor.blocks), lines, user, host,
-                note=messages.related_note(related[1]) if related is not None else "",
-            ),
-            matched,
-        )
+        self.structured.show_answer(AnswerView(
+            evaluation, lines, host=host, applies=applies_selected,
+            related_hosts=related[1] if related is not None else None,
+        ))
+        block = self.editor.find_block(self.selected_uid)
+        block_lines = frozenset()
+        if block is not None:
+            block_lines = frozenset(
+                line for line in [lines.headers.get(block.uid, 0)] + [
+                    lines.options.get(option.uid, 0) for option in block.options
+                ] if line
+            )
+        self.effective.show(Answer(
+            evaluation, list(self.editor.blocks), lines, user, host,
+            note=messages.related_note(related[1]) if related is not None else "",
+            block_lines=block_lines,
+        ))
 
 
 class AdvancedConfigWindow(AdvancedConfigBase, Adw.Window):
@@ -1843,7 +1863,7 @@ class AdvancedConfigWindow(AdvancedConfigBase, Adw.Window):
     def _host_setup(self, parent) -> None:
         if parent is not None:
             self.set_transient_for(parent)
-        self.set_default_size(1400, 760)
+        self.set_default_size(1280, 820)
         self.set_title(_("Advanced Configuration"))
         self.connect("close-request", self._on_close_request)
 
@@ -1855,6 +1875,11 @@ class AdvancedConfigWindow(AdvancedConfigBase, Adw.Window):
 
     def _host_close(self) -> None:
         self.close()
+
+    def _host_dirty_changed(self) -> None:
+        title = _("Advanced Configuration") + (" •" if self.dirty else "")
+        if self.get_title() != title:
+            self.set_title(title)
 
 
 class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
@@ -1912,7 +1937,7 @@ class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
         """Read the configuration again and show the block that was
         selected, if it is still there. Not while there is a draft to
         lose: a file changed under unsaved changes is said at the save."""
-        if not self._loaded or self._saving or self.dirty or self.results.raw_pending:
+        if not self._loaded or self._saving or self.dirty or self.raw.pending:
             return
         # Until the read is back the view counts as not loaded: a place to
         # go to or a block to begin, asked for meanwhile, waits for the
@@ -1946,8 +1971,8 @@ class AdvancedConfigView(AdvancedConfigBase, Adw.BreakpointBin):
         self.set_child(widget)
 
     def _host_min_size(self):
-        # Far below a window's: the tab is as wide as the main window
-        # leaves it, and one pane at a time fits in little.
+        # Far below a window's: the view is as wide as the main window
+        # leaves it.
         return 360, 300
 
     def _host_close(self) -> None:

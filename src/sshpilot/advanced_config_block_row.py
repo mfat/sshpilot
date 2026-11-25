@@ -65,15 +65,20 @@ class BlockRow(Gtk.ListBoxRow):
         content.append(text)
         self.set_child(content)
 
-    def update(self, kind: str, patterns: str, disabled: bool = False) -> None:
-        shown = (kind, patterns, bool(disabled))
+    def update(self, kind: str, patterns: str, disabled: bool = False,
+               detail: str = "") -> None:
+        """Show a block. *detail* (``user@hostname``, the block's own) is
+        the caption when given; else the caption says what the block is."""
+        shown = (kind, patterns, bool(disabled), detail)
         if shown == self._shown:
             return
         self._shown = shown
         category = block_category(kind, patterns)
         self.category = category
         title = messages.block_list_title(kind, patterns)
-        caption = messages.block_category_label(category, len(patterns.split()) or 1)
+        caption = detail or messages.block_category_label(
+            category, len(patterns.split()) or 1
+        )
         if disabled:
             # Translators: a block that is switched off, e.g. "Host pattern · off".
             caption = _("{kind} · off").format(kind=caption)

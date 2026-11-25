@@ -55,6 +55,7 @@ def test_block_status_waits_for_openssh():
     "src/sshpilot/ssh_config_blocks.py",
     "src/sshpilot/api/transport/config_draft_codec.py",
     "src/sshpilot/advanced_config_model.py",
+    "src/sshpilot/advanced_config_fields.py",
 ])
 def test_backend_modules_do_not_translate(path):
     source = (ROOT / path).read_text()
@@ -63,6 +64,7 @@ def test_backend_modules_do_not_translate(path):
 
 def test_window_strings_are_extracted():
     potfiles = (ROOT / "po" / "POTFILES").read_text().splitlines()
-    for name in ("window", "rules_view", "results_view"):
+    for name in ("window", "sidebar", "structured_view", "effective_view", "raw_view",
+                 "block_row"):
         assert f"src/sshpilot/advanced_config_{name}.py" in potfiles
     assert "src/sshpilot/gtk/advanced_config_messages.py" in potfiles

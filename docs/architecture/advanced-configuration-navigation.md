@@ -1,7 +1,7 @@
 # Opening Advanced Configuration at a place
 
-Advanced Configuration shows the SSH configuration as blocks, with what
-OpenSSH resolves for a host. Any part of the app can open it at a block, an
+Advanced Configuration shows the SSH configuration as blocks, one at a time
+(Structured, Effective and Raw views), with what OpenSSH resolves for a host. Any part of the app can open it at a block, an
 option or a line, in the root file or in a file the root reads through
 `Include`. There is one way in; do not construct `AdvancedConfigWindow`
 yourself and do not reach into its selection.
@@ -49,10 +49,10 @@ app.activate_action(
 | Field | Meaning |
 | --- | --- |
 | `host` | The block whose `Host` line declares the host (`ssh_config_document.declared_hosts`: a plain name no wildcard on the same line already matches). Used when no `line` is given or the line finds nothing. Not found: a toast, nothing moves. |
-| `line` | A 1-based line of `file` **as saved**. The block or option it belongs to is shown wherever unsaved edits have moved it (the window keeps the line map of the text it loaded). A line no block owns (a comment, a blank line) is shown selected on the Text page. |
+| `line` | A 1-based line of `file` **as saved**. The block or option it belongs to is shown wherever unsaved edits have moved it (the window keeps the line map of the text it loaded). A line no block owns (a comment, a blank line) is shown selected in the Raw view. |
 | `option` | A keyword. The first option of the block with that keyword is shown instead of the block's header. |
 | `file` | A path as a connection reports its source. Empty, the root's own path, or a path the configuration does not read all mean the root. |
-| `pin` | `host` is typed into the sidebar's field: it stays the host being checked whichever block is selected afterwards. |
+| `pin` | `host` is put in the host-to-check field above the views: it stays the host being checked whichever block is selected afterwards. |
 
 The call may be made before the window has loaded, and for a file other than
 the one on screen: the window loads what it needs and goes there. If the file
@@ -61,9 +61,10 @@ it; keeping them cancels the navigation.
 
 ## Rules
 
-- **Included files.** The window shows one file at a time; the sidebar's
-  drop-down switches between the files of the configuration and is hidden
-  while there is only one. A file is named to the daemon by the name the
+- **Included files.** The window shows one file at a time. The sidebar lists
+  every file of the configuration as a heading: the file on screen lists its
+  blocks under it, and another file is a row that opens it; the Raw view has
+  a tab per file. A file is named to the daemon by the name the
   daemon gave out (`SshConfigText.files`), never by a path the frontend
   chose: `file=` above is looked up among those names and falls back to the
   root.
@@ -79,7 +80,8 @@ it; keeping them cancels the navigation.
   the connection editor passes the hook that re-marks its fields, and still
   saves only the fields changed in it.
 - **A configuration OpenSSH rejects** opens like any other: the rejected line
-  is marked on its card, and `line=` reaches it.
+  is marked "Rejected" beside its field in the Structured view, and `line=`
+  reaches it.
 
 ## Callers
 
@@ -97,8 +99,8 @@ The dropdown at the top of the main sidebar switches the window between
 Connections and Configuration (`sidebar_views`). Configuration is
 Advanced Configuration in the main window: `AdvancedConfigView`, the same
 controller and widgets as the window (`AdvancedConfigBase`) with `embedded`
-set. Its list of blocks is shown in the main sidebar and its rules and results
-in the content area, in the tabs' place; the tabs are hidden, not closed, and
+set. Its list of blocks is shown in the main sidebar and its three views in
+the content area, in the tabs' place; the tabs are hidden, not closed, and
 selecting or opening one brings Connections back.
 
 `MainWindow.open_advanced_config` shows this view. It opens the window

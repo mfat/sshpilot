@@ -232,3 +232,52 @@ def shadowed_count(count: int) -> str:
     return ngettext(
         "{count} line not used", "{count} lines not used", count
     ).format(count=count)
+
+
+# -- the Structured view --------------------------------------------------------
+
+def source_label(source, *, forced: bool = False, default: bool = False) -> str:
+    """Where a value this block does not set comes from, for the label
+    beside an empty field: another block, another file, Settings, or
+    OpenSSH's own default."""
+    if forced:
+        return forced_source()
+    if source is None:
+        return default_source() if default else ""
+    if source.block:
+        # The block's header as written, e.g. "from Host *".
+        return _("from {block}").format(block=source.block)
+    if source.file:
+        return _("from {file}").format(file=source.file)
+    return _("from the global options")
+
+
+def applies_text(applies, host: str) -> str:
+    """Whether the block on screen applies to the host being checked."""
+    if applies is None or not host:
+        return ""
+    if applies:
+        return _("Applies to {host}.").format(host=host)
+    return _(
+        "Does not apply to {host}: OpenSSH skips this block for it."
+    ).format(host=host)
+
+
+def key_status_text(state: str, mode: int = 0) -> str:
+    """What the key file on disk says about itself (see
+    ``advanced_config_fields.key_file_status``)."""
+    if state == "missing":
+        return _("File not found")
+    if state == "open":
+        return _("Permissions {mode}: other users can read it").format(mode=f"{mode:04o}")
+    if state == "unchecked":
+        return _("Checked when connecting")
+    return ""
+
+
+def test_result_text(ok: bool, detail: str = "") -> str:
+    if ok:
+        return _("Connected")
+    if detail:
+        return _("Failed: {detail}").format(detail=detail)
+    return _("Failed")

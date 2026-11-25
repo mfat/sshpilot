@@ -151,7 +151,9 @@ src/sshpilot/resources/ui/text_editor_window.ui
 src/sshpilot/resources/ui/window.ui
 src/sshpilot/advanced_config_window.py
 src/sshpilot/gtk/advanced_config_messages.py
-src/sshpilot/advanced_config_rules_view.py
-src/sshpilot/advanced_config_results_view.py
+src/sshpilot/advanced_config_sidebar.py
+src/sshpilot/advanced_config_structured_view.py
+src/sshpilot/advanced_config_effective_view.py
+src/sshpilot/advanced_config_raw_view.py
 src/sshpilot/sidebar_views.py
 src/sshpilot/advanced_config_block_row.py

@@ -95,12 +95,12 @@ def _sections(window, blocks=5):
     show_view(window, SECTIONS)
     view = window._config_sections_view
     assert view is not None
-    assert _pump(lambda: len(view._block_rows) == blocks), len(view._block_rows)
+    assert _pump(lambda: len(view.sidebar._rows) == blocks), len(view.sidebar._rows)
     return view
 
 
 def _rows(view):
-    return [view._block_rows[block.uid] for block in view.editor.blocks]
+    return [view.sidebar._rows[block.uid] for block in view.editor.blocks]
 
 
 def _selected_patterns(view):
@@ -116,7 +116,7 @@ def test_the_dropdown_switches_the_whole_window(window):
     window._sidebar_view_switcher.set_selected(1)
     view = window._config_sections_view
     assert stack.get_visible_child_name() == "sections"
-    assert _pump(lambda: len(view._block_rows) == 5)
+    assert _pump(lambda: len(view.sidebar._rows) == 5)
     # The sidebar lists the blocks, each said to be what it is.
     assert view.sidebar_column.get_parent() is window._sidebar_sections_holder
     assert [(r.title.get_label(), r.caption.get_label()) for r in _rows(view)] == [
@@ -141,9 +141,10 @@ def test_the_dropdown_switches_the_whole_window(window):
 def _edit_user(view, value):
     """Type a value into the User option of the *.prod block."""
     prod = next(b for b in view.editor.blocks if b.patterns == "*.prod")
-    option = next(o for o in prod.options if o.key == "User")
-    row = view.rules.cards[prod.uid].rows[option.uid]
-    row.value.set_text(value)
+    view.select_block(prod.uid)
+    field = view.structured.typed["user"]
+    assert field.uid == next(o for o in prod.options if o.key == "User").uid
+    field.entry.set_text(value)
     assert _pump(lambda: view.dirty)
     return prod
 
@@ -302,12 +303,12 @@ def test_the_sections_follow_the_file(window):
 
     view = _sections(window)
     prod = next(b for b in view.editor.blocks if b.patterns == "*.prod")
-    view._block_list.select_row(view._block_rows[prod.uid])
+    view.sidebar.list.select_row(view.sidebar._rows[prod.uid])
     assert _pump(lambda: view.selected_uid == prod.uid)
 
     window.config_path.write_text(CONFIG + "\nHost *.new\n    User fresh\n")
     refresh_sections(window)
-    assert _pump(lambda: len(view._block_rows) == 6)
+    assert _pump(lambda: len(view.sidebar._rows) == 6)
     # The block that was selected still is.
     assert _pump(lambda: _selected_patterns(view) == "*.prod"), _selected_patterns(view)
 
@@ -315,7 +316,7 @@ def test_the_sections_follow_the_file(window):
     window.config_path.write_text(CONFIG)
     refresh_sections(window)                  # not shown: nothing is read
     _pump(lambda: False, seconds=0.4)
-    assert len(view._block_rows) == 6
+    assert len(view.sidebar._rows) == 6
     _sections(window)                         # shown again: read again (5 blocks)
 
 
