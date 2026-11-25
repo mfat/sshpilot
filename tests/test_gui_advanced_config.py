@@ -601,7 +601,11 @@ def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
     effective.select_filter("default")
     assert _pump(lambda: bool(effective.items()))
     item = effective.items()[0]
-    assert item.cell is None or "dim-label" not in item.cell.value.get_css_classes()
+    if item.cell is not None:                        # value and source alike
+        assert "dim-label" not in item.cell.value.get_css_classes()
+        assert "dim-label" not in item.cell.label.get_css_classes()
+        assert item.cell.source.get_sensitive()      # inert, not greyed out
+        assert not item.cell.source.get_can_target()
     effective.select_filter("this")
     # web's IdentityFile ~/.ssh/a does not exist in the test's home.
     (key,) = [i for i in effective.items() if i.key == "identityfile"]

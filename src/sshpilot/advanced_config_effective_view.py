@@ -192,8 +192,11 @@ class _EffectiveCell:
         reachable = bool(item.line) or (
             bool(item.file) and self.controller.source_file(item.file) is not None
         )
-        self.source.set_sensitive(reachable)
-        (self.label.remove_css_class if reachable else self.label.add_css_class)("dim-label")
+        # A source that cannot be shown (OpenSSH's default, the system-wide
+        # file) is plain text: not clickable, but not greyed out either, as
+        # an insensitive button would be.
+        self.source.set_can_target(reachable)
+        self.source.set_focusable(reachable)
 
 
 class EffectiveView(Gtk.Box):
