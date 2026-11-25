@@ -440,12 +440,15 @@ class LineRow:
         self.up.set_sensitive(not first)
         self.down.set_sensitive(not last)
 
-    def _on_drag_begin(self, source, _drag) -> None:
+    def _on_drag_begin(self, source, drag) -> None:
+        """The line rides the pointer as the connection list's chip: an
+        icon and the line's text, not a picture of the whole row."""
+        from .dnd_payload import set_internal_drag_icon
+
         self.view.line_drag_began(self.uid)
-        try:
-            source.set_icon(Gtk.WidgetPaintable.new(self.row), 0, 0)
-        except Exception:
-            pass
+        text = " ".join(part for part in (self.key.get_text(), self.value.get_text()) if part)
+        set_internal_drag_icon(source, self.row, drag=drag,
+                               icon_name="preferences-system-symbolic", label=text or _("Option"))
 
     def _on_changed(self, entry, field: str) -> None:
         if self.view.syncing.on:

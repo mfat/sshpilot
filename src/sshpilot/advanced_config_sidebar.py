@@ -268,12 +268,16 @@ class BlockSidebar(Gtk.Box):
             return None
         return Gdk.ContentProvider.new_for_value(DragItem(row._uid))
 
-    def _on_drag_begin(self, source, _drag, row) -> None:
+    def _on_drag_begin(self, source, drag, row) -> None:
+        """The block rides the pointer as the connection list's chip: its
+        icon and its name, not a picture of the whole row."""
+        from .advanced_config_block_row import ICONS
+        from .dnd_payload import set_internal_drag_icon
+
         self._dragging = row._uid
-        try:
-            source.set_icon(Gtk.WidgetPaintable.new(row), 0, 0)
-        except Exception:
-            pass
+        set_internal_drag_icon(source, row, drag=drag,
+                               icon_name=ICONS.get(getattr(row, "category", ""), "computer-symbolic"),
+                               label=row.title.get_label())
 
     def _end_drag(self) -> None:
         self._dragging = None
