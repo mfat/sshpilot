@@ -2790,6 +2790,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
 
             row = row.get_next_sibling()
+        # Drag grips (Display Drag Handles, compact layout) and the colour
+        # they may carry.
+        self._apply_sidebar_row_actions(force=True)
 
     def _sidebar_forwarding_rules_enabled(self) -> bool:
         try:
@@ -3207,9 +3210,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         self._sidebar_row_actions_reserved = reserved
         # The drag grips go with the row actions (sidebar.py's
-        # _set_child_with_grip): only while the sidebar is wide enough, and
-        # not in the compact layout, where every pixel is the point.
-        grips = reserved and not lb.has_css_class('sidebar-compact')
+        # _set_child_with_grip): only while the sidebar is wide enough, not
+        # in the compact layout, where every pixel is the point, and not
+        # when turned off in Settings ▸ Sidebar.
+        try:
+            wanted = bool(self.config.get_setting('ui.sidebar_show_drag_handles', True))
+        except Exception:
+            wanted = True
+        grips = reserved and wanted and not lb.has_css_class('sidebar-compact')
         row = lb.get_first_child()
         while row is not None:
             grip = getattr(row, 'drag_grip', None)

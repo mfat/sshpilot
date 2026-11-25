@@ -1902,6 +1902,19 @@ class PreferencesWindow(Adw.Window):
         )
         show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
         row_details_group.add(show_group_icon_switch)
+
+        # Drag handles toggle
+        show_drag_handles_switch = Adw.SwitchRow()
+        show_drag_handles_switch.set_title(_("Display Drag Handles"))
+        show_drag_handles_switch.set_subtitle(
+            _("Show grips for reordering at the start of rows; rows can be dragged either way")
+        )
+        show_drag_handles_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_drag_handles', True))
+        )
+        show_drag_handles_switch.connect('notify::active', self.on_sidebar_show_drag_handles_changed)
+        row_details_group.add(show_drag_handles_switch)
+        self._sidebar_mode_dependent_rows.append(show_drag_handles_switch)
         self._sidebar_mode_dependent_rows.append(show_group_icon_switch)
 
         # File manager hover button on connection rows
@@ -7216,6 +7229,16 @@ class PreferencesWindow(Adw.Window):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar show connection icon preference: %s", exc)
+
+    def on_sidebar_show_drag_handles_changed(self, switch, *args):
+        """Persist the preference for the sidebar rows' drag grips."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_drag_handles', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar drag handles preference: %s", exc)
 
     def on_sidebar_show_group_icon_changed(self, switch, *args):
         """Persist the preference for showing the group icon in sidebar."""

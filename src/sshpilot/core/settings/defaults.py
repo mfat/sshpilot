@@ -112,7 +112,10 @@ def get_default_config() -> Dict[str, Any]:
             # Connection-list presentation: 'full' (chrome + prefs) or
             # 'compact' (title-only flat rows; other sidebar toggles ignored).
             'sidebar_mode': 'full',
-            'group_color_display': 'dot',
+            # New installs: the drag grips carry the group colour. Existing
+            # configs keep the mode they have (migration fills a missing key
+            # with 'dot', the long-standing default).
+            'group_color_display': 'grip',
             'group_color_child_rows': True,
             'use_group_color_in_tab': False,
             'use_group_color_in_terminal': False,
@@ -122,6 +125,8 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_show_port_forwarding': True,
             'sidebar_show_connection_icon': True,
             'sidebar_show_group_icon': False,
+            # Drag grips at the start of sidebar rows (Settings ▸ Sidebar).
+            'sidebar_show_drag_handles': True,
             # Hover action buttons on sidebar rows (Settings ▸ Interface ▸ Sidebar)
             'sidebar_show_file_manager_button': True,
             # On for new installs only: existing configs lack the key, and the

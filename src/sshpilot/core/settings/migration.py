@@ -153,7 +153,8 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         updated = True
     display_value = ui_cfg.get('group_color_display') if isinstance(ui_cfg, dict) else None
     if display_value is None:
-        # Match get_default_config(): color dots for installs missing the key.
+        # Configs from before the key: keep the dots they always showed
+        # (new installs start from get_default_config(), Colored Grips).
         ui_cfg['group_color_display'] = 'dot'
         updated = True
     else:
