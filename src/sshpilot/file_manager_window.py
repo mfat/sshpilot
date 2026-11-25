@@ -72,6 +72,7 @@ from .file_manager.transfer_progress import (
 )
 from .gtk.sftp_error_messages import format_direct_sftp_error
 from .gtk.transfer_error_messages import format_transfer_start_error
+from .api.connection_identity import file_manager_connection_id
 
 import logging
 
@@ -457,7 +458,7 @@ class FileManagerWindow(Adw.Window):
         bridge = self._bridge
         connection_id = self._connection_id
         if connection_id is None and connection is not None:
-            connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
+            connection_id = file_manager_connection_id(connection)
         self._manager = create_file_manager_backend(
             host,
             username,
@@ -3755,7 +3756,7 @@ def launch_file_manager_window(
     connection_id = None
     if connection is not None:
         try:
-            connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
+            connection_id = file_manager_connection_id(connection)
         except Exception:
             connection_id = None
 
