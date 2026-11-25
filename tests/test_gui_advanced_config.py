@@ -597,6 +597,37 @@ def test_every_line_is_a_keyword_and_a_value(gtk, tmp_path):
         _close(win)
 
 
+def test_lines_move_up_and_down_and_undo_restores_them(window):
+    web = window.draft.blocks[1]
+    keys = lambda: [o.key for o in web.options]
+    rows = lambda: [window.structured.line_rows[o.uid] for o in web.options]
+    assert keys() == ["User", "Port", "IdentityFile"]
+    assert not rows()[0].up.get_sensitive() and not rows()[-1].down.get_sensitive()
+    rows()[0].down.emit("clicked")
+    assert keys() == ["Port", "User", "IdentityFile"]
+    rows()[2].up.emit("clicked")
+    assert keys() == ["Port", "IdentityFile", "User"]
+    window.undo()
+    assert keys() == ["Port", "User", "IdentityFile"]
+
+
+def test_a_line_dropped_by_its_grip_lands_where_the_gap_opened(window):
+    from sshpilot.advanced_config_widgets import LineDragItem
+
+    web = window.draft.blocks[1]
+    structured = window.structured
+    first, last = web.options[0], web.options[-1]
+    structured.line_drag_began(last.uid)
+    found, bounds = structured.line_rows[first.uid].row.compute_bounds(structured.options_list)
+    assert found
+    top = bounds.get_y() + 3
+    assert structured._on_line_motion(None, 0, top)
+    assert structured._gap.get_parent() is structured.options_list
+    assert structured._on_line_drop(None, LineDragItem(last.uid), 0, top)
+    assert [o.key for o in web.options] == ["IdentityFile", "User", "Port"]
+    assert structured._gap.get_parent() is None
+
+
 def test_a_common_yes_no_option_is_added_as_yes(window):
     window.structured._add_common("identitiesonly")
     assert "    IdentitiesOnly yes\n" in window.editor.text

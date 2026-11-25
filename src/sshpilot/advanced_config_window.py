@@ -1205,6 +1205,14 @@ class AdvancedConfigBase:
         self._after_structure()
         GLib.idle_add(lambda: (self.structured.focus_option(option.uid, key=not key), False)[1])
 
+    def move_option(self, uid: int, index: int) -> None:
+        """Put line *uid* at *index* of its block (as the list was before
+        the move), with an undo step of its own."""
+        block, option = self.editor.find_option(uid)
+        if option is None:
+            return
+        self._after_structure(self.editor.move_option(uid, block.uid, index))
+
     def delete_option(self, uid: int) -> None:
         self._after_structure(self.editor.delete_option(uid))
 

@@ -21,7 +21,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from . import advanced_config_fields as fields  # noqa: E402
-from .advanced_config_widgets import pill, set_class, set_pill  # noqa: E402
+from .advanced_config_widgets import LineDragItem, pill, set_class, set_pill  # noqa: E402
 from .api.models.connections import SshConfigDraftLineState as State  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
 from .connection_dialog_auth import canonical_keyword  # noqa: E402
@@ -330,8 +330,21 @@ class LineRow:
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         for side in ("top", "bottom"):
             getattr(box, f"set_margin_{side}")(6)
-        box.set_margin_start(12)
+        box.set_margin_start(6)
         box.set_margin_end(6)
+        # The grip: drag the line to another place in the block.
+        self.handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+        self.handle.add_css_class("advcfg-drag-handle")
+        self.handle.set_valign(Gtk.Align.CENTER)
+        self.handle.set_tooltip_text(_("Drag to reorder"))
+        self.handle.set_cursor_from_name("grab")
+        source = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+        source.connect("prepare", lambda *_a: Gdk.ContentProvider.new_for_value(LineDragItem(self.uid)))
+        source.connect("drag-begin", self._on_drag_begin)
+        source.connect("drag-end", lambda *_a: view.line_drag_ended())
+        source.connect("drag-cancel", lambda *_a: (view.line_drag_ended(), False)[1])
+        self.handle.add_controller(source)
+        box.append(self.handle)
         self.key = _entry(_("Option"), 24)
         self.key.update_property([Gtk.AccessibleProperty.LABEL], [_("Option")])
         self.key.connect("changed", self._on_changed, "key")
@@ -340,9 +353,12 @@ class LineRow:
         self.value.update_property([Gtk.AccessibleProperty.LABEL], [_("Value")])
         self.value.connect("changed", self._on_changed, "value")
         self.state = _state_pill(view)
+        # Up and down: the line one place earlier or later in the block.
+        self.up = _icon_button("go-up-symbolic", _("Move Up"), lambda: view.move_line(self.uid, -1))
+        self.down = _icon_button("go-down-symbolic", _("Move Down"), lambda: view.move_line(self.uid, 1))
         remove = _icon_button("user-trash-symbolic", _("Remove option"),
                               lambda: view.controller.delete_option(self.uid))
-        for widget in (self.key, self.value, self.state, remove):
+        for widget in (self.key, self.value, self.state, self.up, self.down, remove):
             box.append(widget)
         # Under the fields, while the line goes unused: what is used instead.
         self.instead = Gtk.Label(xalign=0, wrap=True, use_markup=True, visible=False)
@@ -375,6 +391,19 @@ class LineRow:
         if self.instead.get_label() != text:
             self.instead.set_label(text)
         self.instead.set_visible(bool(text))
+
+    def set_place(self, first: bool, last: bool) -> None:
+        """Where the line stands in its block: no Up for the first, no
+        Down for the last."""
+        self.up.set_sensitive(not first)
+        self.down.set_sensitive(not last)
+
+    def _on_drag_begin(self, source, _drag) -> None:
+        self.view.line_drag_began(self.uid)
+        try:
+            source.set_icon(Gtk.WidgetPaintable.new(self.row), 0, 0)
+        except Exception:
+            pass
 
     def _on_changed(self, entry, field: str) -> None:
         if self.view.syncing.on:
@@ -613,6 +642,17 @@ class StructuredView(Gtk.Box):
         #: The lines, dimmed while the block is off.
         self.options_group = group
         self.options_list = _boxed_list()
+        # Lines dragged by their grip: a gap opens where one would land, the
+        # connection list's own placeholder (as the list of blocks does).
+        self._line_drag: Optional[int] = None
+        self._gap: Optional[Gtk.ListBoxRow] = None
+        self._gap_at: Optional[tuple] = None
+        self._gap_clear = 0
+        target = Gtk.DropTarget.new(LineDragItem, Gdk.DragAction.MOVE)
+        target.connect("motion", self._on_line_motion)
+        target.connect("leave", lambda *_a: self._close_gap_later())
+        target.connect("drop", self._on_line_drop)
+        self.options_list.add_controller(target)
         # The block's Host or Match line: a row like the others, first.
         self.header_row = Adw.ActionRow()
         self.header_row.set_title_selectable(False)
@@ -662,6 +702,118 @@ class StructuredView(Gtk.Box):
             return
         value = "yes" if keyword in fields.SWITCHES else ""
         self.controller.add_option(self.uid, fields.SPELLING[keyword], value)
+
+    # -- moving lines ---------------------------------------------------------------
+
+    def move_line(self, uid: int, delta: int) -> None:
+        """Up (-1) or Down (+1): the line one place earlier or later."""
+        block = self.controller.editor.find_block(self.uid)
+        uids = [option.uid for option in block.options] if block is not None else []
+        if uid not in uids:
+            return
+        index = uids.index(uid) + delta
+        if not 0 <= index < len(uids):
+            return
+        # move_option takes the place as the list stands before the move.
+        self.controller.move_option(uid, index + 1 if delta > 0 else index)
+        row = self._rows.get(uid)
+        if row is not None:
+            (row.up if delta < 0 else row.down).grab_focus()
+
+    def line_drag_began(self, uid: int) -> None:
+        self._line_drag = uid
+
+    def line_drag_ended(self) -> None:
+        self._line_drag = None
+        self._close_gap_later()
+
+    def _gap_row(self) -> Gtk.ListBoxRow:
+        if self._gap is None:
+            from .sidebar import _DROP_BAR_HEIGHT, DragIndicator
+
+            bar = DragIndicator()
+            bar.set_visible(True)
+            gap = Gtk.ListBoxRow(selectable=False, activatable=False, focusable=False)
+            gap.set_child(bar)
+            gap.add_css_class("drop-placeholder-row")
+            gap.set_size_request(-1, _DROP_BAR_HEIGHT + 2)
+            self._gap = gap
+        return self._gap
+
+    def _line_place(self, y: float):
+        """``(uid, before)`` of the line a drop at *y* lands beside."""
+        row = self.options_list.get_row_at_y(int(y))
+        if row is None:
+            return None
+        if row is self._gap:
+            return self._gap_at                    # over the gap: it stays
+        uids = {line.row: uid for uid, line in self._rows.items()}
+        order = [option.uid for option in
+                 (self.controller.editor.find_block(self.uid).options if self.uid else [])]
+        if not order:
+            return None
+        if row is self.header_row:
+            return (order[0], True)
+        if row is self.add_option_row:
+            return (order[-1], False)
+        uid = uids.get(row)
+        if uid is None:
+            return None
+        found, bounds = row.compute_bounds(self.options_list)
+        return (uid, found and y < bounds.get_y() + bounds.get_height() / 2)
+
+    def _open_gap(self, place) -> None:
+        if self._gap_clear:
+            GLib.source_remove(self._gap_clear)
+            self._gap_clear = 0
+        gap = self._gap_row()
+        if place is None:
+            self._gap_at = None
+            if gap.get_parent() is not None:
+                self.options_list.remove(gap)
+            return
+        if gap.get_parent() is not None:
+            if self._gap_at == place:
+                return
+            self.options_list.remove(gap)
+        self._gap_at = place
+        uid, before = place
+        index = self._rows[uid].row.get_index()
+        self.options_list.insert(gap, index if before else index + 1)
+
+    def _close_gap_later(self) -> None:
+        """Close the gap once GTK has finished the crossing it is in (see
+        the sidebar's _clear_drop_later and the connection list's #1334)."""
+        if not self._gap_clear:
+            self._gap_clear = GLib.idle_add(self._close_gap_now)
+
+    def _close_gap_now(self) -> bool:
+        self._gap_clear = 0
+        self._open_gap(None)
+        return GLib.SOURCE_REMOVE
+
+    def _on_line_motion(self, _target, _x, y):
+        place = self._line_place(y)
+        if place is None or place[0] == self._line_drag:
+            self._open_gap(None)
+            return Gdk.DragAction.MOVE if place is not None else 0
+        self._open_gap(place)
+        return Gdk.DragAction.MOVE
+
+    def _on_line_drop(self, _target, value, _x, y) -> bool:
+        uid = value.uid if isinstance(value, LineDragItem) else None
+        place = self._gap_at or self._line_place(y)
+        # Out now: the lines are put in order by index straight after.
+        self._open_gap(None)
+        block = self.controller.editor.find_block(self.uid)
+        if uid is None or place is None or block is None or place[0] == uid:
+            return False
+        order = [option.uid for option in block.options]
+        target, before = place
+        if target not in order or uid not in order:
+            return False
+        self.controller.move_option(uid, order.index(target) + (0 if before else 1))
+        return True
 
     # -- the rows (for the controller and the tests) ----------------------------
 
@@ -739,6 +891,7 @@ class StructuredView(Gtk.Box):
                 self.options_list.remove(row.row)
                 self.options_list.insert(row.row, index)
             row.bind(option)
+            row.set_place(index == 1, index == len(block.options))
 
     # -- OpenSSH's answer -------------------------------------------------------
 

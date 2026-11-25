@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 01:06+0330\n"
+"POT-Creation-Date: 2026-11-26 01:10+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -174,7 +174,7 @@ msgstr "Abrir ligações?"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
 #: src/sshpilot/advanced_config_window.py:744
 #: src/sshpilot/advanced_config_window.py:1001
-#: src/sshpilot/advanced_config_structured_view.py:904
+#: src/sshpilot/advanced_config_structured_view.py:1057
 msgid "Cancel"
 msgstr "Cancelar"
 
@@ -389,7 +389,7 @@ msgstr "Nome da sessão"
 #: src/sshpilot/resources/ui/connection_dialog.ui:158
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:31
 #: src/sshpilot/advanced_config_window.py:343
-#: src/sshpilot/advanced_config_structured_view.py:907
+#: src/sshpilot/advanced_config_structured_view.py:1060
 msgid "Save"
 msgstr "Guardar"
 
@@ -1789,7 +1789,7 @@ msgstr "Adicionado"
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:171
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:191
 #: src/sshpilot/preferences.py:5616 src/sshpilot/ssh_option_list.py:166
-#: src/sshpilot/advanced_config_structured_view.py:898
+#: src/sshpilot/advanced_config_structured_view.py:1051
 msgid "Remove"
 msgstr "Remover"
 
@@ -8173,8 +8173,8 @@ msgstr "Editor de configuração SSH"
 #: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
 #: src/sshpilot/sidebar.py:5174 src/sshpilot/window.py:4274
 #: src/sshpilot/resources/ui/connection_dialog.ui:120
-#: src/sshpilot/advanced_config_window.py:1737
-#: src/sshpilot/advanced_config_window.py:1750
+#: src/sshpilot/advanced_config_window.py:1745
+#: src/sshpilot/advanced_config_window.py:1758
 msgid "Advanced Configuration"
 msgstr "Configuração avançada"
 
@@ -10290,7 +10290,7 @@ msgid "Cursor Blinking"
 msgstr "Intermitência do cursor"
 
 #: src/sshpilot/preferences.py:750
-#: src/sshpilot/advanced_config_structured_view.py:541
+#: src/sshpilot/advanced_config_structured_view.py:570
 msgid "Enabled"
 msgstr "Ativar"
 
@@ -13569,14 +13569,14 @@ msgid "Choose a keyword"
 msgstr "Escolher uma palavra-chave"
 
 #: src/sshpilot/ssh_option_list.py:159 src/sshpilot/ssh_option_list.py:161
-#: src/sshpilot/advanced_config_structured_view.py:340
-#: src/sshpilot/advanced_config_structured_view.py:373
+#: src/sshpilot/advanced_config_structured_view.py:353
+#: src/sshpilot/advanced_config_structured_view.py:389
 msgid "Value"
 msgstr "Valor"
 
 #. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
 #: src/sshpilot/ssh_option_list.py:273 src/sshpilot/ssh_option_list.py:277
-#: src/sshpilot/advanced_config_structured_view.py:630
+#: src/sshpilot/advanced_config_structured_view.py:670
 msgid "Add Option"
 msgstr "Adicionar opção"
 
@@ -18247,11 +18247,11 @@ msgstr ""
 "As opções globais têm de ficar acima de todos os blocos Host e Match: o "
 "OpenSSH lê uma opção abaixo de uma linha Host como sendo desse anfitrião."
 
-#: src/sshpilot/advanced_config_window.py:1562
+#: src/sshpilot/advanced_config_window.py:1570
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "Não foi possível consultar o OpenSSH sobre esta configuração."
 
-#: src/sshpilot/advanced_config_window.py:1693
+#: src/sshpilot/advanced_config_window.py:1701
 msgid "Run and Evaluate"
 msgstr "Executar e avaliar"
 
@@ -18643,24 +18643,39 @@ msgstr "Rejeitada"
 msgid "Not used"
 msgstr "Não usada"
 
-#: src/sshpilot/advanced_config_structured_view.py:335
-#: src/sshpilot/advanced_config_structured_view.py:336
+#: src/sshpilot/advanced_config_structured_view.py:339
+#: src/sshpilot/advanced_config_block_row.py:55
+#: src/sshpilot/advanced_config_block_row.py:109
+msgid "Drag to reorder"
+msgstr "Arraste para reordenar"
+
+#: src/sshpilot/advanced_config_structured_view.py:348
+#: src/sshpilot/advanced_config_structured_view.py:349
 msgid "Option"
 msgstr "Opção"
 
-#: src/sshpilot/advanced_config_structured_view.py:343
+#. Up and down: the line one place earlier or later in the block.
+#: src/sshpilot/advanced_config_structured_view.py:357
+msgid "Move Up"
+msgstr "Mover para cima"
+
+#: src/sshpilot/advanced_config_structured_view.py:358
+msgid "Move Down"
+msgstr "Mover para baixo"
+
+#: src/sshpilot/advanced_config_structured_view.py:359
 msgid "Remove option"
 msgstr "Remover opção"
 
-#: src/sshpilot/advanced_config_structured_view.py:478
+#: src/sshpilot/advanced_config_structured_view.py:507
 msgid "No Block Selected"
 msgstr "Nenhum bloco selecionado"
 
-#: src/sshpilot/advanced_config_structured_view.py:479
+#: src/sshpilot/advanced_config_structured_view.py:508
 msgid "Choose a block in the sidebar, or add one."
 msgstr "Escolha um bloco na barra lateral, ou adicione um."
 
-#: src/sshpilot/advanced_config_structured_view.py:539
+#: src/sshpilot/advanced_config_structured_view.py:568
 msgid ""
 "On: OpenSSH reads this block. Off: it is written as comments, which OpenSSH "
 "ignores."
@@ -18668,65 +18683,65 @@ msgstr ""
 "Ligado: o OpenSSH lê este bloco. Desligado: é escrito como comentários, que "
 "o OpenSSH ignora."
 
-#: src/sshpilot/advanced_config_structured_view.py:545
+#: src/sshpilot/advanced_config_structured_view.py:574
 msgid "Duplicate Block"
 msgstr "Duplicar bloco"
 
-#: src/sshpilot/advanced_config_structured_view.py:550
+#: src/sshpilot/advanced_config_structured_view.py:579
 msgid "Delete Block"
 msgstr "Eliminar bloco"
 
-#: src/sshpilot/advanced_config_structured_view.py:567
+#: src/sshpilot/advanced_config_structured_view.py:596
 msgid "Disabled: written as comments, which OpenSSH ignores."
 msgstr "Desativado: escrito como comentários, que o OpenSSH ignora."
 
 #. Applies To: the hosts of a pattern, Match or wildcard block, each
 #. a link (none for a block that names its own hosts).
-#: src/sshpilot/advanced_config_structured_view.py:581
+#: src/sshpilot/advanced_config_structured_view.py:610
 msgid "Applies To"
 msgstr "Aplica-se a"
 
-#: src/sshpilot/advanced_config_structured_view.py:596
+#: src/sshpilot/advanced_config_structured_view.py:625
 msgid "Problems"
 msgstr "Problemas"
 
-#: src/sshpilot/advanced_config_structured_view.py:602
+#: src/sshpilot/advanced_config_structured_view.py:631
 msgid "Show the first problem"
 msgstr "Mostrar o primeiro problema"
 
-#: src/sshpilot/advanced_config_structured_view.py:655
+#: src/sshpilot/advanced_config_structured_view.py:695
 msgid "Add a Common Option"
 msgstr "Adicionar uma opção comum"
 
-#: src/sshpilot/advanced_config_structured_view.py:706
+#: src/sshpilot/advanced_config_structured_view.py:858
 msgid "The names and patterns this block is for"
 msgstr "Os nomes e padrões a que este bloco se aplica"
 
-#: src/sshpilot/advanced_config_structured_view.py:707
+#: src/sshpilot/advanced_config_structured_view.py:859
 msgid "The conditions this block is for"
 msgstr "As condições a que este bloco se aplica"
 
-#: src/sshpilot/advanced_config_structured_view.py:711
+#: src/sshpilot/advanced_config_structured_view.py:863
 msgid "Host patterns"
 msgstr "Padrões de anfitrião"
 
-#: src/sshpilot/advanced_config_structured_view.py:711
+#: src/sshpilot/advanced_config_structured_view.py:863
 msgid "Match conditions"
 msgstr "Condições Match"
 
-#: src/sshpilot/advanced_config_structured_view.py:893
+#: src/sshpilot/advanced_config_structured_view.py:1046
 msgid "A comment above the block"
 msgstr "Um comentário acima do bloco"
 
-#: src/sshpilot/advanced_config_structured_view.py:894
+#: src/sshpilot/advanced_config_structured_view.py:1047
 msgid "Note"
 msgstr "Nota"
 
-#: src/sshpilot/advanced_config_structured_view.py:939
+#: src/sshpilot/advanced_config_structured_view.py:1092
 msgid "Edit Note"
 msgstr "Editar nota"
 
-#: src/sshpilot/advanced_config_structured_view.py:939
+#: src/sshpilot/advanced_config_structured_view.py:1092
 msgid "Add Note"
 msgstr "Adicionar nota"
 
@@ -18849,11 +18864,6 @@ msgstr "Configuração avançada de SSH"
 #, python-brace-format
 msgid "{view} (unsaved changes)"
 msgstr "{view} (alterações não guardadas)"
-
-#: src/sshpilot/advanced_config_block_row.py:55
-#: src/sshpilot/advanced_config_block_row.py:109
-msgid "Drag to reorder"
-msgstr "Arraste para reordenar"
 
 #. Translators: a block that is switched off, e.g. "Host pattern · off".
 #: src/sshpilot/advanced_config_block_row.py:94

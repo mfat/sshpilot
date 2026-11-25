@@ -20,6 +20,15 @@ class DragItem(GObject.Object):
         self.uid = uid
 
 
+class LineDragItem(GObject.Object):
+    """A line of the block on screen being dragged to another place in it.
+    A type of its own, so it is never taken for a dragged block."""
+
+    def __init__(self, uid: int) -> None:
+        super().__init__()
+        self.uid = uid
+
+
 def pill(text: str = "", style: str = "muted") -> Gtk.Label:
     """A small rounded label: a state, a source, a count."""
     label = Gtk.Label(label=text)
