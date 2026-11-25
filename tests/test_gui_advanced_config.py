@@ -23,6 +23,24 @@ CONFIG = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _keys_named_exist():
+    """The key CONFIG names exists (in the test session's own home), so a
+    save is not stopped by "Save With Problems?"; tests about a missing key
+    name one that is missing."""
+    import pathlib
+
+    key = pathlib.Path.home() / ".ssh" / "a"
+    made = not key.exists()
+    if made:
+        key.parent.mkdir(parents=True, exist_ok=True)
+        key.write_text("key")
+        key.chmod(0o600)
+    yield
+    if made:
+        key.unlink()
+
+
 @pytest.fixture()
 def gtk():
     gi = pytest.importorskip("gi")
@@ -591,7 +609,8 @@ def test_identity_files_say_what_the_file_on_disk_is(window, tmp_path):
     os.chmod(key, 0o644)
     rows = window.structured._identity_rows
     (first,) = rows.values()
-    assert "not found" in first.row.get_subtitle()             # ~/.ssh/a
+    first.entry.set_text("~/.ssh/missing")
+    assert "not found" in first.row.get_subtitle()
     window.structured._add_common("identityfile")
     uid = web.options[-1].uid
     row = window.structured._identity_rows[uid]
@@ -667,8 +686,11 @@ def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
         assert "dim-label" not in item.cell.label.get_css_classes()
         assert item.cell.source.get_sensitive()      # inert, not greyed out
         assert not item.cell.source.get_can_target()
+    web = window.draft.blocks[1]
+    window.option_typed(web.options[2].uid, "value", "~/.ssh/missing")
+    assert _settled(window)
+    effective.fill()
     effective.select_filter("this")
-    # web's IdentityFile ~/.ssh/a does not exist in the test's home.
     (key,) = [i for i in effective.items() if i.key == "identityfile"]
     assert key.problems and "File not found" in key.problems[-1]
 
@@ -1150,6 +1172,52 @@ def test_save_asks_openssh_first_however_fast_it_is_pressed(window):
     alert.force_close()
     assert _pump(lambda: not window._saving)
     assert client.saves == 0 and window.dirty and window.save_button.get_sensitive()
+
+
+def test_a_configuration_openssh_rejects_is_not_saved_and_its_line_is_shown(window):
+    client = window._test_client
+    web = window.draft.blocks[1]
+    window.option_typed(web.options[1].uid, "value", "not-a-port")
+    window.save()
+    assert _pump(lambda: getattr(window, "_save_alert", None) is not None)
+    alert = window._save_alert
+    assert not alert.has_response("save")              # no Save Anyway
+    assert alert.has_response("show")
+    _pump(lambda: False, seconds=0.25)
+    alert.emit("response", "show")
+    alert.force_close()
+    assert _pump(lambda: not window._saving)
+    assert client.saves == 0 and window.dirty
+    assert window.selected_uid == web.uid and window.stack.get_visible_child_name() == "structured"
+
+
+def test_nothing_is_saved_when_openssh_cannot_be_asked(window):
+    client = window._test_client
+    web = window.draft.blocks[1]
+    window.option_typed(web.options[1].uid, "value", "2200")
+
+    def unreachable(_request):
+        raise RuntimeError("no background service")
+
+    client.evaluate_ssh_config_draft = unreachable
+    window._answers, window._answers_key = {}, None
+    window.save()
+    assert _pump(lambda: not window._saving)
+    assert client.saves == 0 and window.dirty
+
+
+def test_a_missing_key_file_is_asked_about_before_saving(window):
+    client = window._test_client
+    web = window.draft.blocks[1]
+    window.option_typed(web.options[2].uid, "value", "~/.ssh/missing")
+    window.save()
+    assert _pump(lambda: getattr(window, "_save_alert", None) is not None)
+    alert = window._save_alert
+    assert alert.has_response("save") and "File not found" in alert.get_body()
+    _pump(lambda: False, seconds=0.25)
+    alert.emit("response", "save")
+    alert.force_close()
+    assert _pump(lambda: client.saves == 1)
 
 
 def test_a_configuration_openssh_already_rejects_is_said_so_at_open(gtk, tmp_path):

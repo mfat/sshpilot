@@ -36,6 +36,23 @@ Host *
 """
 
 
+@pytest.fixture(autouse=True)
+def _keys_named_exist():
+    """The key CONFIG names exists in the test session's home: a save is
+    not stopped by "Save With Problems?"."""
+    import pathlib
+
+    key = pathlib.Path.home() / ".ssh" / "prod"
+    made = not key.exists()
+    if made:
+        key.parent.mkdir(parents=True, exist_ok=True)
+        key.write_text("key")
+        key.chmod(0o600)
+    yield
+    if made:
+        key.unlink()
+
+
 class _Capable(_Client):
     def get_capabilities(self):
         return types.SimpleNamespace(supports=lambda _capability: True)

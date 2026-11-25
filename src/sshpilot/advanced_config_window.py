@@ -637,36 +637,108 @@ class AdvancedConfigBase:
         # taken together, now: the save is of this document, whatever is on
         # screen by the time OpenSSH has been asked.
         text, file, revision = self.editor.text, self._file, self._revision
+        # Files the lines name, as they are now (with the text they go with).
+        problems = self._file_problems()
         try:
             # No agreed Match exec command goes with this question: it is
             # about a made-up host, and an agreement is for the host it was
             # given for. A draft that needs one run is saved unchecked.
             request = EvaluateSshConfigDraftRequest(text=text, host=_CHECK_HOST, file=file)
         except (TypeError, ValueError):
-            self._write(text, file, revision)
+            self._refuse_unchecked()
             return
 
         def checked(result, error) -> None:
-            if error is None and result is not None and result.errors:
-                self._confirm_rejected(text, file, revision, result)
+            if error is not None or result is None:
+                # Not knowing is no yes: nothing is written unchecked.
+                logger.debug("the save check could not ask OpenSSH", exc_info=error)
+                self._refuse_unchecked()
+            elif result.errors:
+                self._refuse_rejected(result.errors[0])
+            elif problems:
+                self._confirm_problems(text, file, revision, problems)
             else:
                 self._write(text, file, revision)
 
         self._run(lambda: self._ask_once(request), checked)
 
-    def _confirm_rejected(
-        self, text: str, file: str, revision: str, evaluation: SshConfigDraftEvaluation
-    ) -> None:
+    def _refuse_unchecked(self) -> None:
+        self._toasts.add_toast(Adw.Toast.new(_(
+            "Not saved: OpenSSH could not be asked to check the configuration."
+        )))
+        self._save_over()
+
+    def _refuse_rejected(self, error) -> None:
+        """OpenSSH refuses the whole file over one such line, so it is not
+        saved: say which line, and offer to show it."""
         alert = Adw.AlertDialog(
-            heading=_("Save a configuration OpenSSH rejects?"),
-            body=messages.error_text(evaluation.errors[0]) + "\n\n" + _(
-                "OpenSSH refuses the whole configuration over one such line, "
-                "so no SSH connection starts until it is corrected."
+            heading=_("Not Saved: OpenSSH Rejects This Configuration"),
+            body=messages.error_text(error) + "\n\n" + _(
+                "OpenSSH refuses the whole configuration over one such line, so no "
+                "SSH connection would start. Correct it, then save."
             ),
+        )
+        alert.add_response("cancel", _("Close"))
+        if error.line:
+            alert.add_response("show", _("Show Line"))
+            alert.set_response_appearance("show", Adw.ResponseAppearance.SUGGESTED)
+            alert.set_default_response("show")
+        alert.set_close_response("cancel")
+
+        def answered(_dialog, response: str) -> None:
+            self._save_alert = None
+            self._save_over()
+            if response == "show":
+                if error.file:
+                    self.reveal_source(error.file, error.line)
+                else:
+                    self._reveal_draft_line(error.line)
+
+        alert.connect("response", answered)
+        self._save_alert = alert
+        alert.present(self)
+
+    def _reveal_draft_line(self, line: int) -> None:
+        """Show line *line* of the text on screen."""
+        uid = self.editor.owner_of_line(line, self.editor.lines)
+        if uid is None:
+            return
+        owner, _option = self.editor.find_option(uid)
+        self.show_page("structured")
+        self.select_block(owner.uid if owner is not None else uid)
+        GLib.idle_add(lambda: (self.structured.reveal(uid), False)[1])
+
+    def _file_problems(self) -> list:
+        """Key and certificate files the enabled blocks name that OpenSSH
+        will not use: missing, or (a private key) readable by others. Not
+        reasons to refuse a save, as a rejected line is: OpenSSH only skips
+        the file, and the other connections are untouched."""
+        found = []
+        for block in self.editor.blocks:
+            if block.disabled:
+                continue
+            for option in block.options:
+                keyword = option.keyword.lower()
+                if keyword not in ("identityfile", "certificatefile"):
+                    continue
+                status = fields.key_file_status(option.value)
+                if status.state == fields.KEY_MISSING or (
+                    keyword == "identityfile" and status.state == fields.KEY_OPEN
+                ):
+                    found.append(messages.value_problem_text(
+                        fields.home_relative(status.path),
+                        messages.key_status_text(status.state, status.mode),
+                    ))
+        return found
+
+    def _confirm_problems(self, text: str, file: str, revision: str, problems: list) -> None:
+        alert = Adw.AlertDialog(
+            heading=_("Save With Problems?"),
+            body=_("OpenSSH accepts this configuration, but will not use these files:")
+            + "\n" + "\n".join(f"• {problem}" for problem in problems),
         )
         alert.add_response("cancel", _("Cancel"))
         alert.add_response("save", _("Save Anyway"))
-        alert.set_response_appearance("save", Adw.ResponseAppearance.DESTRUCTIVE)
         alert.set_default_response("cancel")
         alert.set_close_response("cancel")
 
