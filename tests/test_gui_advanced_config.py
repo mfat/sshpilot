@@ -284,7 +284,14 @@ def _effective(win, key):
 
 
 def _field(win, keyword):
-    return win.structured.typed[keyword]
+    """The row of *keyword*'s first line in the block on screen (None: it
+    has none). Every line is a keyword and a value."""
+    rows = win.structured.line_rows
+    block = win.editor.find_block(win.selected_uid)
+    for option in (block.options if block is not None else ()):
+        if option.key.lower() == keyword:
+            return rows.get(option.uid)
+    return None
 
 
 def _status(win, option):
@@ -365,9 +372,9 @@ def test_lines_are_listed_in_the_block_order(window):
     assert [shown[row] for row in order] == [o.uid for o in web.options]
     assert rows.get_row_at_index(len(web.options) + 1) is window.structured.add_option_row
     window.select_block(star.uid)                           # web1 is still the host
-    assert "port" not in window.structured.typed             # Host * sets none
+    assert _field(window, "port") is None                    # Host * sets none
     user = _field(window, "user")
-    assert user.entry.get_text() == "fallback"
+    assert user.value.get_text() == "fallback"
     assert _pump(lambda: user.state.get_label() == "Not used")   # web's block set it first
     assert "Host web1 web2" in user.state._tooltip
 
@@ -409,16 +416,16 @@ def test_global_options_cannot_end_up_under_a_host(window):
 
 
 def test_typing_a_value_re_evaluates_without_redrawing(window):
-    entry = _field(window, "user").entry
+    entry = _field(window, "user").value
     entry.set_text("root")
     assert _pump(lambda: _effective(window, "user") == "root")
-    assert _field(window, "user").entry is entry and entry.get_text() == "root"
+    assert _field(window, "user").value is entry and entry.get_text() == "root"
     assert "    User root\n" in window.editor.text
 
 
 def test_a_rejected_line_is_marked_and_named(window):
     web = window.draft.blocks[1]
-    window.add_option(web.uid, "Bogus", "1", keep=True)
+    window.add_option(web.uid, "Bogus", "1")
     assert _pump(lambda: window.banner.get_revealed())
     assert "line 9" in window.banner.get_title()
     assert _pump(lambda: _status(window, web.options[-1]) == "Rejected")
@@ -489,7 +496,7 @@ def test_the_title_card_says_what_needs_attention_and_shows_it(gtk, tmp_path):
 def test_escape_leaves_a_field_and_keeps_what_was_typed(window):
     from gi.repository import Gdk, Gtk
 
-    entry = _field(window, "user").entry
+    entry = _field(window, "user").value
     keys = [c for c in _controllers(entry) if isinstance(c, Gtk.EventControllerKey)]
     entry.grab_focus()
     entry.set_text("someone-else")
@@ -528,7 +535,7 @@ def test_raw_edits_are_applied_to_the_blocks(window):
 
 def test_save_writes_only_what_changed_and_clears_dirty(window):
     client = window._test_client
-    _field(window, "user").entry.set_text("root")
+    _field(window, "user").value.set_text("root")
     assert _pump(lambda: window.dirty)
     window.save()
     assert _pump(lambda: client.saves == 1 and not window.dirty)
@@ -538,7 +545,7 @@ def test_save_writes_only_what_changed_and_clears_dirty(window):
 def test_a_file_changed_on_disk_is_not_overwritten(window):
     client = window._test_client
     client.path.write_text(CONFIG + "# edited elsewhere\n")
-    _field(window, "user").entry.set_text("root")
+    _field(window, "user").value.set_text("root")
     assert _pump(lambda: window.dirty)
     window.save()
     assert _pump(lambda: (
@@ -549,106 +556,58 @@ def test_a_file_changed_on_disk_is_not_overwritten(window):
 
 # -- the lines of the Structured view ------------------------------------------------
 
-def test_a_common_option_is_added_at_the_end_and_edited_in_its_field(window):
+def test_a_common_option_is_added_at_the_end_and_edited_in_its_row(window):
     web = window.draft.blocks[1]
     window.structured._add_common("hostname")
     assert web.options[-1].key == "HostName"
     hostname = _field(window, "hostname")
     assert hostname.uid == web.options[-1].uid
-    hostname.entry.set_text("10.0.0.5")
+    assert hostname.key.get_text() == "HostName"
+    hostname.value.set_text("10.0.0.5")
     assert "    HostName 10.0.0.5\n" in window.editor.text
     assert _pump(lambda: _effective(window, "hostname") == "10.0.0.5")
-    hostname.entry.set_text("")                              # emptied: the row stays
+    hostname.value.set_text("")                              # emptied: the row stays
     assert _field(window, "hostname") is hostname and "HostName" in window.editor.text
-    hostname.reset.emit("clicked")                           # removed with its button
-    assert "HostName" not in window.editor.text and "hostname" not in window.structured.typed
-    _field(window, "port").reset.emit("clicked")
+    window.delete_option(hostname.uid)
+    assert "HostName" not in window.editor.text and _field(window, "hostname") is None
+    window.delete_option(_field(window, "port").uid)
     assert "Port 2222" not in window.editor.text
     window.undo()
     assert "Port 2222" in window.editor.text
-    assert _field(window, "port").entry.get_text() == "2222"
+    assert _field(window, "port").value.get_text() == "2222"
     assert [o.key for o in web.options][:3] == ["User", "Port", "IdentityFile"]
 
 
-def test_a_switch_is_yes_or_no(window):
-    window.structured._add_common("identitiesonly")
-    assert "    IdentitiesOnly yes\n" in window.editor.text
-    switch = window.structured.switches["identitiesonly"]
-    assert switch.row.get_selected() == 0
-    switch.row.set_selected(1)
-    assert "    IdentitiesOnly no\n" in window.editor.text
-    window.undo()                                            # one choice, one step
-    assert "    IdentitiesOnly yes\n" in window.editor.text
-    window.delete_option(switch.uid)
-    assert "IdentitiesOnly" not in window.editor.text
-
-
-def test_a_value_a_switch_cannot_show_stays_a_plain_line(gtk, tmp_path):
-    win = _open_on(gtk, tmp_path, "Host a\n    ForwardAgent $SSH_AUTH_SOCK\n")
+def test_every_line_is_a_keyword_and_a_value(gtk, tmp_path):
+    """No line gets a control of its own: ForwardAgent with a socket, a
+    second User, an IdentityFile and a forward are rows like any other."""
+    win = _open_on(gtk, tmp_path, (
+        "Host a\n    User one\n    ForwardAgent $SSH_AUTH_SOCK\n    User two\n"
+        "    IdentityFile ~/.ssh/id\n    DynamicForward 1080\n"
+    ))
     try:
         block = win.draft.blocks[0]
-        assert "forwardagent" not in win.structured.switches
-        assert list(win.structured._other_rows) == [block.options[0].uid]
-        row = win.structured._other_rows[block.options[0].uid]
-        assert (row.key.get_text(), row.value.get_text()) == ("ForwardAgent", "$SSH_AUTH_SOCK")
+        rows = win.structured.line_rows
+        assert list(rows) == [option.uid for option in block.options]
+        assert [(rows[o.uid].key.get_text(), rows[o.uid].value.get_text()) for o in block.options] == [
+            ("User", "one"), ("ForwardAgent", "$SSH_AUTH_SOCK"), ("User", "two"),
+            ("IdentityFile", "~/.ssh/id"), ("DynamicForward", "1080"),
+        ]
     finally:
         _close(win)
 
 
-def test_a_line_added_with_add_option_stays_plain_whatever_its_keyword(window):
-    web = window.draft.blocks[1]
-    window.structured.add_option_row.emit("activated")
-    uid = web.options[-1].uid
-    row = window.structured._other_rows[uid]
-    row.key.set_text("Port")
-    row.value.set_text("2")
-    assert window.structured._other_rows[uid] is row          # not turned into a field
-    assert _field(window, "port").uid == web.options[1].uid
-    assert _pump(lambda: _status(window, web.options[-1]) == "Not used")
+def test_a_common_yes_no_option_is_added_as_yes(window):
+    window.structured._add_common("identitiesonly")
+    assert "    IdentitiesOnly yes\n" in window.editor.text
 
 
-def test_a_line_takes_its_field_when_the_one_above_goes(gtk, tmp_path):
-    win = _open_on(gtk, tmp_path, "Host a\n    User one\n    Compression no\n    User two\n")
-    try:
-        first, _compression, second = win.draft.blocks[0].options
-        assert _field(win, "user").uid == first.uid and second.uid in win.structured._other_rows
-        win.delete_option(first.uid)
-        assert _field(win, "user").uid == second.uid and not win.structured._other_rows.get(second.uid)
-    finally:
-        _close(win)
-
-
-def test_identity_files_say_what_the_file_on_disk_is(window, tmp_path):
-    import os
-
-    web = window.draft.blocks[1]
-    key = tmp_path / "id_test"
-    key.write_text("key")
-    os.chmod(key, 0o644)
-    rows = window.structured._identity_rows
-    (first,) = rows.values()
-    first.entry.set_text("~/.ssh/missing")
-    assert "not found" in first.row.get_subtitle()
-    window.structured._add_common("identityfile")
-    uid = web.options[-1].uid
-    row = window.structured._identity_rows[uid]
-    row.entry.set_text(str(key))
-    assert "0644" in row.row.get_subtitle() and row.fix.get_visible()
-    row.fix.emit("clicked")
-    assert os.stat(key).st_mode & 0o777 == 0o600
-    assert row.row.get_subtitle() == "" and not row.fix.get_visible()
-    assert f"    IdentityFile {key}\n" in window.editor.text
-
-
-def test_forwards_are_added_and_removed(window):
-    structured = window.structured
-    structured._add_common("dynamicforward")
-    (row,) = structured._forward_rows.values()
-    assert row.row.get_title() == "DynamicForward" and row.entry.get_placeholder_text() == "1080"
-    row.entry.set_text("1080")
-    assert "    DynamicForward 1080\n" in window.editor.text
-    window.delete_option(row.uid)
-    assert "DynamicForward" not in window.editor.text and not structured._forward_rows
+def test_an_empty_value_shows_what_the_host_gets_from_elsewhere(window):
+    star = window.draft.blocks[2]
+    window.select_block(star.uid)                            # web1 stays in question
+    window.add_option(star.uid, "Port", "")
+    row = window.structured.line_rows[star.options[-1].uid]
+    assert _pump(lambda: row.value.get_placeholder_text() == "2222")   # from web's block
 
 
 # -- the Effective view ---------------------------------------------------------------
@@ -757,13 +716,15 @@ def test_an_unused_line_says_what_is_used_instead(gtk, tmp_path):
         assert _settled(win)
         structured = win.structured
         user = _field(win, "user")
-        assert _pump(lambda: user.row.get_subtitle() == "OpenSSH uses <tt>early</tt> from line 2 (Host zoo)")
-        others = {row.key.get_text(): row for row in structured._other_rows.values()}
-        assert _pump(lambda: others["HostName"].instead.get_label()
-                     == "OpenSSH uses <tt>10.0.0.5</tt> from line 5 (Host zoo)")
-        assert others["ConnectTimeout"].instead.get_label() == "Settings ▸ SSH Options use <tt>7</tt>"
-        hostname = _field(win, "hostname")                  # used: its description
-        assert hostname.row.get_subtitle() == "The real host name or IP address to connect to"
+        assert _pump(lambda: user.instead.get_label()
+                     == "OpenSSH uses <tt>early</tt> from line 2 (Host zoo)")
+        rows = list(structured.line_rows.values())
+        second_hostname = [r for r in rows if r.key.get_text() == "HostName"][1]
+        assert second_hostname.instead.get_label() == "OpenSSH uses <tt>10.0.0.5</tt> from line 5 (Host zoo)"
+        timeout = next(r for r in rows if r.key.get_text() == "ConnectTimeout")
+        assert timeout.instead.get_label() == "Settings ▸ SSH Options use <tt>7</tt>"
+        hostname = _field(win, "hostname")                  # used: nothing said
+        assert not hostname.instead.get_visible()
     finally:
         _close(win)
 
@@ -847,7 +808,7 @@ def test_effective_column_titles_sit_over_their_columns(window):
 
 def test_only_the_view_on_screen_is_filled(window):
     window.show_page("structured")
-    _field(window, "user").entry.set_text("other")
+    _field(window, "user").value.set_text("other")
     assert _settled(window)
     assert window.effective._stale and window.raw._stale
     window.show_page("effective")
@@ -1078,7 +1039,7 @@ def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
         _pick(win, "Host *.prod")
         assert _pump(lambda: _applies(win) == ["a.prod", "b.prod"])
         assert win._evaluation is None and _dimmed(win) == []
-        assert _field(win, "port").entry.get_text() == "2200"
+        assert _field(win, "port").value.get_text() == "2200"
 
         _pick(win, "Match host *.test")                      # a rule, as a pattern
         assert _pump(lambda: _applies(win) == ["c.test", "d.test"])
@@ -1144,7 +1105,7 @@ def test_a_failed_save_notice_goes_with_the_next_good_save(window):
     client = window._test_client
     real = client.save_ssh_config_text
     client.save_ssh_config_text = lambda request: (_ for _ in ()).throw(OSError("disk"))
-    _field(window, "user").entry.set_text("root")
+    _field(window, "user").value.set_text("root")
     assert _pump(lambda: window.dirty)
     window.save()
     assert _pump(lambda: window.file_banner.get_revealed())
@@ -1274,13 +1235,13 @@ def test_an_edit_redraws_in_place(window):
     """The widgets of what did not change are the same widgets after an
     edit: focus and typed text survive."""
     web, star = window.draft.blocks[1], window.draft.blocks[2]
-    user, row = _field(window, "user").entry, window.sidebar._rows[star.uid]
-    window.add_option(web.uid, "Compression", "no", keep=True)
-    other = window.structured._other_rows[web.options[-1].uid]
+    user, row = _field(window, "user").value, window.sidebar._rows[star.uid]
+    window.add_option(web.uid, "Compression", "no")
+    other = window.structured.line_rows[web.options[-1].uid]
     window.move_block(star.uid, 1)
     window.undo()
-    assert _field(window, "user").entry is user and window.sidebar._rows[star.uid] is row
-    assert window.structured._other_rows[web.options[-1].uid] is other
+    assert _field(window, "user").value is user and window.sidebar._rows[star.uid] is row
+    assert window.structured.line_rows[web.options[-1].uid] is other
     assert [o.key for o in web.options] == ["User", "Port", "IdentityFile", "Compression"]
 
 
@@ -1310,8 +1271,8 @@ def test_a_line_of_the_saved_file_is_found_after_unsaved_edits(window):
     it in the draft, and it is still the block that is shown."""
     glob, web, star = window.draft.blocks
     saved_line = window._loaded_lines.headers[star.uid]
-    window.add_option(web.uid, keep=True)
-    window.add_option(web.uid, keep=True)                   # Host * is two lines lower now
+    window.add_option(web.uid)
+    window.add_option(web.uid)                   # Host * is two lines lower now
     window.select_block(glob.uid)
     window.go_to(line=saved_line)
     assert _selected(window) == "*"
@@ -1352,7 +1313,7 @@ def test_an_included_file_is_shown_evaluated_and_saved(gtk, tmp_path):
         assert _pump(lambda: _command(win) == "ssh -G inc1")
         assert _effective(win, "port") == "2200"            # the root's line counts too
 
-        _field(win, "user").entry.set_text("carol")
+        _field(win, "user").value.set_text("carol")
         assert _pump(lambda: win.dirty)
         win.save()
         assert _pump(lambda: client.saves == 1 and not win.dirty)
@@ -1421,7 +1382,7 @@ def test_the_raw_view_marks_the_selected_block_and_follows_edits(window):
     ]
     window.select_block(star.uid)
     assert _raw_marked(window)[0] == "Host *"
-    window.add_option(star.uid, "Compression", "no", keep=True)   # the block grew
+    window.add_option(star.uid, "Compression", "no")   # the block grew
     assert _raw_marked(window)[-1].strip() == "Compression no"
 
 
@@ -1474,7 +1435,7 @@ def test_a_selection_is_answered_in_the_same_step(gtk, tmp_path):
         assert asked == []                                     # nothing was asked
 
         win.select_block(web.uid)
-        _field(win, "user").entry.set_text("admin")            # another draft
+        _field(win, "user").value.set_text("admin")            # another draft
         assert _pump(lambda: _effective(win, "user") == "admin")
         assert "web1" in asked                                 # asked again, for the new text
     finally:
@@ -1532,7 +1493,7 @@ def test_a_save_is_of_the_file_it_was_clicked_for(gtk, tmp_path):
             return real(request)
 
         client.evaluate_ssh_config_draft = slow
-        _field(win, "user").entry.set_text("root")
+        _field(win, "user").value.set_text("root")
         assert _pump(lambda: win.dirty)
         win.save()
         assert win._saving
@@ -1587,7 +1548,7 @@ def test_agreeing_to_run_a_command_is_for_the_host_on_screen_only(window, tmp_pa
 
 def test_reload_after_a_save_conflict_asks_before_dropping_the_draft(window):
     client = window._test_client
-    _field(window, "user").entry.set_text("mine")
+    _field(window, "user").value.set_text("mine")
     assert _pump(lambda: window.dirty)
     client.path.write_text(CONFIG + "\n# edited elsewhere\n")
     window.save()
@@ -1640,7 +1601,7 @@ def test_the_window_s_sidebar_folds_away(window, shell):
 def test_the_window_says_when_it_closes(window):
     closed = []
     window.add_closed_listener(lambda: closed.append(1))
-    _field(window, "user").entry.set_text("unsaved")
+    _field(window, "user").value.set_text("unsaved")
     assert _pump(lambda: window.dirty)
     asked = []
     window._confirm_discard = lambda proceed, stay=None: asked.append(proceed)
@@ -1666,7 +1627,7 @@ def test_a_block_handed_over_is_added_unsaved_with_its_host_line_and_options(win
     ]
     assert window.selected_uid == block.uid
     assert window.structured.patterns_row.get_text() == "*.prod !bastion"
-    assert _field(window, "hostname").entry.get_text() == "%h.example.com"
+    assert _field(window, "hostname").value.get_text() == "%h.example.com"
     assert window._test_client.saves == 0
     assert "Host *.prod !bastion\n" in window.editor.text
 

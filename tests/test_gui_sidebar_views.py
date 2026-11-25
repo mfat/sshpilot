@@ -178,9 +178,9 @@ def _edit_user(view, value):
     """Type a value into the User option of the *.prod block."""
     prod = next(b for b in view.editor.blocks if b.patterns == "*.prod")
     view.select_block(prod.uid)
-    field = view.structured.typed["user"]
-    assert field.uid == next(o for o in prod.options if o.key == "User").uid
-    field.entry.set_text(value)
+    user = next(o for o in prod.options if o.key == "User")
+    field = view.structured.line_rows[user.uid]
+    field.value.set_text(value)
     assert _pump(lambda: view.dirty)
     return prod
 

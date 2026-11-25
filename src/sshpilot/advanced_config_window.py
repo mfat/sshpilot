@@ -35,7 +35,6 @@ asks the daemon, and hands each answer to the views.
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from gettext import gettext as _
 from typing import Callable, Optional
@@ -44,7 +43,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, GObject, Gtk  # noqa: E402
 
 from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_effective_view import Answer, EffectiveView  # noqa: E402
@@ -1198,15 +1197,11 @@ class AdvancedConfigBase:
     def delete_block(self, uid: int) -> None:
         self._after_structure(self.editor.delete_block(uid))
 
-    def add_option(self, block_uid: int, key: str = "", value: str = "", *,
-                   keep: bool = False) -> None:
-        """Add a line to a block. *keep*: added with Add Option, a plain
-        line whatever its keyword."""
+    def add_option(self, block_uid: int, key: str = "", value: str = "") -> None:
+        """Add a line to a block, and focus it (its keyword when empty)."""
         option = self.editor.add_option(block_uid, key, value)
         if option is None:
             return
-        if keep:
-            self.structured.keep(option.uid)
         self._after_structure()
         GLib.idle_add(lambda: (self.structured.focus_option(option.uid, key=not key), False)[1])
 
@@ -1221,56 +1216,6 @@ class AdvancedConfigBase:
 
     def option_typed(self, uid: int, field: str, text: str) -> None:
         self._after_typing(self.editor.set_option(uid, field, text))
-
-    def choice_made(self, block_uid: Optional[int], keyword: str, uid: Optional[int],
-                    value: Optional[str]) -> None:
-        """A yes/no field set to yes, no, or not set (None: the line goes)."""
-        if self.editor.find_block(block_uid) is None:
-            return
-        if value is None:
-            if uid is not None:
-                self._after_structure(self.editor.delete_option(uid))
-            return
-        if uid is None:
-            self.editor.add_option(block_uid, fields.SPELLING[keyword], value)
-            self._after_structure()
-            return
-        if self.editor.set_option(uid, "value", value):
-            self.editor.commit_typing()         # one choice, one undo step
-            self._after_structure()
-
-    # -- key files ---------------------------------------------------------------
-
-    def browse_identity(self, uid: int) -> None:
-        """Choose the key file of an IdentityFile line."""
-        dialog = Gtk.FileDialog(title=_("Choose a Key File"))
-        folder = os.path.expanduser("~/.ssh")
-        if os.path.isdir(folder):
-            dialog.set_initial_folder(Gio.File.new_for_path(folder))
-        root = self.get_root() if hasattr(self, "get_root") else None
-
-        def chosen(source, result) -> None:
-            try:
-                file = source.open_finish(result)
-            except GLib.Error:
-                return                      # dismissed
-            path = file.get_path() if file is not None else None
-            if not path:
-                return
-            if self.editor.set_option(uid, "value", fields.home_relative(path)):
-                self.editor.commit_typing()
-                self._after_structure()
-
-        dialog.open(root if isinstance(root, Gtk.Window) else None, None, chosen)
-
-    def fix_key(self, path: str) -> None:
-        if fields.fix_key_permissions(path):
-            text = _("Only you can read {path} now.").format(path=fields.home_relative(path))
-        else:
-            text = _("The permissions of {path} could not be changed.").format(
-                path=fields.home_relative(path)
-            )
-        self._toasts.add_toast(Adw.Toast.new(text))
 
     # -- the Raw view -------------------------------------------------------
 

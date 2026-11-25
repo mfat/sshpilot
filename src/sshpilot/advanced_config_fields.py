@@ -1,40 +1,19 @@
-"""Which option lines of a block the Structured view shows as typed fields
-(GTK-free).
+"""Helpers for the Directives view (GTK-free): how the common options are
+spelled when added, what a key file on disk says about itself, the hops of
+a ProxyJump, and what an answer of ``ssh -G`` comes to.
 
-The Structured view lists a block's lines in the block's order. A few
-keywords get a control of their own (HostName, User, Port, the identity
-files, ProxyJump, the yes/no switches, the forwards); every other line is a
-keyword and a value. Nothing is ever dropped or rewritten to fit a control:
-a line a control cannot show as it is stays a plain line. So:
-
-* a keyword with one value is shown by its field only for its **first**
-  line in the block: OpenSSH keeps the first value it obtains, and a second
-  line of the same keyword is a line of its own (not used), shown as a
-  plain line where it can be seen and removed;
-* a yes/no field takes its keyword's first line only when its value is
-  ``yes`` or ``no``: an agent socket written after ``ForwardAgent`` stays
-  a plain line, as text;
-* lines added with Add Option stay plain lines while the block is on
-  screen, even when their keyword is one a field shows: otherwise the row
-  being typed into would turn into another control under the pointer
-  (*keep*).
-
-Also here: what a key file on disk says about itself, for the identity
-file rows (missing, readable by others).
+Every line of a block is shown the same way, a keyword and a value (the
+user chose plain rows over typed fields for a few keywords).
 """
 from __future__ import annotations
 
 import os
 import stat
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional
 
-#: Fields of one value, in the order the view shows them.
-SINGLE = ("hostname", "user", "port", "proxyjump")
-#: Fields of a yes/no choice ("not set" being the third).
+#: Common options that are yes or no: added with "yes".
 SWITCHES = ("identitiesonly", "forwardagent")
-IDENTITY = "identityfile"
-FORWARDS = ("localforward", "remoteforward", "dynamicforward")
 
 #: How each keyword is written when the view adds it.
 SPELLING = {
@@ -50,75 +29,11 @@ SPELLING = {
     "dynamicforward": "DynamicForward",
 }
 
-_YES_NO = ("yes", "no")
-
-
-@dataclass
-class Claims:
-    """The option uids each part of the Structured view shows."""
-
-    single: Dict[str, int] = field(default_factory=dict)
-    switches: Dict[str, int] = field(default_factory=dict)
-    identities: List[int] = field(default_factory=list)
-    forwards: List[int] = field(default_factory=list)
-    other: List[int] = field(default_factory=list)
-
-
 def _unquoted(value: str) -> str:
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] == '"':
         return value[1:-1]
     return value
-
-
-def claim(options: Iterable, keep: Iterable[int] = ()) -> Claims:
-    """Share a block's *options* out between the fields and the table."""
-    kept = set(keep)
-    claims = Claims()
-    #: Keywords whose first line has been seen: a field only ever shows the
-    #: first, the one OpenSSH uses.
-    seen: set = set()
-    for option in options:
-        keyword = option.keyword
-        first = keyword not in seen
-        seen.add(keyword)
-        if option.uid in kept or not keyword:
-            claims.other.append(option.uid)
-        elif keyword in SINGLE and first:
-            claims.single[keyword] = option.uid
-        elif (
-            keyword in SWITCHES and first
-            and _unquoted(option.value).lower() in _YES_NO
-        ):
-            claims.switches[keyword] = option.uid
-        elif keyword == IDENTITY:
-            claims.identities.append(option.uid)
-        elif keyword in FORWARDS:
-            claims.forwards.append(option.uid)
-        else:
-            claims.other.append(option.uid)
-    return claims
-
-
-#: The kinds of control a line is shown with (see :func:`line_kinds`).
-SINGLE_KIND = "single"
-SWITCH_KIND = "switch"
-IDENTITY_KIND = "identity"
-FORWARD_KIND = "forward"
-OTHER_KIND = "other"
-
-
-def line_kinds(options: Iterable, keep: Iterable[int] = ()) -> List[tuple]:
-    """``(uid, kind)`` of every line of a block, in the block's order: the
-    Structured view lists them as the file does, each with the control
-    :func:`claim` gives it."""
-    options = list(options)
-    claims = claim(options, keep)
-    kinds: Dict[int, str] = {uid: SINGLE_KIND for uid in claims.single.values()}
-    kinds.update({uid: SWITCH_KIND for uid in claims.switches.values()})
-    kinds.update({uid: IDENTITY_KIND for uid in claims.identities})
-    kinds.update({uid: FORWARD_KIND for uid in claims.forwards})
-    return [(option.uid, kinds.get(option.uid, OTHER_KIND)) for option in options]
 
 
 # -- key files ---------------------------------------------------------------
@@ -187,16 +102,6 @@ def value_file_problems(key: str, values: List[str], *, default: bool,
         if status.state == KEY_MISSING or (private and status.state == KEY_OPEN):
             found.append(status)
     return found
-
-
-def fix_key_permissions(path: str) -> bool:
-    """Make *path* readable and writable by its owner only, as OpenSSH
-    requires of a private key. False when it could not be done."""
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        return False
-    return True
 
 
 def home_relative(path: str, home: Optional[str] = None) -> str:
