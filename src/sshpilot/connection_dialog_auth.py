@@ -1577,7 +1577,7 @@ class AuthPolicyGroup:
         """Why OpenSSH tries something else: the tooltip of the preview.
 
         *notes*: ``(row title, note)`` of each row that is set here and not
-        used. A note reads "Not used: ..." about its own row, so away from
+        used. A note reads "No effect: ..." about its own row, so away from
         that row it is shown under the row's name.
         """
         from gi.repository import GLib

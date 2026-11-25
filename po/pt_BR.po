@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 01:47+0330\n"
+"POT-Creation-Date: 2026-11-26 01:52+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -2884,18 +2884,18 @@ msgstr "Rota"
 
 #: src/sshpilot/connection_dialog_route.py:190
 msgid ""
-"The jump hosts are not used: the proxy command comes first, and OpenSSH uses "
-"only one of the two."
+"The jump hosts have no effect: the proxy command comes first, and OpenSSH "
+"uses only one of the two."
 msgstr ""
-"Os hosts de salto não são usados: o comando de proxy vem primeiro e o "
+"Os hosts de salto não têm efeito: o comando de proxy vem primeiro e o "
 "OpenSSH usa apenas um dos dois."
 
 #: src/sshpilot/connection_dialog_route.py:192
 msgid ""
-"The proxy command is not used: the jump hosts come first, and OpenSSH uses "
+"The proxy command has no effect: the jump hosts come first, and OpenSSH uses "
 "only one of the two."
 msgstr ""
-"O comando de proxy não é usado: os hosts de salto vêm primeiro e o OpenSSH "
+"O comando de proxy não tem efeito: os hosts de salto vêm primeiro e o OpenSSH "
 "usa apenas um dos dois."
 
 #: src/sshpilot/connection_dialog_route.py:268
@@ -3035,22 +3035,22 @@ msgstr ""
 #: src/sshpilot/connection_dialog_overrides.py:252
 #, python-brace-format
 msgid ""
-"Not used: “{block}” in {file} (line {line}) already sets {keyword} to "
+"No effect: “{block}” in {file} (line {line}) already sets {keyword} to "
 "“{value}”, and OpenSSH keeps the first value it finds. The value here is "
 "saved, but connections use “{value}”."
 msgstr ""
-"Não usado: “{block}” em {file} (linha {line}) já define {keyword} como "
+"Sem efeito: “{block}” em {file} (linha {line}) já define {keyword} como "
 "“{value}”, e o OpenSSH mantém o primeiro valor que encontra. O valor aqui é "
 "salvo, mas as conexões usam “{value}”."
 
 #: src/sshpilot/connection_dialog_overrides.py:258
 #, python-brace-format
 msgid ""
-"Not used: line {line} of {file}, above every Host block, already sets "
+"No effect: line {line} of {file}, above every Host block, already sets "
 "{keyword} to “{value}”, and OpenSSH keeps the first value it finds. The "
 "value here is saved, but connections use “{value}”."
 msgstr ""
-"Não usado: a linha {line} de {file}, acima de todos os blocos Host, já "
+"Sem efeito: a linha {line} de {file}, acima de todos os blocos Host, já "
 "define {keyword} como “{value}”, e o OpenSSH mantém o primeiro valor que "
 "encontra. O valor aqui é salvo, mas as conexões usam “{value}”."
 
@@ -18238,8 +18238,8 @@ msgstr "O OpenSSH obtém o valor desta opção a partir desta linha."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:65
 #, python-brace-format
-msgid "Not used: {where} sets this option first."
-msgstr "Não usada: {where} define esta opção primeiro."
+msgid "No effect: {where} sets this option first."
+msgstr "Sem efeito: {where} define esta opção primeiro."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:69
 msgid "OpenSSH collects every value of this option."
@@ -18250,9 +18250,9 @@ msgid "This block does not apply to the target."
 msgstr "Este bloco não se aplica ao destino."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:73
-msgid "Not used: Settings ▸ SSH Options set this option for every connection."
+msgid "No effect: Settings ▸ SSH Options set this option for every connection."
 msgstr ""
-"Não usada: Configurações ▸ Opções de SSH definem esta opção para todas as "
+"Sem efeito: Configurações ▸ Opções de SSH definem esta opção para todas as "
 "conexões."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:74
@@ -18500,25 +18500,28 @@ msgstr[1] "{count} linhas substituídas pelas Configurações"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:331
 #, python-brace-format
-msgid "{count} line not used"
-msgid_plural "{count} lines not used"
-msgstr[0] "{count} linha não usada"
-msgstr[1] "{count} linhas não usadas"
+msgid "{count} line has no effect"
+msgid_plural "{count} lines have no effect"
+msgstr[0] "{count} linha sem efeito"
+msgstr[1] "{count} linhas sem efeito"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:338
 #, python-brace-format
 msgid "{count} directive will not take effect due to configuration precedence."
 msgid_plural ""
 "{count} directives will not take effect due to configuration precedence."
-msgstr[0] "{count} diretiva não terá efeito devido à precedência da configuração."
-msgstr[1] "{count} diretivas não terão efeito devido à precedência da configuração."
+msgstr[0] ""
+"{count} diretiva não terá efeito devido à precedência da configuração."
+msgstr[1] ""
+"{count} diretivas não terão efeito devido à precedência da configuração."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:347
 #, python-brace-format
 msgid "{count} directive is overridden by Settings ▸ SSH Options."
 msgid_plural "{count} directives are overridden by Settings ▸ SSH Options."
 msgstr[0] "{count} diretiva é substituída por Configurações ▸ Opções de SSH."
-msgstr[1] "{count} diretivas são substituídas por Configurações ▸ Opções de SSH."
+msgstr[1] ""
+"{count} diretivas são substituídas por Configurações ▸ Opções de SSH."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:356
 #, python-brace-format
@@ -18595,8 +18598,8 @@ msgid "Rejected"
 msgstr "Rejeitada"
 
 #: src/sshpilot/advanced_config_structured_view.py:161
-msgid "Not used"
-msgstr "Não usada"
+msgid "No effect"
+msgstr "Sem efeito"
 
 #: src/sshpilot/advanced_config_structured_view.py:376
 #: src/sshpilot/advanced_config_block_row.py:55
@@ -18838,6 +18841,9 @@ msgstr "{view} (alterações não salvas)"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · desativado"
+
+#~ msgid "Not used"
+#~ msgstr "Não usada"
 
 #~ msgid "The real host name or IP address to connect to"
 #~ msgstr "O nome real do host ou o endereço IP ao qual conectar"

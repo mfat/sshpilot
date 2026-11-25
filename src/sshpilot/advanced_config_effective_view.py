@@ -41,7 +41,7 @@ ALL, THIS_BLOCK, OTHER, DEFAULT = "all", "this", "other", "default"
 ATTENTION = "attention"
 
 #: How much a problem matters, most first: a file OpenSSH will not use,
-#: lines of the block that go unused ("Not used" in Structured), lines
+#: lines of the block that go unused ("No effect" in Directives), lines
 #: Settings override ("Overridden" in Structured).
 ERROR, IGNORED, OVERRIDDEN = "error", "ignored", "overridden"
 _SEVERITY = (ERROR, IGNORED, OVERRIDDEN)

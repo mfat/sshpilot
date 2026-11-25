@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 01:47+0330\n"
+"POT-Creation-Date: 2026-11-26 01:52+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -2920,18 +2920,18 @@ msgstr "Route"
 
 #: src/sshpilot/connection_dialog_route.py:190
 msgid ""
-"The jump hosts are not used: the proxy command comes first, and OpenSSH uses "
-"only one of the two."
+"The jump hosts have no effect: the proxy command comes first, and OpenSSH "
+"uses only one of the two."
 msgstr ""
-"Die Sprung-Hosts werden nicht verwendet: Der Proxy-Befehl steht zuerst, und "
+"Die Sprung-Hosts haben keine Wirkung: Der Proxy-Befehl steht zuerst, und "
 "OpenSSH verwendet nur einen von beiden."
 
 #: src/sshpilot/connection_dialog_route.py:192
 msgid ""
-"The proxy command is not used: the jump hosts come first, and OpenSSH uses "
+"The proxy command has no effect: the jump hosts come first, and OpenSSH uses "
 "only one of the two."
 msgstr ""
-"Der Proxy-Befehl wird nicht verwendet: Die Sprung-Hosts stehen zuerst, und "
+"Der Proxy-Befehl hat keine Wirkung: Die Sprung-Hosts stehen zuerst, und "
 "OpenSSH verwendet nur einen von beiden."
 
 #: src/sshpilot/connection_dialog_route.py:268
@@ -3078,22 +3078,22 @@ msgstr ""
 #: src/sshpilot/connection_dialog_overrides.py:252
 #, python-brace-format
 msgid ""
-"Not used: “{block}” in {file} (line {line}) already sets {keyword} to "
+"No effect: “{block}” in {file} (line {line}) already sets {keyword} to "
 "“{value}”, and OpenSSH keeps the first value it finds. The value here is "
 "saved, but connections use “{value}”."
 msgstr ""
-"Nicht verwendet: „{block}“ in {file} (Zeile {line}) setzt {keyword} bereits "
+"Keine Wirkung: „{block}“ in {file} (Zeile {line}) setzt {keyword} bereits "
 "auf „{value}“, und OpenSSH behält den ersten gefundenen Wert. Der Wert hier "
 "wird gespeichert, aber Verbindungen verwenden „{value}“."
 
 #: src/sshpilot/connection_dialog_overrides.py:258
 #, python-brace-format
 msgid ""
-"Not used: line {line} of {file}, above every Host block, already sets "
+"No effect: line {line} of {file}, above every Host block, already sets "
 "{keyword} to “{value}”, and OpenSSH keeps the first value it finds. The "
 "value here is saved, but connections use “{value}”."
 msgstr ""
-"Nicht verwendet: Zeile {line} von {file}, oberhalb aller Host-Blöcke, setzt "
+"Keine Wirkung: Zeile {line} von {file}, oberhalb aller Host-Blöcke, setzt "
 "{keyword} bereits auf „{value}“, und OpenSSH behält den ersten gefundenen "
 "Wert. Der Wert hier wird gespeichert, aber Verbindungen verwenden „{value}“."
 
@@ -18463,8 +18463,8 @@ msgstr "OpenSSH übernimmt den Wert dieser Option aus dieser Zeile."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:65
 #, python-brace-format
-msgid "Not used: {where} sets this option first."
-msgstr "Nicht verwendet: {where} setzt diese Option zuerst."
+msgid "No effect: {where} sets this option first."
+msgstr "Keine Wirkung: {where} setzt diese Option zuerst."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:69
 msgid "OpenSSH collects every value of this option."
@@ -18475,9 +18475,9 @@ msgid "This block does not apply to the target."
 msgstr "Dieser Block gilt nicht für das Ziel."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:73
-msgid "Not used: Settings ▸ SSH Options set this option for every connection."
+msgid "No effect: Settings ▸ SSH Options set this option for every connection."
 msgstr ""
-"Nicht verwendet: Einstellungen ▸ SSH-Optionen setzen diese Option für jede "
+"Keine Wirkung: Einstellungen ▸ SSH-Optionen setzen diese Option für jede "
 "Verbindung."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:74
@@ -18724,25 +18724,31 @@ msgstr[1] "{count} Zeilen durch Einstellungen überschrieben"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:331
 #, python-brace-format
-msgid "{count} line not used"
-msgid_plural "{count} lines not used"
-msgstr[0] "{count} Zeile nicht verwendet"
-msgstr[1] "{count} Zeilen nicht verwendet"
+msgid "{count} line has no effect"
+msgid_plural "{count} lines have no effect"
+msgstr[0] "{count} Zeile ohne Wirkung"
+msgstr[1] "{count} Zeilen ohne Wirkung"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:338
 #, python-brace-format
 msgid "{count} directive will not take effect due to configuration precedence."
 msgid_plural ""
 "{count} directives will not take effect due to configuration precedence."
-msgstr[0] "{count} Direktive wird wegen der Vorrangregeln der Konfiguration nicht wirksam."
-msgstr[1] "{count} Direktiven werden wegen der Vorrangregeln der Konfiguration nicht wirksam."
+msgstr[0] ""
+"{count} Direktive wird wegen der Vorrangregeln der Konfiguration nicht "
+"wirksam."
+msgstr[1] ""
+"{count} Direktiven werden wegen der Vorrangregeln der Konfiguration nicht "
+"wirksam."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:347
 #, python-brace-format
 msgid "{count} directive is overridden by Settings ▸ SSH Options."
 msgid_plural "{count} directives are overridden by Settings ▸ SSH Options."
-msgstr[0] "{count} Direktive wird von Einstellungen ▸ SSH-Optionen überschrieben."
-msgstr[1] "{count} Direktiven werden von Einstellungen ▸ SSH-Optionen überschrieben."
+msgstr[0] ""
+"{count} Direktive wird von Einstellungen ▸ SSH-Optionen überschrieben."
+msgstr[1] ""
+"{count} Direktiven werden von Einstellungen ▸ SSH-Optionen überschrieben."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:356
 #, python-brace-format
@@ -18819,8 +18825,8 @@ msgid "Rejected"
 msgstr "Abgelehnt"
 
 #: src/sshpilot/advanced_config_structured_view.py:161
-msgid "Not used"
-msgstr "Nicht verwendet"
+msgid "No effect"
+msgstr "Keine Wirkung"
 
 #: src/sshpilot/advanced_config_structured_view.py:376
 #: src/sshpilot/advanced_config_block_row.py:55
@@ -19063,6 +19069,9 @@ msgstr "{view} (ungespeicherte Änderungen)"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · aus"
+
+#~ msgid "Not used"
+#~ msgstr "Nicht verwendet"
 
 #~ msgid "The real host name or IP address to connect to"
 #~ msgstr "Der echte Hostname oder die IP-Adresse für die Verbindung"

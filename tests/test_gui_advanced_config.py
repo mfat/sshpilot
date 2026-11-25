@@ -358,7 +358,7 @@ def test_filtering_by_a_host_shows_openssh_s_answer(window):
     # Lines OpenSSH uses need no word; the ones it does not say so.
     assert [_status(window, o) for o in web.options] == [None, None, None]
     window.select_block(star.uid)
-    assert [_status(window, o) for o in star.options] == ["Not used", "Overridden"]
+    assert [_status(window, o) for o in star.options] == ["No effect", "Overridden"]
     assert _effective(window, "user") == "deploy"
     assert _effective(window, "connecttimeout") == "7"      # Settings beat the file
 
@@ -375,7 +375,7 @@ def test_lines_are_listed_in_the_block_order(window):
     assert _field(window, "port") is None                    # Host * sets none
     user = _field(window, "user")
     assert user.value.get_text() == "fallback"
-    assert _pump(lambda: user.state.get_label() == "Not used")   # web's block set it first
+    assert _pump(lambda: user.state.get_label() == "No effect")   # web's block set it first
     assert "Host web1 web2" in user.state._tooltip
 
 
@@ -815,7 +815,7 @@ def test_lines_that_do_not_take_effect_are_struck_through_and_rejected_ones_red(
     try:
         block = win.draft.blocks[0]
         rows = [win.structured.line_rows[o.uid] for o in block.options]
-        assert _pump(lambda: rows[1].state.get_label() == "Not used")
+        assert _pump(lambda: rows[1].state.get_label() == "No effect")
         assert rows[1].value._struck                                  # struck through
         assert not rows[1].value.has_css_class("dim-label")          # not dimmed
         assert not getattr(rows[0].value, "_struck", False)          # used: plain
@@ -827,7 +827,7 @@ def test_lines_that_do_not_take_effect_are_struck_through_and_rejected_ones_red(
 
 
 def test_a_not_used_pill_shows_the_line_used_instead(gtk, tmp_path):
-    """Structured's "Not used" pill is a link, as a source is in Effective."""
+    """Structured's "No effect" pill is a link, as a source is in Effective."""
     from gi.repository import Gtk
     win = _open_on(gtk, tmp_path, (
         "Host db1\n    User postgres\n    Port 5432\n\nHost *\n    User fallback\n"
@@ -838,7 +838,7 @@ def test_a_not_used_pill_shows_the_line_used_instead(gtk, tmp_path):
         win.select_block(star.uid)                           # db1 stays in question
         assert _settled(win)
         user = _field(win, "user")
-        assert _pump(lambda: user.state.get_label() == "Not used")
+        assert _pump(lambda: user.state.get_label() == "No effect")
         assert user.state._target == ("", 2)                 # db1's User line
         controllers = user.state.observe_controllers()
         click = next(controllers.get_item(i) for i in range(controllers.get_n_items())

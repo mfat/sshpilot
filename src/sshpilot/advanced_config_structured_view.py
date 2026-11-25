@@ -120,7 +120,7 @@ def _struck() -> "Pango.AttrList":
 
 
 def _state_pill(view: "StructuredView") -> Gtk.Label:
-    """The pill that says what OpenSSH does with a line. A "Not used" one
+    """The pill that says what OpenSSH does with a line. A "No effect" one
     is a link: a click shows the line that is used instead, as a source
     does in Effective."""
     label = pill(style="warning")
@@ -151,14 +151,14 @@ def _set_pill_target(label: Gtk.Label, target) -> None:
 
 
 def _line_pill(label: Gtk.Label, item, error) -> bool:
-    """Say what OpenSSH does with a line: only what needs saying (not used,
+    """Say what OpenSSH does with a line: only what needs saying (no effect,
     overridden, rejected). Returns whether the line is unused."""
     if error is not None:
         set_pill(label, _("Rejected"), "error", messages.error_text(error))
         _set_pill_target(label, None)
         return False
     if item is not None and item.state in (State.SHADOWED, State.FORCED):
-        text = _("Not used") if item.state is State.SHADOWED else messages.state_label(item.state)
+        text = _("No effect") if item.state is State.SHADOWED else messages.state_label(item.state)
         tooltip = messages.state_tooltip(item)
         target = None
         if item.state is State.SHADOWED and item.decided_line:
@@ -1218,7 +1218,7 @@ class StructuredView(Gtk.Box):
         return row.value if row is not None else None
 
     def line_status(self, uid: int) -> Optional[str]:
-        """What is said beside option *uid* (Not used, Overridden,
+        """What is said beside option *uid* (No effect, Overridden,
         Rejected), or None: nothing needs saying, or it is not shown."""
         row = self._rows.get(uid)
         if row is None:

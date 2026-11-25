@@ -62,7 +62,7 @@ def state_tooltip(item: SshConfigDraftLine) -> str:
     if state is State.APPLIED:
         return _("OpenSSH takes this option's value from this line.")
     if state is State.SHADOWED:
-        return _("Not used: {where} sets this option first.").format(
+        return _("No effect: {where} sets this option first.").format(
             where=where(item.decided_file, item.decided_line, item.decided_block)
         )
     if state is State.ACCUMULATED:
@@ -70,7 +70,7 @@ def state_tooltip(item: SshConfigDraftLine) -> str:
     if state is State.INACTIVE:
         return _("This block does not apply to the target.")
     if state is State.FORCED:
-        return _("Not used: Settings ▸ SSH Options set this option for every connection.")
+        return _("No effect: Settings ▸ SSH Options set this option for every connection.")
     return _("OpenSSH reads the files this line names at this place.")
 
 
@@ -250,7 +250,7 @@ def used_instead_markup(value: str, place: str, forced: bool = False) -> str:
 
 
 def show_line_hint() -> str:
-    """Under a "Not used" pill's reason: the pill is a link to that line."""
+    """Under a "No effect" pill's reason: the pill is a link to that line."""
     return _("Click to show that line.")
 
 
@@ -328,7 +328,7 @@ def overridden_count(count: int) -> str:
 def shadowed_count(count: int) -> str:
     """Short, for a row's problem label (Effective)."""
     return ngettext(
-        "{count} line not used", "{count} lines not used", count
+        "{count} line has no effect", "{count} lines have no effect", count
     ).format(count=count)
 
 

@@ -187,9 +187,9 @@ class ConnectionDialogRouteMixin:
         if note is None:
             return
         if unused == "jump":
-            text = _("The jump hosts are not used: the proxy command comes first, and OpenSSH uses only one of the two.")
+            text = _("The jump hosts have no effect: the proxy command comes first, and OpenSSH uses only one of the two.")
         elif unused == "command":
-            text = _("The proxy command is not used: the jump hosts come first, and OpenSSH uses only one of the two.")
+            text = _("The proxy command has no effect: the jump hosts come first, and OpenSSH uses only one of the two.")
         else:
             text = ""
         note.set_label(text)

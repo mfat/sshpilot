@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 01:47+0330\n"
+"POT-Creation-Date: 2026-11-26 01:52+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -2872,18 +2872,18 @@ msgstr "مسیر"
 
 #: src/sshpilot/connection_dialog_route.py:190
 msgid ""
-"The jump hosts are not used: the proxy command comes first, and OpenSSH uses "
-"only one of the two."
+"The jump hosts have no effect: the proxy command comes first, and OpenSSH "
+"uses only one of the two."
 msgstr ""
-"میزبان‌های پرش استفاده نمی‌شوند: فرمان پراکسی اول آمده است و OpenSSH فقط یکی "
+"میزبان‌های پرش اثری ندارند: فرمان پراکسی اول آمده است و OpenSSH فقط یکی "
 "از این دو را به کار می‌برد."
 
 #: src/sshpilot/connection_dialog_route.py:192
 msgid ""
-"The proxy command is not used: the jump hosts come first, and OpenSSH uses "
+"The proxy command has no effect: the jump hosts come first, and OpenSSH uses "
 "only one of the two."
 msgstr ""
-"فرمان پراکسی استفاده نمی‌شود: میزبان‌های پرش اول آمده‌اند و OpenSSH فقط یکی از "
+"فرمان پراکسی اثری ندارد: میزبان‌های پرش اول آمده‌اند و OpenSSH فقط یکی از "
 "این دو را به کار می‌برد."
 
 #: src/sshpilot/connection_dialog_route.py:268
@@ -3025,22 +3025,22 @@ msgstr ""
 #: src/sshpilot/connection_dialog_overrides.py:252
 #, python-brace-format
 msgid ""
-"Not used: “{block}” in {file} (line {line}) already sets {keyword} to "
+"No effect: “{block}” in {file} (line {line}) already sets {keyword} to "
 "“{value}”, and OpenSSH keeps the first value it finds. The value here is "
 "saved, but connections use “{value}”."
 msgstr ""
-"استفاده نمی‌شود: «{block}» در {file} (خط {line}) از قبل {keyword} را روی "
+"بی‌اثر: «{block}» در {file} (خط {line}) از قبل {keyword} را روی "
 "«{value}» تنظیم کرده است و OpenSSH اولین مقداری را که پیدا کند نگه می‌دارد. "
 "مقدار اینجا ذخیره می‌شود، اما اتصال‌ها از «{value}» استفاده می‌کنند."
 
 #: src/sshpilot/connection_dialog_overrides.py:258
 #, python-brace-format
 msgid ""
-"Not used: line {line} of {file}, above every Host block, already sets "
+"No effect: line {line} of {file}, above every Host block, already sets "
 "{keyword} to “{value}”, and OpenSSH keeps the first value it finds. The "
 "value here is saved, but connections use “{value}”."
 msgstr ""
-"استفاده نمی‌شود: خط {line} از {file}، بالاتر از همهٔ بلوک‌های Host، از قبل "
+"بی‌اثر: خط {line} از {file}، بالاتر از همهٔ بلوک‌های Host، از قبل "
 "{keyword} را روی «{value}» تنظیم کرده است و OpenSSH اولین مقداری را که پیدا "
 "کند نگه می‌دارد. مقدار اینجا ذخیره می‌شود، اما اتصال‌ها از «{value}» استفاده "
 "می‌کنند."
@@ -18065,8 +18065,8 @@ msgstr "OpenSSH مقدار این گزینه را از این خط می‌گیر
 
 #: src/sshpilot/gtk/advanced_config_messages.py:65
 #, python-brace-format
-msgid "Not used: {where} sets this option first."
-msgstr "استفاده نمی‌شود: {where} این گزینه را زودتر تنظیم می‌کند."
+msgid "No effect: {where} sets this option first."
+msgstr "بی‌اثر: {where} این گزینه را زودتر تنظیم می‌کند."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:69
 msgid "OpenSSH collects every value of this option."
@@ -18077,9 +18077,9 @@ msgid "This block does not apply to the target."
 msgstr "این بلوک برای هدف اعمال نمی‌شود."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:73
-msgid "Not used: Settings ▸ SSH Options set this option for every connection."
+msgid "No effect: Settings ▸ SSH Options set this option for every connection."
 msgstr ""
-"استفاده نمی‌شود: تنظیمات ▸ گزینه‌های SSH این گزینه را برای همهٔ اتصال‌ها تنظیم "
+"بی‌اثر: تنظیمات ▸ گزینه‌های SSH این گزینه را برای همهٔ اتصال‌ها تنظیم "
 "می‌کند."
 
 #: src/sshpilot/gtk/advanced_config_messages.py:74
@@ -18326,10 +18326,10 @@ msgstr[1] "{count} خط توسط تنظیمات بازنویسی شد"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:331
 #, python-brace-format
-msgid "{count} line not used"
-msgid_plural "{count} lines not used"
-msgstr[0] "{count} خط استفاده‌نشده"
-msgstr[1] "{count} خط استفاده‌نشده"
+msgid "{count} line has no effect"
+msgid_plural "{count} lines have no effect"
+msgstr[0] "{count} خط بی‌اثر"
+msgstr[1] "{count} خط بی‌اثر"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:338
 #, python-brace-format
@@ -18421,8 +18421,8 @@ msgid "Rejected"
 msgstr "رد شده"
 
 #: src/sshpilot/advanced_config_structured_view.py:161
-msgid "Not used"
-msgstr "استفاده نمی‌شود"
+msgid "No effect"
+msgstr "بی‌اثر"
 
 #: src/sshpilot/advanced_config_structured_view.py:376
 #: src/sshpilot/advanced_config_block_row.py:55
@@ -18663,6 +18663,9 @@ msgstr "{view} (تغییرات ذخیره‌نشده)"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · خاموش"
+
+#~ msgid "Not used"
+#~ msgstr "استفاده نمی‌شود"
 
 #~ msgid "The real host name or IP address to connect to"
 #~ msgstr "نام واقعی میزبان یا نشانی IP برای اتصال"

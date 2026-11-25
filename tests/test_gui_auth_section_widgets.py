@@ -237,7 +237,7 @@ def test_the_line_shows_in_red_with_its_reason_when_another_setting_wins(gtk):
         "PreferredAuthentications password,publickey", "PasswordAuthentication yes",
         earlier={"passwordauthentication": "no"},
     )
-    section.set_preview_notes([("Password", "Not used: “Host *” <sets> it & wins.")])
+    section.set_preview_notes([("Password", "No effect: “Host *” <sets> it & wins.")])
     assert section.order_row.get_subtitle() == "password, publickey"
     assert section.effective_row.get_subtitle() == "publickey"
     assert section.preview.get_visible()

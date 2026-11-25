@@ -249,13 +249,13 @@ def earlier_note(keyword: str, own: Optional[str], earlier: Dict[str, object]) -
     block = str(getattr(entry, "block", "") or "").strip()
     if block:
         template = _(
-            "Not used: “{block}” in {file} (line {line}) already sets "
+            "No effect: “{block}” in {file} (line {line}) already sets "
             "{keyword} to “{value}”, and OpenSSH keeps the first value it "
             "finds. The value here is saved, but connections use “{value}”."
         )
     else:
         template = _(
-            "Not used: line {line} of {file}, above every Host block, already "
+            "No effect: line {line} of {file}, above every Host block, already "
             "sets {keyword} to “{value}”, and OpenSSH keeps the first value "
             "it finds. The value here is saved, but connections use “{value}”."
         )
@@ -610,7 +610,7 @@ class ConnectionDialogOverridesMixin:
                 continue
             note = getattr(row, "_sshpilot_override_note", "") or ""
             if note:
-                # Each note is about its own row ("Not used: ..."): away
+                # Each note is about its own row ("No effect: ..."): away
                 # from the row it needs the row's name to say what is not.
                 notes.append((row.get_title(), note))
         try:

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 01:47+0330\n"
+"POT-Creation-Date: 2026-11-26 01:52+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -2783,15 +2783,15 @@ msgstr "路由"
 
 #: src/sshpilot/connection_dialog_route.py:190
 msgid ""
-"The jump hosts are not used: the proxy command comes first, and OpenSSH uses "
-"only one of the two."
-msgstr "跳板主机未被使用：代理命令在前，OpenSSH 只会使用两者之一。"
+"The jump hosts have no effect: the proxy command comes first, and OpenSSH "
+"uses only one of the two."
+msgstr "跳板主机不起作用：代理命令在前，OpenSSH 只会使用两者之一。"
 
 #: src/sshpilot/connection_dialog_route.py:192
 msgid ""
-"The proxy command is not used: the jump hosts come first, and OpenSSH uses "
+"The proxy command has no effect: the jump hosts come first, and OpenSSH uses "
 "only one of the two."
-msgstr "代理命令未被使用：跳板主机在前，OpenSSH 只会使用两者之一。"
+msgstr "代理命令不起作用：跳板主机在前，OpenSSH 只会使用两者之一。"
 
 #: src/sshpilot/connection_dialog_route.py:268
 msgid "Type a host name to see its route."
@@ -2923,21 +2923,21 @@ msgstr ""
 #: src/sshpilot/connection_dialog_overrides.py:252
 #, python-brace-format
 msgid ""
-"Not used: “{block}” in {file} (line {line}) already sets {keyword} to "
+"No effect: “{block}” in {file} (line {line}) already sets {keyword} to "
 "“{value}”, and OpenSSH keeps the first value it finds. The value here is "
 "saved, but connections use “{value}”."
 msgstr ""
-"未使用：{file}（第 {line} 行）中的“{block}”已将 {keyword} 设为“{value}”，而 "
+"不起作用：{file}（第 {line} 行）中的“{block}”已将 {keyword} 设为“{value}”，而 "
 "OpenSSH 保留它找到的第一个值。此处的值会被保存，但连接使用“{value}”。"
 
 #: src/sshpilot/connection_dialog_overrides.py:258
 #, python-brace-format
 msgid ""
-"Not used: line {line} of {file}, above every Host block, already sets "
+"No effect: line {line} of {file}, above every Host block, already sets "
 "{keyword} to “{value}”, and OpenSSH keeps the first value it finds. The "
 "value here is saved, but connections use “{value}”."
 msgstr ""
-"未使用：{file} 的第 {line} 行（位于所有 Host 块之上）已将 {keyword} 设"
+"不起作用：{file} 的第 {line} 行（位于所有 Host 块之上）已将 {keyword} 设"
 "为“{value}”，而 OpenSSH 保留它找到的第一个值。此处的值会被保存，但连接使"
 "用“{value}”。"
 
@@ -17521,8 +17521,8 @@ msgstr "OpenSSH 从此行取得该选项的值。"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:65
 #, python-brace-format
-msgid "Not used: {where} sets this option first."
-msgstr "未使用：{where} 先设置了此选项。"
+msgid "No effect: {where} sets this option first."
+msgstr "不起作用：{where} 先设置了此选项。"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:69
 msgid "OpenSSH collects every value of this option."
@@ -17533,8 +17533,8 @@ msgid "This block does not apply to the target."
 msgstr "此块不适用于该目标。"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:73
-msgid "Not used: Settings ▸ SSH Options set this option for every connection."
-msgstr "未使用：设置 ▸ SSH 选项为所有连接设置了此选项。"
+msgid "No effect: Settings ▸ SSH Options set this option for every connection."
+msgstr "不起作用：设置 ▸ SSH 选项为所有连接设置了此选项。"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:74
 msgid "OpenSSH reads the files this line names at this place."
@@ -17762,9 +17762,9 @@ msgstr[0] "{count} 行被设置覆盖"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:331
 #, python-brace-format
-msgid "{count} line not used"
-msgid_plural "{count} lines not used"
-msgstr[0] "{count} 行未使用"
+msgid "{count} line has no effect"
+msgid_plural "{count} lines have no effect"
+msgstr[0] "{count} 行不起作用"
 
 #: src/sshpilot/gtk/advanced_config_messages.py:338
 #, python-brace-format
@@ -17853,8 +17853,8 @@ msgid "Rejected"
 msgstr "被拒绝"
 
 #: src/sshpilot/advanced_config_structured_view.py:161
-msgid "Not used"
-msgstr "未使用"
+msgid "No effect"
+msgstr "不起作用"
 
 #: src/sshpilot/advanced_config_structured_view.py:376
 #: src/sshpilot/advanced_config_block_row.py:55
@@ -18091,6 +18091,9 @@ msgstr "{view}（未保存的更改）"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · 已关闭"
+
+#~ msgid "Not used"
+#~ msgstr "未使用"
 
 #~ msgid "The real host name or IP address to connect to"
 #~ msgstr "要连接的真实主机名或 IP 地址"
