@@ -4,8 +4,8 @@ This computer is always on the left and the server on the right; the arrow
 between them points the way a forwarded connection travels (right for Local
 and Dynamic, left for Remote). Each side shows the machine over the address
 it plays a part with: an ear where the forward listens, a target where the
-connection is delivered. The type and its ssh flag sit on the left of the
-row, edit and delete on the right.
+connection is delivered. The type and its ssh flag sit on a line above,
+edit and delete on the right.
 
 ``describe_forward`` is the pure part (what to show for a rule); the widget
 builders below only lay it out.
@@ -20,8 +20,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gtk, Pango  # noqa: E402
+from gi.repository import Gdk, Gtk, Pango  # noqa: E402
 
 #: The machine a side belongs to.
 THIS_COMPUTER = "local"
@@ -157,11 +156,7 @@ ARROW_WIDTH = 36
 #: Widest the left side's address gets, in characters: past it the address
 #: ends in an ellipsis (the full text is its tooltip), so one long address
 #: does not widen every row through the size group.
-LEFT_ADDRESS_CHARS = 24
-#: Width of the type-and-flag column. Fixed, not just size-grouped: the flag
-#: wraps, so its column could otherwise be squeezed by a different amount on
-#: each row and the strips would start at different places.
-HEADING_WIDTH = 190
+LEFT_ADDRESS_CHARS = 20
 
 
 def _ensure_css() -> None:
@@ -237,7 +232,8 @@ def _side(machine: str, server_name: str, side: Side, kind: str, shrink: bool) -
     address = Gtk.Label(label=side.address, xalign=0)
     for name_ in ("monospace", "caption", "dim-label"):
         address.add_css_class(name_)
-    address.set_ellipsize(Pango.EllipsizeMode.END)
+    # In the middle: the port, at the end, is what tells rules apart.
+    address.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
     if not shrink:
         # As wide as the address (up to the cap) at the least, not only by
         # nature: a row short of room would otherwise squeeze this side
@@ -258,49 +254,37 @@ def build_forward_rule_row(
     server_name: str,
     on_edit: Callable[[], None],
     on_delete: Callable[[], None],
-    label_group: Optional[Gtk.SizeGroup] = None,
     side_group: Optional[Gtk.SizeGroup] = None,
 ) -> Gtk.Widget:
-    """One rule's row. *label_group* and *side_group*, shared by every row of
-    the list, keep the type column and the left side the same width, so the
-    arrows line up from row to row."""
+    """One rule's row: the type and its flag over the strip. *side_group*,
+    shared by every row of the list, keeps the left side the same width, so
+    the arrows line up from row to row."""
     _ensure_css()
-    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
     row.add_css_class("forward-rule")
+    body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    body.set_hexpand(True)
 
-    # Type and flag.
-    heading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-    heading.set_valign(Gtk.Align.CENTER)
+    # Type and flag, on a line above the strip rather than in a column
+    # beside it: a column made every row, and the dialog, too wide.
+    heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
     title = Gtk.Label(label=view.title, xalign=0)
     title.add_css_class("forward-title")
     title.add_css_class(f"forward-{view.kind}")
+    title.set_valign(Gtk.Align.BASELINE)
     heading.append(title)
-    flag = Gtk.Label(label=view.flag, xalign=0)
+    flag = Gtk.Label(label=view.flag, xalign=0, hexpand=True)
     for name in ("monospace", "caption", "dim-label"):
         flag.add_css_class(name)
     flag.set_wrap(True)
-    flag.set_wrap_mode(Pango.WrapMode.CHAR)
-    flag.set_max_width_chars(20)
+    flag.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    flag.set_valign(Gtk.Align.BASELINE)
     heading.append(flag)
-    heading.set_size_request(HEADING_WIDTH, -1)
-    # Held to that width: the row measures the flag for its own height, and
-    # a wrapped flag asks for more width the fewer lines it may take, which
-    # the row would hand it before the strip gets any.
-    column = Adw.Clamp(
-        maximum_size=HEADING_WIDTH,
-        tightening_threshold=HEADING_WIDTH,
-        orientation=Gtk.Orientation.HORIZONTAL,
-    )
-    column.set_child(heading)
-    column.set_halign(Gtk.Align.START)
-    if label_group is not None:
-        label_group.add_widget(column)
-    row.append(column)
+    body.append(heading)
 
     # This computer, arrow, server.
-    strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+    strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
     strip.add_css_class("forward-strip")
-    strip.set_hexpand(True)
     left = _side(THIS_COMPUTER, server_name, view.this_computer, view.kind, shrink=False)
     if side_group is not None:
         side_group.add_widget(left)
@@ -322,7 +306,8 @@ def build_forward_rule_row(
     right = _side(SERVER, server_name, view.server, view.kind, shrink=True)
     right.set_hexpand(True)
     strip.append(right)
-    row.append(strip)
+    body.append(strip)
+    row.append(body)
 
     # Actions.
     edit = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER)

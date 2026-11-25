@@ -87,13 +87,12 @@ class ConnectionDialogPortForwardingMixin:
         if self.placeholder.get_parent():
             self.placeholder.unparent()
 
-        # One card for all rules, a separator between rows. The size groups
-        # give every row the same type column and left side, so the arrows
+        # One card for all rules, a separator between rows. The size group
+        # gives every row the same left side, so the arrows
         # line up down the list.
         from sshpilot.forward_rule_row import build_forward_rule_row, describe_forward
 
         server_name = self._forwarding_server_name()
-        label_group = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
         side_group = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         card.add_css_class("card")
@@ -111,7 +110,6 @@ class ConnectionDialogPortForwardingMixin:
                 server_name,
                 on_edit=lambda r=rule: self.on_edit_forwarding_rule_clicked(None, r),
                 on_delete=lambda r=rule: self.on_delete_forwarding_rule_clicked(None, r),
-                label_group=label_group,
                 side_group=side_group,
             ))
             shown += 1
