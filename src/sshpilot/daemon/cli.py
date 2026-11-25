@@ -234,6 +234,10 @@ def build_parser() -> argparse.ArgumentParser:
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument("--verbose", action="store_true")
     verbosity.add_argument("--quiet", action="store_true")
+    # Passed by the launcher on macOS, which spawns the daemon without
+    # start_new_session so CPython can use posix_spawn (see
+    # launcher.daemon_detaches_itself). Hidden: nobody types it.
+    parser.add_argument("--new-session", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--force",
         action="store_true",
@@ -245,6 +249,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _start_new_session() -> None:
+    """Leave the launching GUI's session, as ``start_new_session`` would.
+
+    Keeps a terminal's Ctrl+C or hangup for the GUI from reaching the daemon.
+    """
+
+    try:
+        os.setsid()
+    except OSError as error:
+        # Already a session leader: nothing to leave.
+        logging.getLogger(__name__).debug(
+            "Could not start a new session errno=%s", error.errno
+        )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     # Also started as ``python -m sshpilot.daemon``, bypassing run.py.
     from sshpilot.platform.windows.openssh import prefer_builtin_openssh
@@ -252,6 +271,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     prefer_builtin_openssh()
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.new_session and args.command is None and hasattr(os, "setsid"):
+        _start_new_session()
     if args.command is None and sys.platform == "win32":
         # The daemon launches every OpenSSH child; OpenSSH for Windows refuses
         # keys and configs under a directory Python created with mode 0o700

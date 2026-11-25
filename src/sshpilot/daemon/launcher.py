@@ -138,21 +138,47 @@ AMBIGUOUS_HANDSHAKE_GRACE = 2.0
 AMBIGUOUS_HANDSHAKE_POLL = 0.1
 
 
+#: Daemon argument that makes the daemon call ``setsid()`` itself (macOS).
+NEW_SESSION_FLAG = "--new-session"
+
+
+def daemon_detaches_itself() -> bool:
+    """Whether the daemon, not ``Popen``, starts its own session.
+
+    On macOS the daemon is spawned while the GUI imports GTK on another
+    thread, and ``fork()`` there can deadlock against ``gtk_init``'s
+    ``setlocale`` (issue #1430): libSystem's fork handlers and the locale
+    code take malloc and locale locks in opposite order. CPython only uses
+    ``posix_spawn`` (a kernel call on macOS, no fork handlers) when neither
+    ``close_fds`` nor ``start_new_session`` is requested, so the launcher
+    asks for neither and the daemon detaches itself with
+    :data:`NEW_SESSION_FLAG`. File descriptors still do not leak: Python
+    creates every descriptor non-inheritable (PEP 446).
+    """
+
+    return sys.platform == "darwin"
+
+
 def detached_process_options() -> dict:
     """Popen options that detach a background child from the caller.
 
     Windows ignores ``start_new_session``. There the daemon gets its own
     process group and a hidden console, which the console programs it starts
     (ssh.exe, ssh-keygen.exe) inherit instead of each opening a window.
+    On macOS the options must leave ``posix_spawn`` available (see
+    :func:`daemon_detaches_itself`).
     """
 
     if sys.platform == "win32":
         return {
+            "close_fds": True,
             "creationflags": (
                 subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-            )
+            ),
         }
-    return {"start_new_session": True}
+    if daemon_detaches_itself():
+        return {"close_fds": False}
+    return {"close_fds": True, "start_new_session": True}
 
 
 class _EvictionDeclined(Exception):
@@ -359,6 +385,7 @@ class DaemonLauncher:
                     str(self.socket_path),
                     *(("--verbose",) if self._verbose else ()),
                     *(("--quiet",) if self._quiet else ()),
+                    *((NEW_SESSION_FLAG,) if daemon_detaches_itself() else ()),
                 )
             else:
                 command = (
@@ -369,6 +396,7 @@ class DaemonLauncher:
                     str(self.socket_path),
                     *(("--verbose",) if self._verbose else ()),
                     *(("--quiet",) if self._quiet else ()),
+                    *((NEW_SESSION_FLAG,) if daemon_detaches_itself() else ()),
                 )
             # Begin verbose forwarding before the child exists so startup
             # failures still contribute their daemon diagnostics.
@@ -380,7 +408,6 @@ class DaemonLauncher:
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    close_fds=True,
                     env=_child_environment(self._environment),
                     **detached_process_options(),
                 )

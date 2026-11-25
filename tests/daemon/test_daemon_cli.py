@@ -131,3 +131,53 @@ def test_cli_server_start_uses_environment_idle_default_when_unset(monkeypatch, 
     exit_code = main(["--socket", str(tmp_path / "sshpilotd.sock")])
     assert exit_code == 0
     assert captured["idle_shutdown_seconds"] is _IDLE_SHUTDOWN_UNSET
+
+
+def _stub_server_start(monkeypatch):
+    class _FakeServer:
+        def __init__(self, *args, **kwargs):
+            self._startup_error = None
+
+        def serve_forever(self):
+            return None
+
+        def shutdown(self):
+            return None
+
+    monkeypatch.setattr("sshpilot.daemon.server.DaemonServer", _FakeServer)
+    monkeypatch.setattr("sshpilot.daemon.cli._production_core_services", lambda: None)
+    monkeypatch.setattr(
+        "sshpilot.daemon.cli.run_server",
+        lambda **kwargs: kwargs["serve_forever"]() or 0,
+    )
+
+
+def test_new_session_flag_makes_the_daemon_leave_the_launcher_session(
+    monkeypatch, tmp_path
+):
+    """macOS spawns without start_new_session (issue #1430); the daemon detaches."""
+
+    import os
+
+    calls = []
+    _stub_server_start(monkeypatch)
+    monkeypatch.setattr(os, "setsid", lambda: calls.append("setsid"), raising=False)
+
+    assert main(["--socket", str(tmp_path / "s.sock"), "--new-session"]) == 0
+    assert calls == ["setsid"]
+
+    calls.clear()
+    assert main(["--socket", str(tmp_path / "s.sock")]) == 0
+    assert calls == []
+
+
+def test_new_session_tolerates_an_existing_session_leader(monkeypatch, tmp_path):
+    import os
+
+    def _setsid():
+        raise PermissionError(1, "Operation not permitted")
+
+    _stub_server_start(monkeypatch)
+    monkeypatch.setattr(os, "setsid", _setsid, raising=False)
+
+    assert main(["--socket", str(tmp_path / "s.sock"), "--new-session"]) == 0

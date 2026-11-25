@@ -301,6 +301,78 @@ def test_frozen_process_launch_uses_bundle_dispatch_and_resets_bootloader(
     assert captured["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
 
 
+def _captured_launch(tmp_path, monkeypatch):
+    captured = {}
+
+    class _Process:
+        def poll(self):
+            return None
+
+    def _popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return _Process()
+
+    launcher = DaemonLauncher(
+        socket_path=tmp_path / "runtime" / "sshpilotd.sock",
+        environment={"PATH": "/usr/bin"},
+        popen=_popen,
+    )
+    monkeypatch.setattr(launcher, "_wait_until_ready", lambda _process: object())
+    launcher.connect_or_start()
+    return launcher, captured
+
+
+def test_macos_launch_leaves_posix_spawn_available_and_daemon_detaches(
+    tmp_path, monkeypatch
+):
+    """Issue #1430: fork() beside gtk_init's setlocale deadlocks on macOS."""
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    launcher, captured = _captured_launch(tmp_path, monkeypatch)
+
+    assert captured["argv"][-1] == "--new-session"
+    assert captured["close_fds"] is False
+    assert "start_new_session" not in captured
+    assert "preexec_fn" not in captured
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX spawn path")
+def test_macos_launch_options_take_cpythons_posix_spawn_path(monkeypatch):
+    """CPython falls back to fork_exec for any option posix_spawn cannot do."""
+
+    from sshpilot.daemon import launcher as launcher_module
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    options = launcher_module.detached_process_options()
+    monkeypatch.undo()
+
+    def _no_fork(*_args, **_kwargs):
+        raise AssertionError("daemon spawn fell back to fork()")
+
+    monkeypatch.setattr(subprocess, "_USE_POSIX_SPAWN", True)
+    monkeypatch.setattr(subprocess, "_fork_exec", _no_fork)
+    process = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        shell=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=dict(os.environ),
+        **options,
+    )
+    assert process.wait(timeout=30) == 0
+
+
+@pytest.mark.skipif(sys.platform in {"win32", "darwin"}, reason="Linux/BSD options")
+def test_other_posix_launch_keeps_popen_session_and_closed_fds(tmp_path, monkeypatch):
+    _launcher, captured = _captured_launch(tmp_path, monkeypatch)
+
+    assert "--new-session" not in captured["argv"]
+    assert captured["close_fds"] is True
+    assert captured["start_new_session"] is True
+
+
 def test_verbose_launch_passes_flag_and_starts_askpass_forwarder(tmp_path, monkeypatch):
     class _Process:
         def poll(self):
