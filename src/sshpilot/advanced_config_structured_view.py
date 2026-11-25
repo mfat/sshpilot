@@ -546,12 +546,7 @@ class RoutingCard:
 
     def __init__(self, view: "StructuredView") -> None:
         self.view = view
-        self.group = Adw.PreferencesGroup(title=_("Routing and Tunnels"))
-        add = Gtk.Button()
-        add.set_child(Adw.ButtonContent(icon_name="list-add-symbolic", label=_("Add Tunnel")))
-        add.add_css_class("flat")
-        add.connect("clicked", lambda *_a: view.focus_add_forward())
-        self.group.set_header_suffix(add)
+        self.group = Adw.PreferencesGroup()
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card.add_css_class("card")
         card.add_css_class("advcfg-routing")
@@ -743,7 +738,7 @@ class StructuredView(Gtk.Box):
         self.page.add(self.routing.group)
 
         # -- connection ------------------------------------------------------
-        group = Adw.PreferencesGroup(title=_("Connection"))
+        group = Adw.PreferencesGroup()
         connection = _boxed_list()
         self.typed: Dict[str, TypedField] = {}
         for keyword in ("hostname", "user", "port"):
@@ -753,7 +748,7 @@ class StructuredView(Gtk.Box):
         self.page.add(group)
 
         # -- authentication -------------------------------------------------
-        group = Adw.PreferencesGroup(title=_("Authentication"))
+        group = Adw.PreferencesGroup()
         self.auth_list = _boxed_list()
         self.identity_hint = Adw.ActionRow(title="IdentityFile")
         self.identity_hint.set_subtitle_lines(3)
@@ -773,7 +768,7 @@ class StructuredView(Gtk.Box):
         self.page.add(group)
 
         # -- networking ------------------------------------------------------
-        group = Adw.PreferencesGroup(title=_("Networking"))
+        group = Adw.PreferencesGroup()
         network = _boxed_list()
         field = self.typed["proxyjump"] = TypedField(self, "proxyjump", descriptions["proxyjump"])
         network.append(field.row)
@@ -784,10 +779,7 @@ class StructuredView(Gtk.Box):
         group.add(network)
         self.page.add(group)
 
-        group = Adw.PreferencesGroup(
-            title=_("Port Forwards"),
-            description=_("Tunnels opened with every connection this block applies to"),
-        )
+        group = Adw.PreferencesGroup()
         self.forward_list = _boxed_list()
         self.add_forward_row = Adw.ActionRow(title=_("Add Forward"))
         self.forward_kind = Gtk.DropDown.new_from_strings(
@@ -808,21 +800,15 @@ class StructuredView(Gtk.Box):
         self.page.add(group)
 
         # -- everything else ----------------------------------------------------
-        self.other_group = Adw.PreferencesGroup(
-            title=_("Other Options"),
-            description=_("Lines no field above shows, in the block's order"),
-        )
-        add_option = Gtk.Button()
-        add_option.set_child(Adw.ButtonContent(icon_name="list-add-symbolic", label=_("Add Option")))
-        add_option.add_css_class("flat")
-        add_option.connect("clicked", lambda *_a: controller.add_option(self.uid, keep=True))
-        self.other_group.set_header_suffix(add_option)
+        self.other_group = Adw.PreferencesGroup()
         self.other_list = _boxed_list()
-        none = Gtk.Label(label=_("No other options."), xalign=0)
-        none.add_css_class("dim-label")
-        for side in ("top", "bottom", "start", "end"):
-            getattr(none, f"set_margin_{side}")(12)
-        self.other_list.set_placeholder(none)
+        self.add_option_row = Adw.ActionRow(title=_("Add Option"))
+        self.add_option_row.add_prefix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
+        self.add_option_row.set_activatable(True)
+        self.add_option_row.connect(
+            "activated", lambda *_a: controller.add_option(self.uid, keep=True)
+        )
+        self.other_list.append(self.add_option_row)
         self.other_group.add(self.other_list)
         self.page.add(self.other_group)
 
@@ -995,9 +981,6 @@ class StructuredView(Gtk.Box):
                         continue            # an answer one edit behind
                     tunnels.append((keyword, value, None, source))
         self.routing.show(stops, tunnels)
-
-    def focus_add_forward(self) -> None:
-        self.forward_spec.grab_focus()
 
     def _show_status(self, answer: AnswerView) -> None:
         block = self.controller.editor.find_block(self.uid)
