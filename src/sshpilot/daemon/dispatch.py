@@ -233,6 +233,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
     "connections.evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
+    # Registers a target that can be launched, as connections.open_transient.
+    "connections.open_draft_test": Capability.SESSIONS_WRITE,
     "connections.list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "connections.list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "connections.check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -518,6 +520,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.get_earlier_directives",
         "connections.get_inherited_auth",
         "connections.evaluate_ssh_config_draft",
+        "connections.open_draft_test",
         "connections.list_config_conflicts",
         "connections.list_config_syntax_errors",
         "connections.check_unsaved_host",
@@ -808,6 +811,7 @@ class RequestDispatcher:
             "connections.evaluate_ssh_config_draft": (
                 self._handle_evaluate_ssh_config_draft
             ),
+            "connections.open_draft_test": self._handle_open_draft_test_connection,
             "connections.list_config_conflicts": self._handle_list_config_conflicts,
             "connections.list_config_syntax_errors": (
                 self._handle_list_config_syntax_errors
@@ -1519,6 +1523,27 @@ class RequestDispatcher:
         return DeferredResult(
             operation=operation,
             command_key=(SSH_CONFIG_DRAFT_COMMAND_KEY, owner),
+            on_rejected=lambda: None,
+        )
+
+    def _handle_open_draft_test_connection(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.config_draft_codec import (
+            evaluate_ssh_config_draft_request_from_wire,
+        )
+
+        draft = evaluate_ssh_config_draft_request_from_wire(request.params)
+        # Reads the configuration (the draft is read as a launch reads it),
+        # and registers a launchable target (sessions.write, from the table).
+        self._require_capability(state, Capability.CONNECTIONS_CONFIG_READ)
+        return DeferredResult(
+            operation=lambda: connection_details_to_wire(
+                self._connections.open_draft_test_connection(draft)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )
 

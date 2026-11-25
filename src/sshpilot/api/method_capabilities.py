@@ -28,6 +28,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "list_sessions": Capability.SESSIONS_READ,
     "open_session": Capability.SESSIONS_WRITE,
     "open_transient_connection": Capability.SESSIONS_WRITE,
+    "open_draft_test_connection": Capability.SESSIONS_WRITE,
     "release_terminal_input": Capability.TERMINAL_INPUT,
     "replay_terminal": Capability.TERMINAL_REPLAY,
     "resize_terminal": Capability.TERMINAL_RESIZE,

@@ -316,6 +316,13 @@ class SshPilotClient(Protocol):
         """Register an unsaved target; open sessions on the returned id."""
         ...
 
+    def open_draft_test_connection(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> ConnectionDetails:
+        """Register an unsaved target that reaches ``request.host`` as the
+        SSH configuration draft would; run commands on the returned id."""
+        ...
+
     def preview_asbru_import(self, source: str) -> AsbruImportPreview:
         ...
 

@@ -473,6 +473,15 @@ class ConnectionRepository:
         with self._lock:
             return copy.deepcopy(self._transient.create(data, in_use=in_use))
 
+    def open_draft_test_connection(
+        self, write, host: str, user: Optional[str] = None, *, in_use: Tuple[str, ...] = ()
+    ) -> Optional[ConnectionRecord]:
+        """Register a target that resolves *host* through a configuration
+        draft (see :meth:`TransientConnections.create_from_draft`)."""
+        with self._lock:
+            record = self._transient.create_from_draft(write, host, user, in_use=in_use)
+            return copy.deepcopy(record) if record is not None else None
+
     def transient_summary(self, record: ConnectionRecord) -> ConnectionSummary:
         """The public summary of a transient record (it has no snapshot row)."""
         try:

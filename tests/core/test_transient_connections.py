@@ -330,3 +330,60 @@ def test_issue_1320_save_dialog_sees_what_the_target_inherited(tmp_path):
     assert resolved["proxyjump"] == "jumpTest"
     # What was typed wins over Host *, as it did for the session.
     assert resolved["user"] == "alice"
+
+
+# -- a target that reads a configuration draft (Advanced Configuration's test) --
+
+def _draft_request(text, host, **kwargs):
+    from sshpilot.api.models.connections import EvaluateSshConfigDraftRequest
+
+    return EvaluateSshConfigDraftRequest(text=text, host=host, **kwargs)
+
+
+def test_a_draft_test_target_launches_through_the_draft(tmp_path):
+    """Test Connection reaches a host as the unsaved draft would have it,
+    through the ordinary launch path: -F names the draft, written as a
+    launch reads the saved file; the saved file is left as it is."""
+    saved = "Host web\n    HostName old.example\n"
+    repo, root = _repo(tmp_path, saved)
+    service = _service(repo)
+    draft = "Host web\n    HostName new.example\n    User deploy\n\nHost *\n    Port 2200\n"
+
+    details = service.open_draft_test_connection(_draft_request(draft, "web"))
+    assert details.id.startswith(TRANSIENT_ID_PREFIX)
+    record = repo.get_record(details.id)
+    assert (record.hostname, record.username) == ("new.example", "deploy")
+    provider = DaemonConnectionLaunchProvider(repo.get_record)
+    argv, _env = provider.prepare_remote_command_launch(
+        details.id, "true", interaction_policy="broker"
+    )
+    config = Path(argv[argv.index("-F") + 1])
+    assert config.read_text().startswith(draft)
+    assert "web" in argv and argv[-1] == "true"
+    assert root.read_text() == saved
+    assert record.id not in {c.id for c in repo.snapshot().connections}
+
+    # A host the draft does not name still reads the draft (its Host *).
+    other = service.open_draft_test_connection(_draft_request(draft, "elsewhere", user="ops"))
+    record = repo.get_record(other.id)
+    assert record.username == "ops"
+    assert Path(record.source).read_text().startswith(draft)
+
+    # Discarded: its folder goes with it.
+    folder = Path(record.source).parent
+    assert repo.discard_transient_connection(other.id)
+    assert not folder.exists()
+
+
+def test_a_draft_test_needs_consent_for_a_new_match_exec(tmp_path):
+    repo, _root = _repo(tmp_path, "Host web\n    User a\n")
+    service = _service(repo)
+    draft = 'Match exec "true"\n    User b\n'
+    with pytest.raises(SshPilotError):
+        service.open_draft_test_connection(_draft_request(draft, "web"))
+    agreed = service.open_draft_test_connection(
+        _draft_request(draft, "web", allowed_exec=("true",))
+    )
+    assert agreed.id.startswith(TRANSIENT_ID_PREFIX)
+    with pytest.raises(SshPilotError):
+        service.open_draft_test_connection(_draft_request(draft, "-oProxyCommand=x"))

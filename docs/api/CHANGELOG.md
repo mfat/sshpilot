@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- `open_draft_test_connection` (`connections.open_draft_test`, capability
+  `sessions.write`, plus `connections.config.read`) registers an unsaved
+  target that reaches a host as an SSH configuration draft would: it takes
+  an `EvaluateSshConfigDraftRequest`, reads the draft as a launch reads the
+  saved file, and returns the `ConnectionDetails` of a transient connection
+  whose launch passes the draft with `-F`. Commands run on it through the
+  ordinary launch path (Advanced Configuration's Test Connection). A draft
+  with a `Match exec` command that is not in `allowed_exec` is refused with
+  `INVALID_REQUEST`. Additive. The API implementation version is 0.117;
+  Protocol remains 1.0.
 - A `Host` pattern (a wildcard or a negation) is refused as a connection
   name, on create, rename and split: a connection is one host, and the
   pattern used to be written as a rule block that showed up as no connection

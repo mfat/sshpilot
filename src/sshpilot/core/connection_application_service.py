@@ -1743,6 +1743,84 @@ class ConnectionApplicationService:
                 "The SSH config draft evaluation was superseded",
             ) from None
 
+    def open_draft_test_connection(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> ConnectionDetails:
+        """Register a target that connects to ``request.host`` as the draft
+        would have it, were it saved: an unsaved ("transient") connection
+        whose launch passes the draft with ``-F``, read as a launch reads
+        the saved file (the same reading :meth:`evaluate_ssh_config_draft`
+        asks OpenSSH about). Sessions and one-shot commands open it by the
+        returned id like any other connection, through the same launch
+        path, prompts included. Nothing is written to the configuration.
+
+        A ``Match exec`` command the saved file does not have runs only once
+        agreed (``request.allowed_exec``), as for an evaluation: a draft with
+        one not agreed to is refused.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        if type(request) is not EvaluateSshConfigDraftRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "An SSH config draft request is required",
+            )
+        from .ssh_config_draft import DraftContext, new_exec_commands, write_draft_for_launch
+        from .ssh_config_effective import _safe_host_identifier
+
+        host = _safe_host_identifier(request.host)
+        if not host or any(char.isspace() for char in host):
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED, "The host to test is invalid",
+                details={"field": "host"},
+            )
+        target_path = None
+        if request.file:
+            try:
+                target_path = str(self._repository.ssh_config_file_path(request.file))
+            except CoreError as error:
+                raise _map_core_error(error) from error
+        try:
+            saved_text = self._repository.get_ssh_config_text(
+                *([request.file] if request.file else [])
+            ).text
+        except Exception:
+            saved_text = ""
+        if new_exec_commands(request.text, saved_text, request.allowed_exec):
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "The draft has a Match exec command that was not agreed to",
+            )
+        context = DraftContext(
+            root_path=str(self._repository.root_config_path),
+            isolated=bool(self._repository.ssh_config_isolated),
+            target_path=target_path,
+        )
+        try:
+            in_use = tuple(self._transient_ids_in_use())
+        except Exception:
+            logger.debug("Transient in-use lookup failed", exc_info=True)
+            in_use = ()
+        try:
+            record = self._repository.open_draft_test_connection(
+                lambda folder: write_draft_for_launch(request.text, context, str(folder)),
+                host, request.user, in_use=in_use,
+            )
+        except SshPilotError:
+            raise
+        except CoreError as error:
+            raise _map_core_error(error) from error
+        except Exception as error:
+            logger.exception("Draft test connection preparation failed")
+            raise self._persistence_error() from error
+        if record is None:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "The SSH configuration does not read this file",
+                details={"field": "file"},
+            )
+        return self._record_to_details(record)
+
     def get_ssh_config_text(self, file: str = "") -> SshConfigText:
         """Return the text of the daemon-selected SSH config for the raw
         editor, or (*file*) of a file it reads through ``Include``, named as

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 10:59+0330\n"
+"POT-Creation-Date: 2026-11-25 11:17+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -168,8 +168,8 @@ msgstr "打开连接？"
 #: src/sshpilot/resources/ui/scp_download_window.ui:25
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:21
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
-#: src/sshpilot/advanced_config_window.py:660
-#: src/sshpilot/advanced_config_window.py:926
+#: src/sshpilot/advanced_config_window.py:664
+#: src/sshpilot/advanced_config_window.py:930
 msgid "Cancel"
 msgstr "取消"
 
@@ -372,7 +372,7 @@ msgstr "会话名称"
 #: src/sshpilot/resources/ui/command_edit_dialog.ui:25
 #: src/sshpilot/resources/ui/connection_dialog.ui:158
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:31
-#: src/sshpilot/advanced_config_window.py:314
+#: src/sshpilot/advanced_config_window.py:318
 msgid "Save"
 msgstr "保存"
 
@@ -842,7 +842,7 @@ msgid "Discard changes to authorized_keys?"
 msgstr "放弃对 authorized_keys 的更改？"
 
 #: src/sshpilot/authorized_keys_window.py:798
-#: src/sshpilot/advanced_config_window.py:927
+#: src/sshpilot/advanced_config_window.py:931
 #: src/sshpilot/advanced_config_raw_view.py:62
 msgid "Discard"
 msgstr "放弃"
@@ -7738,18 +7738,18 @@ msgid "Restore…"
 msgstr "恢复"
 
 #: src/sshpilot/macos_menubar.py:67 src/sshpilot/text_editor.py:412
-#: src/sshpilot/window.py:3654 src/sshpilot/advanced_config_window.py:305
+#: src/sshpilot/window.py:3654 src/sshpilot/advanced_config_window.py:309
 msgid "Undo"
 msgstr "撤销"
 
 #: src/sshpilot/macos_menubar.py:68 src/sshpilot/text_editor.py:418
-#: src/sshpilot/advanced_config_window.py:309
+#: src/sshpilot/advanced_config_window.py:313
 msgid "Redo"
 msgstr "重做"
 
 #: src/sshpilot/macos_menubar.py:79 src/sshpilot/omni_search.py:183
 #: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window.py:2397
-#: src/sshpilot/window_help.py:52 src/sshpilot/advanced_config_window.py:297
+#: src/sshpilot/window_help.py:52 src/sshpilot/advanced_config_window.py:301
 msgid "Toggle Sidebar"
 msgstr "切换侧边栏"
 
@@ -7790,8 +7790,8 @@ msgstr "SSH 配置编辑器"
 #: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
 #: src/sshpilot/sidebar.py:5161 src/sshpilot/window.py:4264
 #: src/sshpilot/resources/ui/connection_dialog.ui:120
-#: src/sshpilot/advanced_config_window.py:1882
-#: src/sshpilot/advanced_config_window.py:1895
+#: src/sshpilot/advanced_config_window.py:1930
+#: src/sshpilot/advanced_config_window.py:1943
 msgid "Advanced Configuration"
 msgstr "高级配置"
 
@@ -8217,7 +8217,7 @@ msgid "Environment"
 msgstr "环境"
 
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:146
-#: src/sshpilot/advanced_config_window.py:282
+#: src/sshpilot/advanced_config_window.py:286
 msgid "Raw"
 msgstr "原始"
 
@@ -12811,7 +12811,7 @@ msgstr "在主机上运行命令…"
 msgid "Copy Address"
 msgstr "复制地址"
 
-#: src/sshpilot/sidebar.py:5159 src/sshpilot/advanced_config_window.py:411
+#: src/sshpilot/sidebar.py:5159 src/sshpilot/advanced_config_window.py:415
 msgid "Copy SSH Command"
 msgstr "复制 SSH 命令"
 
@@ -13264,7 +13264,7 @@ msgstr "会话已结束。"
 #. Dismiss button to hide the banner manually
 #: src/sshpilot/terminal.py:623 src/sshpilot/terminal.py:697
 #: src/sshpilot/window.py:2213 src/sshpilot/window.py:2239
-#: src/sshpilot/advanced_config_window.py:716
+#: src/sshpilot/advanced_config_window.py:720
 msgid "Dismiss"
 msgstr "忽略"
 
@@ -13914,7 +13914,7 @@ msgstr "跟随系统样式"
 
 #. Through the menu's Reload: it asks before dropping the
 #. draft this save was meant to keep.
-#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:706
+#: src/sshpilot/web_tab.py:82 src/sshpilot/advanced_config_window.py:710
 msgid "Reload"
 msgstr "重新载入"
 
@@ -17333,113 +17333,113 @@ msgstr "直通"
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
 
-#: src/sshpilot/advanced_config_window.py:280
+#: src/sshpilot/advanced_config_window.py:284
 msgid "Structured"
 msgstr "结构化"
 
-#: src/sshpilot/advanced_config_window.py:281
+#: src/sshpilot/advanced_config_window.py:285
 msgid "Effective"
 msgstr "生效值"
 
-#: src/sshpilot/advanced_config_window.py:319
+#: src/sshpilot/advanced_config_window.py:323
 msgid "Reload from Disk"
 msgstr "从磁盘重新加载"
 
-#: src/sshpilot/advanced_config_window.py:320
+#: src/sshpilot/advanced_config_window.py:324
 msgid "Copy Configuration"
 msgstr "复制配置"
 
-#: src/sshpilot/advanced_config_window.py:400
+#: src/sshpilot/advanced_config_window.py:404
 msgid ""
 "The host OpenSSH is asked about. Empty: the host the selected block names."
 msgstr "向 OpenSSH 询问的主机。留空：所选块指定的主机。"
 
-#: src/sshpilot/advanced_config_window.py:403
-#: src/sshpilot/advanced_config_window.py:1052
+#: src/sshpilot/advanced_config_window.py:407
+#: src/sshpilot/advanced_config_window.py:1056
 msgid "Host to check"
 msgstr "要检查的主机"
 
-#: src/sshpilot/advanced_config_window.py:418
+#: src/sshpilot/advanced_config_window.py:422
 msgid "Test Connection"
 msgstr "测试连接"
 
-#: src/sshpilot/advanced_config_window.py:561
+#: src/sshpilot/advanced_config_window.py:565
 msgid "The SSH configuration could not be read."
 msgstr "无法读取 SSH 配置。"
 
-#: src/sshpilot/advanced_config_window.py:583
-#: src/sshpilot/advanced_config_window.py:711
+#: src/sshpilot/advanced_config_window.py:587
+#: src/sshpilot/advanced_config_window.py:715
 msgid "This SSH configuration is read-only: changes cannot be saved."
 msgstr "此 SSH 配置为只读：无法保存更改。"
 
-#: src/sshpilot/advanced_config_window.py:654
+#: src/sshpilot/advanced_config_window.py:658
 msgid "Save a configuration OpenSSH rejects?"
 msgstr "要保存 OpenSSH 拒绝的配置吗？"
 
-#: src/sshpilot/advanced_config_window.py:656
+#: src/sshpilot/advanced_config_window.py:660
 msgid ""
 "OpenSSH refuses the whole configuration over one such line, so no SSH "
 "connection starts until it is corrected."
 msgstr ""
 "只要有这样一行，OpenSSH 就会拒绝整个配置，在更正之前任何 SSH 连接都无法启动。"
 
-#: src/sshpilot/advanced_config_window.py:661
+#: src/sshpilot/advanced_config_window.py:665
 msgid "Save Anyway"
 msgstr "仍然保存"
 
-#: src/sshpilot/advanced_config_window.py:703
+#: src/sshpilot/advanced_config_window.py:707
 msgid "The SSH configuration changed on disk since it was opened."
 msgstr "SSH 配置自打开以来已在磁盘上发生更改。"
 
-#: src/sshpilot/advanced_config_window.py:716
+#: src/sshpilot/advanced_config_window.py:720
 msgid "The SSH configuration could not be saved."
 msgstr "无法保存 SSH 配置。"
 
 #. an earlier failure is history
-#: src/sshpilot/advanced_config_window.py:723
+#: src/sshpilot/advanced_config_window.py:727
 msgid "SSH configuration saved"
 msgstr "SSH 配置已保存"
 
-#: src/sshpilot/advanced_config_window.py:754
+#: src/sshpilot/advanced_config_window.py:758
 msgid "The file of the configuration on screen"
 msgstr "屏幕上显示的配置文件"
 
-#: src/sshpilot/advanced_config_window.py:880
+#: src/sshpilot/advanced_config_window.py:884
 #, python-brace-format
 msgid "No Host block names “{host}” in this file."
 msgstr "此文件中没有 Host 块指明“{host}”。"
 
-#: src/sshpilot/advanced_config_window.py:917
+#: src/sshpilot/advanced_config_window.py:921
 msgid "Configuration copied"
 msgstr "配置已复制"
 
-#: src/sshpilot/advanced_config_window.py:923
+#: src/sshpilot/advanced_config_window.py:927
 msgid "Discard unsaved changes?"
 msgstr "放弃未保存的更改？"
 
-#: src/sshpilot/advanced_config_window.py:924
+#: src/sshpilot/advanced_config_window.py:928
 msgid "The changes made here have not been saved to the SSH configuration."
 msgstr "此处所做的更改尚未保存到 SSH 配置。"
 
-#: src/sshpilot/advanced_config_window.py:1060
-#: src/sshpilot/advanced_config_window.py:1290
+#: src/sshpilot/advanced_config_window.py:1065
+#: src/sshpilot/advanced_config_window.py:1315
 msgid "Testing…"
 msgstr "正在测试…"
 
-#: src/sshpilot/advanced_config_window.py:1062
+#: src/sshpilot/advanced_config_window.py:1067
 msgid "Choose a block that names a host, or type one to check"
 msgstr "请选择指定了主机的块，或输入要检查的主机"
 
-#: src/sshpilot/advanced_config_window.py:1064
-msgid "Save first: the test connects with the saved configuration"
-msgstr "请先保存：测试使用已保存的配置进行连接"
+#: src/sshpilot/advanced_config_window.py:1069
+msgid "Allow the Match exec command first: the test would run it"
+msgstr "请先允许 Match exec 命令：测试会运行它"
 
-#: src/sshpilot/advanced_config_window.py:1066
+#: src/sshpilot/advanced_config_window.py:1071
 #, python-brace-format
-msgid "Connect to {host} with the saved configuration"
-msgstr "使用已保存的配置连接到 {host}"
+msgid "Connect to {host} with the configuration shown here, saved or not"
+msgstr "使用此处显示的配置（无论是否已保存）连接到 {host}"
 
-#: src/sshpilot/advanced_config_window.py:1082
+#: src/sshpilot/advanced_config_window.py:1089
 msgid ""
 "Global options must stay above every Host and Match block: OpenSSH reads an "
 "option below a Host line as that host's."
@@ -17447,37 +17447,30 @@ msgstr ""
 "全局选项必须位于所有 Host 和 Match 块之上：OpenSSH 会把 Host 行下方的选项当作"
 "该主机的选项。"
 
-#: src/sshpilot/advanced_config_window.py:1243
+#: src/sshpilot/advanced_config_window.py:1250
 msgid "Choose a Key File"
 msgstr "选择密钥文件"
 
-#: src/sshpilot/advanced_config_window.py:1265
+#: src/sshpilot/advanced_config_window.py:1272
 #, python-brace-format
 msgid "Only you can read {path} now."
 msgstr "现在只有您可以读取 {path}。"
 
-#: src/sshpilot/advanced_config_window.py:1267
+#: src/sshpilot/advanced_config_window.py:1274
 #, python-brace-format
 msgid "The permissions of {path} could not be changed."
 msgstr "无法更改 {path} 的权限。"
 
-#: src/sshpilot/advanced_config_window.py:1280
+#: src/sshpilot/advanced_config_window.py:1287
 #, python-brace-format
 msgid "Copied “{command}”"
 msgstr "已复制“{command}”"
 
-#: src/sshpilot/advanced_config_window.py:1339
-#, python-brace-format
-msgid ""
-"“{host}” is not a saved connection: only saved connections can be tested "
-"here."
-msgstr "“{host}”不是已保存的连接：此处只能测试已保存的连接。"
-
-#: src/sshpilot/advanced_config_window.py:1699
+#: src/sshpilot/advanced_config_window.py:1746
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "无法就此配置询问 OpenSSH。"
 
-#: src/sshpilot/advanced_config_window.py:1829
+#: src/sshpilot/advanced_config_window.py:1876
 msgid "Run and Evaluate"
 msgstr "运行并求值"
 
@@ -18043,6 +18036,26 @@ msgstr "拖动以重新排序"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · 已关闭"
+
+#~ msgid "Save first: the test connects with the saved configuration"
+#~ msgstr "请先保存：测试使用已保存的配置进行连接"
+
+#~ msgid "Reached"
+#~ msgstr "可达"
+
+#~ msgid ""
+#~ "The host was reached, but the login was not completed: it needs a "
+#~ "password or a code typed in, or a key it did not accept. The test asks "
+#~ "for nothing, so such a login is not tried."
+#~ msgstr ""
+#~ "已连到主机，但登录未完成：需要输入密码或验证码，或者主机未接受所给的密钥。"
+#~ "测试不会询问任何内容，因此不会尝试这类登录。"
+
+#, python-brace-format
+#~ msgid ""
+#~ "“{host}” is not a saved connection: only saved connections can be tested "
+#~ "here."
+#~ msgstr "“{host}”不是已保存的连接：此处只能测试已保存的连接。"
 
 #~ msgid "Collapse All"
 #~ msgstr "全部折叠"

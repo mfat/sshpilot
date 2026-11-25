@@ -864,17 +864,16 @@ def test_copy_command_is_for_the_host_checked(window):
     assert not window.copy_command_button.get_sensitive()
 
 
-class _Broadcasts:
-    """What Test Connection asks of the daemon: the saved connections and
-    a one-shot command."""
+class _Tests:
+    """What Test Connection asks of the daemon: a target that reads the
+    draft, and a one-shot command on it."""
 
     def __init__(self, state="succeeded", exit_code=0, stderr=""):
         from types import SimpleNamespace
 
         from sshpilot.api.models.broadcast import HostCommandState
 
-        self.requests = []
-        self.connections = [SimpleNamespace(id="c-web1", nickname="web1")]
+        self.drafts, self.requests = [], []
         result = SimpleNamespace(
             state=HostCommandState(state), exit_code=exit_code, stderr=stderr,
         )
@@ -884,43 +883,61 @@ class _Broadcasts:
         )
 
     def install(self, client):
-        client.list_connections = lambda: self.connections
+        from types import SimpleNamespace
+
+        def target(request):
+            self.drafts.append(request)
+            return SimpleNamespace(id="adhoc-draft")
+
+        client.open_draft_test_connection = target
         client.start_broadcast_command = lambda request: (self.requests.append(request), self.summary)[1]
         client.get_broadcast_command = lambda _op: self.summary
         client.cancel_broadcast_command = lambda _op: None
+        return self
 
 
-def test_test_connection_runs_through_the_saved_connection(window):
-    broadcasts = _Broadcasts()
-    broadcasts.install(window._test_client)
+def test_test_connection_runs_through_the_app_on_the_draft(window):
+    tests = _Tests().install(window._test_client)
+    _field(window, "user").entry.set_text("unsaved")       # not saved: tested as shown
+    assert _pump(lambda: window.dirty)
     assert window.test_button.get_sensitive()
     window.test_connection()
     assert _pump(lambda: window.test_status.get_label() == "Connected")
-    (request,) = broadcasts.requests
-    assert request.connection_ids == ("c-web1",) and request.command == "true"
+    (draft,) = tests.drafts
+    assert draft.host == "web1" and "    User unsaved\n" in draft.text
+    (request,) = tests.requests
+    assert request.connection_ids == ("adhoc-draft",) and request.command == "true"
     assert window.test_button.get_sensitive()
 
-    _field(window, "user").entry.set_text("unsaved")       # the test uses the saved file
-    assert _pump(lambda: window.dirty)
-    assert not window.test_button.get_sensitive()
-    assert "Save" in window.test_button.get_tooltip_text()
+
+def test_any_host_name_can_be_tested(window):
+    tests = _Tests().install(window._test_client)
+    _check(window, "admin@nowhere.example")                 # no block names it
+    window.test_connection()
+    assert _pump(lambda: not window._testing)
+    assert (tests.drafts[0].host, tests.drafts[0].user) == ("nowhere.example", "admin")
 
 
 def test_a_failed_test_says_what_openssh_said(window):
-    _Broadcasts("failed", 255, "debug1: x\nssh: connect to host web1 port 2222: Connection refused\n"
-                ).install(window._test_client)
+    _Tests("failed", 255, "debug1: x\nssh: connect to host web1 port 2222: Connection refused\n"
+           ).install(window._test_client)
     window.test_connection()
     assert _pump(lambda: window.test_status.get_label() == "Failed")
     assert window.test_status._tooltip.endswith("Connection refused")
 
 
-def test_a_host_that_is_no_saved_connection_is_not_tested(window):
-    broadcasts = _Broadcasts()
-    broadcasts.connections = []
-    broadcasts.install(window._test_client)
+def test_a_match_exec_waiting_for_consent_holds_the_test(window, tmp_path):
+    tests = _Tests().install(window._test_client)
+    window.add_block("match")
+    window.structured.patterns_row.set_text(f'exec "touch {tmp_path / "x"}"')
+    assert _pump(lambda: window.banner.get_revealed() and bool(window.banner.get_button_label()))
+    assert not window.test_button.get_sensitive()
+    assert "Match exec" in window.test_button.get_tooltip_text()
+    window.banner.emit("button-clicked")                    # agreed: the test may run it
+    assert _pump(lambda: window.test_button.get_sensitive())
     window.test_connection()
     assert _pump(lambda: not window._testing)
-    assert broadcasts.requests == [] and window.test_status.get_label() == ""
+    assert tests.drafts[0].allowed_exec
 
 
 # -- review findings ---------------------------------------------------------------------

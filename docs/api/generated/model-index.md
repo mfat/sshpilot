@@ -754,7 +754,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Full v1 connection response without secret values or sensitive paths.
 
-**Related methods:** `create_connection`, `get_connection`, `open_transient_connection`, `update_connection`
+**Related methods:** `create_connection`, `get_connection`, `open_draft_test_connection`, `open_transient_connection`, `update_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2136,7 +2136,7 @@ configuration does not. ``allowed_exec`` lists, word for word, the new
 commands the user agreed to run; any other new command keeps the draft
 pending.
 
-**Related methods:** `evaluate_ssh_config_draft`
+**Related methods:** `evaluate_ssh_config_draft`, `open_draft_test_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |

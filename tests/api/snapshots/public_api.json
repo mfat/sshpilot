@@ -15,7 +15,7 @@
     "TerminalSubscription",
     "ValidationReason"
   ],
-  "api_implementation_version": "0.116",
+  "api_implementation_version": "0.117",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -483,6 +483,10 @@
       "capability": "connections.groups",
       "status": "daemon-only"
     },
+    "open_draft_test_connection": {
+      "capability": "sessions.write",
+      "status": "daemon-only"
+    },
     "open_forward": {
       "capability": "forwards.write",
       "status": "daemon-only"
@@ -891,6 +895,7 @@
     "list_transfers",
     "lock_secrets",
     "move_connections",
+    "open_draft_test_connection",
     "open_forward",
     "open_session",
     "open_sftp",
@@ -1932,6 +1937,16 @@
         }
       ],
       "return": "bool"
+    },
+    "open_draft_test_connection": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "EvaluateSshConfigDraftRequest"
+        }
+      ],
+      "return": "ConnectionDetails"
     },
     "open_forward": {
       "parameters": [
@@ -3004,6 +3019,9 @@
     },
     "connections.move": {
       "capability": "connections.groups"
+    },
+    "connections.open_draft_test": {
+      "capability": "sessions.write"
     },
     "connections.open_transient": {
       "capability": "sessions.write"

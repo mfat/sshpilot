@@ -382,6 +382,39 @@ def _mirror_tree(
     return text, target_copy[0], real_of
 
 
+def write_draft_for_launch(
+    text: str, context: DraftContext, directory: str
+) -> Optional[str]:
+    """Write the draft into *directory* as a launch would read it, and
+    return the file to pass with ``-F``.
+
+    The same reading :func:`evaluate_draft` asks OpenSSH about: the
+    system-wide file after the draft when a launch would read it, and for
+    the draft of an included file, copies of the files that lead to it with
+    the draft in its place. None when the root does not read that file.
+    """
+    system = context.system_config
+    system_copy = _system_copy(system, directory) if system else None
+    launch_text: Optional[str] = text
+    if context.target_path is not None:
+        try:
+            with open(context.root_path, encoding="utf-8", newline="") as handle:
+                root_text = handle.read()
+        except (OSError, UnicodeError):
+            root_text = ""
+        folder = os.path.join(directory, "tree")
+        os.mkdir(folder, 0o700)
+        launch_text, _copy, _real = _mirror_tree(
+            root_text, context.root_path, context.target_path, text, folder,
+            str(openssh_user_dir()),
+        )
+        if launch_text is None:
+            return None
+    path = os.path.join(directory, "config")
+    _write_private(path, _launch_text(launch_text, system_copy))
+    return path
+
+
 class _Run:
     """One evaluation's time budget and its way out."""
 

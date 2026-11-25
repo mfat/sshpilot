@@ -224,6 +224,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: open_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: open_transient_connection status=daemon-only capability=sessions.write -->
+<!-- api-method-contract: open_draft_test_connection status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: open_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: replay_terminal status=daemon-only capability=terminal.replay -->
 <!-- api-method-contract: release_interaction status=daemon-only capability=interactions.respond -->
@@ -414,6 +415,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sessions.get` | `sessions.read` | Implemented |
 | `sessions.open` | `sessions.write` | Implemented |
 | `connections.open_transient` | `sessions.write` | Implemented; registers an unsaved target for `sessions.open` |
+| `connections.open_draft_test` | `sessions.write` | Implemented; registers a target that reads an SSH configuration draft |
 | `sessions.attach` | `sessions.write` | Implemented |
 | `sessions.detach` | `sessions.write` | Implemented |
 | `sessions.close` | `sessions.write` | Implemented |
@@ -560,6 +562,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sessions.list capability=sessions.read -->
 <!-- api-daemon-method: sessions.open capability=sessions.write -->
 <!-- api-daemon-method: connections.open_transient capability=sessions.write -->
+<!-- api-daemon-method: connections.open_draft_test capability=sessions.write -->
 <!-- api-daemon-method: sftp.attach capability=sftp.write -->
 <!-- api-daemon-method: sftp.chmod capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.close capability=sftp.write -->
@@ -1661,6 +1664,29 @@ details = client.open_transient_connection(
                             plugin_data={"host": "10.0.0.5", "port": 2323})
 )
 client.open_session(OpenSessionRequest(connection_id=details.id))
+```
+
+<!-- api-method: open_draft_test_connection -->
+## `open_draft_test_connection`
+
+Daemon-only. Registers a target that reaches `request.host` as an SSH
+configuration draft would, were it saved, and returns its
+`ConnectionDetails`: Advanced Configuration's Test Connection runs a
+one-shot command on the returned `id` (`start_broadcast_command`), so the
+test goes through the ordinary launch path, prompts included. It takes the
+`EvaluateSshConfigDraftRequest` of `evaluate_ssh_config_draft` and reads the
+draft the same way, as a launch reads the saved file (for `file`, through
+the root, with the draft in that file's place). Needs `sessions.write` and
+`connections.config.read`. A `Match exec` command the saved file lacks must
+be in `allowed_exec`, or the request is refused (`INVALID_REQUEST`). Nothing
+is written to the configuration; like `open_transient_connection`, the
+target is never listed and the oldest are dropped beyond 64.
+
+```python
+details = client.open_draft_test_connection(
+    EvaluateSshConfigDraftRequest(text=draft_text, host="web1")
+)
+client.start_broadcast_command(BroadcastCommandRequest((details.id,), "true"))
 ```
 
 <!-- api-method: open_session -->

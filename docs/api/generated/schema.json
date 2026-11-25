@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.116",
+  "api_implementation_version": "0.117",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -383,6 +383,10 @@
     },
     "move_connections": {
       "capability": "connections.groups",
+      "status": "daemon-only"
+    },
+    "open_draft_test_connection": {
+      "capability": "sessions.write",
       "status": "daemon-only"
     },
     "open_forward": {
@@ -797,6 +801,9 @@
     },
     "connections.move": {
       "capability": "connections.groups"
+    },
+    "connections.open_draft_test": {
+      "capability": "sessions.write"
     },
     "connections.open_transient": {
       "capability": "sessions.write"
