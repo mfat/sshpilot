@@ -806,7 +806,7 @@ class StructuredView(Gtk.Box):
         elif answer.host:
             text = _("Asking OpenSSH about {host}…").format(host=answer.host)
         else:
-            text = _("Type a host to check above to see what OpenSSH would use for it.")
+            text = messages.no_host_text()
         self.status_row.set_subtitle(GLib.markup_escape_text(text))
         header = self.controller.editor.lines.headers.get(self.uid, 0)
         error = answer.errors.get(header) if header else None

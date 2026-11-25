@@ -175,13 +175,11 @@ def window(gtk, tmp_path):
 
 
 def _check(win, host):
-    """Keep *host* in question whichever block is selected, as typing it
-    above the views does. It need not be a host the file names."""
-    if win.check_entry.get_text() != host:
-        win.check_entry.set_text(host)          # typed by the user: it stays
-    else:                                       # nothing to type: asked again
-        win._pin_typed = bool(host)
-        win._target_changed()
+    """Keep *host* in question whichever block the window selects, as a
+    source followed or ``go_to`` with *pin* does (a block picked in the
+    sidebar drops it). It need not be a host the file names."""
+    win._set_typed(host)
+    win._target_changed()
 
 
 def _command(win):
@@ -306,8 +304,7 @@ def test_it_opens_on_the_first_host_block_and_asks_about_it(gtk, tmp_path):
     try:
         assert _block_rows(win) == ["Global", "Host web1 web2", "Host *"]
         assert _selected(win) == "web1 web2"            # one block is always shown
-        assert win.check_entry.get_text() == "" and win.target_text() == "web1"
-        assert win.check_entry.get_placeholder_text() == "web1"
+        assert win._typed_host() == "" and win.target_text() == "web1"
         assert _pump(lambda: _command(win) == "ssh -G web1")
         assert win.structured.patterns_row.get_text() == "web1 web2"
         assert win.block_title.get_label() == "web1 web2"
@@ -350,7 +347,7 @@ def test_another_target_is_asked_again(window):
     assert _dimmed(window) == []               # web's block does not apply: listed alike
     window.target_entry.set_text("web1")       # a name the file names: checked, selected
     assert _pump(lambda: _effective(window, "user") == "deploy")
-    assert window.selected_uid == web.uid and window.check_entry.get_text() == "web1"
+    assert window.selected_uid == web.uid and window._typed_host() == "web1"
     window.target_entry.set_text("")           # the search ends: what it found stays
     _pump(lambda: False, seconds=0.5)
     assert window.selected_uid == web.uid and window.target_text() == "web1"
@@ -579,16 +576,16 @@ def test_effective_is_hidden_for_a_block_that_names_no_host(window):
     glob, web, star = window.draft.blocks
     page = window.stack.get_page(window.effective)
     window.show_page("effective")
-    window.check_entry.set_text("")                   # the selection says
+    _check(window, "")                                # the selection says
     window.select_block(star.uid)                     # Host *: no host to ask about
     assert _pump(lambda: not page.get_visible())
     assert window.stack.get_visible_child_name() == "structured"
     window.show_page("effective")                     # not offered: not shown
     assert window.stack.get_visible_child_name() == "structured"
-    window.check_entry.set_text("web1")               # a host typed: offered again
+    _check(window, "web1")                            # a host in question: offered again
     assert _pump(page.get_visible)
     assert window.stack.get_visible_child_name() == "effective"   # where it was left
-    window.check_entry.set_text("")
+    _check(window, "")
     assert _pump(lambda: not page.get_visible())
     window.show_page("raw")                           # another page picked meanwhile
     window.select_block(web.uid)
@@ -657,7 +654,7 @@ def test_a_not_used_pill_shows_the_line_used_instead(gtk, tmp_path):
     try:
         db, star = win.draft.blocks
         _check(win, "db1")
-        _pick(win, "Host *")
+        win.select_block(star.uid)                           # db1 stays in question
         assert _settled(win)
         user = _field(win, "user")
         assert _pump(lambda: user.state.get_label() == "Not used")
@@ -738,9 +735,9 @@ def test_only_the_view_on_screen_is_filled(window):
 
 # -- the sidebar ------------------------------------------------------------------------
 
-def test_the_sidebar_lists_the_blocks_and_a_typed_host_stays(window):
-    """The fixture typed web1: that host is checked whichever block is
-    selected."""
+def test_the_sidebar_lists_the_blocks_and_a_host_in_question_stays(window):
+    """The fixture keeps web1 in question: it is checked whichever block
+    the window selects, until a block is picked in the sidebar."""
     glob, web, star = window.draft.blocks
     window.add_block("host")
     db = window.draft.blocks[-1]
@@ -752,15 +749,15 @@ def test_the_sidebar_lists_the_blocks_and_a_typed_host_stays(window):
     assert _settled(window)
     asked = window._request_serial
 
-    _pick(window, "Host *")
+    window.select_block(star.uid)
     assert window.selected_uid == star.uid
     window.select_block(web.uid)
     assert window.sidebar.list.get_selected_row()._uid == web.uid
     _pump(lambda: False, seconds=0.4)
     assert window._request_serial == asked            # nothing new was asked
-    assert window.check_entry.get_text() == "web1" and window.target_text() == "web1"
+    assert window._typed_host() == "web1" and window.target_text() == "web1"
 
-    window.check_entry.set_text("")                   # unpinned: the selection says
+    _check(window, "")                                # unpinned: the selection says
     assert window.target_text() == "web1"             # web's block is selected
     _pick(window, "Host db1 *.internal")
     assert window.target_text() == "db1"              # the first plain name
@@ -838,7 +835,7 @@ def test_the_search_finds_blocks_and_an_exact_name_is_checked(gtk, tmp_path):
         typed("deploy")                               # not by any other directive
         assert _shown_rows(win) == []
         typed("web2")                                 # the second name of a line
-        assert win.selected_uid == web.uid and win.check_entry.get_text() == "web2"
+        assert win.selected_uid == web.uid and win._typed_host() == "web2"
         assert _pump(lambda: _command(win) == "ssh -G web2")
         typed("nowhere")                              # no block has it: no host
         assert _shown_rows(win) == []
@@ -897,18 +894,12 @@ def test_picking_a_block_drops_a_host_the_window_put_in_question(window):
     window.show_page("effective")
     assert _pump(lambda: window.effective.command.get_label() == "ssh -G db1")
     window.reveal_line(window._evaluated_lines.headers[db.uid])     # a source clicked
-    assert window.check_entry.get_text() == "db1"
+    assert window._typed_host() == "db1"
     window.show_page("effective")
     _pick(window, "Host web1 web2")
-    assert window.check_entry.get_text() == "" and window.target_text() == "web1"
+    assert window._typed_host() == "" and window.target_text() == "web1"
     assert _pump(lambda: window.effective.command.get_label() == "ssh -G web1")
     assert _pump(lambda: _effective(window, "user") == "deploy")
-
-    window.check_entry.set_text("db1")             # typed by the user: it stays
-    _pick(window, "Host web1 web2")
-    _pick(window, "Host db1")
-    _pick(window, "Host web1 web2")
-    assert window.check_entry.get_text() == "db1" and window.target_text() == "db1"
 
 
 def test_clicking_a_block_selects_it_and_alt_arrows_move_it(window):
@@ -938,7 +929,7 @@ def test_a_source_s_line_is_shown_without_losing_the_host(gtk, tmp_path):
         win.reveal_line(win._evaluated_lines.headers[star.uid])
         assert win.selected_uid == star.uid
         assert win.stack.get_visible_child_name() == "structured"
-        assert win.check_entry.get_text() == "web1" and win.target_text() == "web1"
+        assert win._typed_host() == "web1" and win.target_text() == "web1"
         _pump(lambda: False, seconds=0.4)
         assert _command(win) == "ssh -G web1"
     finally:
@@ -987,22 +978,9 @@ def test_retyping_the_picked_block_s_host_follows_it(gtk, tmp_path):
         assert _block_rows(win) == ["Global", "Host edge9 web2", "Host *"]
         assert win.sidebar.list.get_selected_row()._uid == web.uid
         assert _pump(lambda: _command(win) == "ssh -G edge9")
-        assert win.check_entry.get_text() == "" and win.block_title.get_label() == "edge9 web2"
+        assert win._typed_host() == "" and win.block_title.get_label() == "edge9 web2"
     finally:
         _close(win)
-
-
-def test_copy_command_is_for_the_host_checked(window):
-    copied = []
-    window.get_clipboard = lambda: type("Clip", (), {"set": lambda _s, text: copied.append(text)})()
-    window.copy_command()
-    assert copied == ["ssh web1"]
-    _check(window, "admin@web2")
-    window.copy_command()
-    assert copied[-1] == "ssh admin@web2"
-    window.select_block(window.draft.blocks[0].uid)
-    _check(window, "")                                     # global options: no host
-    assert not window.copy_command_button.get_sensitive()
 
 
 class _Tests:
@@ -1217,7 +1195,7 @@ def test_going_to_a_host_before_the_window_has_loaded(gtk, tmp_path):
     try:
         win.go_to(host="edge", option="user", pin=True)        # nothing is loaded yet
         assert _pump(lambda: _selected(win) == "*.prod edge")   # a name beside a pattern
-        assert win.check_entry.get_text() == "edge"             # pinned
+        assert win._typed_host() == "edge"                      # pinned
         assert _pump(lambda: _command(win) == "ssh -G edge")
         win.go_to(host="web2")                                  # the second name of a line
         assert _selected(win) == "web1 web2"

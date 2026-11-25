@@ -10,8 +10,10 @@ selected, in one of three views:
   and the line behind each value;
 * **Raw**: the text of the file, the block's lines marked.
 
-The host being checked is the one typed above the views, else the host the
-selected block names. Copy Command and Test Connection are about it.
+The host being checked is the host the selected block names, unless the
+window keeps another in question (a source followed, a host name searched
+for, ``go_to`` with *pin*) until a block is picked in the sidebar. Test
+Connection is about it.
 
 Nothing here decides what applies. Every answer comes from the daemon, which
 asks OpenSSH (``ssh -G``) about the draft in the context a connection would
@@ -214,13 +216,9 @@ class AdvancedConfigBase:
         self._prefetch_source = 0
         #: True while a move of the Raw view's cursor is selecting a block.
         self._selecting_from_raw = False
-        #: The host typed above the views: the one OpenSSH is asked about,
-        #: whichever block is selected. Empty: the selected block's own.
+        #: A host kept in question: the one OpenSSH is asked about, whichever
+        #: block the window selects. Empty: the selected block's own.
         self._pinned_host = ""
-        #: The pinned host was typed in the host-to-check field by the user
-        #: (not put there by the window: a source followed, a search, go_to).
-        self._pin_typed = False
-        self._check_syncing = False
         #: The host to check was put there by the search (an exact name).
         self._check_from_search = False
         self._testing = False
@@ -397,8 +395,7 @@ class AdvancedConfigBase:
         self.add_breakpoint(narrow)
 
     def _build_context_bar(self) -> Gtk.Widget:
-        """The block on screen, the host being checked, and what can be
-        done with that host."""
+        """The block on screen, its file, and testing the host checked."""
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.add_css_class("advcfg-context")
         self.block_title = Gtk.Label(xalign=0)
@@ -411,29 +408,8 @@ class AdvancedConfigBase:
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         bar.append(spacer)
-        self.check_entry = Gtk.Entry()
-        self.check_entry.set_width_chars(16)
-        self.check_entry.set_valign(Gtk.Align.CENTER)
-        self.check_entry.set_icon_from_icon_name(
-            Gtk.EntryIconPosition.PRIMARY, "network-server-symbolic"
-        )
-        self.check_entry.set_tooltip_text(_(
-            "The host OpenSSH is asked about. Empty: the host the selected block names."
-        ))
-        self.check_entry.update_property(
-            [Gtk.AccessibleProperty.LABEL], [_("Host to check")]
-        )
-        self.check_entry.connect("changed", self._on_check_typed)
-        self.check_entry.connect("icon-release", self._on_check_icon)
-        bar.append(self.check_entry)
         self.test_status = pill(style="muted")
         bar.append(self.test_status)
-        self.copy_command_button = Gtk.Button(
-            icon_name="edit-copy-symbolic", tooltip_text=_("Copy SSH Command")
-        )
-        self.copy_command_button.set_valign(Gtk.Align.CENTER)
-        self.copy_command_button.connect("clicked", lambda *_a: self.copy_command())
-        bar.append(self.copy_command_button)
         self.test_button = Gtk.Button()
         self.test_button.set_child(Adw.ButtonContent(
             icon_name="media-playback-start-symbolic", label=_("Test Connection"),
@@ -460,16 +436,16 @@ class AdvancedConfigBase:
         return self.editor.dirty or self.raw.pending
 
     def target_text(self) -> str:
-        """The host OpenSSH is asked about: the one typed above the views,
-        else the one the selected block names. Empty: none."""
+        """The host OpenSSH is asked about: the one kept in question, else
+        the one the selected block names. Empty: none."""
         return self._typed_host() or first_host_name(
             self.editor.find_block(self.selected_uid)
         )
 
     def _typed_host(self) -> str:
         """The host asked about whichever block is selected, if there is
-        one: typed above the views, or one a caller asked to keep in
-        question (``go_to`` with *pin*, a source followed from Effective).
+        one a caller asked to keep in question (``go_to`` with *pin*, a
+        source followed, a host name searched for).
         Empty otherwise: the selected block then says."""
         return self._pinned_host
 
@@ -537,39 +513,11 @@ class AdvancedConfigBase:
     # -- the host being checked -------------------------------------------
 
     def _set_typed(self, text: str) -> None:
-        """Put a host to check above the views, as the window's own doing."""
-        self._check_syncing = True
-        try:
-            if self.check_entry.get_text() != text:
-                self.check_entry.set_text(text)
-        finally:
-            self._check_syncing = False
+        """Keep a host in question whichever block the window selects (a
+        source followed, a host name searched for, ``go_to`` with *pin*);
+        "" hands the question back to the selected block."""
         self._pinned_host = text.strip()
-        self._pin_typed = False
         self._sync_context()
-
-    def _on_check_typed(self, entry) -> None:
-        self._sync_check_icon()
-        if self._check_syncing:
-            return
-        host = entry.get_text().strip()
-        self._check_from_search = False     # typed here: the user's own
-        if host == self._pinned_host:
-            return
-        self._pinned_host = host
-        self._pin_typed = bool(host)
-        self._sync_context()
-        self._target_changed()
-
-    def _sync_check_icon(self) -> None:
-        has_text = bool(self.check_entry.get_text())
-        self.check_entry.set_icon_from_icon_name(
-            Gtk.EntryIconPosition.SECONDARY, "edit-clear-symbolic" if has_text else None
-        )
-
-    def _on_check_icon(self, entry, position) -> None:
-        if position == Gtk.EntryIconPosition.SECONDARY:
-            entry.set_text("")
 
     # ------------------------------------------------------------------
     # background work
@@ -1085,16 +1033,11 @@ class AdvancedConfigBase:
         self._sync_test_button()
 
     def _sync_context(self) -> None:
-        """The bar above the views: the block, and the host it is checked
-        with (typed, or the block's own name in grey)."""
+        """The bar above the views: the block on screen."""
         block = self.editor.find_block(self.selected_uid)
         title = messages.block_list_title(block.kind, block.patterns) if block else ""
         if self.block_title.get_label() != title:
             self.block_title.set_label(title)
-        own = first_host_name(block)
-        self.check_entry.set_placeholder_text(own or _("Host to check"))
-        host = split_target(self.target_text())[1]
-        self.copy_command_button.set_sensitive(bool(host))
         self._sync_test_button()
 
     def _sync_test_button(self) -> None:
@@ -1273,15 +1216,7 @@ class AdvancedConfigBase:
             )
         self._toasts.add_toast(Adw.Toast.new(text))
 
-    # -- the host being checked: copy, test, the route -------------------------
-
-    def copy_command(self) -> None:
-        user, host = split_target(self.target_text())
-        if not host:
-            return
-        command = "ssh " + (f"{user}@" if user else "") + host
-        self.get_clipboard().set(command)
-        self._toasts.add_toast(Adw.Toast.new(_("Copied “{command}”").format(command=command)))
+    # -- the host being checked: test, the route -------------------------------
 
     def test_connection(self) -> None:
         """Connect to the host being checked, as the configuration shown
@@ -1497,19 +1432,17 @@ class AdvancedConfigBase:
         Picking a block means "show me this one": a host the window put in
         question on its own (a source followed from Effective, a host name
         searched for, ``go_to`` with *pin*) gives way to the block's own,
-        so Effective follows the selection. A host the user typed in the
-        host-to-check field stays: the field shows it, and clearing it
-        hands the question back to the selection."""
+        so Effective follows the selection."""
         self.select_block(uid)
-        if self._pinned_host and not self._pin_typed:
+        if self._pinned_host:
             self._check_from_search = False
             self._set_typed("")
             self._target_changed(idle=not self._answer_ready())
 
     def select_block(self, uid: Optional[int]) -> None:
         """Select a block, from the sidebar or the Raw view: the one shown,
-        the one Alt+arrows move, and, unless a host is typed above the
-        views, the one that says which host OpenSSH is asked about."""
+        the one Alt+arrows move, and, unless a host is kept in question,
+        the one that says which host OpenSSH is asked about."""
         if uid == self.selected_uid:
             return
         before = self._question()

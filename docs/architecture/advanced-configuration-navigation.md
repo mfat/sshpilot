@@ -52,7 +52,7 @@ app.activate_action(
 | `line` | A 1-based line of `file` **as saved**. The block or option it belongs to is shown wherever unsaved edits have moved it (the window keeps the line map of the text it loaded). A line no block owns (a comment, a blank line) is shown selected in the Raw view. |
 | `option` | A keyword. The first option of the block with that keyword is shown instead of the block's header. |
 | `file` | A path as a connection reports its source. Empty, the root's own path, or a path the configuration does not read all mean the root. |
-| `pin` | `host` is put in the host-to-check field above the views: it stays the host being checked while the window moves the selection, until the user picks a block in the sidebar (the picked block's own host is checked then). A host the user typed in that field stays until they clear it. |
+| `pin` | `host` is kept as the host being checked while the window moves the selection, until the user picks a block in the sidebar (the picked block's own host is checked then). |
 
 The call may be made before the window has loaded, and for a file other than
 the one on screen: the window loads what it needs and goes there. If the file

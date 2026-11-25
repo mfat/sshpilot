@@ -618,10 +618,7 @@ class EffectiveView(Gtk.Box):
         if not answer.answered:
             if evaluation is None:
                 self.note.set_title(_("No Host Checked"))
-                self.note.set_description(answer.note or _(
-                    "Choose a block that names a host, or type a host to check, "
-                    "to see what OpenSSH would use for it."
-                ))
+                self.note.set_description(answer.note or messages.no_host_text())
             elif evaluation.pending_exec:
                 self.note.set_title(_("Waiting for Consent"))
                 self.note.set_description(GLib.markup_escape_text(
