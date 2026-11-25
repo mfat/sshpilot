@@ -106,9 +106,17 @@ def _instead(answer: AnswerView, uid: int, keyword: str) -> str:
     return messages.used_instead_markup(value, place)
 
 
-#: The text of a line that does not take effect (see LineRow.show).
-_STRUCK = Pango.AttrList()
-_STRUCK.insert(Pango.attr_strikethrough_new(True))
+_STRUCK_ATTRS: list = []
+
+
+def _struck() -> "Pango.AttrList":
+    """The text attributes of a line that does not take effect (see
+    LineRow.show): made on first use, not at import (gi may be a stub)."""
+    if not _STRUCK_ATTRS:
+        attrs = Pango.AttrList()
+        attrs.insert(Pango.attr_strikethrough_new(True))
+        _STRUCK_ATTRS.append(attrs)
+    return _STRUCK_ATTRS[0]
 
 
 def _state_pill(view: "StructuredView") -> Gtk.Label:
@@ -462,7 +470,7 @@ class LineRow:
             set_class(entry, "advcfg-unused", struck)
             # GtkText ignores CSS text-decoration: a Pango attribute it is.
             if bool(entry.get_attributes()) != struck:
-                entry.set_attributes(_STRUCK if struck else None)
+                entry.set_attributes(_struck() if struck else None)
         option = self.view.controller.editor.find_option(self.uid)[1]
         keyword = canonical_keyword(option.keyword) if option else ""
         # Empty: what the host gets from elsewhere, greyed in the field.
