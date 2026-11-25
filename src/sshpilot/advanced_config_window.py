@@ -77,6 +77,8 @@ _HISTORY_DELAY_MS = 700
 #: Asked about when saving: OpenSSH reads every line whatever the host, so a
 #: name no block mentions is enough to learn whether it accepts the text.
 _CHECK_HOST = "sshpilot-config-check"
+#: Set by "Don't Show Again" on the caution banner shown on opening.
+CAUTION_DISMISSED_KEY = "ui.advanced_config_caution_dismissed"
 
 #: Below this width the sidebar folds away and the view switcher moves to
 #: the bottom of the window.
@@ -397,6 +399,15 @@ class AdvancedConfigBase:
         self.banner.connect("button-clicked", self._on_answer_banner_button)
         self._answer_banner_action: Optional[Callable[[], None]] = None
         view.add_top_bar(self.banner)
+        # A word of care on opening, until the user dismisses it for good.
+        self.caution_banner = Adw.Banner(
+            title=_("This is an editor for your SSH configuration file. "
+                    "Order of items matters, please use with care"),
+            button_label=_("Don't Show Again"),
+        )
+        self.caution_banner.connect("button-clicked", self._on_caution_dismissed)
+        self.caution_banner.set_revealed(not self._caution_dismissed())
+        view.add_top_bar(self.caution_banner)
         # The block's title card heads the views' column (not the list of
         # blocks beside it).
         self.content_column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1080,6 +1091,29 @@ class AdvancedConfigBase:
         self.file_banner.set_button_label(button or None)
         self._file_banner_action = action
         self.file_banner.set_revealed(bool(text))
+
+    def _app_config(self):
+        return getattr(self._parent_window, "config", None)
+
+    def _caution_dismissed(self) -> bool:
+        config = self._app_config()
+        if config is None:
+            return False
+        try:
+            return bool(config.get_setting(CAUTION_DISMISSED_KEY, False))
+        except Exception:
+            logger.debug("Could not read %s", CAUTION_DISMISSED_KEY, exc_info=True)
+            return False
+
+    def _on_caution_dismissed(self, *_args) -> None:
+        self.caution_banner.set_revealed(False)
+        config = self._app_config()
+        if config is None:
+            return
+        try:
+            config.set_setting(CAUTION_DISMISSED_KEY, True)
+        except Exception:
+            logger.error("Could not save %s", CAUTION_DISMISSED_KEY, exc_info=True)
 
     def _on_file_banner_button(self, *_args) -> None:
         action, self._file_banner_action = self._file_banner_action, None
