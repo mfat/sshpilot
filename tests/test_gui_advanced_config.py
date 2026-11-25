@@ -650,6 +650,25 @@ def test_key_lines_have_browse_and_say_what_the_file_on_disk_is(window, tmp_path
     assert web.options[2].value == str(key)
 
 
+def test_keyword_suggestions_are_chosen_with_the_keyboard(window):
+    from gi.repository import Gdk, Gtk
+
+    web = window.draft.blocks[1]
+    window.structured.add_option_row.emit("activated")
+    row = window.structured.line_rows[web.options[-1].uid]
+    row.key.grab_focus()
+    row.key.set_text("Pass")
+    row.suggestions.typed()
+    assert row.suggestions.visible()
+    keys = [c for c in _controllers(row.key) if isinstance(c, Gtk.EventControllerKey)
+            and c.get_propagation_phase() == Gtk.PropagationPhase.CAPTURE]
+    assert keys                                         # ahead of the text widget
+    press = lambda keyval: any(k.emit("key-pressed", keyval, 0, 0) for k in keys)
+    assert press(Gdk.KEY_Down) and press(Gdk.KEY_Down) and press(Gdk.KEY_Up)
+    assert press(Gdk.KEY_Return)
+    assert row.key.get_text() == "PasswordAuthentication" and not row.suggestions.visible()
+
+
 def test_a_common_yes_no_option_is_added_as_yes(window):
     window.structured._add_common("identitiesonly")
     assert "    IdentitiesOnly yes\n" in window.editor.text

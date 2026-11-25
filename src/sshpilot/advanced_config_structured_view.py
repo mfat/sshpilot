@@ -229,6 +229,9 @@ class _Suggestions:
         self.popover: Optional[Gtk.Popover] = None
         self.names: Optional[Gtk.ListBox] = None
         keys = Gtk.EventControllerKey()
+        # Ahead of the field's own text widget, which takes Enter (activate)
+        # and Tab before a controller of the entry would see them.
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._on_key)
         entry.add_controller(keys)
         focus = Gtk.EventControllerFocus()
@@ -299,19 +302,33 @@ class _Suggestions:
         self.accept(row.get_child().get_label())
 
     def _on_key(self, _controller, keyval, _code, _state) -> bool:
+        """Down/Up walk the suggestions (kept in view), Enter or Tab take
+        the selected one, Esc closes the list: as the connection editor's
+        option list does (ssh_option_list._on_keyword_key)."""
         if not self.visible():
             return False
         selected = self.names.get_selected_row()
         if keyval in (Gdk.KEY_Down, Gdk.KEY_Up):
-            index = selected.get_index() if selected is not None else -1
-            index += 1 if keyval == Gdk.KEY_Down else -1
-            target = self.names.get_row_at_index(max(0, index))
+            step = 1 if keyval == Gdk.KEY_Down else -1
+            index = (selected.get_index() if selected is not None else -1 if step > 0 else 0) + step
+            target = self.names.get_row_at_index(index)
             if target is not None:
                 self.names.select_row(target)
+                # Keep the selection in view without moving the focus.
+                adjustment = self.popover.get_child().get_vadjustment()
+                height = max(target.get_height(), 1)
+                top = index * height
+                if top < adjustment.get_value():
+                    adjustment.set_value(top)
+                elif top + height > adjustment.get_value() + adjustment.get_page_size():
+                    adjustment.set_value(top + height - adjustment.get_page_size())
             return True
-        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_Tab) and selected is not None:
-            self._take(selected)
-            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_ISO_Enter, Gdk.KEY_Tab):
+            if selected is not None:
+                self._take(selected)
+                return True
+            self.hide()                     # nothing chosen: Enter/Tab go on as usual
+            return False
         if keyval == Gdk.KEY_Escape:
             self.hide()
             return True
@@ -355,6 +372,9 @@ class LineRow:
         self.key = _entry(_("Option"), 24)
         self.key.update_property([Gtk.AccessibleProperty.LABEL], [_("Option")])
         self.key.connect("changed", self._on_changed, "key")
+        # Enter in the keyword goes on to the value, as in the connection
+        # editor's option list.
+        self.key.connect("activate", lambda *_a: self.value.grab_focus())
         self.value = _entry()
         self.value.set_hexpand(True)
         self.value.update_property([Gtk.AccessibleProperty.LABEL], [_("Value")])
