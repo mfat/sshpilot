@@ -130,6 +130,7 @@ class OptionRow:
         #: What :meth:`show` last put on the line.
         self._said: Optional[tuple] = None
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.box.add_css_class("advcfg-row")
         grip = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
         grip.add_css_class("dim-label")
         grip.set_tooltip_text(_("Drag to reorder or to another block"))
@@ -486,6 +487,21 @@ class BlockCard:
             self.rows_box.reorder_child_after(self.footer, previous)
 
 
+class _AnchoringLayout(Gtk.BoxLayout):
+    """The column of cards' layout. Having placed the cards, it keeps the
+    one the view holds where it was (see :meth:`RulesView.hold_card`): in
+    the same layout pass, so no frame shows it anywhere else. (A Box is
+    laid out by its layout manager: its own size_allocate is not called.)"""
+
+    def __init__(self, view: "RulesView") -> None:
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self._view = view
+
+    def do_allocate(self, widget, width: int, height: int, baseline: int) -> None:
+        Gtk.BoxLayout.do_allocate(self, widget, width, height, baseline)
+        self._view._apply_anchor()
+
+
 class RulesView(Gtk.Box):
     """The scrolling list of block cards."""
 
@@ -535,7 +551,16 @@ class RulesView(Gtk.Box):
         self.scroller = Gtk.ScrolledWindow()
         self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroller.set_vexpand(True)
-        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.box.set_layout_manager(_AnchoringLayout(self))
+        self.box.set_spacing(12)
+        self.box.add_css_class("advcfg-list")
+        #: A block's card held at a distance under the top edge of the list
+        #: while the blocks around it fold or open: (uid, offset), applied as
+        #: the list is laid out, so no frame shows it anywhere else.
+        self._anchor: Optional[tuple] = None
+        #: Where the bar was when a block was dropped on it.
+        self._landed_top: Optional[float] = None
         for side in ("top", "bottom", "start", "end"):
             getattr(self.box, f"set_margin_{side}")(14)
         self.empty = Adw.StatusPage(
@@ -599,6 +624,16 @@ class RulesView(Gtk.Box):
         None when no bar is shown (nothing was dragged over the list)."""
         kind, uid = _drag_payload(value)
         mark = next((m for m in self._drop_marks.values() if m.get_visible()), None)
+        if mark is not None and kind == _BLOCK_DRAG and mark.get_parent() is self.box:
+            # The card takes the bar's place: it is held there (see
+            # end_block_drag), under the pointer that let it go. (Read
+            # before the bar is hidden: hidden, it has no place.)
+            found, bounds = mark.compute_bounds(self.box)
+            if found:
+                self._landed_top = (
+                    bounds.get_y() + self.box.get_margin_top()
+                    - self.scroller.get_vadjustment().get_value()
+                )
         self.hide_drop_marks()
         if mark is None or kind != self._drag_kind:
             return None
@@ -732,24 +767,43 @@ class RulesView(Gtk.Box):
             return
         self._dragging = uid
         self._drag_kind = _BLOCK_DRAG
-        top = self.card_top(uid)
+        self.hold_card(uid)
         for other, card in self.cards.items():
             if other != uid:
                 card.show_folded(True, animate=False)
-        if top is not None:
-            self._after_layout(lambda: self.put_card_at(uid, top))
 
     def end_block_drag(self) -> None:
-        """The drag is over, dropped or not: the blocks are as they were."""
+        """The drag is over, dropped or not: the blocks are as they were,
+        and the dragged one stays where it was let go."""
         uid, self._dragging = self._dragging, None
         self._drag_kind = ""
         self.hide_drop_marks()
+        landed, self._landed_top = self._landed_top, None
         if uid is None:
             return
+        self.hold_card(uid, landed)
         for card in self.cards.values():
             card.show_folded(card.folded, animate=False)
-        if uid in self.cards:
-            self._after_layout(lambda: self.scroll_to(uid))
+
+    def hold_card(self, uid: int, top: Optional[float] = None) -> None:
+        """Keep a block's card where it is on screen (or *top* under the
+        list's top edge) while the cards around it fold or open. Scrolling
+        it there a frame later showed one frame with every card moved, and
+        the list flickered."""
+        if top is None:
+            top = self.card_top(uid)
+        if top is None:
+            return
+        anchor = self._anchor = (uid, top)
+        self._after_layout(lambda: self._release_anchor(anchor))
+
+    def _release_anchor(self, anchor: tuple) -> None:
+        if self._anchor is anchor:          # not one a later hold put there
+            self._anchor = None
+
+    def _apply_anchor(self) -> None:
+        if self._anchor is not None:
+            self.put_card_at(*self._anchor)
 
     def _after_layout(self, action) -> None:
         """Run *action* once the list has been laid out again. Sizes change

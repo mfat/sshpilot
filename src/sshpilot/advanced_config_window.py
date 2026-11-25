@@ -103,6 +103,10 @@ _CSS = """
 .advcfg-block.skipped { opacity: 0.45; }
 .advcfg-unused entry { opacity: 0.6; }
 .advcfg-flash { outline: 2px solid @accent_color; outline-offset: 2px; }
+/* Where a drop lands is shown by the bar alone: not by the theme's outline
+   around whatever the pointer is over, which on the list drew its two
+   edges as long vertical lines. */
+.advcfg-list:drop(active), .advcfg-row:drop(active) { box-shadow: none; }
 """
 _css_installed = False
 
