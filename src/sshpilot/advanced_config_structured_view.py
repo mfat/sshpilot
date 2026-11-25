@@ -741,7 +741,8 @@ class StructuredView(Gtk.Box):
         self.error_row.add_css_class("error")
         body.append(self.error_row)
 
-        self.tiles = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # The tiles share the full width: one alone spans it, two halve it.
+        self.tiles = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, homogeneous=True)
         # Applies To: the hosts of a pattern, Match or wildcard block, each
         # a link (none for a block that names its own hosts).
         self.applies_box, content, _dot = _card_tile("network-server-symbolic", _("Applies To"))
@@ -761,6 +762,7 @@ class StructuredView(Gtk.Box):
         self.problems_tile, content, self.problems_dot = _card_tile(
             "dialog-warning-symbolic", _("Problems"),
         )
+        self.problems_tile.set_hexpand(True)
         self.problems_label = Gtk.Label(xalign=0)
         content.append(self.problems_label)
         self.problems_tile.set_cursor_from_name("pointer")

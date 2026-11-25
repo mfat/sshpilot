@@ -110,7 +110,7 @@ _CSS = """
 .advcfg-card-band switch { background-color: alpha(white, 0.3); }
 .advcfg-card-band switch:checked { background-color: alpha(white, 0.45); }
 .advcfg-card-band switch slider { background-color: white; }
-.advcfg-card-body { padding: 10px 4px 0 4px; }
+.advcfg-card-body { padding: 10px 0 0 0; }
 .advcfg-card-title { font-size: 1.3em; font-weight: bold; }
 .advcfg-block-list:drop(active) { box-shadow: none; }
 .advcfg-block-list > row.advcfg-file-row { min-height: 0; }
