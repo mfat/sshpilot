@@ -591,7 +591,7 @@ class RoutingCard:
         if not stops:
             self.route.append(self._note(_("Type a host to check to see its route.")))
         else:
-            entries = [(_("This computer"), "", False)] + list(stops)
+            entries = [(_("This computer"), GLib.get_host_name(), False)] + list(stops)
             for index, (name, endpoint, jump) in enumerate(entries):
                 if index:
                     arrow = Gtk.Image.new_from_icon_name("go-next-symbolic")
@@ -626,20 +626,25 @@ class RoutingCard:
             where.set_ellipsize(Pango.EllipsizeMode.END)
             where.set_max_width_chars(32)
             box.append(where)
+        # Every stop is as tall as the tallest, its text in the middle.
         box.set_valign(Gtk.Align.CENTER)
         if jump:
             # A jump host: its own block is a click away.
             button = Gtk.Button(child=box, tooltip_text=_("Show this host's block"))
             button.add_css_class("advcfg-hop")
-            button.set_valign(Gtk.Align.CENTER)
+            button.set_valign(Gtk.Align.FILL)
             button.connect("clicked", lambda *_a, n=name: self.view.controller.show_host(
                 fields.hop_host(n)
             ))
             return button
-        box.add_css_class("advcfg-hop")
+        stop = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        stop.set_valign(Gtk.Align.FILL)
+        box.set_vexpand(True)
+        stop.append(box)
+        stop.add_css_class("advcfg-hop")
         if index == count - 1 and index:
-            box.add_css_class("advcfg-hop-target")
-        return box
+            stop.add_css_class("advcfg-hop-target")
+        return stop
 
     def _tunnel(self, keyword: str, value: str, uid: Optional[int], source: str):
         listen, target = fields.forward_parts(keyword, value)
