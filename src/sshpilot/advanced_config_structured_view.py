@@ -659,9 +659,6 @@ class StructuredView(Gtk.Box):
         names.append(self.head_caption)
         # The file the block is in, on a line of its own.
         file_line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        file_icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic")
-        file_icon.add_css_class("dim-label")
-        file_line.append(file_icon)
         self.head_file = Gtk.Label(xalign=0)
         self.head_file.add_css_class("dim-label")
         self.head_file.add_css_class("caption")
