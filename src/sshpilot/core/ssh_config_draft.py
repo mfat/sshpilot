@@ -57,6 +57,7 @@ from ..api.models.connections import (
     SshConfigDraftSource,
     SshConfigDraftValue,
 )
+from ..platform.fs import makedirs_private
 from ..platform.paths import openssh_user_dir
 from ..platform.process import hidden_console_kwargs
 from ..ssh_config_blocks import GLOBAL, keyword_of, scan_blocks
@@ -403,7 +404,7 @@ def write_draft_for_launch(
         except (OSError, UnicodeError):
             root_text = ""
         folder = os.path.join(directory, "tree")
-        os.mkdir(folder, 0o700)
+        makedirs_private(folder)
         launch_text, _copy, _real = _mirror_tree(
             root_text, context.root_path, context.target_path, text, folder,
             str(openssh_user_dir()),
@@ -626,7 +627,7 @@ def evaluate_draft(
             trees = []
             for name, text in (("plain", request.text), ("probed", probed_text)):
                 folder = os.path.join(directory, name)
-                os.mkdir(folder, 0o700)
+                makedirs_private(folder)
                 trees.append(_mirror_tree(
                     root_text, context.root_path, target, text, folder, include_base
                 ))

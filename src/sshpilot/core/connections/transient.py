@@ -130,7 +130,7 @@ class TransientConnections:
         with self._lock:
             connection_id = self._new_id_locked()
             folder = self._directory_locked() / connection_id
-            folder.mkdir(mode=0o700)
+            makedirs_private(folder)
             try:
                 path = write(folder)
                 if not path:
