@@ -31,6 +31,7 @@ from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_widgets import pill, set_class, set_pill  # noqa: E402
 from .api.models.connections import SshConfigDraftLineState as State  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
+from .i18n import N_  # noqa: E402
 from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap  # noqa: E402
 from .ssh_option_list import OPENSSH_KEYWORDS  # noqa: E402
 
@@ -50,7 +51,8 @@ class AnswerView:
     """What OpenSSH answered, as the Structured view reads it."""
 
     def __init__(self, evaluation=None, lines: Optional[LineMap] = None, *,
-                 host: str = "", applies=None, related_hosts=None) -> None:
+                 host: str = "", applies=None, related_hosts=None,
+                 current: bool = True) -> None:
         #: The answer when OpenSSH evaluated the draft; None otherwise (no
         #: host, a rejected draft, a command waiting for consent).
         self.evaluation = evaluation if evaluation is not None and evaluation.evaluated else None
@@ -58,6 +60,8 @@ class AnswerView:
         self.host = host
         self.applies = applies
         self.related_hosts = related_hosts
+        #: The answer is about the text as it is now (not one edit behind).
+        self.current = current
         self.values: Dict[str, List[str]] = {}
         self.sources: Dict[str, object] = {}
         self.forced: set = set()
@@ -157,7 +161,7 @@ class TypedField:
         self.uid: Optional[int] = None
         self.row = Adw.ActionRow(title=fields.SPELLING[keyword], subtitle=description)
         self.row.set_title_selectable(False)
-        self.entry = _entry(width=24)
+        self.entry = _entry(width=34)
         self.entry.set_hexpand(False)
         self.entry.update_property([Gtk.AccessibleProperty.LABEL], [fields.SPELLING[keyword]])
         self.entry.connect("changed", self._on_changed)
@@ -264,7 +268,7 @@ class IdentityRow:
         self.status = None
         self.row = Adw.ActionRow(title="IdentityFile")
         self.row.set_subtitle_lines(1)
-        self.entry = _entry(width=28)
+        self.entry = _entry(width=38)
         self.entry.update_property([Gtk.AccessibleProperty.LABEL], ["IdentityFile"])
         self.entry.connect("changed", self._on_changed)
         self.state = pill(style="warning")
@@ -315,7 +319,7 @@ class ForwardRow:
         self.view = view
         self.uid = uid
         self.row = Adw.ActionRow()
-        self.entry = _entry(width=26)
+        self.entry = _entry(width=34)
         self.entry.connect("changed", self._on_changed)
         self.state = pill(style="warning")
         remove = _icon_button("user-trash-symbolic", _("Remove this forward"),
@@ -500,55 +504,163 @@ class OtherRow:
         self.suggestions.destroy()
 
 
-class JumpChain:
-    """This computer → each jump host → the host: who is connected to, and
-    through whom, as OpenSSH resolves them."""
+class _Page(Gtk.ScrolledWindow):
+    """The block's groups, one under the other, as wide as reads well: a
+    preferences page keeps to a narrow column that leaves most of a wide
+    window empty."""
 
     def __init__(self) -> None:
-        self.row = Adw.ActionRow(title=_("Route"))
-        self.row.set_activatable(False)
-        self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.box.set_valign(Gtk.Align.CENTER)
-        self.box.set_margin_top(6)
-        self.box.set_margin_bottom(6)
-        self.row.add_suffix(self.box)
+        super().__init__()
+        self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.set_vexpand(True)
+        clamp = Adw.Clamp(maximum_size=1100, tightening_threshold=900)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        for side in ("top", "bottom"):
+            getattr(self.box, f"set_margin_{side}")(24)
+        for side in ("start", "end"):
+            getattr(self.box, f"set_margin_{side}")(12)
+        clamp.set_child(self.box)
+        self.set_child(clamp)
+
+    def add(self, widget: Gtk.Widget) -> None:
+        self.box.append(widget)
+
+    def scroll_to_top(self) -> None:
+        self.get_vadjustment().set_value(0)
+
+
+_FORWARD_KINDS = {
+    # Translators: kinds of SSH port forward, shown on a tunnel's chip.
+    "localforward": N_("Local"),
+    "remoteforward": N_("Remote"),
+    "dynamicforward": N_("SOCKS"),
+}
+
+
+class RoutingCard:
+    """Routing and tunnels at a glance: this computer → each jump host →
+    the host, as OpenSSH resolves them for the host checked, and the port
+    forwards that open with it. The block's own forwards can be removed
+    here; forwards other blocks add are shown dimmed, with where they come
+    from. A jump host is a button that shows its block."""
+
+    def __init__(self, view: "StructuredView") -> None:
+        self.view = view
+        self.group = Adw.PreferencesGroup(title=_("Routing and Tunnels"))
+        add = Gtk.Button()
+        add.set_child(Adw.ButtonContent(icon_name="list-add-symbolic", label=_("Add Tunnel")))
+        add.add_css_class("flat")
+        add.connect("clicked", lambda *_a: view.focus_add_forward())
+        self.group.set_header_suffix(add)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.add_css_class("card")
+        card.add_css_class("advcfg-routing")
+        card.append(self._caption(_("Route")))
+        self.route = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.route.set_max_children_per_line(24)
+        self.route.set_column_spacing(4)
+        self.route.set_row_spacing(6)
+        card.append(self.route)
+        card.append(self._caption(_("Port forwards")))
+        self.tunnels = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.tunnels.set_max_children_per_line(12)
+        self.tunnels.set_column_spacing(6)
+        self.tunnels.set_row_spacing(6)
+        card.append(self.tunnels)
+        self.group.add(card)
         self._shown: Optional[tuple] = None
 
-    def show(self, stops: Sequence[tuple]) -> None:
-        """*stops*: ``(name, endpoint)`` from the first jump host to the
-        host itself. Hidden when there is no jump host."""
-        stops = tuple(stops)
-        self.row.set_visible(len(stops) > 1)
-        if stops == self._shown:
+    @staticmethod
+    def _caption(text: str) -> Gtk.Label:
+        label = Gtk.Label(label=text, xalign=0)
+        label.add_css_class("caption-heading")
+        label.add_css_class("dim-label")
+        return label
+
+    def show(self, stops: Sequence[tuple], tunnels: Sequence[tuple]) -> None:
+        """*stops*: ``(name, endpoint, is_jump)`` from the first jump host
+        to the host itself (none: no host is checked). *tunnels*:
+        ``(keyword, value, uid or None, source)``; a uid is a line of this
+        block, which can be removed."""
+        shown = (tuple(stops), tuple(tunnels))
+        if shown == self._shown:
             return
-        self._shown = stops
-        while (child := self.box.get_first_child()) is not None:
-            self.box.remove(child)
-        entries = [(_("This computer"), "")] + list(stops)
-        for index, (name, endpoint) in enumerate(entries):
-            if index:
-                arrow = Gtk.Image.new_from_icon_name("go-next-symbolic")
-                arrow.add_css_class("dim-label")
-                self.box.append(arrow)
-            stop = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            stop.add_css_class("advcfg-hop")
-            if index == len(entries) - 1:
-                stop.add_css_class("advcfg-hop-target")
-            title = Gtk.Label(label=name, xalign=0)
-            if index:
-                title.add_css_class("monospace")
-            title.set_ellipsize(Pango.EllipsizeMode.END)
-            title.set_max_width_chars(18)
-            stop.append(title)
-            if endpoint:
-                where = Gtk.Label(label=endpoint, xalign=0)
-                where.add_css_class("caption")
-                where.add_css_class("dim-label")
-                where.add_css_class("monospace")
-                where.set_ellipsize(Pango.EllipsizeMode.END)
-                where.set_max_width_chars(30)
-                stop.append(where)
-            self.box.append(stop)
+        self._shown = shown
+        self.route.remove_all()
+        if not stops:
+            self.route.append(self._note(_("Type a host to check to see its route.")))
+        else:
+            entries = [(_("This computer"), "", False)] + list(stops)
+            for index, (name, endpoint, jump) in enumerate(entries):
+                if index:
+                    arrow = Gtk.Image.new_from_icon_name("go-next-symbolic")
+                    arrow.add_css_class("dim-label")
+                    arrow.set_valign(Gtk.Align.CENTER)
+                    self.route.append(arrow)
+                self.route.append(self._stop(name, endpoint, index, len(entries), jump))
+        self.tunnels.remove_all()
+        if not tunnels:
+            self.tunnels.append(self._note(_("No port forwards.")))
+        for keyword, value, uid, source in tunnels:
+            self.tunnels.append(self._tunnel(keyword, value, uid, source))
+
+    @staticmethod
+    def _note(text: str) -> Gtk.Label:
+        label = Gtk.Label(label=text, xalign=0)
+        label.add_css_class("dim-label")
+        return label
+
+    def _stop(self, name: str, endpoint: str, index: int, count: int, jump: bool):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        title = Gtk.Label(label=name, xalign=0)
+        if index:
+            title.add_css_class("monospace")
+        title.set_ellipsize(Pango.EllipsizeMode.END)
+        title.set_max_width_chars(24)
+        box.append(title)
+        if endpoint:
+            where = Gtk.Label(label=endpoint, xalign=0)
+            for name_ in ("caption", "dim-label", "monospace"):
+                where.add_css_class(name_)
+            where.set_ellipsize(Pango.EllipsizeMode.END)
+            where.set_max_width_chars(32)
+            box.append(where)
+        box.set_valign(Gtk.Align.CENTER)
+        if jump:
+            # A jump host: its own block is a click away.
+            button = Gtk.Button(child=box, tooltip_text=_("Show this host's block"))
+            button.add_css_class("advcfg-hop")
+            button.set_valign(Gtk.Align.CENTER)
+            button.connect("clicked", lambda *_a, n=name: self.view.controller.show_host(
+                fields.hop_host(n)
+            ))
+            return button
+        box.add_css_class("advcfg-hop")
+        if index == count - 1 and index:
+            box.add_css_class("advcfg-hop-target")
+        return box
+
+    def _tunnel(self, keyword: str, value: str, uid: Optional[int], source: str):
+        listen, target = fields.forward_parts(keyword, value)
+        chip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        chip.add_css_class("advcfg-tunnel")
+        kind = pill(_(_FORWARD_KINDS.get(keyword, keyword)), "success" if uid else "muted")
+        chip.append(kind)
+        text = f"{listen} → {target}" if target else listen
+        label = Gtk.Label(label=text)
+        label.add_css_class("monospace")
+        chip.append(label)
+        if uid is not None:
+            remove = Gtk.Button(icon_name="window-close-symbolic",
+                                tooltip_text=_("Remove this forward"))
+            remove.add_css_class("flat")
+            remove.add_css_class("circular")
+            remove.connect("clicked", lambda *_a: self.view.controller.delete_option(uid))
+            chip.append(remove)
+        else:
+            chip.add_css_class("dim-label")
+            chip.set_tooltip_text(source or None)
+        return chip
 
 
 def _boxed_list() -> Gtk.ListBox:
@@ -585,7 +697,7 @@ class StructuredView(Gtk.Box):
             description=_("Choose a block in the sidebar, or add one."),
         )
         self.stack.add_named(empty, "empty")
-        self.page = Adw.PreferencesPage()
+        self.page = _Page()
         self.stack.add_named(self.page, "block")
 
         # -- the block itself ---------------------------------------------
@@ -627,6 +739,8 @@ class StructuredView(Gtk.Box):
         block_list.append(self.error_row)
         self.block_group.add(block_list)
         self.page.add(self.block_group)
+        self.routing = RoutingCard(self)
+        self.page.add(self.routing.group)
 
         # -- connection ------------------------------------------------------
         group = Adw.PreferencesGroup(title=_("Connection"))
@@ -663,8 +777,6 @@ class StructuredView(Gtk.Box):
         network = _boxed_list()
         field = self.typed["proxyjump"] = TypedField(self, "proxyjump", descriptions["proxyjump"])
         network.append(field.row)
-        self.jump_chain = JumpChain()
-        network.append(self.jump_chain.row)
         field = self.switches["forwardagent"] = SwitchField(
             self, "forwardagent", descriptions["forwardagent"]
         )
@@ -828,19 +940,64 @@ class StructuredView(Gtk.Box):
         else:
             hint = _("Not set here.")
         self.identity_hint.set_subtitle(GLib.markup_escape_text(hint))
-        # The route, as OpenSSH resolves it for the host being checked.
-        hops = fields.jump_hops((answer.values.get("proxyjump") or [""])[0])
-        stops = [(hop, self.controller.hop_endpoint(fields.hop_host(hop))) for hop in hops]
-        if hops:
+        self._show_routing(answer)
+        self._show_status(answer)
+
+    def _show_routing(self, answer: AnswerView) -> None:
+        """The route and the tunnels, as OpenSSH resolves them for the host
+        checked; this block's own forwards even without an answer."""
+        stops = []
+        if answer.evaluation is not None and answer.host:
+            for hop in fields.jump_hops((answer.values.get("proxyjump") or [""])[0]):
+                stops.append((hop, self.controller.hop_endpoint(fields.hop_host(hop)), True))
             endpoint = ""
             if answer.values.get("hostname"):
                 endpoint = "{host}:{port}".format(
                     host=answer.values["hostname"][0],
                     port=(answer.values.get("port") or ["22"])[0],
                 )
-            stops.append((answer.host or "", endpoint))
-        self.jump_chain.show(stops)
-        self._show_status(answer)
+            stops.append((answer.host, endpoint, False))
+        block = self.controller.editor.find_block(self.uid)
+        own = [
+            (option.keyword, option.value, option.uid)
+            for option in (block.options if block is not None else ())
+            if option.uid in self._forward_rows
+        ]
+        tunnels = [(keyword, value, uid, "") for keyword, value, uid in own]
+        if answer.evaluation is not None and answer.applies is not False:
+            # OpenSSH names no source for a keyword it collects: the line
+            # behind a forward is the other block's line with that value
+            # that it read.
+            elsewhere = []
+            for other in self.controller.editor.blocks:
+                if other.uid == self.uid:
+                    continue
+                for option in other.options:
+                    if option.keyword in fields.FORWARDS:
+                        item, _error = answer.line_state(option.uid)
+                        if item is not None and item.state in (State.APPLIED, State.ACCUMULATED):
+                            elsewhere.append((option.keyword, option.value, other))
+            for keyword in fields.FORWARDS:
+                for value in answer.values.get(keyword, ()):
+                    if any(k == keyword and fields.same_forward(keyword, v, value)
+                           for k, v, _uid in own):
+                        continue
+                    found = next((block for k, v, block in elsewhere
+                                  if k == keyword and fields.same_forward(keyword, v, value)), None)
+                    if found is not None:
+                        source = _("from {block}").format(
+                            block=messages.block_title(found.kind, found.patterns)
+                        )
+                    elif answer.current:
+                        # Another file of the configuration, or Settings.
+                        source = messages.source_label(answer.sources.get(keyword))
+                    else:
+                        continue            # an answer one edit behind
+                    tunnels.append((keyword, value, None, source))
+        self.routing.show(stops, tunnels)
+
+    def focus_add_forward(self) -> None:
+        self.forward_spec.grab_focus()
 
     def _show_status(self, answer: AnswerView) -> None:
         block = self.controller.editor.find_block(self.uid)

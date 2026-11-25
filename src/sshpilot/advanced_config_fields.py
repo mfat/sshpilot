@@ -183,3 +183,23 @@ def hop_host(hop: str) -> str:
     if hop.startswith("["):
         return hop[1:].partition("]")[0]
     return hop.partition(":")[0]
+
+
+def forward_parts(keyword: str, value: str) -> tuple:
+    """``(listen, target)`` of a forward as a person reads it: the port (or
+    address) it listens on, and where it leads. A DynamicForward leads to
+    no one place: its target is empty. ``ssh -G`` writes addresses in
+    brackets; they are left out."""
+    words = _unquoted(value).replace("[", "").replace("]", "").split()
+    if not words:
+        return "", ""
+    listen = words[0]
+    if listen.isdigit():
+        listen = ":" + listen
+    target = words[1] if keyword != "dynamicforward" and len(words) > 1 else ""
+    return listen, target
+
+
+def same_forward(keyword: str, one: str, other: str) -> bool:
+    """Whether two forward values are the same forward, however written."""
+    return forward_parts(keyword, one) == forward_parts(keyword, other)

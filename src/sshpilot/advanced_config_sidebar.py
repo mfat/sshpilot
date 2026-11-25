@@ -207,6 +207,7 @@ class BlockSidebar(Gtk.Box):
                         "" if block.kind == GLOBAL else _block_detail(block),
                     )
                     block_row._movable = block.kind != GLOBAL
+                    block_row.set_movable(block_row._movable)
                     index += 1
             self.list.invalidate_filter()
         finally:

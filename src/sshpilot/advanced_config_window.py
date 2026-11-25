@@ -109,8 +109,17 @@ _CSS = """
 .advcfg-block-list:drop(active) { box-shadow: none; }
 .advcfg-block-list > row.advcfg-file-row { min-height: 0; }
 .advcfg-flash { outline: 2px solid @accent_color; outline-offset: 2px; }
+.advcfg-routing { padding: 12px 14px 14px 14px; }
 .advcfg-hop { padding: 4px 10px; border-radius: 8px; background-color: alpha(currentColor, 0.07); }
+button.advcfg-hop { background-color: alpha(@accent_color, 0.12); }
+button.advcfg-hop:hover { background-color: alpha(@accent_color, 0.2); }
 .advcfg-hop.advcfg-hop-target { background-color: alpha(@success_color, 0.14); }
+.advcfg-tunnel { padding: 2px 4px 2px 6px; border-radius: 8px;
+  border: 1px solid alpha(@success_color, 0.35); background-color: alpha(@success_color, 0.06); }
+.advcfg-tunnel.dim-label { border-color: alpha(currentColor, 0.15); background-color: transparent; }
+.advcfg-tunnel button.circular { min-width: 22px; min-height: 22px; padding: 0; }
+.advcfg-drag-handle { opacity: 0.45; }
+row:hover .advcfg-drag-handle { opacity: 0.9; }
 .advcfg-chip { padding: 2px 10px; border-radius: 999px; font-size: 0.9em; }
 .advcfg-command-bar { padding: 6px 6px 6px 14px; }
 entry.warning { color: @warning_color; }
@@ -1340,6 +1349,11 @@ class AdvancedConfigBase:
 
         self._run(work, done)
 
+    def show_host(self, host: str) -> None:
+        """Show the block that declares *host* (a jump host on the route)."""
+        if host:
+            self.go_to(host=host)
+
     def hop_endpoint(self, name: str) -> str:
         """``hostname:port`` OpenSSH resolves for a jump host, when its
         answer is already had (the hosts the configuration names are asked
@@ -1841,6 +1855,7 @@ class AdvancedConfigBase:
         self.structured.show_answer(AnswerView(
             evaluation, lines, host=host, applies=applies_selected,
             related_hosts=related[1] if related is not None else None,
+            current=self._evaluated_serial == self.editor.serial,
         ))
         block = self.editor.find_block(self.selected_uid)
         block_lines = frozenset()

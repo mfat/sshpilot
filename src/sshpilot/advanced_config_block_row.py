@@ -47,6 +47,16 @@ class BlockRow(Gtk.ListBoxRow):
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=_SPACING)
         content.set_margin_top(_MARGIN)
         content.set_margin_bottom(_MARGIN)
+        # The grip of a block that can be dragged to another place (every
+        # block but the global options, which stay first).
+        self.handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+        self.handle.add_css_class("advcfg-drag-handle")
+        self.handle.set_valign(Gtk.Align.CENTER)
+        self.handle.set_tooltip_text(_("Drag to reorder"))
+        self.handle.set_cursor_from_name("grab")
+        self.handle.set_opacity(0)
+        content.append(self.handle)
+        content.set_spacing(8)
         self.icon = Gtk.Image()
         self.icon.set_icon_size(Gtk.IconSize.NORMAL)
         self.icon.set_valign(Gtk.Align.CENTER)
@@ -91,6 +101,12 @@ class BlockRow(Gtk.ListBoxRow):
             self.title.add_css_class("dim-label")
         else:
             self.title.remove_css_class("dim-label")
+
+    def set_movable(self, movable: bool) -> None:
+        """Show the grip, or keep its room empty so the icons line up."""
+        self.movable = movable
+        self.handle.set_opacity(1 if movable else 0)
+        self.handle.set_tooltip_text(_("Drag to reorder") if movable else None)
 
     def set_plain(self, title: str, icon_name: str) -> None:
         """A row that is not a block ("All Blocks"): a name on one line."""
