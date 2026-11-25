@@ -129,6 +129,7 @@ _ICON_RESOURCE_MAP = {
     'mail-forward-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/mail-forward-symbolic.svg',
     # Connection editor: the Routing page.
     'connector-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/connector-symbolic.svg',
+    'server-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/server-symbolic.svg',
     'network-shield-dots-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-dots-symbolic.svg',
     'network-shield-crossed-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-crossed-symbolic.svg',
     'text-editor-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/text-editor-symbolic.svg',
