@@ -1219,11 +1219,28 @@ class AdvancedConfigBase:
     # -- key files ---------------------------------------------------------------
 
     def browse_identity(self, uid: int) -> None:
-        """Choose the file of a key (IdentityFile, CertificateFile) line."""
+        """Choose the file of a key (IdentityFile, CertificateFile) line.
+
+        Gtk.FileDialog goes through the FileChooser portal when sandboxed.
+        In the Flatpak a file outside ~/.ssh comes back as a portal path
+        (/run/user/…/doc/…) the bundled OpenSSH cannot rely on, so it is
+        copied into ~/.ssh first, after asking, as the connection editor
+        does (flatpak_ssh_import), and the copy is what the line names."""
+        from .platform_utils import get_ssh_dir
+
+        _block, option = self.editor.find_option(uid)
+        if option is None:
+            return
+        kind = "cert" if option.keyword == "certificatefile" else "key"
         dialog = Gtk.FileDialog(title=_("Choose a Key File"))
-        folder = os.path.expanduser("~/.ssh")
-        if os.path.isdir(folder):
-            dialog.set_initial_folder(Gio.File.new_for_path(folder))
+        try:
+            folder = get_ssh_dir()
+            if os.path.isdir(folder):
+                dialog.set_initial_folder(Gio.File.new_for_path(folder))
+        except Exception:
+            logger.debug("No SSH folder to start the key chooser in", exc_info=True)
+        # The window the person is looking at (#1103): this one, or the
+        # main window this view is shown in.
         root = self.get_root() if hasattr(self, "get_root") else None
 
         def chosen(source, result) -> None:
@@ -1232,13 +1249,66 @@ class AdvancedConfigBase:
             except GLib.Error:
                 return                      # dismissed
             path = file.get_path() if file is not None else None
-            if not path:
-                return
-            if self.editor.set_option(uid, "value", fields.home_relative(path)):
+            if path:
+                self._use_key_file(uid, path, kind)
+
+        dialog.open(root if isinstance(root, Gtk.Window) else None, None, chosen)
+
+    def _use_key_file(self, uid: int, path: str, kind: str) -> None:
+        """Write *path* into line *uid*: at once, or (Flatpak, a file outside
+        ~/.ssh) once it has been copied into ~/.ssh, if the user agrees."""
+        from .flatpak_ssh_import import (
+            import_certificate_into_ssh_dir,
+            import_private_key_into_ssh_dir,
+            needs_flatpak_ssh_import,
+        )
+
+        def write(chosen: str) -> None:
+            if self.editor.set_option(uid, "value", fields.home_relative(chosen)):
                 self.editor.commit_typing()
                 self._after_structure()
 
-        dialog.open(root if isinstance(root, Gtk.Window) else None, None, chosen)
+        if not needs_flatpak_ssh_import(path):
+            write(path)
+            return
+        if kind == "cert":
+            heading = _("Copy certificate into ~/.ssh?")
+            body = _(
+                "Flatpak can only use SSH files under ~/.ssh. Copy this "
+                "certificate into ~/.ssh and use the copy?"
+            )
+        else:
+            heading = _("Copy key into ~/.ssh?")
+            body = _(
+                "Flatpak can only use SSH keys under ~/.ssh. Copy this key "
+                "into ~/.ssh and use the copy? Matching .pub and certificate "
+                "files next to it will be copied too when present."
+            )
+        alert = Adw.AlertDialog(heading=heading, body=body)
+        alert.add_response("cancel", _("Cancel"))
+        alert.add_response("copy", _("Copy"))
+        alert.set_response_appearance("copy", Adw.ResponseAppearance.SUGGESTED)
+        alert.set_default_response("copy")
+        alert.set_close_response("cancel")
+
+        def answered(_dialog, response: str) -> None:
+            if response != "copy":
+                return
+            try:
+                if kind == "cert":
+                    dest, _companions = import_certificate_into_ssh_dir(path)
+                else:
+                    dest, _companions = import_private_key_into_ssh_dir(path)
+            except Exception as exc:
+                logger.warning("Copying %s into ~/.ssh failed: %s", path, exc, exc_info=True)
+                self._toasts.add_toast(Adw.Toast.new(
+                    _("Could not copy the file into ~/.ssh: {error}").format(error=str(exc))
+                ))
+                return
+            write(dest)
+
+        alert.connect("response", answered)
+        alert.present(self)
 
     def fix_key(self, path: str) -> None:
         if fields.fix_key_permissions(path):

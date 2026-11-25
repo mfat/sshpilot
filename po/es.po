@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 01:13+0330\n"
+"POT-Creation-Date: 2026-11-26 01:15+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -174,6 +174,7 @@ msgstr "¿Conexiones abiertas?"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:26
 #: src/sshpilot/advanced_config_window.py:747
 #: src/sshpilot/advanced_config_window.py:1004
+#: src/sshpilot/advanced_config_window.py:1288
 #: src/sshpilot/advanced_config_structured_view.py:1100
 msgid "Cancel"
 msgstr "Cancelar"
@@ -3698,6 +3699,7 @@ msgstr "Subir"
 #: src/sshpilot/key_sources.py:275 src/sshpilot/macos_menubar.py:72
 #: src/sshpilot/terminal.py:1252 src/sshpilot/terminal.py:3601
 #: src/sshpilot/window_dialogs.py:3598
+#: src/sshpilot/advanced_config_window.py:1289
 msgid "Copy"
 msgstr "Copiar"
 
@@ -7284,11 +7286,11 @@ msgstr "Todos los archivos"
 msgid "Select SSH Certificate File"
 msgstr "Seleccione el archivo de certificado SSH"
 
-#: src/sshpilot/key_sources.py:260
+#: src/sshpilot/key_sources.py:260 src/sshpilot/advanced_config_window.py:1275
 msgid "Copy certificate into ~/.ssh?"
 msgstr "¿Copiar el certificado en ~/.ssh?"
 
-#: src/sshpilot/key_sources.py:262
+#: src/sshpilot/key_sources.py:262 src/sshpilot/advanced_config_window.py:1277
 msgid ""
 "Flatpak can only use SSH files under ~/.ssh. Copy this certificate into "
 "~/.ssh and use the copy?"
@@ -7296,11 +7298,11 @@ msgstr ""
 "Flatpak solo puede usar archivos SSH en ~/.ssh. ¿Copiar este certificado en "
 "~/.ssh y usar la copia?"
 
-#: src/sshpilot/key_sources.py:266
+#: src/sshpilot/key_sources.py:266 src/sshpilot/advanced_config_window.py:1281
 msgid "Copy key into ~/.ssh?"
 msgstr "Copiar clave al servidor"
 
-#: src/sshpilot/key_sources.py:268
+#: src/sshpilot/key_sources.py:268 src/sshpilot/advanced_config_window.py:1283
 msgid ""
 "Flatpak can only use SSH keys under ~/.ssh. Copy this key into ~/.ssh and "
 "use the copy? Matching .pub and certificate files next to it will be copied "
@@ -7310,7 +7312,7 @@ msgstr ""
 "usar la copia? Los archivos .pub y certificados asociados situados a su lado "
 "también se copiarán si existen."
 
-#: src/sshpilot/key_sources.py:298
+#: src/sshpilot/key_sources.py:298 src/sshpilot/advanced_config_window.py:1305
 #, python-brace-format
 msgid "Could not copy the file into ~/.ssh: {error}"
 msgstr "No se pudo abrir el selector de destino:{error}"
@@ -8156,8 +8158,8 @@ msgstr "Editor de configuración SSH"
 #: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
 #: src/sshpilot/sidebar.py:5174 src/sshpilot/window.py:4274
 #: src/sshpilot/resources/ui/connection_dialog.ui:120
-#: src/sshpilot/advanced_config_window.py:1781
-#: src/sshpilot/advanced_config_window.py:1794
+#: src/sshpilot/advanced_config_window.py:1851
+#: src/sshpilot/advanced_config_window.py:1864
 msgid "Advanced Configuration"
 msgstr "Configuración avanzada"
 
@@ -18244,25 +18246,25 @@ msgstr ""
 "Las opciones globales deben quedar por encima de todos los bloques Host y "
 "Match: OpenSSH lee una opción bajo una línea Host como de ese host."
 
-#: src/sshpilot/advanced_config_window.py:1223
+#: src/sshpilot/advanced_config_window.py:1235
 msgid "Choose a Key File"
 msgstr "Elegir un archivo de clave"
 
-#: src/sshpilot/advanced_config_window.py:1245
+#: src/sshpilot/advanced_config_window.py:1315
 #, python-brace-format
 msgid "Only you can read {path} now."
 msgstr "Ahora solo usted puede leer {path}."
 
-#: src/sshpilot/advanced_config_window.py:1247
+#: src/sshpilot/advanced_config_window.py:1317
 #, python-brace-format
 msgid "The permissions of {path} could not be changed."
 msgstr "No se pudieron cambiar los permisos de {path}."
 
-#: src/sshpilot/advanced_config_window.py:1606
+#: src/sshpilot/advanced_config_window.py:1676
 msgid "OpenSSH could not be asked about this configuration."
 msgstr "No se pudo consultar a OpenSSH sobre esta configuración."
 
-#: src/sshpilot/advanced_config_window.py:1737
+#: src/sshpilot/advanced_config_window.py:1807
 msgid "Run and Evaluate"
 msgstr "Ejecutar y evaluar"
 
