@@ -118,6 +118,20 @@ def related_note(hosts) -> str:
     ).format(hosts=shown)
 
 
+def applies_to_label() -> str:
+    """Before the hosts a pattern or Match block applies to."""
+    return _("Applies to:")
+
+
+def applies_to_none() -> str:
+    return _("Applies to none of the hosts this configuration names.")
+
+
+def show_host_block(host: str) -> str:
+    """The tooltip of a host a pattern block applies to: a link to it."""
+    return _("Show the block of {host}").format(host=host)
+
+
 def no_host_text() -> str:
     """While the block picked names no host and none is kept in question."""
     return _("Pick a block that names a host to see what OpenSSH would use for it.")

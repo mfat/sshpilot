@@ -109,6 +109,20 @@ _CSS = """
 .advcfg-drag-handle { opacity: 0.45; }
 row:hover .advcfg-drag-handle { opacity: 0.9; }
 .advcfg-chip { padding: 2px 10px; border-radius: 999px; font-size: 0.9em; }
+.advcfg-block-head { margin-bottom: 6px; }
+.advcfg-keyword { font-weight: bold; padding: 3px 10px; border-radius: 6px;
+  color: @accent_color; background-color: alpha(@accent_bg_color, 0.12); }
+entry.advcfg-head-entry { background: none; box-shadow: none; min-height: 30px; padding-left: 4px; }
+entry.advcfg-head-entry:hover { background-color: alpha(currentColor, 0.05); }
+entry.advcfg-head-entry:focus-within { background-color: alpha(currentColor, 0.07);
+  box-shadow: inset 0 0 0 2px alpha(@accent_color, 0.5); }
+entry.advcfg-head-entry.monospace { font-size: 1.25em; font-weight: bold; }
+.advcfg-comment { font-style: italic; color: alpha(currentColor, 0.6); font-family: monospace; }
+button.advcfg-add-note { padding: 2px 8px; min-height: 24px; color: alpha(currentColor, 0.6); }
+.advcfg-disabled-note { color: @warning_color; font-weight: 600; }
+.advcfg-dimmed { opacity: 0.55; }
+button.advcfg-host-chip { padding: 1px 10px; min-height: 24px; border-radius: 999px;
+  font-family: monospace; font-size: 0.9em; }
 .advcfg-summary { padding: 14px 16px; }
 .advcfg-tile { padding: 8px 12px; border-radius: 8px;
   background-color: alpha(@accent_bg_color, 0.07); box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.14); }

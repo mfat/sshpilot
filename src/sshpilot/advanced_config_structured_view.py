@@ -609,48 +609,106 @@ class StructuredView(Gtk.Box):
         self.page = _Page()
         self.stack.add_named(self.page, "block")
 
-        # -- the block itself ---------------------------------------------
-        self.block_group = Adw.PreferencesGroup()
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        # -- the block itself: a heading, not a card ------------------------
+        # One line as the file has it (keyword, names, on/off, actions); the
+        # note as the comment it is; what the block applies to, or what is
+        # wrong with it, only when there is something to say.
+        self.block_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.block_group.add_css_class("advcfg-block-head")
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.keyword = Gtk.Label()
+        self.keyword.add_css_class("advcfg-keyword")
+        self.keyword.add_css_class("monospace")
+        self.keyword.set_valign(Gtk.Align.CENTER)
+        line.append(self.keyword)
+        self.head_title = Gtk.Label(xalign=0, hexpand=True)
+        self.head_title.add_css_class("title-3")
+        line.append(self.head_title)
+        self.patterns_row = Gtk.Entry(hexpand=True)
+        self.patterns_row.add_css_class("advcfg-head-entry")
+        self.patterns_row.add_css_class("monospace")
+        self.patterns_row.connect("changed", self._on_patterns_changed)
+        line.append(self.patterns_row)
+        self.enabled_row = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self.enabled_row.set_tooltip_text(
+            _("On: OpenSSH reads this block. Off: it is written as comments, which OpenSSH ignores.")
+        )
+        self.enabled_row.update_property([Gtk.AccessibleProperty.LABEL], [_("Enabled")])
+        self.enabled_row.connect("notify::active", self._on_enabled)
+        line.append(self.enabled_row)
         self.duplicate_button = Gtk.Button(icon_name="edit-copy-symbolic",
                                            tooltip_text=_("Duplicate Block"))
         self.duplicate_button.add_css_class("flat")
+        self.duplicate_button.set_valign(Gtk.Align.CENTER)
         self.duplicate_button.connect("clicked", lambda *_a: controller.duplicate_block(self.uid))
         self.delete_button = Gtk.Button(icon_name="user-trash-symbolic",
                                         tooltip_text=_("Delete Block"))
         self.delete_button.add_css_class("flat")
+        self.delete_button.set_valign(Gtk.Align.CENTER)
         self.delete_button.connect("clicked", lambda *_a: controller.delete_block(self.uid))
-        actions.append(self.duplicate_button)
-        actions.append(self.delete_button)
-        self.block_group.set_header_suffix(actions)
-        block_list = _boxed_list()
-        self.patterns_row = Adw.EntryRow()
-        self.patterns_row.add_css_class("monospace")
-        self.patterns_row.connect("changed", self._on_patterns_changed)
-        block_list.append(self.patterns_row)
-        self.note_row = Adw.EntryRow(title=_("Note (a comment above the block)"))
+        line.append(self.duplicate_button)
+        line.append(self.delete_button)
+        self.block_group.append(line)
+
+        # The note: "+ Add note" until there is one, then a "# ..." line.
+        self.note_stack = Gtk.Stack(hhomogeneous=False, vhomogeneous=False)
+        self.add_note_button = Gtk.Button(label=_("Add Note"), halign=Gtk.Align.START)
+        self.add_note_button.add_css_class("flat")
+        self.add_note_button.add_css_class("advcfg-add-note")
+        self.add_note_button.set_child(Adw.ButtonContent(
+            icon_name="list-add-symbolic", label=_("Add Note"),
+        ))
+        self.add_note_button.connect("clicked", lambda *_a: self._edit_note())
+        self.note_stack.add_named(self.add_note_button, "add")
+        note_line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        hash_mark = Gtk.Label(label="#")
+        hash_mark.add_css_class("monospace")
+        hash_mark.add_css_class("advcfg-comment")
+        note_line.append(hash_mark)
+        self.note_row = Gtk.Entry(hexpand=True, placeholder_text=_("A comment above the block"))
+        self.note_row.add_css_class("advcfg-head-entry")
+        self.note_row.add_css_class("advcfg-comment")
+        self.note_row.update_property([Gtk.AccessibleProperty.LABEL], [_("Note")])
         self.note_row.connect("changed", self._on_note_changed)
-        block_list.append(self.note_row)
-        self.enabled_row = Adw.SwitchRow(
-            title=_("Enabled"),
-            subtitle=_("Off, the block is written as comments, which OpenSSH ignores"),
+        focus = Gtk.EventControllerFocus()
+        # Left empty: back to Add Note (once the focus has moved on).
+        focus.connect("leave", lambda *_a: GLib.idle_add(
+            lambda: (self._sync_note_shown(), False)[1]
+        ))
+        self.note_row.add_controller(focus)
+        note_line.append(self.note_row)
+        self.note_stack.add_named(note_line, "note")
+        self.block_group.append(self.note_stack)
+
+        # Off: one line that says so (the lines below are dimmed with it).
+        self.disabled_label = Gtk.Label(
+            label=_("Disabled: written as comments, which OpenSSH ignores."), xalign=0,
         )
-        self.enabled_row.connect("notify::active", self._on_enabled)
-        block_list.append(self.enabled_row)
-        self.status_row = Adw.ActionRow(title=_("Host checked"))
-        self.status_row.set_activatable(False)
-        self.status_row.set_subtitle_lines(4)
-        block_list.append(self.status_row)
-        self.error_row = Adw.ActionRow()
+        self.disabled_label.add_css_class("advcfg-disabled-note")
+        self.block_group.append(self.disabled_label)
+        # A pattern or Match block: the hosts it applies to, each a link.
+        self.applies_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.applies_label = Gtk.Label(xalign=0)
+        self.applies_label.add_css_class("dim-label")
+        self.applies_box.append(self.applies_label)
+        # Chips as wide as their names, not stretched across the line.
+        self.applies_chips = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,
+                                         halign=Gtk.Align.START, max_children_per_line=12)
+        self.applies_chips.set_column_spacing(6)
+        self.applies_chips.set_row_spacing(6)
+        self.applies_box.append(self.applies_chips)
+        self.block_group.append(self.applies_box)
+        #: What is wrong with the block's own line, or that it does not
+        #: apply to a host kept in question.
+        self.error_row = Gtk.Label(xalign=0, wrap=True)
         self.error_row.add_css_class("error")
-        self.error_row.set_subtitle_lines(4)
-        self.error_row.set_visible(False)
-        block_list.append(self.error_row)
-        self.block_group.add(block_list)
+        self.block_group.append(self.error_row)
         self.page.add(self.block_group)
 
         # -- the lines, in the block's order ------------------------------------
         group = Adw.PreferencesGroup()
+        #: The lines, dimmed while the block is off.
+        self.options_group = group
         self.options_list = _boxed_list()
         self.add_option_row = Adw.ActionRow(title=_("Add Option"))
         self.add_option_row.add_prefix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
@@ -746,23 +804,29 @@ class StructuredView(Gtk.Box):
         self.kind = block.kind
         options = {option.uid: option for option in block.options}
         is_global = block.kind == GLOBAL
-        self.block_group.set_title(GLib.markup_escape_text(
-            messages.block_title(block.kind, block.patterns)
-        ))
+        # Global options have no line of their own: a title stands in.
+        self.keyword.set_visible(not is_global)
         self.patterns_row.set_visible(not is_global)
-        self.note_row.set_visible(not is_global)
+        self.head_title.set_visible(is_global)
+        self.head_title.set_label(messages.block_title(block.kind, block.patterns))
+        self.keyword.set_label("Host" if block.kind == HOST else "Match")
+        self.patterns_row.update_property(
+            [Gtk.AccessibleProperty.LABEL],
+            [_("Host patterns") if block.kind == HOST else _("Match conditions")],
+        )
+        self.note_stack.set_visible(not is_global)
         self.duplicate_button.set_visible(not is_global)
-        title = _("Host patterns") if block.kind == HOST else _("Match conditions")
-        if self.patterns_row.get_title() != title:
-            self.patterns_row.set_title(title)
         self.syncing.set_text(self.patterns_row, block.patterns)
         self.syncing.set_text(self.note_row, block.note)
+        self._sync_note_shown()
         if self.enabled_row.get_active() == block.disabled:
             self.syncing.on = True
             try:
                 self.enabled_row.set_active(not block.disabled)
             finally:
                 self.syncing.on = False
+        self.disabled_label.set_visible(block.disabled)
+        set_class(self.options_group, "advcfg-dimmed", block.disabled)
 
         # Every line in the block's order, each with its control. A row is
         # made again only when its line changes kind (a line above went).
@@ -794,25 +858,54 @@ class StructuredView(Gtk.Box):
         self._show_status(answer)
 
     def _show_status(self, answer: AnswerView) -> None:
+        """Only what says something: the hosts a pattern or Match block
+        applies to, that the block does not apply to a host kept in
+        question, or what OpenSSH rejects in its line."""
         block = self.controller.editor.find_block(self.uid)
         disabled = block is not None and block.disabled
-        if disabled:
-            text = _("Off: OpenSSH does not read this block.")
-        elif answer.related_hosts is not None:
-            text = messages.related_note(answer.related_hosts)
-        elif answer.evaluation is not None:
-            applies = answer.applies if block is None or block.kind != GLOBAL else True
-            text = messages.applies_text(applies, answer.host)
-        elif answer.host:
-            text = _("Asking OpenSSH about {host}…").format(host=answer.host)
-        else:
-            text = messages.no_host_text()
-        self.status_row.set_subtitle(GLib.markup_escape_text(text))
+        hosts = None if disabled else answer.related_hosts
+        self._show_applies(hosts)
         header = self.controller.editor.lines.headers.get(self.uid, 0)
         error = answer.errors.get(header) if header else None
-        self.error_row.set_visible(error is not None)
         if error is not None:
-            self.error_row.set_title(GLib.markup_escape_text(messages.error_text(error)))
+            text = messages.error_text(error)
+        elif (not disabled and answer.evaluation is not None and answer.applies is False
+              and block is not None and block.kind != GLOBAL):
+            text = messages.applies_text(False, answer.host)
+        else:
+            text = ""
+        self.error_row.set_label(text)
+        self.error_row.set_visible(bool(text))
+
+    #: Hosts named before the rest are counted ("+3").
+    _APPLIES_SHOWN = 8
+
+    def _show_applies(self, hosts) -> None:
+        shown = tuple(hosts or ())
+        if getattr(self, "_applies", None) == (hosts is None, shown):
+            return
+        self._applies = (hosts is None, shown)
+        self.applies_box.set_visible(hosts is not None)
+        child = self.applies_chips.get_first_child()
+        while child is not None:
+            following = child.get_next_sibling()
+            self.applies_chips.remove(child)
+            child = following
+        if hosts is None:
+            return
+        self.applies_label.set_label(
+            messages.applies_to_label() if shown else messages.applies_to_none()
+        )
+        for name in shown[:self._APPLIES_SHOWN]:
+            chip = Gtk.Button(label=name, tooltip_text=messages.show_host_block(name))
+            chip.add_css_class("advcfg-host-chip")
+            chip.connect("clicked", lambda *_a, n=name: self.controller.go_to(host=n))
+            self.applies_chips.append(chip)
+        if len(shown) > self._APPLIES_SHOWN:
+            rest = shown[self._APPLIES_SHOWN:]
+            more = Gtk.Label(label=f"+{len(rest)}", tooltip_text=", ".join(rest))
+            more.add_css_class("dim-label")
+            self.applies_chips.append(more)
 
     # -- gestures ----------------------------------------------------------------
 
@@ -823,6 +916,19 @@ class StructuredView(Gtk.Box):
     def _on_note_changed(self, row) -> None:
         if not self.syncing.on and self.uid is not None:
             self.controller.note_typed(self.uid, row.get_text())
+
+    def _edit_note(self) -> None:
+        self.note_stack.set_visible_child_name("note")
+        self.note_row.grab_focus()
+
+    def _sync_note_shown(self) -> None:
+        """The note line while there is a note or it is being written; the
+        Add Note button otherwise."""
+        root = self.note_row.get_root()
+        focus = root.get_focus() if root is not None else None
+        writing = focus is not None and (focus is self.note_row or focus.is_ancestor(self.note_row))
+        has_note = bool(self.note_row.get_text().strip())
+        self.note_stack.set_visible_child_name("note" if has_note or writing else "add")
 
     def _on_enabled(self, row, _pspec) -> None:
         if self.syncing.on or self.uid is None:
@@ -868,7 +974,7 @@ class StructuredView(Gtk.Box):
         """Bring the field of option or block *uid* into view and flash it."""
         widget = self.option_widget(uid)
         if widget is None:
-            widget = self.patterns_row if self.patterns_row.get_visible() else self.block_group
+            widget = self.patterns_row if self.patterns_row.get_visible() else self.head_title
             self.page.scroll_to_top()
         else:
             # The row holding the field: the one a boxed list scrolls to.

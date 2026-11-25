@@ -243,6 +243,20 @@ def _settled(win):
     ))
 
 
+def _applies(win):
+    """The hosts the block's heading says it applies to (None: no such line)."""
+    structured = win.structured
+    if not structured.applies_box.get_visible():
+        return None
+    names, child = [], structured.applies_chips.get_first_child()
+    while child is not None:
+        inner = child.get_child()
+        if isinstance(inner, type(structured.duplicate_button)):
+            names.append(inner.get_label())
+        child = child.get_next_sibling()
+    return names
+
+
 def _effective(win, key):
     """The value the Effective view lists for *key* (None: not listed)."""
     win.effective.fill()        # whichever view is open
@@ -405,7 +419,9 @@ def test_a_new_match_exec_runs_only_after_consent(window, tmp_path):
     assert _pump(marker.exists)
     # The answer that follows the consent, not the one that asked for it.
     assert _pump(lambda: window._evaluation is not None and window._evaluation.evaluated)
-    assert _pump(lambda: window.structured.status_row.get_subtitle() == "Applies to web1.")
+    assert _pump(lambda: window._evaluated_lines.headers[block.uid]
+                 in window._evaluation.matched_blocks)          # it applies to web1
+    assert not window.structured.error_row.get_visible()
 
 
 def test_disabling_a_block_writes_comments_and_openssh_skips_it(window):
@@ -413,7 +429,8 @@ def test_disabling_a_block_writes_comments_and_openssh_skips_it(window):
     window.structured.enabled_row.set_active(False)          # the switch
     assert _settled(window) and _effective(window, "user") == "fallback"
     assert "# [disabled] Host web1 web2\n" in window.editor.text
-    assert window.structured.status_row.get_subtitle().startswith("Off")
+    assert window.structured.disabled_label.get_visible()
+    assert window.structured.options_group.has_css_class("advcfg-dimmed")
     assert window.draft.blocks[1].uid == web.uid == window.selected_uid
 
 
@@ -948,22 +965,28 @@ def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
     ))
     try:
         a, b, d, prod, test, lab, star = win.draft.blocks
-        status = win.structured.status_row
+        structured = win.structured
 
         _pick(win, "Host *.prod")
-        assert _pump(lambda: "a.prod, b.prod" in status.get_subtitle())
+        assert _pump(lambda: _applies(win) == ["a.prod", "b.prod"])
         assert win._evaluation is None and _dimmed(win) == []
         assert _field(win, "port").entry.get_text() == "2200"
 
         _pick(win, "Match host *.test")                      # a rule, as a pattern
-        assert _pump(lambda: "c.test, d.test" in status.get_subtitle())
+        assert _pump(lambda: _applies(win) == ["c.test", "d.test"])
 
         _pick(win, "Host *.lab")                             # no listed host fits it:
-        assert _pump(lambda: "none of the hosts" in status.get_subtitle())
+        assert _pump(lambda: _applies(win) == [])
+        assert "none of the hosts" in structured.applies_label.get_label()
+
+        _pick(win, "Host *.prod")                            # a chip shows that host
+        assert _pump(lambda: _applies(win) == ["a.prod", "b.prod"])
+        structured.applies_chips.get_child_at_index(1).get_child().emit("clicked")
+        assert _pump(lambda: win.selected_uid == b.uid)
 
         _pick(win, "Host a.prod")                            # a host: the usual answer
         assert _pump(lambda: _command(win) == "ssh -G a.prod")
-        assert status.get_subtitle() == "Applies to a.prod."
+        assert _applies(win) is None                         # nothing worth saying
         assert _dimmed(win) == []
     finally:
         _close(win)
