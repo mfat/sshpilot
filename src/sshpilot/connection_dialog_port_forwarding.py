@@ -117,9 +117,27 @@ class ConnectionDialogPortForwardingMixin:
             shown += 1
         if shown:
             self.rules_list.append(card)
+        else:
+            # Every rule is disabled or of a kind the list cannot draw.
+            self.rules_list.append(self.placeholder)
 
         # Show the rules list
         self.rules_list.show()
+
+    def _watch_forwarding_server_name(self):
+        """Redraw the rules when the alias or host they name changes."""
+        for attr in ('nickname_row', 'hostname_row'):
+            row = getattr(self, attr, None)
+            if row is None:
+                continue
+            try:
+                row.connect('changed', self._on_forwarding_server_name_changed)
+            except Exception:
+                logger.debug("Cannot watch %s for the forward rules", attr, exc_info=True)
+
+    def _on_forwarding_server_name_changed(self, *_args):
+        if getattr(self, 'forwarding_rules', None):
+            self.load_port_forwarding_rules()
 
     def _forwarding_server_name(self):
         """The name the rule list gives the server: the connection's alias,

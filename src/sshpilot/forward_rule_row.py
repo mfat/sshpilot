@@ -16,7 +16,12 @@ from dataclasses import dataclass
 from gettext import gettext as _
 from typing import Callable, Optional
 
-from gi.repository import Gdk, Gtk, Pango
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gtk, Pango  # noqa: E402
 
 #: The machine a side belongs to.
 THIS_COMPUTER = "local"
@@ -52,11 +57,23 @@ def _text(value) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _host(host: str) -> str:
+    """*host* as ssh reads it in a forward: an IPv6 address in brackets, as
+    the config writer (``_format_forward_host``) puts it."""
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        return f"[{host}]"
+    return host
+
+
+def _address(host: str, port: str) -> str:
+    return f"{_host(host)}:{port}"
+
+
 def _bind_prefix(addr: str) -> str:
     """``addr:`` for the flag, or nothing when ssh's default (localhost) is
     meant -- the editor fills that in, and repeating it only lengthens the
     flag."""
-    return f"{addr}:" if addr and addr != _DEFAULT_BIND else ""
+    return f"{_host(addr)}:" if addr and addr != _DEFAULT_BIND else ""
 
 
 def describe_forward(rule: dict) -> Optional[ForwardView]:
@@ -72,9 +89,9 @@ def describe_forward(rule: dict) -> Optional[ForwardView]:
         return ForwardView(
             kind="local",
             title=_("Local"),
-            flag=f"-L {_bind_prefix(addr)}{port}:{host}:{hport}",
-            this_computer=Side(f"{shown_bind}:{port}", LISTENS),
-            server=Side(f"{host}:{hport}", DELIVERS),
+            flag=f"-L {_bind_prefix(addr)}{port}:{_address(host, hport)}",
+            this_computer=Side(_address(shown_bind, port), LISTENS),
+            server=Side(_address(host, hport), DELIVERS),
             outbound=True,
         )
 
@@ -90,15 +107,15 @@ def describe_forward(rule: dict) -> Optional[ForwardView]:
                 title=_("Remote SOCKS"),
                 flag=f"-R {_bind_prefix(addr)}{port}",
                 this_computer=Side(_("any host"), DELIVERS),
-                server=Side(_("SOCKS {address}").format(address=f"{shown_bind}:{port}"), LISTENS),
+                server=Side(_("SOCKS {address}").format(address=_address(shown_bind, port)), LISTENS),
                 outbound=False,
             )
         return ForwardView(
             kind="remote",
             title=_("Remote"),
-            flag=f"-R {_bind_prefix(addr)}{port}:{host}:{hport}",
-            this_computer=Side(f"{host}:{hport}", DELIVERS),
-            server=Side(f"{shown_bind}:{port}", LISTENS),
+            flag=f"-R {_bind_prefix(addr)}{port}:{_address(host, hport)}",
+            this_computer=Side(_address(host, hport), DELIVERS),
+            server=Side(_address(shown_bind, port), LISTENS),
             outbound=False,
         )
 
@@ -107,7 +124,7 @@ def describe_forward(rule: dict) -> Optional[ForwardView]:
             kind="dynamic",
             title=_("Dynamic"),
             flag=f"-D {_bind_prefix(addr)}{port}",
-            this_computer=Side(_("SOCKS {address}").format(address=f"{shown_bind}:{port}"), LISTENS),
+            this_computer=Side(_("SOCKS {address}").format(address=_address(shown_bind, port)), LISTENS),
             server=Side(_("any host"), DELIVERS),
             outbound=True,
         )
@@ -137,6 +154,10 @@ _css_installed = False
 
 #: Arrow length in px: the same on every row, so the rows line up.
 ARROW_WIDTH = 36
+#: Widest the left side's address gets, in characters: past it the address
+#: ends in an ellipsis (the full text is its tooltip), so one long address
+#: does not widen every row through the size group.
+LEFT_ADDRESS_CHARS = 24
 #: Width of the type-and-flag column. Fixed, not just size-grouped: the flag
 #: wraps, so its column could otherwise be squeezed by a different amount on
 #: each row and the strips would start at different places.
@@ -188,8 +209,9 @@ def _draw_arrow(area: Gtk.DrawingArea, cr, width: int, height: int, outbound: bo
 
 
 def _side(machine: str, server_name: str, side: Side, kind: str, shrink: bool) -> Gtk.Widget:
-    """*shrink*: let the labels ellipsize. Only the right side does, so the
-    left side keeps its natural width and its size group holds on every row."""
+    """*shrink*: let the labels shrink with the row. Only the right side
+    does, so the left side keeps one width and its size group holds on every
+    row; the left side's address is capped at ``LEFT_ADDRESS_CHARS``."""
     box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
     icon = _image(
         "computer-symbolic" if machine == THIS_COMPUTER else "network-server-symbolic", 16
@@ -215,8 +237,15 @@ def _side(machine: str, server_name: str, side: Side, kind: str, shrink: bool) -
     address = Gtk.Label(label=side.address, xalign=0)
     for name_ in ("monospace", "caption", "dim-label"):
         address.add_css_class(name_)
-    if shrink:
-        address.set_ellipsize(Pango.EllipsizeMode.END)
+    address.set_ellipsize(Pango.EllipsizeMode.END)
+    if not shrink:
+        # As wide as the address (up to the cap) at the least, not only by
+        # nature: a row short of room would otherwise squeeze this side
+        # more on some rows than on others, and the arrows would not line up.
+        chars = min(len(side.address), LEFT_ADDRESS_CHARS)
+        address.set_width_chars(chars)
+        address.set_max_width_chars(chars)
+    address.set_tooltip_text(side.address)
     line.append(address)
     text.append(line)
 
@@ -252,12 +281,21 @@ def build_forward_rule_row(
     flag.set_wrap(True)
     flag.set_wrap_mode(Pango.WrapMode.CHAR)
     flag.set_max_width_chars(20)
-    flag.set_selectable(True)
     heading.append(flag)
     heading.set_size_request(HEADING_WIDTH, -1)
+    # Held to that width: the row measures the flag for its own height, and
+    # a wrapped flag asks for more width the fewer lines it may take, which
+    # the row would hand it before the strip gets any.
+    column = Adw.Clamp(
+        maximum_size=HEADING_WIDTH,
+        tightening_threshold=HEADING_WIDTH,
+        orientation=Gtk.Orientation.HORIZONTAL,
+    )
+    column.set_child(heading)
+    column.set_halign(Gtk.Align.START)
     if label_group is not None:
-        label_group.add_widget(heading)
-    row.append(heading)
+        label_group.add_widget(column)
+    row.append(column)
 
     # This computer, arrow, server.
     strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
@@ -293,6 +331,7 @@ def build_forward_rule_row(
     edit.connect("clicked", lambda *_a: on_edit())
     delete = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
     delete.add_css_class("flat")
+    delete.add_css_class("error")
     delete.set_tooltip_text(_("Delete Rule"))
     delete.connect("clicked", lambda *_a: on_delete())
     actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)

@@ -4082,6 +4082,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         self.placeholder.add_css_class("dim-label")
         self.rules_list.append(self.placeholder)
+        # The rows name the server by the alias or host fields.
+        self._watch_forwarding_server_name()
 
         # Initialize empty rules list if it doesn't exist
         if not hasattr(self, 'forwarding_rules'):

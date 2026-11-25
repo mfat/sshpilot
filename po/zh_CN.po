@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 17:37+0330\n"
+"POT-Creation-Date: 2026-11-25 19:54+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -114,7 +114,7 @@ msgstr "打开连接？"
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
 #: src/sshpilot/connection_dialog_auth.py:1407
-#: src/sshpilot/connection_dialog_port_forwarding.py:247
+#: src/sshpilot/connection_dialog_port_forwarding.py:241
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
 #: src/sshpilot/file_manager/pane.py:1009
@@ -191,7 +191,7 @@ msgid "Split View — {name}"
 msgstr "分屏视图 — {name}"
 
 #: src/sshpilot/actions.py:519 src/sshpilot/actions.py:671
-#: src/sshpilot/connection_dialog.py:6192 src/sshpilot/file_manager/pane.py:57
+#: src/sshpilot/connection_dialog.py:6194 src/sshpilot/file_manager/pane.py:57
 #: src/sshpilot/file_manager/pane.py:65 src/sshpilot/terminal.py:1216
 #: src/sshpilot/terminal_manager.py:1179 src/sshpilot/text_editor.py:1840
 #: src/sshpilot/window.py:6725 src/sshpilot/window.py:8557
@@ -215,7 +215,7 @@ msgstr ""
 "{error}"
 
 #: src/sshpilot/actions.py:522 src/sshpilot/actions.py:916
-#: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:6195
+#: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:6197
 #: src/sshpilot/daemon_quit_policy.py:535 src/sshpilot/file_manager/pane.py:58
 #: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2730
 #: src/sshpilot/file_manager/pane.py:3142
@@ -363,7 +363,7 @@ msgstr "会话名称"
 
 #. Save button
 #: src/sshpilot/actions.py:866
-#: src/sshpilot/connection_dialog_port_forwarding.py:251
+#: src/sshpilot/connection_dialog_port_forwarding.py:245
 #: src/sshpilot/login_profile_dialogs.py:165 src/sshpilot/rbw_setup.py:167
 #: src/sshpilot/terminal_theme_editor.py:88 src/sshpilot/text_editor.py:379
 #: src/sshpilot/text_editor.py:1767 src/sshpilot/window_dialogs.py:3462
@@ -1624,7 +1624,7 @@ msgstr "命令已删除"
 msgid "Only SSH commands are allowed. Example: ssh user@host"
 msgstr "仅允许 SSH 命令。示例：ssh user@host"
 
-#: src/sshpilot/command_palette.py:86 src/sshpilot/connection_dialog.py:4247
+#: src/sshpilot/command_palette.py:86 src/sshpilot/connection_dialog.py:4249
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:88
 #: src/sshpilot/omni_search.py:913 src/sshpilot/omni_search.py:940
 #: src/sshpilot/omni_search.py:975
@@ -1818,7 +1818,7 @@ msgid "Variable holding the socket path, e.g. $SSH_AUTH_SOCK"
 msgstr "保存套接字路径的变量，例如 $SSH_AUTH_SOCK"
 
 #: src/sshpilot/connection_dialog.py:2964
-#: src/sshpilot/connection_dialog.py:5946
+#: src/sshpilot/connection_dialog.py:5948
 msgid "Secure storage is unavailable."
 msgstr "安全存储不可用。"
 
@@ -2015,8 +2015,8 @@ msgid "Select FIDO security key provider library"
 msgstr "选择 FIDO 安全密钥提供程序库"
 
 #: src/sshpilot/connection_dialog.py:3821
-#: src/sshpilot/connection_dialog.py:4879
-#: src/sshpilot/connection_dialog_port_forwarding.py:221
+#: src/sshpilot/connection_dialog.py:4881
+#: src/sshpilot/connection_dialog_port_forwarding.py:215
 #: src/sshpilot/host_info_tab.py:103 src/sshpilot/host_info_tab.py:569
 #: src/sshpilot/machine_info_dialog.py:2705
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:46
@@ -2032,13 +2032,13 @@ msgstr "协议"
 
 #. Display Name (SSH Pilot-owned presentation metadata)
 #: src/sshpilot/connection_dialog.py:3866
-#: src/sshpilot/connection_dialog.py:4884
-#: src/sshpilot/connection_dialog.py:4889
+#: src/sshpilot/connection_dialog.py:4886
+#: src/sshpilot/connection_dialog.py:4891
 msgid "Name (optional)"
 msgstr "命令（可选）"
 
 #: src/sshpilot/connection_dialog.py:3868
-#: src/sshpilot/connection_dialog.py:4886
+#: src/sshpilot/connection_dialog.py:4888
 msgid "Shown in the connection list. Leave empty to use the SSH alias."
 msgstr "连接没有主机或 SSH 别名。"
 
@@ -2051,8 +2051,8 @@ msgstr "主机名 / IP 地址"
 #. plugin protocols' fields take, and the familiar host/port/user one.
 #. Title: Port and protocol
 #: src/sshpilot/connection_dialog.py:3885
-#: src/sshpilot/connection_dialog_port_forwarding.py:223
-#: src/sshpilot/connection_dialog_port_forwarding.py:604
+#: src/sshpilot/connection_dialog_port_forwarding.py:217
+#: src/sshpilot/connection_dialog_port_forwarding.py:598
 #: src/sshpilot/machine_info_dialog.py:2535
 #: src/sshpilot/plugins/builtin/rdp_protocol/__init__.py:314
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:41
@@ -2230,11 +2230,11 @@ msgstr "查看当前使用的端口和潜在冲突信息"
 msgid "No port forwarding rules configured"
 msgstr "未配置端口转发规则"
 
-#: src/sshpilot/connection_dialog.py:4096
+#: src/sshpilot/connection_dialog.py:4098
 msgid "About Port Forwarding"
 msgstr "关于端口转发"
 
-#: src/sshpilot/connection_dialog.py:4098
+#: src/sshpilot/connection_dialog.py:4100
 msgid ""
 "Port forwarding allows you to securely tunnel network connections.\n"
 "\n"
@@ -2251,15 +2251,15 @@ msgstr ""
 "• <b>远程转发</b>：将远程机器上的端口转发到本地机器侧指定的主机和端口。\n"
 "• <b>动态转发</b>：在本地机器上启动 SOCKS 代理并监听指定端口。"
 
-#: src/sshpilot/connection_dialog.py:4117
+#: src/sshpilot/connection_dialog.py:4119
 msgid "Opens the way to the host before SSH Pilot connects. Choose one."
 msgstr "在 SSH Pilot 连接前打通访问主机的路径。请选择一项。"
 
-#: src/sshpilot/connection_dialog.py:4122
+#: src/sshpilot/connection_dialog.py:4124
 msgid "Runs before SSH Pilot connects, for example to bring up a VPN."
 msgstr ""
 
-#: src/sshpilot/connection_dialog.py:4127
+#: src/sshpilot/connection_dialog.py:4129
 msgid ""
 "Ports to reach for, in order, such as 7000,8000,9000. Add :udp to a port for "
 "UDP. Sent by SSH Pilot itself, so no knock tool has to be installed."
@@ -2267,14 +2267,14 @@ msgstr ""
 "按顺序敲击的端口，例如 7000,8000,9000。在端口后添加 :udp 以使用 UDP。由 SSH "
 "Pilot 自行发送，因此无需安装敲门工具。"
 
-#: src/sshpilot/connection_dialog.py:4132
+#: src/sshpilot/connection_dialog.py:4134
 msgid ""
 "Anything else that has to run first — fwknop, a VPN dial-up, or a knock and "
 "a VPN together in one line."
 msgstr ""
 "任何需要首先运行的内容——fwknop、VPN 拨号，或在同一行中包含端口敲门和 VPN。"
 
-#: src/sshpilot/connection_dialog.py:4136
+#: src/sshpilot/connection_dialog.py:4138
 msgid ""
 "Sent to OpenSSH.\n"
 "\n"
@@ -2290,34 +2290,34 @@ msgstr ""
 
 #. : Shown under the command box. These are expanded before the command runs,
 #. : so a knock does not have to hardcode a hostname that later changes.
-#: src/sshpilot/connection_dialog.py:4142
+#: src/sshpilot/connection_dialog.py:4144
 msgid "%h host · %p port · %u user"
 msgstr "%h 主机 · %p 端口 · %u 用户"
 
 #. "and", not "&": Adw.PreferencesGroup renders its title as
 #. Pango markup, and a bare ampersand makes the parse fail, so
 #. GTK drops the whole title silently.
-#: src/sshpilot/connection_dialog.py:4158
-#: src/sshpilot/connection_dialog.py:4923
+#: src/sshpilot/connection_dialog.py:4160
+#: src/sshpilot/connection_dialog.py:4925
 msgid "Port Knocking and Pre-Connect"
 msgstr "端口敲门和预连接"
 
-#: src/sshpilot/connection_dialog.py:4169
-#: src/sshpilot/connection_dialog.py:4187
+#: src/sshpilot/connection_dialog.py:4171
+#: src/sshpilot/connection_dialog.py:4189
 msgid "Port knock sequence"
 msgstr "端口敲门序列"
 
-#: src/sshpilot/connection_dialog.py:4180
+#: src/sshpilot/connection_dialog.py:4182
 msgid "7000,8000,9000"
 msgstr "7000,8000,9000"
 
-#: src/sshpilot/connection_dialog.py:4223
+#: src/sshpilot/connection_dialog.py:4225
 msgid "fwknop -n %h"
 msgstr "fwknop -n %h"
 
 #. Its radio is the label, which also puts the name outside the box
 #. rather than sitting inside the card looking like part of the field.
-#: src/sshpilot/connection_dialog.py:4242
+#: src/sshpilot/connection_dialog.py:4244
 msgid "Run a command"
 msgstr "运行命令…"
 
@@ -2325,125 +2325,125 @@ msgstr "运行命令…"
 #. options: the result answers a question about the text directly
 #. above it, and at the bottom of the group it was far enough away to
 #. read as unrelated.
-#: src/sshpilot/connection_dialog.py:4261
+#: src/sshpilot/connection_dialog.py:4263
 msgid "Test"
 msgstr "测试"
 
-#: src/sshpilot/connection_dialog.py:4314
+#: src/sshpilot/connection_dialog.py:4316
 msgid "Timeout"
 msgstr "超时"
 
-#: src/sshpilot/connection_dialog.py:4316
+#: src/sshpilot/connection_dialog.py:4318
 msgid "Seconds before the command is stopped. 0 uses the app default."
 msgstr "停止命令前的等待秒数。0 表示使用应用默认值。"
 
-#: src/sshpilot/connection_dialog.py:4323
+#: src/sshpilot/connection_dialog.py:4325
 msgid "Do not connect if pre-connect command fails"
 msgstr "预连接命令失败时不连接"
 
-#: src/sshpilot/connection_dialog.py:4326
-#: src/sshpilot/connection_dialog.py:4930
+#: src/sshpilot/connection_dialog.py:4328
+#: src/sshpilot/connection_dialog.py:4932
 msgid ""
 "Off: SSH Pilot warns and connects anyway, so the SSH error is the one you "
 "see."
 msgstr "关闭：SSH Pilot 会显示警告并仍继续连接，以便您查看实际的 SSH 错误。"
 
-#: src/sshpilot/connection_dialog.py:4333
+#: src/sshpilot/connection_dialog.py:4335
 msgid "SSH Commands"
 msgstr "命令"
 
-#: src/sshpilot/connection_dialog.py:4337
+#: src/sshpilot/connection_dialog.py:4339
 msgid "Local Command"
 msgstr "本地命令"
 
-#: src/sshpilot/connection_dialog.py:4339
+#: src/sshpilot/connection_dialog.py:4341
 msgid "Executed locally after connect"
 msgstr "在连接后在本地执行"
 
-#: src/sshpilot/connection_dialog.py:4342
+#: src/sshpilot/connection_dialog.py:4344
 msgid "Remote Command"
 msgstr "远程命令"
 
-#: src/sshpilot/connection_dialog.py:4345
+#: src/sshpilot/connection_dialog.py:4347
 msgid "Executed on remote; TTY requested for interactivity"
 msgstr "在远程执行；请求 TTY 以进行交互"
 
-#: src/sshpilot/connection_dialog.py:4483
+#: src/sshpilot/connection_dialog.py:4485
 msgid "Enter a knock sequence first."
 msgstr "请先输入主机名"
 
-#: src/sshpilot/connection_dialog.py:4484
+#: src/sshpilot/connection_dialog.py:4486
 msgid "Enter a command first."
 msgstr "输入要运行的 shell 命令："
 
-#: src/sshpilot/connection_dialog.py:4493
+#: src/sshpilot/connection_dialog.py:4495
 msgid "The background service is unavailable."
 msgstr "守护进程传输服务不可用。"
 
-#: src/sshpilot/connection_dialog.py:4510
+#: src/sshpilot/connection_dialog.py:4512
 msgid "Running…"
 msgstr "运行中"
 
-#: src/sshpilot/connection_dialog.py:4517
+#: src/sshpilot/connection_dialog.py:4519
 msgid "The test could not be interpreted."
 msgstr "无法启动传输"
 
-#: src/sshpilot/connection_dialog.py:4727
+#: src/sshpilot/connection_dialog.py:4729
 #, python-brace-format
 msgid ""
 "“{name}” will get a Host block of its own, at the end of the file. The block "
 "it leaves stays for: {others}"
 msgstr "“{name}”将在文件末尾获得自己的 Host 块。原来的块继续用于：{others}"
 
-#: src/sshpilot/connection_dialog.py:4730
+#: src/sshpilot/connection_dialog.py:4732
 msgid "Edit for All"
 msgstr "为全部编辑"
 
-#: src/sshpilot/connection_dialog.py:4733
+#: src/sshpilot/connection_dialog.py:4735
 #, python-brace-format
 msgid ""
 "“{name}” shares its Host block with: {others}. Changes apply to all of them."
 msgstr "“{name}”与以下项共用其 Host 块：{others}。更改会应用于全部。"
 
-#: src/sshpilot/connection_dialog.py:4736
+#: src/sshpilot/connection_dialog.py:4738
 msgid "Edit Separately"
 msgstr "单独编辑"
 
-#: src/sshpilot/connection_dialog.py:4744
+#: src/sshpilot/connection_dialog.py:4746
 msgid "To rename this host, edit it separately."
 msgstr "要重命名此主机，请单独编辑它。"
 
-#: src/sshpilot/connection_dialog.py:4891
+#: src/sshpilot/connection_dialog.py:4893
 #, fuzzy
 msgid ""
 "Shown in the connection list. Leave empty to name it after what it connects "
 "to."
 msgstr "连接没有主机或 SSH 别名。"
 
-#: src/sshpilot/connection_dialog.py:4926
+#: src/sshpilot/connection_dialog.py:4928
 #, fuzzy
 msgid "Pre-Connect Command"
 msgstr "连接命令"
 
-#: src/sshpilot/connection_dialog.py:4933
+#: src/sshpilot/connection_dialog.py:4935
 #, fuzzy
 msgid ""
 "Off: SSH Pilot warns and connects anyway, so the connection's own error is "
 "the one you see."
 msgstr "关闭：SSH Pilot 会显示警告并仍继续连接，以便您查看实际的 SSH 错误。"
 
-#: src/sshpilot/connection_dialog.py:5053 src/sshpilot/omni_search.py:224
+#: src/sshpilot/connection_dialog.py:5055 src/sshpilot/omni_search.py:224
 #: src/sshpilot/preferences.py:2749 src/sshpilot/preferences.py:3274
 #: src/sshpilot/settings_index.py:56
 msgid "Advanced"
 msgstr "高级"
 
-#: src/sshpilot/connection_dialog.py:5055
+#: src/sshpilot/connection_dialog.py:5057
 #, fuzzy
 msgid "Display"
 msgstr "分组显示"
 
-#: src/sshpilot/connection_dialog.py:5057
+#: src/sshpilot/connection_dialog.py:5059
 #, fuzzy
 msgid "Devices"
 msgstr "设备"
@@ -2451,7 +2451,7 @@ msgstr "设备"
 #. Use the same neutral fallback as the local tab. Shell-provided
 #. titles can still replace it later.
 #. Move the existing terminal out of the main tab_view into pane 0
-#: src/sshpilot/connection_dialog.py:5059 src/sshpilot/omni_search.py:210
+#: src/sshpilot/connection_dialog.py:5061 src/sshpilot/omni_search.py:210
 #: src/sshpilot/preferences.py:1280 src/sshpilot/preferences.py:3266
 #: src/sshpilot/shortcut_editor.py:253 src/sshpilot/settings_index.py:48
 #: src/sshpilot/split_view.py:407 src/sshpilot/split_view.py:608
@@ -2465,92 +2465,92 @@ msgstr "设备"
 msgid "Terminal"
 msgstr "终端"
 
-#: src/sshpilot/connection_dialog.py:5132
+#: src/sshpilot/connection_dialog.py:5134
 #: src/sshpilot/plugins/builtin/docker_manager/tab_logs.py:99
 #: src/sshpilot/window_broadcast.py:75 src/sshpilot/window_dialogs.py:3273
 #: src/sshpilot/window_dialogs.py:3678
 msgid "Clear"
 msgstr "清除"
 
-#: src/sshpilot/connection_dialog.py:5189
+#: src/sshpilot/connection_dialog.py:5191
 #, fuzzy
 msgid "Show suggestions"
 msgstr "显示更多操作"
 
-#: src/sshpilot/connection_dialog.py:5221
+#: src/sshpilot/connection_dialog.py:5223
 #, fuzzy
 msgid "Looking…"
 msgstr "正在加载…"
 
-#: src/sshpilot/connection_dialog.py:5252
+#: src/sshpilot/connection_dialog.py:5254
 #, fuzzy
 msgid "Nothing found"
 msgstr "未发现监听端口"
 
-#: src/sshpilot/connection_dialog.py:5272
+#: src/sshpilot/connection_dialog.py:5274
 #, fuzzy
 msgid "Filter…"
 msgstr "筛选标签…"
 
-#: src/sshpilot/connection_dialog.py:5464
+#: src/sshpilot/connection_dialog.py:5466
 #: src/sshpilot/connection_dialog_validation.py:241
 #, python-brace-format
 msgid "{field} is required"
 msgstr "{field} 为必填项"
 
-#: src/sshpilot/connection_dialog.py:5515
-#: src/sshpilot/connection_dialog.py:5911
-#: src/sshpilot/connection_dialog.py:6112
+#: src/sshpilot/connection_dialog.py:5517
+#: src/sshpilot/connection_dialog.py:5913
+#: src/sshpilot/connection_dialog.py:6114
 msgid "The connection settings could not be saved."
 msgstr "无法保存连接设置。"
 
-#: src/sshpilot/connection_dialog.py:5530
+#: src/sshpilot/connection_dialog.py:5532
 #: src/sshpilot/file_manager/properties_dialog.py:757
 #: src/sshpilot/login_profile_dialogs.py:890
 msgid "Group"
 msgstr "组"
 
-#: src/sshpilot/connection_dialog.py:5533
+#: src/sshpilot/connection_dialog.py:5535
 msgid "No group"
 msgstr "无分组"
 
-#: src/sshpilot/connection_dialog.py:5638
+#: src/sshpilot/connection_dialog.py:5640
 msgid "Could not load the connection from the daemon"
 msgstr "无法从守护进程加载连接"
 
-#: src/sshpilot/connection_dialog.py:5640
+#: src/sshpilot/connection_dialog.py:5642
 msgid "Connection is still loading"
 msgstr "连接仍在加载中"
 
-#: src/sshpilot/connection_dialog.py:5655
+#: src/sshpilot/connection_dialog.py:5657
 msgid ""
 "An SSH option on the Extra Options page is not valid. Fix or remove it, then "
 "save again."
 msgstr "“额外选项”页面中有一个 SSH 选项无效。请修正或删除后再保存。"
 
-#: src/sshpilot/connection_dialog.py:5672
+#: src/sshpilot/connection_dialog.py:5674
 msgid "Please enter a nickname for this connection"
 msgstr "请输入此连接的别名"
 
-#: src/sshpilot/connection_dialog.py:5780
+#: src/sshpilot/connection_dialog.py:5782
 #: src/sshpilot/login_profile_dialogs.py:449
 msgid "Please correct the invalid key passphrase."
 msgstr "请更正无效的密钥口令。"
 
-#: src/sshpilot/connection_dialog.py:5873
+#: src/sshpilot/connection_dialog.py:5875
 msgid "The secure storage backend could not be unlocked."
 msgstr "无法解锁安全存储后端。"
 
-#: src/sshpilot/connection_dialog.py:5956
+#: src/sshpilot/connection_dialog.py:5958
 #, python-brace-format
 msgid "Saving to {backend}"
 msgstr "正在保存到 {backend}"
 
-#: src/sshpilot/connection_dialog.py:5957
+#: src/sshpilot/connection_dialog.py:5959
 msgid "Saving passwords and passphrases to secure storage…"
 msgstr "正在将密码和口令保存到安全存储…"
 
-#: src/sshpilot/connection_dialog.py:6041
+#: src/sshpilot/connection_dialog.py:6043
 msgid ""
 "The connection settings were saved, but secure storage did not answer in "
 "time. The password may have been stored anyway — reopen the connection to "
@@ -2559,33 +2559,33 @@ msgstr ""
 "连接设置已保存，但安全存储未及时响应。密码可能仍已保存 — 请在重新保存前重新打"
 "开连接进行检查。"
 
-#: src/sshpilot/connection_dialog.py:6123
+#: src/sshpilot/connection_dialog.py:6125
 msgid ""
 "The connection settings were saved, but secure storage rejected a password "
 "or passphrase. Please try saving again."
 msgstr "连接设置已保存，但安全存储拒绝了密码或口令。请尝试重新保存。"
 
-#: src/sshpilot/connection_dialog.py:6215
+#: src/sshpilot/connection_dialog.py:6217
 msgid ""
 "The connection could not be loaded from the service. You can retry or close "
 "the editor."
 msgstr "无法从服务加载连接。您可以重试或关闭编辑器。"
 
-#: src/sshpilot/connection_dialog.py:6218
+#: src/sshpilot/connection_dialog.py:6220
 msgid ""
 "The connection could not be loaded from the service. Please close the editor "
 "and try again."
 msgstr "无法从服务加载连接。请关闭编辑器并重试。"
 
-#: src/sshpilot/connection_dialog.py:6222
+#: src/sshpilot/connection_dialog.py:6224
 msgid "Could not load connection"
 msgstr "无法加载连接"
 
-#: src/sshpilot/connection_dialog.py:6226
+#: src/sshpilot/connection_dialog.py:6228
 msgid "_Retry"
 msgstr "重试(_R)"
 
-#: src/sshpilot/connection_dialog.py:6231 src/sshpilot/window.py:2189
+#: src/sshpilot/connection_dialog.py:6233 src/sshpilot/window.py:2189
 msgid "_Close"
 msgstr "关闭(_C)"
 
@@ -3020,84 +3020,59 @@ msgstr "端口必须在 1 到 65535 之间。"
 msgid "Unsupported forwarding type: {type}"
 msgstr "不支持的转发类型：{type}"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:104
-msgid "Local Port Forwarding"
-msgstr "本地端口转发"
+#: src/sshpilot/connection_dialog_port_forwarding.py:153
+#: src/sshpilot/scp_window.py:334 src/sshpilot/sshcopyid_window.py:127
+#: src/sshpilot/window_dialogs.py:1197 src/sshpilot/window_dialogs.py:2509
+msgid "Server"
+msgstr "服务器"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:106
-#, python-brace-format
-msgid "Local {local_port} → {remote_host}:{remote_port}"
-msgstr "本地 {local_port} → {remote_host}:{remote_port}"
-
-#: src/sshpilot/connection_dialog_port_forwarding.py:112
-msgid "Remote Port Forwarding"
-msgstr "远程端口转发"
-
-#: src/sshpilot/connection_dialog_port_forwarding.py:120
-#: src/sshpilot/port_utils.py:121
-#, python-brace-format
-msgid "Remote {src} → SOCKS"
-msgstr "远程 {src} → SOCKS"
-
-#: src/sshpilot/connection_dialog_port_forwarding.py:122
-#, python-brace-format
-msgid "Remote {src} → {dest_host}:{dest_port}"
-msgstr "远程 {src} → {dest_host}:{dest_port}"
-
-#: src/sshpilot/connection_dialog_port_forwarding.py:126
-msgid "Dynamic Port Forwarding (SOCKS)"
-msgstr "动态端口转发 (SOCKS)"
-
-#: src/sshpilot/connection_dialog_port_forwarding.py:128
-#, python-brace-format
-msgid "SOCKS proxy on port {port}"
-msgstr "端口 {port} 上的 SOCKS 代理"
-
-#: src/sshpilot/connection_dialog_port_forwarding.py:192
+#: src/sshpilot/connection_dialog_port_forwarding.py:186
 msgid "Port Forwarding Rule Editor"
 msgstr "端口转发规则编辑器"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:202
-#: src/sshpilot/file_manager/pane.py:436
+#: src/sshpilot/connection_dialog_port_forwarding.py:196
+#: src/sshpilot/file_manager/pane.py:436 src/sshpilot/forward_rule_row.py:90
 #: src/sshpilot/plugins/builtin/docker_manager/__init__.py:50
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:769
 #: src/sshpilot/preferences.py:3207
 msgid "Local"
 msgstr "本地"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:203
-#: src/sshpilot/file_manager/pane.py:435 src/sshpilot/preferences.py:3207
+#: src/sshpilot/connection_dialog_port_forwarding.py:197
+#: src/sshpilot/file_manager/pane.py:435 src/sshpilot/forward_rule_row.py:114
+#: src/sshpilot/preferences.py:3207
 msgid "Remote"
 msgstr "远程"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:204
+#: src/sshpilot/connection_dialog_port_forwarding.py:198
+#: src/sshpilot/forward_rule_row.py:124
 msgid "Dynamic"
 msgstr "动态"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:206
+#: src/sshpilot/connection_dialog_port_forwarding.py:200
 #: src/sshpilot/file_manager/pane_controls.py:148
 msgid "Type"
 msgstr "类型"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:209
+#: src/sshpilot/connection_dialog_port_forwarding.py:203
 msgid "Bind address (optional)"
 msgstr "绑定地址（可选）"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:211
+#: src/sshpilot/connection_dialog_port_forwarding.py:205
 msgid "Local port"
 msgstr "本地端口"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:426
+#: src/sshpilot/connection_dialog_port_forwarding.py:420
 #, python-brace-format
 msgid "Port {port} is already in use"
 msgstr "端口 {port} 已被占用"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:428
+#: src/sshpilot/connection_dialog_port_forwarding.py:422
 #, python-brace-format
 msgid " by {process} (PID: {pid})"
 msgstr "，占用进程：{process} (PID: {pid})"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:436
+#: src/sshpilot/connection_dialog_port_forwarding.py:430
 #, python-brace-format
 msgid ""
 "\n"
@@ -3108,35 +3083,35 @@ msgstr ""
 "\n"
 "建议替代端口：端口 {alt_port}"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:535
+#: src/sshpilot/connection_dialog_port_forwarding.py:529
 msgid "Port Information"
 msgstr "端口信息"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:553
+#: src/sshpilot/connection_dialog_port_forwarding.py:547
 msgid "Currently Listening Ports"
 msgstr "当前监听端口"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:561
+#: src/sshpilot/connection_dialog_port_forwarding.py:555
 msgid "Refresh port information"
 msgstr "刷新端口信息"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:592
+#: src/sshpilot/connection_dialog_port_forwarding.py:586
 msgid "No listening ports found"
 msgstr "未发现监听端口"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:593
+#: src/sshpilot/connection_dialog_port_forwarding.py:587
 msgid "All ports appear to be available"
 msgstr "所有端口似乎均可用"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:617
+#: src/sshpilot/connection_dialog_port_forwarding.py:611
 msgid "Unknown process"
 msgstr "未知进程"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:625
+#: src/sshpilot/connection_dialog_port_forwarding.py:619
 msgid "System port (requires root)"
 msgstr "系统端口（需要 root 权限）"
 
-#: src/sshpilot/connection_dialog_port_forwarding.py:635
+#: src/sshpilot/connection_dialog_port_forwarding.py:629
 msgid "Error loading port information"
 msgstr "加载端口信息出错"
 
@@ -4731,6 +4706,49 @@ msgstr "打开内置文件管理器失败：{error}"
 #: src/sshpilot/file_manager_integration.py:424
 msgid "Failed to open internal file manager"
 msgstr "打开文件管理器失败"
+
+#: src/sshpilot/forward_rule_row.py:106
+msgid "Remote SOCKS"
+msgstr "远程 SOCKS"
+
+#: src/sshpilot/forward_rule_row.py:108 src/sshpilot/forward_rule_row.py:127
+msgid "any host"
+msgstr "任意主机"
+
+#: src/sshpilot/forward_rule_row.py:109 src/sshpilot/forward_rule_row.py:126
+#, python-brace-format
+msgid "SOCKS {address}"
+msgstr "SOCKS {address}"
+
+#: src/sshpilot/forward_rule_row.py:225 src/sshpilot/route_strip.py:205
+msgid "This computer"
+msgstr "本机"
+
+#: src/sshpilot/forward_rule_row.py:234
+msgid "Listens here"
+msgstr "在此监听"
+
+#: src/sshpilot/forward_rule_row.py:234 src/sshpilot/scp_window.py:655
+msgid "Destination"
+msgstr "目标"
+
+#: src/sshpilot/forward_rule_row.py:300
+#, python-brace-format
+msgid "To {server}"
+msgstr "到 {server}"
+
+#: src/sshpilot/forward_rule_row.py:302
+#, python-brace-format
+msgid "From {server}"
+msgstr "来自 {server}"
+
+#: src/sshpilot/forward_rule_row.py:314
+msgid "Edit Rule"
+msgstr "编辑规则"
+
+#: src/sshpilot/forward_rule_row.py:319
+msgid "Delete Rule"
+msgstr "删除规则"
 
 #: src/sshpilot/forwarding_only_ui.py:195
 msgid "dynamic"
@@ -9795,6 +9813,11 @@ msgstr "校验和不匹配 — 拒绝安装。"
 msgid "Local {lp} → {rh}:{rp}"
 msgstr "本地 {lp} → {rh}:{rp}"
 
+#: src/sshpilot/port_utils.py:121
+#, python-brace-format
+msgid "Remote {src} → SOCKS"
+msgstr "远程 {src} → SOCKS"
+
 #: src/sshpilot/port_utils.py:122
 #, python-brace-format
 msgid "Remote {src} → {dh}:{dp}"
@@ -12002,11 +12025,6 @@ msgstr "下载文件"
 msgid "Legacy: Transfer files with scp"
 msgstr "传统方式：使用 scp 传输文件"
 
-#: src/sshpilot/scp_window.py:334 src/sshpilot/sshcopyid_window.py:127
-#: src/sshpilot/window_dialogs.py:1197 src/sshpilot/window_dialogs.py:2509
-msgid "Server"
-msgstr "服务器"
-
 #: src/sshpilot/scp_window.py:354 src/sshpilot/sshcopyid_window.py:403
 #: src/sshpilot/window_dialogs.py:1190 src/sshpilot/window_dialogs.py:1221
 #: src/sshpilot/window_dialogs.py:2527
@@ -12049,10 +12067,6 @@ msgstr "刷新远程列表"
 #: src/sshpilot/scp_window.py:619
 msgid "Remote files"
 msgstr "远程文件"
-
-#: src/sshpilot/scp_window.py:655
-msgid "Destination"
-msgstr "目标"
 
 #: src/sshpilot/scp_window.py:664 src/sshpilot/scp_window.py:670
 msgid "Local destination"
@@ -17876,10 +17890,6 @@ msgstr "正在向 OpenSSH 询问 {host}…"
 msgid "Type a host to check above to see what OpenSSH would use for it."
 msgstr "在上方输入要检查的主机，即可查看 OpenSSH 会为它使用什么。"
 
-#: src/sshpilot/route_strip.py:205
-msgid "This computer"
-msgstr "本机"
-
 #: src/sshpilot/route_strip.py:241
 msgid "Drag to change the order of the jump hosts"
 msgstr "拖动以更改跳板主机的顺序"
@@ -17987,6 +17997,27 @@ msgstr "拖动以重新排序"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · 已关闭"
+
+#~ msgid "Local Port Forwarding"
+#~ msgstr "本地端口转发"
+
+#, python-brace-format
+#~ msgid "Local {local_port} → {remote_host}:{remote_port}"
+#~ msgstr "本地 {local_port} → {remote_host}:{remote_port}"
+
+#~ msgid "Remote Port Forwarding"
+#~ msgstr "远程端口转发"
+
+#, python-brace-format
+#~ msgid "Remote {src} → {dest_host}:{dest_port}"
+#~ msgstr "远程 {src} → {dest_host}:{dest_port}"
+
+#~ msgid "Dynamic Port Forwarding (SOCKS)"
+#~ msgstr "动态端口转发 (SOCKS)"
+
+#, python-brace-format
+#~ msgid "SOCKS proxy on port {port}"
+#~ msgstr "端口 {port} 上的 SOCKS 代理"
 
 #~ msgid "SOCKS"
 #~ msgstr "SOCKS"
