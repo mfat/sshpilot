@@ -132,7 +132,9 @@ class ConnectionDialogRouteMixin:
         caption.add_css_class("caption-heading")
         caption.add_css_class("dim-label")
         inner.append(caption)
-        self.route_strip = RouteStrip(on_reorder=self._reorder_jump_hosts)
+        self.route_strip = RouteStrip(
+            on_reorder=self._reorder_jump_hosts, on_remove=self._remove_jump_host,
+        )
         inner.append(self.route_strip)
         card.append(inner)
         group.add(card)
@@ -152,8 +154,24 @@ class ConnectionDialogRouteMixin:
         if row is None:
             return
         hops = reorder(fields.jump_hops(row.get_text()), index, position)
-        if hops is None:
+        if hops is not None:
+            self._write_jump_hosts(hops)
+
+    def _remove_jump_host(self, index: int) -> None:
+        """A jump host card's remove button: the hop leaves the Jump hosts
+        row. The last hop of a chain this host inherits leaves ``none``:
+        an empty row would inherit the chain again."""
+        row = getattr(self, "proxy_jump_row", None)
+        if row is None:
             return
+        inherited = "proxy_jump_row" in (getattr(self, "_inherited_row_handlers", None) or {})
+        hops = fields.jump_hops(row.get_text())
+        if 0 <= index < len(hops):
+            del hops[index]
+            self._write_jump_hosts(hops or (["none"] if inherited else []))
+
+    def _write_jump_hosts(self, hops: List[str]) -> None:
+        row = self.proxy_jump_row
         text = ",".join(hops)
         setter = getattr(self, "_set_text_without_completion", None)
         if callable(setter):

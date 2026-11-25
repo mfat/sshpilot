@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 14:38+0330\n"
+"POT-Creation-Date: 2026-11-25 14:42+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -2776,7 +2776,7 @@ msgstr "OpenSSH 使用的身份文件"
 msgid "Route"
 msgstr "路由"
 
-#: src/sshpilot/connection_dialog_route.py:201
+#: src/sshpilot/connection_dialog_route.py:219
 msgid "Type a host name to see its route."
 msgstr "输入主机名以查看其路由。"
 
@@ -17885,18 +17885,27 @@ msgstr "正在向 OpenSSH 询问 {host}…"
 msgid "Type a host to check above to see what OpenSSH would use for it."
 msgstr "在上方输入要检查的主机，即可查看 OpenSSH 会为它使用什么。"
 
-#: src/sshpilot/route_strip.py:200
+#: src/sshpilot/route_strip.py:205
 msgid "This computer"
 msgstr "本机"
 
-#: src/sshpilot/route_strip.py:235
+#: src/sshpilot/route_strip.py:241
 msgid "Drag to change the order of the jump hosts"
 msgstr "拖动以更改跳板主机的顺序"
 
 #. A jump host: its own block is a click away.
-#: src/sshpilot/route_strip.py:304
+#: src/sshpilot/route_strip.py:310
 msgid "Show this host's block"
 msgstr "显示此主机的块"
+
+#: src/sshpilot/route_strip.py:318
+msgid "Remove this jump host"
+msgstr "移除此跳板主机"
+
+#: src/sshpilot/route_strip.py:320
+#, python-brace-format
+msgid "Remove jump host {name}"
+msgstr "移除跳板主机 {name}"
 
 #: src/sshpilot/advanced_config_effective_view.py:100
 msgid "Show this line"

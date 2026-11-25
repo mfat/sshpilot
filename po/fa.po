@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 14:38+0330\n"
+"POT-Creation-Date: 2026-11-25 14:42+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -2865,7 +2865,7 @@ msgstr "پرونده‌های هویتی که OpenSSH به کار می‌برد"
 msgid "Route"
 msgstr "مسیر"
 
-#: src/sshpilot/connection_dialog_route.py:201
+#: src/sshpilot/connection_dialog_route.py:219
 msgid "Type a host name to see its route."
 msgstr "برای دیدن مسیر، نام یک میزبان را وارد کنید."
 
@@ -18445,18 +18445,27 @@ msgid "Type a host to check above to see what OpenSSH would use for it."
 msgstr ""
 "میزبانی برای بررسی در بالا بنویسید تا ببینید OpenSSH برای آن چه به کار می‌برد."
 
-#: src/sshpilot/route_strip.py:200
+#: src/sshpilot/route_strip.py:205
 msgid "This computer"
 msgstr "این رایانه"
 
-#: src/sshpilot/route_strip.py:235
+#: src/sshpilot/route_strip.py:241
 msgid "Drag to change the order of the jump hosts"
 msgstr "برای تغییر ترتیب میزبان‌های پرش، بکشید"
 
 #. A jump host: its own block is a click away.
-#: src/sshpilot/route_strip.py:304
+#: src/sshpilot/route_strip.py:310
 msgid "Show this host's block"
 msgstr "نمایش بلوک این میزبان"
+
+#: src/sshpilot/route_strip.py:318
+msgid "Remove this jump host"
+msgstr "حذف این میزبان پرش"
+
+#: src/sshpilot/route_strip.py:320
+#, python-brace-format
+msgid "Remove jump host {name}"
+msgstr "حذف میزبان پرش {name}"
 
 #: src/sshpilot/advanced_config_effective_view.py:100
 msgid "Show this line"

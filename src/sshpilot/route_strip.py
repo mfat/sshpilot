@@ -49,6 +49,7 @@ button.route-stop.route-jump:hover { background-color: alpha(@accent_color, 0.2)
 .route-stop.route-command { background-color: alpha(@warning_color, 0.14); }
 .route-stop.route-inherited { opacity: 0.6; }
 .route-stop.route-dragged { opacity: 0.35; }
+.route-stop button.route-remove { min-width: 22px; min-height: 22px; padding: 0; margin-right: -4px; }
 .route-stop.route-drop-before { box-shadow: inset 3px 0 0 0 @accent_bg_color; }
 .route-stop.route-drop-after { box-shadow: inset -3px 0 0 0 @accent_bg_color; }
 """
@@ -169,15 +170,19 @@ class RouteStrip(Gtk.Widget):
         self,
         on_hop: Optional[Callable[[str], None]] = None,
         on_reorder: Optional[Callable[[int, int], None]] = None,
+        on_remove: Optional[Callable[[int], None]] = None,
     ) -> None:
         """*on_hop(name)*: a jump host card was clicked. *on_reorder(index,
         position)*: the jump host at *index* was dropped at *position* (0:
-        first; the count of jump hosts: last), counted before it moves."""
+        first; the count of jump hosts: last), counted before it moves.
+        *on_remove(index)*: the jump host at *index* is to go (its card
+        then has a remove button)."""
         super().__init__()
         _ensure_css()
         self.set_layout_manager(_FlowLayout())
         self.on_hop = on_hop
         self.on_reorder = on_reorder
+        self.on_remove = on_remove
         self._shown: Optional[tuple] = None
         self._heights = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.VERTICAL)
 
@@ -207,9 +212,10 @@ class RouteStrip(Gtk.Widget):
                 arrow.set_valign(Gtk.Align.CENTER)
                 arrow._route_glue = True        # stays with the stop after it
                 self.append(arrow)
-            widget = self._stop(stop)
-            if movable and stop.kind == JUMP:
-                self._make_movable(widget, hop)
+            widget = self._stop(stop, hop if stop.kind == JUMP else None)
+            if stop.kind == JUMP:
+                if movable:
+                    self._make_movable(widget, hop)
                 hop += 1
             self.append(widget)
 
@@ -283,7 +289,7 @@ class RouteStrip(Gtk.Widget):
         """The stops on screen (for tests)."""
         return self._shown[0] if self._shown else ()
 
-    def _stop(self, stop: Stop) -> Gtk.Widget:
+    def _stop(self, stop: Stop, hop: Optional[int] = None) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.set_valign(Gtk.Align.CENTER)
         title = Gtk.Label(label=stop.name, xalign=0)
@@ -305,6 +311,21 @@ class RouteStrip(Gtk.Widget):
             widget.connect("clicked", lambda *_a, n=stop.name: self.on_hop(n))
         else:
             widget = Gtk.CenterBox(orientation=Gtk.Orientation.VERTICAL)
+            if hop is not None and self.on_remove is not None:
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                row.append(box)
+                remove = Gtk.Button(icon_name="window-close-symbolic",
+                                    tooltip_text=_("Remove this jump host"))
+                remove.update_property([Gtk.AccessibleProperty.LABEL],
+                                       [_("Remove jump host {name}").format(name=stop.name)])
+                for name in ("flat", "circular", "route-remove"):
+                    remove.add_css_class(name)
+                remove.set_valign(Gtk.Align.CENTER)
+                remove.connect("clicked", lambda *_a, i=hop: GLib.idle_add(
+                    lambda: (self.on_remove(i), False)[1]
+                ))
+                row.append(remove)
+                box = row
             widget.set_center_widget(box)
             if stop.kind == COMMAND:
                 widget.set_tooltip_text(stop.endpoint or None)

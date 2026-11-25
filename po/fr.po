@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 14:38+0330\n"
+"POT-Creation-Date: 2026-11-25 14:42+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -2892,7 +2892,7 @@ msgstr "Fichiers d’identité utilisés par OpenSSH"
 msgid "Route"
 msgstr "Itinéraire"
 
-#: src/sshpilot/connection_dialog_route.py:201
+#: src/sshpilot/connection_dialog_route.py:219
 msgid "Type a host name to see its route."
 msgstr "Saisissez un nom d’hôte pour voir son itinéraire."
 
@@ -18817,18 +18817,27 @@ msgstr ""
 "Saisissez ci-dessus un hôte à vérifier pour voir ce qu’OpenSSH utiliserait "
 "pour lui."
 
-#: src/sshpilot/route_strip.py:200
+#: src/sshpilot/route_strip.py:205
 msgid "This computer"
 msgstr "Cet ordinateur"
 
-#: src/sshpilot/route_strip.py:235
+#: src/sshpilot/route_strip.py:241
 msgid "Drag to change the order of the jump hosts"
 msgstr "Glissez pour changer l’ordre des hôtes de rebond"
 
 #. A jump host: its own block is a click away.
-#: src/sshpilot/route_strip.py:304
+#: src/sshpilot/route_strip.py:310
 msgid "Show this host's block"
 msgstr "Afficher le bloc de cet hôte"
+
+#: src/sshpilot/route_strip.py:318
+msgid "Remove this jump host"
+msgstr "Retirer cet hôte de rebond"
+
+#: src/sshpilot/route_strip.py:320
+#, python-brace-format
+msgid "Remove jump host {name}"
+msgstr "Retirer l’hôte de rebond {name}"
 
 #: src/sshpilot/advanced_config_effective_view.py:100
 msgid "Show this line"

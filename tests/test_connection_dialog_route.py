@@ -49,3 +49,44 @@ def test_a_jump_host_moves_to_where_it_is_dropped():
     assert reorder(hops, 0, 2) == ["b", "a", "c"]        # after the second
     assert reorder(hops, 1, 1) is None and reorder(hops, 1, 2) is None   # its own place
     assert reorder(hops, 5, 0) is None and hops == ["a", "b", "c"]
+
+
+class _Row:
+    def __init__(self, text):
+        self.text = text
+
+    def get_text(self):
+        return self.text
+
+    def set_text(self, text):
+        self.text = text
+
+
+def _dialog(text, inherited=False):
+    from sshpilot.connection_dialog_route import ConnectionDialogRouteMixin
+
+    dialog = ConnectionDialogRouteMixin()
+    dialog.proxy_jump_row = _Row(text)
+    dialog._inherited_row_handlers = {"proxy_jump_row": object()} if inherited else {}
+    return dialog
+
+
+def test_a_jump_host_is_removed_from_the_row():
+    dialog = _dialog("gate, admin@edge:2200, core")
+    dialog._remove_jump_host(1)
+    assert dialog.proxy_jump_row.text == "gate,core"
+    dialog._remove_jump_host(0)
+    dialog._remove_jump_host(0)
+    assert dialog.proxy_jump_row.text == ""            # a direct connection
+    dialog._remove_jump_host(0)                        # nothing left: nothing done
+    assert dialog.proxy_jump_row.text == ""
+
+
+def test_the_last_inherited_jump_host_leaves_none():
+    # An empty row would inherit the chain again from the other block.
+    dialog = _dialog("gate", inherited=True)
+    dialog._remove_jump_host(0)
+    assert dialog.proxy_jump_row.text == "none"
+    dialog = _dialog("gate, edge", inherited=True)
+    dialog._remove_jump_host(0)
+    assert dialog.proxy_jump_row.text == "edge"

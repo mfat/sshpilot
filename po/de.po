@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 14:38+0330\n"
+"POT-Creation-Date: 2026-11-25 14:42+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -2915,7 +2915,7 @@ msgstr "Von OpenSSH verwendete Identitätsdateien"
 msgid "Route"
 msgstr "Route"
 
-#: src/sshpilot/connection_dialog_route.py:201
+#: src/sshpilot/connection_dialog_route.py:219
 msgid "Type a host name to see its route."
 msgstr "Geben Sie einen Hostnamen ein, um seine Route zu sehen."
 
@@ -18844,18 +18844,27 @@ msgstr ""
 "Geben Sie oben einen zu prüfenden Host ein, um zu sehen, was OpenSSH dafür "
 "verwenden würde."
 
-#: src/sshpilot/route_strip.py:200
+#: src/sshpilot/route_strip.py:205
 msgid "This computer"
 msgstr "Dieser Computer"
 
-#: src/sshpilot/route_strip.py:235
+#: src/sshpilot/route_strip.py:241
 msgid "Drag to change the order of the jump hosts"
 msgstr "Ziehen, um die Reihenfolge der Sprung-Hosts zu ändern"
 
 #. A jump host: its own block is a click away.
-#: src/sshpilot/route_strip.py:304
+#: src/sshpilot/route_strip.py:310
 msgid "Show this host's block"
 msgstr "Den Block dieses Hosts anzeigen"
+
+#: src/sshpilot/route_strip.py:318
+msgid "Remove this jump host"
+msgstr "Diesen Sprung-Host entfernen"
+
+#: src/sshpilot/route_strip.py:320
+#, python-brace-format
+msgid "Remove jump host {name}"
+msgstr "Sprung-Host {name} entfernen"
 
 #: src/sshpilot/advanced_config_effective_view.py:100
 msgid "Show this line"
