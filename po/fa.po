@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 21:43+0330\n"
+"POT-Creation-Date: 2026-11-25 21:58+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -17909,8 +17909,8 @@ msgid "Copy key to Server"
 msgstr "رونوشت کلید به سرور"
 
 #: src/sshpilot/advanced_config_window.py:290
-msgid "Structured"
-msgstr "ساختاریافته"
+msgid "Directives"
+msgstr "دستورها"
 
 #: src/sshpilot/advanced_config_window.py:291
 msgid "Effective"
@@ -18587,6 +18587,9 @@ msgstr "برای تغییر ترتیب بکشید"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · خاموش"
+
+#~ msgid "Structured"
+#~ msgstr "ساختاریافته"
 
 #~ msgid "Copy Configuration"
 #~ msgstr "رونوشت از پیکربندی"

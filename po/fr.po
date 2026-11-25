@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-25 21:43+0330\n"
+"POT-Creation-Date: 2026-11-25 21:58+0330\n"
 "PO-Revision-Date: 2026-10-01 14:15+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
@@ -18273,8 +18273,8 @@ msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
 
 #: src/sshpilot/advanced_config_window.py:290
-msgid "Structured"
-msgstr "Structurée"
+msgid "Directives"
+msgstr "Directives"
 
 #: src/sshpilot/advanced_config_window.py:291
 msgid "Effective"
@@ -18959,6 +18959,9 @@ msgstr "Faites glisser pour réordonner"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · désactivé"
+
+#~ msgid "Structured"
+#~ msgstr "Structurée"
 
 #~ msgid "Copy Configuration"
 #~ msgstr "Copier la configuration"
