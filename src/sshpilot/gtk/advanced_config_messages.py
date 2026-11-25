@@ -176,8 +176,10 @@ def block_list_title(kind: str, patterns: str) -> str:
     return patterns.strip() or _("New Host Block")
 
 
-def block_category_label(category: str, names: int = 1) -> str:
-    """What a block is for, as the caption of its row."""
+def block_category_label(category: str, names: int = 1, kind: str = "") -> str:
+    """What a block is for, as the caption of its row. *kind* tells
+    ``Host *`` (a wildcard Host block) from the global options and
+    ``Match all``, which apply to every host as well."""
     if category == "connection":
         # The file's own word: a "connection" is the app's name for a host
         # it lists, and this is a view of the file.
@@ -188,6 +190,9 @@ def block_category_label(category: str, names: int = 1) -> str:
         return _("Host pattern")
     if category == "match_rule":
         return _("Match rule")
+    if kind == "host":
+        # Host * (Host is OpenSSH's keyword: not translated).
+        return _("Wildcard Host block")
     return _("All hosts")
 
 

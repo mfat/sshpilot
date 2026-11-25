@@ -87,7 +87,7 @@ class BlockRow(Gtk.ListBoxRow):
         self.category = category
         title = messages.block_list_title(kind, patterns)
         caption = detail or messages.block_category_label(
-            category, len(patterns.split()) or 1
+            category, len(patterns.split()) or 1, kind
         )
         if disabled:
             # Translators: a block that is switched off, e.g. "Host pattern · off".

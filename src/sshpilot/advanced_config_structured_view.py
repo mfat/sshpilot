@@ -640,17 +640,20 @@ class StructuredView(Gtk.Box):
         self.block_group.add_css_class("card")
         self.block_group.add_css_class("advcfg-title-card")
         line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # The name, and under it what kind of block and its file.
+        names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+        names.set_valign(Gtk.Align.CENTER)
         self.head_title = Gtk.Label(xalign=0)
         self.head_title.add_css_class("monospace")
         self.head_title.add_css_class("advcfg-card-title")
         self.head_title.set_ellipsize(Pango.EllipsizeMode.END)
-        line.append(self.head_title)
-        self.head_caption = Gtk.Label(xalign=0, hexpand=True)
+        names.append(self.head_title)
+        self.head_caption = Gtk.Label(xalign=0)
         self.head_caption.add_css_class("dim-label")
         self.head_caption.add_css_class("caption")
         self.head_caption.set_ellipsize(Pango.EllipsizeMode.END)
-        self.head_caption.set_valign(Gtk.Align.CENTER)
-        line.append(self.head_caption)
+        names.append(self.head_caption)
+        line.append(names)
         self.note_button = Gtk.MenuButton(
             icon_name="document-edit-symbolic", popover=self._build_note_popover(),
         )
@@ -916,7 +919,8 @@ class StructuredView(Gtk.Box):
             self.head_title.set_label(title)
             self.head_title.set_tooltip_text(messages.block_title(block.kind, block.patterns))
         kind = messages.block_category_label(
-            block_category(block.kind, block.patterns), len(block.patterns.split()) or 1
+            block_category(block.kind, block.patterns), len(block.patterns.split()) or 1,
+            block.kind,
         )
         caption = " · ".join(part for part in (kind, self._file_name) if part)
         if self.head_caption.get_label() != caption:

@@ -130,7 +130,7 @@ def test_the_rail_switches_the_whole_window(window):
         ("web1", "Host"),
         ("*.prod", "Host pattern"),
         ("Match host *.corp", "Match rule"),
-        ("Host *", "All hosts"),
+        ("Host *", "Wildcard Host block"),
     ]
     # The content area shows the configuration in the tabs' place.
     assert view.get_visible() and not window.tab_overview.get_visible()

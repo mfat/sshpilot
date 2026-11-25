@@ -851,7 +851,7 @@ def test_the_block_list_names_each_block_and_says_what_it_is(gtk, tmp_path):
             ("edge *.edge", "Host pattern"),
             ("app", "ops@10.0.0.9"),
             ("*.old", "Host pattern · off"),
-            ("Host *", "All hosts"),
+            ("Host *", "Wildcard Host block"),
         ]
         icons = [r.icon.get_icon_name() for r in rows]
         assert icons[1] == icons[2] and len(set(icons)) == 4     # one per kind

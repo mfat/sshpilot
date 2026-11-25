@@ -42,4 +42,5 @@ def test_the_caption_says_what_the_block_is_for():
     assert block_category_label(CONNECTION, 3) == "3 hosts"
     assert block_category_label(PATTERN) == "Host pattern"
     assert block_category_label(MATCH_RULE) == "Match rule"
-    assert block_category_label(ALL_HOSTS) == "All hosts"
+    assert block_category_label(ALL_HOSTS) == "All hosts"                 # global options, Match all
+    assert block_category_label(ALL_HOSTS, kind="host") == "Wildcard Host block"   # Host *
