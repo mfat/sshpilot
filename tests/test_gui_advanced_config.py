@@ -244,10 +244,11 @@ def _settled(win):
 
 
 def _applies(win):
-    """The hosts the block's heading says it applies to (None: no such line)."""
+    """The hosts the title card says a pattern or Match block applies to
+    ([] for none; None for a block that names its hosts)."""
     structured = win.structured
-    if not structured.applies_box.get_visible():
-        return None
+    if not structured.applies_chips.get_visible():
+        return [] if "none of the hosts" in structured.applies_label.get_label() else None
     names, child = [], structured.applies_chips.get_first_child()
     while child is not None:
         inner = child.get_child()
@@ -321,7 +322,7 @@ def test_it_opens_on_the_first_host_block_and_asks_about_it(gtk, tmp_path):
         assert win._typed_host() == "" and win.target_text() == "web1"
         assert _pump(lambda: _command(win) == "ssh -G web1")
         assert win.structured.patterns_row.get_text() == "web1 web2"
-        assert win.block_title.get_label() == "web1 web2"
+        assert win.structured.head_title.get_label() == "web1 web2"
     finally:
         _close(win)
 
@@ -428,7 +429,7 @@ def test_a_new_match_exec_runs_only_after_consent(window, tmp_path):
 def test_the_note_is_saved_cancelled_or_removed_and_the_title_follows(window):
     structured = window.structured
     web = window.draft.blocks[1]
-    assert structured.head_title.get_label() == "Host web1 web2"
+    assert structured.head_title.get_label() == "web1 web2"
     structured.note_popover.popup()
     structured.note_row.set_text("typed, then cancelled")
     structured.note_popover.popdown()                    # Cancel: nothing written
@@ -444,7 +445,28 @@ def test_the_note_is_saved_cancelled_or_removed_and_the_title_follows(window):
     structured.remove_note_button.emit("clicked")
     assert window.draft.blocks[1].note == "" and not structured.note_label.get_visible()
     structured.patterns_row.set_text("web1 web3")        # the title follows the typing
-    assert structured.head_title.get_label() == "Host web1 web3"
+    assert structured.head_title.get_label() == "web1 web3"
+
+
+def test_the_title_card_says_what_needs_attention_and_shows_it(gtk, tmp_path):
+    win = _open_on(gtk, tmp_path, (
+        "Host web1\n    User deploy\n    User other\n    ConnectTimeout 30\n"
+    ))
+    try:
+        structured = win.structured
+        assert structured.head_caption.get_label().startswith("Host")
+        assert structured.applies_label.get_label() == "web1"     # no address: its name
+        assert structured.lines_label.get_label() == "3 lines"
+        assert _pump(lambda: structured.problems_tile.get_visible())
+        assert structured.problems_label.get_label() == (
+            "1 line not used · 1 line overridden by Settings"
+        )
+        assert structured.problems_tile.has_css_class("advcfg-attn-error")   # not used: red
+        win.show_page("raw")
+        structured._show_first_problem()
+        assert win.stack.get_visible_child_name() == "structured"
+    finally:
+        _close(win)
 
 
 def test_disabling_a_block_writes_comments_and_openssh_skips_it(window):
@@ -453,6 +475,7 @@ def test_disabling_a_block_writes_comments_and_openssh_skips_it(window):
     assert _settled(window) and _effective(window, "user") == "fallback"
     assert "# [disabled] Host web1 web2\n" in window.editor.text
     assert window.structured.disabled_label.get_visible()
+    assert window.structured.tiles.has_css_class("advcfg-dimmed")
     assert window.structured.options_group.has_css_class("advcfg-dimmed")
     assert window.draft.blocks[1].uid == web.uid == window.selected_uid
 
@@ -1000,7 +1023,6 @@ def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
 
         _pick(win, "Host *.lab")                             # no listed host fits it:
         assert _pump(lambda: _applies(win) == [])
-        assert "none of the hosts" in structured.applies_label.get_label()
 
         _pick(win, "Host *.prod")                            # a chip shows that host
         assert _pump(lambda: _applies(win) == ["a.prod", "b.prod"])
@@ -1024,7 +1046,7 @@ def test_retyping_the_picked_block_s_host_follows_it(gtk, tmp_path):
         assert _block_rows(win) == ["Global", "Host edge9 web2", "Host *"]
         assert win.sidebar.list.get_selected_row()._uid == web.uid
         assert _pump(lambda: _command(win) == "ssh -G edge9")
-        assert win._typed_host() == "" and win.block_title.get_label() == "edge9 web2"
+        assert win._typed_host() == "" and win.structured.head_title.get_label() == "edge9 web2"
     finally:
         _close(win)
 
@@ -1217,7 +1239,7 @@ def test_an_included_file_is_shown_evaluated_and_saved(gtk, tmp_path):
         win.go_to(host="inc1", file=str(included))          # a connection's source file
         assert _pump(lambda: win._file == str(included) and len(win.draft.blocks) == 2)
         assert _selected(win) == "inc1"
-        assert win.file_pill.get_label() == "hosts.conf"
+        assert win.structured.head_caption.get_label().endswith("hosts.conf")
         assert files[""].get_activatable() and not files[str(included)].get_activatable()
         assert _pump(lambda: _command(win) == "ssh -G inc1")
         assert _effective(win, "port") == "2200"            # the root's line counts too

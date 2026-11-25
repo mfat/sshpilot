@@ -27,24 +27,9 @@ from gi.repository import Adw, Gdk, Gio, Gtk, Pango  # noqa: E402
 
 from .advanced_config_block_row import BlockRow  # noqa: E402
 from .advanced_config_widgets import DragItem, set_class  # noqa: E402
+from . import advanced_config_fields as fields  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
 from .ssh_config_blocks import GLOBAL, HOST, MATCH, Block  # noqa: E402
-
-
-def _block_detail(block: Block) -> str:
-    """``user@hostname`` as the block itself sets them; empty when it sets
-    neither."""
-    values: Dict[str, str] = {}
-    for option in block.options:
-        keyword = option.keyword
-        if keyword in ("user", "hostname") and keyword not in values:
-            values[keyword] = option.value.strip().strip('"')
-    user, host = values.get("user", ""), values.get("hostname", "")
-    if user and host:
-        return f"{user}@{host}"
-    # Without an address of its own, what the block is says more than a
-    # user name alone.
-    return host
 
 
 class FileRow(Gtk.ListBoxRow):
@@ -204,7 +189,7 @@ class BlockSidebar(Gtk.Box):
                         self.list.insert(block_row, index)
                     block_row.update(
                         block.kind, block.patterns, block.disabled,
-                        "" if block.kind == GLOBAL else _block_detail(block),
+                        "" if block.kind == GLOBAL else fields.block_detail(block),
                     )
                     block_row._movable = block.kind != GLOBAL
                     block_row.set_movable(block_row._movable)

@@ -44,7 +44,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
 from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_effective_view import Answer, EffectiveView  # noqa: E402
@@ -59,7 +59,6 @@ from .advanced_config_model import (  # noqa: E402
 from .advanced_config_raw_view import RawView  # noqa: E402
 from .advanced_config_sidebar import BlockSidebar, block_matches  # noqa: E402
 from .advanced_config_structured_view import AnswerView, StructuredView  # noqa: E402
-from .advanced_config_widgets import pill, set_pill  # noqa: E402
 from .api.errors import ErrorCode, SshPilotError  # noqa: E402
 from .api.models.connections import (  # noqa: E402
     EvaluateSshConfigDraftRequest,
@@ -100,7 +99,9 @@ _CSS = """
 .advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
 .advcfg-pill.advcfg-pill-link:hover { text-decoration: underline; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
-.advcfg-context { padding: 6px 12px; }
+.advcfg-context { padding: 12px 16px 0 16px; }
+.advcfg-title-card { padding: 14px 16px; }
+.advcfg-card-title { font-size: 1.3em; font-weight: bold; }
 .advcfg-block-list > row.advcfg-drop-above { box-shadow: inset 0 2px 0 0 @accent_bg_color; }
 .advcfg-block-list > row.advcfg-drop-below { box-shadow: inset 0 -2px 0 0 @accent_bg_color; }
 .advcfg-block-list:drop(active) { box-shadow: none; }
@@ -356,7 +357,11 @@ class AdvancedConfigBase:
         self.banner.connect("button-clicked", self._on_answer_banner_button)
         self._answer_banner_action: Optional[Callable[[], None]] = None
         view.add_top_bar(self.banner)
-        view.add_top_bar(self._build_context_bar())
+        # The block's title card heads the views' column (not the list of
+        # blocks beside it).
+        self.content_column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.content_column.append(self._build_context_bar())
+        self.content_column.append(self.stack)
 
         self.switcher_bar = Adw.ViewSwitcherBar(stack=self.stack)
         view.add_bottom_bar(self.switcher_bar)
@@ -366,12 +371,12 @@ class AdvancedConfigBase:
         #: The list of blocks: what a host puts in a sidebar of its own.
         self.sidebar_column = self.sidebar
         if self.embedded:
-            view.set_content(self.stack)
+            view.set_content(self.content_column)
             self.split = None
         else:
             self.split = Adw.OverlaySplitView()
             self.split.set_sidebar(self.sidebar)
-            self.split.set_content(self.stack)
+            self.split.set_content(self.content_column)
             self.split.set_min_sidebar_width(220)
             self.split.set_max_sidebar_width(300)
             self.split.bind_property(
@@ -412,19 +417,11 @@ class AdvancedConfigBase:
         return row
 
     def _build_context_bar(self) -> Gtk.Widget:
-        """The block on screen and its file."""
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        """The block on screen: its title card (see the Directives view),
+        above all three views, so it is named once whichever is shown."""
+        bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         bar.add_css_class("advcfg-context")
-        self.block_title = Gtk.Label(xalign=0)
-        self.block_title.add_css_class("title-4")
-        self.block_title.add_css_class("monospace")
-        self.block_title.set_ellipsize(Pango.EllipsizeMode.END)
-        bar.append(self.block_title)
-        self.file_pill = pill(style="muted")
-        bar.append(self.file_pill)
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        bar.append(spacer)
+        bar.append(self.structured.block_group)
         return bar
 
     # ------------------------------------------------------------------
@@ -525,7 +522,6 @@ class AdvancedConfigBase:
         source followed, a host name searched for, ``go_to`` with *pin*);
         "" hands the question back to the selected block."""
         self._pinned_host = text.strip()
-        self._sync_context()
 
     # ------------------------------------------------------------------
     # background work
@@ -751,8 +747,7 @@ class AdvancedConfigBase:
         self.sidebar.sync(self.editor.blocks, self._files, self._file, self._display_name)
         self.sidebar.select(self.selected_uid)
         self.raw.set_files(self._files, self._file)
-        set_pill(self.file_pill, self._display_name, "muted",
-                 _("The config file this block is in"))
+        self.structured.set_file_name(self._display_name)
 
     def open_file(self, file: str) -> None:
         """Put another file of the configuration on screen: *file* as the
@@ -1014,7 +1009,6 @@ class AdvancedConfigBase:
         self.structured.show(block)
         self.raw.set_text(self.editor.text)
         self._mark_selection_in_raw(scroll=False)
-        self._sync_context()
         self._update_chrome()
         self._show_answer()                     # the last answer, until the new one
         self._schedule_evaluation(now=evaluate_now)
@@ -1032,13 +1026,6 @@ class AdvancedConfigBase:
         self.structured.set_sensitive(not pending)
         self.sidebar.list.set_sensitive(not pending)
         self.sidebar.new_button.set_sensitive(not pending)
-
-    def _sync_context(self) -> None:
-        """The bar above the views: the block on screen."""
-        block = self.editor.find_block(self.selected_uid)
-        title = messages.block_list_title(block.kind, block.patterns) if block else ""
-        if self.block_title.get_label() != title:
-            self.block_title.set_label(title)
 
     def _target_changed(self, *, idle: bool = False) -> None:
         # A command can depend on the host (%h, %r): agreement to run it
@@ -1075,7 +1062,6 @@ class AdvancedConfigBase:
         self._mark_selection_in_raw(scroll=False)
         # The sidebar names blocks by their patterns, user and address.
         self.sidebar.sync(self.editor.blocks, self._files, self._file, self._display_name)
-        self._sync_context()
         self._schedule_history()
         self._update_chrome()
         self._schedule_evaluation()
@@ -1324,7 +1310,6 @@ class AdvancedConfigBase:
         self.sidebar.select(self.selected_uid)
         self.structured.show(block)
         self._mark_selection_in_raw()
-        self._sync_context()
         if self._question() != before:
             # An answer had already is shown with the selection, in the same
             # frame. One that must be asked for is asked from the idle

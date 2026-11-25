@@ -274,3 +274,18 @@ def connection_summary(values: Dict[str, List[str]], defaults: Iterable[str],
         identities_only=one("identitiesonly").lower() == "yes",
     )
 
+
+def block_detail(block) -> str:
+    """``user@hostname`` as the block itself sets them; empty when it sets
+    neither."""
+    values: Dict[str, str] = {}
+    for option in block.options:
+        keyword = option.keyword
+        if keyword in ("user", "hostname") and keyword not in values:
+            values[keyword] = option.value.strip().strip('"')
+    user, host = values.get("user", ""), values.get("hostname", "")
+    if user and host:
+        return f"{user}@{host}"
+    # Without an address of its own, what the block is says more than a
+    # user name alone.
+    return host

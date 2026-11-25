@@ -28,7 +28,7 @@ from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_widgets import pill, set_class, set_pill  # noqa: E402
 from .api.models.connections import SshConfigDraftLineState as State  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
-from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap  # noqa: E402
+from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap, block_category  # noqa: E402
 from .ssh_option_list import OPENSSH_KEYWORDS  # noqa: E402
 
 
@@ -580,6 +580,27 @@ def _boxed_list() -> Gtk.ListBox:
     return listbox
 
 
+def _card_tile(icon: str, title: str) -> tuple:
+    """A tile of the title card: ``(tile, content box, severity dot)``."""
+    tile = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    tile.add_css_class("advcfg-tile")
+    heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    image = Gtk.Image.new_from_icon_name(icon)
+    image.add_css_class("advcfg-tile-icon")
+    heading.append(image)
+    label = Gtk.Label(label=title, xalign=0)
+    label.add_css_class("caption-heading")
+    label.add_css_class("advcfg-tile-title")
+    heading.append(label)
+    dot = Gtk.Box(valign=Gtk.Align.CENTER, visible=False)
+    dot.add_css_class("advcfg-dot")
+    heading.append(dot)
+    tile.append(heading)
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    tile.append(content)
+    return tile, content, dot
+
+
 class StructuredView(Gtk.Box):
     """One block as fields. *controller* supplies the edits (see the
     calls) and ``browse_identity(uid)``."""
@@ -609,18 +630,27 @@ class StructuredView(Gtk.Box):
         self.page = _Page()
         self.stack.add_named(self.page, "block")
 
-        # -- the block itself ---------------------------------------------------
-        # Above the lines: the block's name (read only: it follows the Host
-        # or Match row as it is typed), Note, on/off and the actions; under
-        # it the note as the comment it is, and what the block applies to
-        # or what is wrong with it, only when there is something to say.
-        self.block_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.block_group.add_css_class("advcfg-block-head")
+        # -- the block itself: the title card --------------------------------------
+        # What the block is (its name, read only: it follows the Host or
+        # Match row as it is typed; what kind of block; its file), Note,
+        # on/off and the actions; the note as the comment it is; and tiles:
+        # what it applies to, how many lines, and its problems when it has
+        # any. The window shows the card above all three views.
+        self.block_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.block_group.add_css_class("card")
+        self.block_group.add_css_class("advcfg-title-card")
         line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.head_title = Gtk.Label(xalign=0, hexpand=True)
-        self.head_title.add_css_class("heading")
+        self.head_title = Gtk.Label(xalign=0)
+        self.head_title.add_css_class("monospace")
+        self.head_title.add_css_class("advcfg-card-title")
         self.head_title.set_ellipsize(Pango.EllipsizeMode.END)
         line.append(self.head_title)
+        self.head_caption = Gtk.Label(xalign=0, hexpand=True)
+        self.head_caption.add_css_class("dim-label")
+        self.head_caption.add_css_class("caption")
+        self.head_caption.set_ellipsize(Pango.EllipsizeMode.END)
+        self.head_caption.set_valign(Gtk.Align.CENTER)
+        line.append(self.head_caption)
         self.note_button = Gtk.MenuButton(
             icon_name="document-edit-symbolic", popover=self._build_note_popover(),
         )
@@ -652,31 +682,52 @@ class StructuredView(Gtk.Box):
         self.note_label = Gtk.Label(xalign=0, wrap=True, selectable=True)
         self.note_label.add_css_class("advcfg-comment")
         self.block_group.append(self.note_label)
-
-        # Off: one line that says so (the lines below are dimmed with it).
+        # Off: one line that says so (the tiles and lines are dimmed with it).
         self.disabled_label = Gtk.Label(
             label=_("Disabled: written as comments, which OpenSSH ignores."), xalign=0,
         )
         self.disabled_label.add_css_class("advcfg-disabled-note")
         self.block_group.append(self.disabled_label)
-        # A pattern or Match block: the hosts it applies to, each a link.
-        self.applies_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.applies_label = Gtk.Label(xalign=0)
-        self.applies_label.add_css_class("dim-label")
-        self.applies_box.append(self.applies_label)
-        # Chips as wide as their names, not stretched across the line.
-        self.applies_chips = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,
-                                         halign=Gtk.Align.START, max_children_per_line=12)
-        self.applies_chips.set_column_spacing(6)
-        self.applies_chips.set_row_spacing(6)
-        self.applies_box.append(self.applies_chips)
-        self.block_group.append(self.applies_box)
         #: What is wrong with the block's own line, or that it does not
         #: apply to a host kept in question.
         self.error_row = Gtk.Label(xalign=0, wrap=True)
         self.error_row.add_css_class("error")
         self.block_group.append(self.error_row)
-        self.page.add(self.block_group)
+
+        self.tiles = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # Applies To: the hosts of a pattern or Match block, each a link;
+        # for a host, its own user@address.
+        self.applies_box, content, _dot = _card_tile("network-server-symbolic", _("Applies To"))
+        self.applies_box.set_hexpand(True)
+        self.applies_label = Gtk.Label(xalign=0)
+        self.applies_label.set_ellipsize(Pango.EllipsizeMode.END)
+        content.append(self.applies_label)
+        # Chips as wide as their names, not stretched across the line.
+        self.applies_chips = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,
+                                         halign=Gtk.Align.START, max_children_per_line=12)
+        self.applies_chips.set_column_spacing(6)
+        self.applies_chips.set_row_spacing(6)
+        content.append(self.applies_chips)
+        self.tiles.append(self.applies_box)
+        self.lines_tile, content, _dot = _card_tile("document-properties-symbolic", _("Directives"))
+        self.lines_label = Gtk.Label(xalign=0)
+        content.append(self.lines_label)
+        self.tiles.append(self.lines_tile)
+        # Problems: shown only when there are some; a click shows the first.
+        self.problems_tile, content, self.problems_dot = _card_tile(
+            "dialog-warning-symbolic", _("Problems"),
+        )
+        self.problems_label = Gtk.Label(xalign=0)
+        content.append(self.problems_label)
+        self.problems_tile.set_cursor_from_name("pointer")
+        self.problems_tile.set_tooltip_text(_("Show the first problem"))
+        click = Gtk.GestureClick()
+        click.connect("released", lambda *_a: self._show_first_problem())
+        self.problems_tile.add_controller(click)
+        self._first_problem: Optional[int] = None
+        self.tiles.append(self.problems_tile)
+        self.block_group.append(self.tiles)
+        self._file_name = ""
 
         # -- the lines, in the block's order ------------------------------------
         group = Adw.PreferencesGroup()
@@ -776,7 +827,9 @@ class StructuredView(Gtk.Box):
         if block is None:
             self.uid = None
             self.stack.set_visible_child_name("empty")
+            self.block_group.set_visible(False)
             return
+        self.block_group.set_visible(True)
         if block.uid != self.uid:
             self.uid = block.uid
             self._keep = set()
@@ -804,9 +857,8 @@ class StructuredView(Gtk.Box):
             [Gtk.AccessibleProperty.LABEL],
             [_("Host patterns") if block.kind == HOST else _("Match conditions")],
         )
-        title = messages.block_title(block.kind, block.patterns)
-        if self.head_title.get_label() != title:
-            self.head_title.set_label(title)
+        self._show_heading(block)
+        self.lines_label.set_label(messages.line_count(len(block.options)))
         self.note_button.set_visible(not is_global)
         self.duplicate_button.set_visible(not is_global)
         self.syncing.set_text(self.patterns_row, block.patterns)
@@ -819,6 +871,7 @@ class StructuredView(Gtk.Box):
                 self.syncing.on = False
         self.disabled_label.set_visible(block.disabled)
         set_class(self.options_group, "advcfg-dimmed", block.disabled)
+        set_class(self.tiles, "advcfg-dimmed", block.disabled)
 
         # Every line in the block's order, each with its control. A row is
         # made again only when its line changes kind (a line above went).
@@ -849,14 +902,34 @@ class StructuredView(Gtk.Box):
             row.show(answer)
         self._show_status(answer)
 
+    def set_file_name(self, name: str) -> None:
+        """The file the block is in, as the title card says it."""
+        self._file_name = name
+        block = self.controller.editor.find_block(self.uid) if self.uid is not None else None
+        if block is not None:
+            self._show_heading(block)
+
+    def _show_heading(self, block: Block) -> None:
+        title = messages.block_list_title(block.kind, block.patterns)
+        set_class(self.head_title, "monospace", block.kind != GLOBAL)
+        if self.head_title.get_label() != title:
+            self.head_title.set_label(title)
+            self.head_title.set_tooltip_text(messages.block_title(block.kind, block.patterns))
+        kind = messages.block_category_label(
+            block_category(block.kind, block.patterns), len(block.patterns.split()) or 1
+        )
+        caption = " · ".join(part for part in (kind, self._file_name) if part)
+        if self.head_caption.get_label() != caption:
+            self.head_caption.set_label(caption)
+
     def _show_status(self, answer: AnswerView) -> None:
         """Only what says something: the hosts a pattern or Match block
         applies to, that the block does not apply to a host kept in
-        question, or what OpenSSH rejects in its line."""
+        question, what OpenSSH rejects in its line, and the problems of
+        its lines."""
         block = self.controller.editor.find_block(self.uid)
         disabled = block is not None and block.disabled
-        hosts = None if disabled else answer.related_hosts
-        self._show_applies(hosts)
+        self._show_applies(block, None if disabled else answer.related_hosts)
         header = self.controller.editor.lines.headers.get(self.uid, 0)
         error = answer.errors.get(header) if header else None
         if error is not None:
@@ -868,26 +941,76 @@ class StructuredView(Gtk.Box):
             text = ""
         self.error_row.set_label(text)
         self.error_row.set_visible(bool(text))
+        self._show_problems(block, answer, header_error=error is not None)
+
+    def _show_problems(self, block, answer: AnswerView, *, header_error: bool) -> None:
+        unused = overridden = rejected = 0
+        first = None
+        for option in (block.options if block is not None and not block.disabled else ()):
+            item, error = answer.line_state(option.uid)
+            if error is not None:
+                rejected += 1
+            elif item is not None and item.state is State.SHADOWED:
+                unused += 1
+            elif item is not None and item.state is State.FORCED:
+                overridden += 1
+            else:
+                continue
+            first = option.uid if first is None else first
+        rejected += int(header_error)
+        self._first_problem = first
+        parts = []
+        if rejected:
+            parts.append(messages.rejected_count(rejected))
+        if unused:
+            parts.append(messages.shadowed_count(unused))
+        if overridden:
+            parts.append(messages.overridden_count(overridden))
+        self.problems_tile.set_visible(bool(parts))
+        self.problems_label.set_label(" · ".join(parts))
+        style = "error" if (rejected or unused) else "purple"
+        for name in ("error", "purple"):
+            on = bool(parts) and name == style
+            set_class(self.problems_tile, f"advcfg-attn-{name}", on)
+            set_class(self.problems_dot, f"advcfg-attn-{name}", on)
+        self.problems_dot.set_visible(bool(parts))
+
+    def _show_first_problem(self) -> None:
+        if self._first_problem is None:
+            return
+        self.controller.show_page("structured")
+        self.reveal(self._first_problem)
 
     #: Hosts named before the rest are counted ("+3").
     _APPLIES_SHOWN = 8
 
-    def _show_applies(self, hosts) -> None:
+    def _show_applies(self, block, hosts) -> None:
+        """A pattern or Match block: the hosts it applies to, as chips. A
+        host: its own user@address (or its names). Global options: every
+        host."""
+        if block is None:
+            return
+        names = False                  # a sentence, or names (monospace)
+        if hosts is None:
+            if block.kind == GLOBAL or block.patterns.split() == ["*"]:
+                text = messages.every_host()
+            else:
+                text, names = fields.block_detail(block) or block.patterns.strip(), True
+        else:
+            text = "" if hosts else messages.applies_to_none()
+        set_class(self.applies_label, "monospace", names)
+        self.applies_label.set_label(text)
+        self.applies_label.set_visible(bool(text))
         shown = tuple(hosts or ())
         if getattr(self, "_applies", None) == (hosts is None, shown):
             return
         self._applies = (hosts is None, shown)
-        self.applies_box.set_visible(hosts is not None)
+        self.applies_chips.set_visible(bool(shown))
         child = self.applies_chips.get_first_child()
         while child is not None:
             following = child.get_next_sibling()
             self.applies_chips.remove(child)
             child = following
-        if hosts is None:
-            return
-        self.applies_label.set_label(
-            messages.applies_to_label() if shown else messages.applies_to_none()
-        )
         for name in shown[:self._APPLIES_SHOWN]:
             chip = Gtk.Button(label=name, tooltip_text=messages.show_host_block(name))
             chip.add_css_class("advcfg-host-chip")
@@ -906,7 +1029,9 @@ class StructuredView(Gtk.Box):
             self.controller.patterns_typed(self.uid, row.get_text())
             # The name above follows the typing (the view is not shown
             # again for an edit of its own).
-            self.head_title.set_label(messages.block_title(self.kind, row.get_text()))
+            block = self.controller.editor.find_block(self.uid)
+            if block is not None:
+                self._show_heading(block)
 
     # -- the note -------------------------------------------------------------
 
