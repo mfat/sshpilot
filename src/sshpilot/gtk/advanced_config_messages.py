@@ -132,11 +132,6 @@ def show_host_block(host: str) -> str:
     return _("Show the block of {host}").format(host=host)
 
 
-def every_host() -> str:
-    """What global options and Host * apply to."""
-    return _("Every host")
-
-
 def line_count(count: int) -> str:
     """How many lines a block has (its title card)."""
     return ngettext("{count} line", "{count} lines", count).format(count=count)

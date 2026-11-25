@@ -707,11 +707,12 @@ class StructuredView(Gtk.Box):
         body.append(self.error_row)
 
         self.tiles = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        # Applies To: the hosts of a pattern or Match block, each a link;
-        # for a host, its own user@address.
+        # Applies To: the hosts of a pattern, Match or wildcard block, each
+        # a link (none for a block that names its own hosts).
         self.applies_box, content, _dot = _card_tile("network-server-symbolic", _("Applies To"))
         self.applies_box.set_hexpand(True)
         self.applies_label = Gtk.Label(xalign=0)
+        self.applies_label.add_css_class("dim-label")
         self.applies_label.set_ellipsize(Pango.EllipsizeMode.END)
         content.append(self.applies_label)
         # Chips as wide as their names, not stretched across the line.
@@ -999,20 +1000,13 @@ class StructuredView(Gtk.Box):
     _APPLIES_SHOWN = 8
 
     def _show_applies(self, block, hosts) -> None:
-        """A pattern or Match block: the hosts it applies to, as chips. A
-        host: its own user@address (or its names). Global options: every
-        host."""
+        """A pattern, Match or wildcard block: the hosts it applies to, as
+        chips. A block that names its hosts (or the global options) has no
+        such tile: its title already says what it applies to."""
         if block is None:
             return
-        names = False                  # a sentence, or names (monospace)
-        if hosts is None:
-            if block.kind == GLOBAL or block.patterns.split() == ["*"]:
-                text = messages.every_host()
-            else:
-                text, names = fields.block_detail(block) or block.patterns.strip(), True
-        else:
-            text = "" if hosts else messages.applies_to_none()
-        set_class(self.applies_label, "monospace", names)
+        self.applies_box.set_visible(hosts is not None)
+        text = messages.applies_to_none() if hosts is not None and not hosts else ""
         self.applies_label.set_label(text)
         self.applies_label.set_visible(bool(text))
         shown = tuple(hosts or ())

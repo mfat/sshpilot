@@ -455,7 +455,7 @@ def test_the_title_card_says_what_needs_attention_and_shows_it(gtk, tmp_path):
     try:
         structured = win.structured
         assert structured.head_caption.get_label().startswith("Host")
-        assert structured.applies_label.get_label() == "web1"     # no address: its name
+        assert not structured.applies_box.get_visible()   # it names its host: no tile
         assert structured.lines_label.get_label() == "3 lines"
         assert _pump(lambda: structured.problems_tile.get_visible())
         assert structured.problems_label.get_label() == (
