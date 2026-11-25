@@ -667,6 +667,8 @@ class StructuredView(Gtk.Box):
         # any. The window shows the card above all three views.
         self.block_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.block_group.add_css_class("advcfg-title-card")
+        # Shown with a block (see show): nothing to head before there is one.
+        self.block_group.set_visible(False)
         # A card in the accent colour, whole (grey while the block is off),
         # holds the name and the actions; the note, notices and tiles sit
         # under it on the page.

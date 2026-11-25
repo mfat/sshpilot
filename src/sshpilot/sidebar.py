@@ -443,13 +443,26 @@ def install_sidebar_css():
           background: none;
         }
 
+        /* The list beside the view rail is the middle pane of three (rail,
+           list, content): libadwaita's secondary-sidebar colours, which it
+           gives the middle pane of nested split views, while the rail keeps
+           the sidebar colours. Named colours, so libadwaita before CSS
+           variables has them too. */
+        .sidebar-pane.secondary-pane {
+          background-color: @secondary_sidebar_bg_color;
+          color: @secondary_sidebar_fg_color;
+        }
+        .sidebar-pane.secondary-pane:backdrop {
+          background-color: @secondary_sidebar_backdrop_color;
+        }
+
         /* Detachable sidebar popup: an opaque panel floating over the work area
            (see search_popup.SearchPopup). Use the same sidebar tone as the
            docked .sidebar-pane shell; the shadow lifts it off the content;
            the scrim is transparent and only captures click-outside. */
         .sidebar-popup {
-          background-color: @sidebar_bg_color;
-          color: @sidebar_fg_color;
+          background-color: @secondary_sidebar_bg_color;
+          color: @secondary_sidebar_fg_color;
           box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
         }
 
@@ -472,7 +485,7 @@ def install_sidebar_css():
            SearchPopup.set_transparent) — the terminal shows faintly
            through the panel while the rows stay readable. */
         .sidebar-popup.sidebar-popup-transparent {
-          background-color: alpha(@sidebar_bg_color, 0.94);
+          background-color: alpha(@secondary_sidebar_bg_color, 0.94);
         }
 
         /* Chrome-free panel for modes whose content draws its own frame
@@ -5729,6 +5742,8 @@ def _assemble_sidebar_shell(window, sidebar_box):
     # .sidebar-pane wrapper (sidebar-bg / backdrop / trailing hairline). The
     # deprecated .sidebar class only drew a border and cleared list fills.
     sidebar_toolbar_view.add_css_class('sidebar-pane')
+    # The middle of rail, list and content: secondary-sidebar colours.
+    sidebar_toolbar_view.add_css_class('secondary-pane')
     sidebar_toolbar_view.add_top_bar(window.sidebar_header_bar)
     sidebar_toolbar_view.set_content(sidebar_box)
     # Kept so the detachable sidebar popup can reparent sidebar_box out of here
