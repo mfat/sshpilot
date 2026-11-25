@@ -245,12 +245,6 @@ class BlockSidebar(Gtk.Box):
         finally:
             self._syncing = False
 
-    def show_dimmed(self, dimmed: set) -> None:
-        """Dim the rows of the blocks in *dimmed* (blocks that do not apply
-        to the host being checked), in place."""
-        for uid, row in self._rows.items():
-            set_class(row, "advcfg-skipped", uid in dimmed)
-
     def _on_row_selected(self, _list, row) -> None:
         if self._syncing or row is None or not isinstance(row, BlockRow):
             return

@@ -104,7 +104,6 @@ _CSS = """
 .advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
 .advcfg-context { padding: 6px 12px; }
-.advcfg-block-list > row.advcfg-skipped { opacity: 0.5; }
 .advcfg-block-list > row.advcfg-drop-above { box-shadow: inset 0 2px 0 0 @accent_bg_color; }
 .advcfg-block-list > row.advcfg-drop-below { box-shadow: inset 0 -2px 0 0 @accent_bg_color; }
 .advcfg-block-list:drop(active) { box-shadow: none; }
@@ -216,9 +215,6 @@ class AdvancedConfigBase:
         self._evaluate_source = 0
         self._history_source = 0
         self._allowed_exec: set = set()
-        #: Blocks added or edited for the host being checked: they are not
-        #: dimmed even when they do not apply to it.
-        self._kept_visible: set = set()
         self.selected_uid: Optional[int] = None
         #: Where the selected block stood: a draft read anew (Apply, Reload)
         #: selects the block at the same place.
@@ -593,7 +589,6 @@ class AdvancedConfigBase:
         self._loaded_lines = self.editor.lines
         self._loaded = True
         self._allowed_exec.clear()
-        self._kept_visible.clear()
         self.raw.discard()
         if not same_file:
             self._selected_index = self._first_index()
@@ -867,7 +862,6 @@ class AdvancedConfigBase:
                 self.editor.set_option(block.options[0].uid, "value", value)
             else:
                 self.editor.add_option(block.uid, key, value)
-        self._kept_visible.add(block.uid)
         self.selected_uid = block.uid
         self.show_page("structured")
         self._after_structure()
@@ -1036,7 +1030,6 @@ class AdvancedConfigBase:
         block = self.editor.find_block(self.selected_uid)
         if block is not None:
             self._selected_index = blocks.index(block)
-        self._kept_visible &= {item.uid for item in blocks}
         self._sync_files()
         self.structured.show(block)
         self.raw.set_text(self.editor.text)
@@ -1092,10 +1085,8 @@ class AdvancedConfigBase:
 
     def _target_changed(self, *, idle: bool = False) -> None:
         # A command can depend on the host (%h, %r): agreement to run it
-        # was for the host in question at the time. Blocks kept bright
-        # were worked on for that host too.
+        # was for the host in question at the time.
         self._allowed_exec.clear()
-        self._kept_visible.clear()
         set_pill(self.test_status, "", "muted")
         self._schedule_evaluation(idle=idle, now=not idle and self._answer_ready())
 
@@ -1137,7 +1128,6 @@ class AdvancedConfigBase:
         block = self.editor.add_block(kind)
         if block is None:
             return
-        self._kept_visible.add(block.uid)
         self.selected_uid = block.uid
         self.show_page("structured")
         self._after_structure()
@@ -1167,14 +1157,12 @@ class AdvancedConfigBase:
         return self.move_block(uid, index)
 
     def toggle_block(self, uid: int) -> None:
-        self._kept_visible.add(uid)
         if not self._after_structure(self.editor.toggle_block(uid)):
             self._show_draft()              # refused: the switch goes back
 
     def duplicate_block(self, uid: int) -> None:
         copy = self.editor.duplicate_block(uid)
         if copy is not None:
-            self._kept_visible.add(copy.uid)
             self.selected_uid = copy.uid
             self._after_structure()
 
@@ -1190,7 +1178,6 @@ class AdvancedConfigBase:
             return
         if keep:
             self.structured.keep(option.uid)
-        self._kept_visible.add(block_uid)
         self._after_structure()
         GLib.idle_add(lambda: (self.structured.focus_option(option.uid, key=not key), False)[1])
 
@@ -1198,17 +1185,12 @@ class AdvancedConfigBase:
         self._after_structure(self.editor.delete_option(uid))
 
     def patterns_typed(self, uid: int, text: str) -> None:
-        self._kept_visible.add(uid)
         self._after_typing(self.editor.set_patterns(uid, text))
 
     def note_typed(self, uid: int, text: str) -> None:
-        self._kept_visible.add(uid)
         self._after_typing(self.editor.set_note(uid, text))
 
     def option_typed(self, uid: int, field: str, text: str) -> None:
-        owner, _option = self.editor.find_option(uid)
-        if owner is not None:
-            self._kept_visible.add(owner.uid)
         self._after_typing(self.editor.set_option(uid, field, text))
 
     def choice_made(self, block_uid: Optional[int], keyword: str, uid: Optional[int],
@@ -1216,7 +1198,6 @@ class AdvancedConfigBase:
         """A yes/no field set to yes, no, or not set (None: the line goes)."""
         if self.editor.find_block(block_uid) is None:
             return
-        self._kept_visible.add(block_uid)
         if value is None:
             if uid is not None:
                 self._after_structure(self.editor.delete_option(uid))
@@ -1853,21 +1834,13 @@ class AdvancedConfigBase:
         matched = set(evaluation.matched_blocks) if answered else set()
         if related is not None:
             answered, matched = True, related[0]
-        # Blocks that do not apply to the host being checked are dimmed in
-        # the sidebar (never hidden, never moved), unless worked on for it.
-        dimmed = set()
+        # Whether the selected block applies is said in its own view. The
+        # sidebar lists every block alike, whatever applies (the user found
+        # blocks dimmed for another host unexplained).
         applies_selected = None
-        for block in self.editor.blocks:
-            if not answered or block.disabled:
-                continue
-            applies = block.kind == GLOBAL or lines.headers.get(block.uid, 0) in matched
-            if block.uid == self.selected_uid:
-                applies_selected = applies
-            # The block in hand is at full strength, whatever applies.
-            if not applies and block.uid not in self._kept_visible \
-                    and block.uid != self.selected_uid:
-                dimmed.add(block.uid)
-        self.sidebar.show_dimmed(dimmed)
+        block = self.editor.find_block(self.selected_uid)
+        if answered and block is not None and not block.disabled:
+            applies_selected = block.kind == GLOBAL or lines.headers.get(block.uid, 0) in matched
         self._sync_test_button()        # a Match exec command may wait for consent
         user, host = split_target(self.target_text())
         self.structured.show_answer(AnswerView(
@@ -1875,7 +1848,6 @@ class AdvancedConfigBase:
             related_hosts=related[1] if related is not None else None,
             current=self._evaluated_serial == self.editor.serial,
         ))
-        block = self.editor.find_block(self.selected_uid)
         block_lines = frozenset()
         if block is not None:
             block_lines = frozenset(

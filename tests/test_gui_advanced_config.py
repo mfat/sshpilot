@@ -226,11 +226,12 @@ def _pick(win, text):
 
 
 def _dimmed(win):
-    """Blocks dimmed in the sidebar as not applying to the host checked.
-    Every block stays listed: none is hidden."""
+    """Sidebar rows drawn fainter than the others. None ever is: the user
+    found blocks dimmed for another host unexplained."""
     return [
         block.patterns or block.kind for block in win.draft.blocks
-        if win.sidebar._rows[block.uid].has_css_class("advcfg-skipped")
+        if win.sidebar._rows[block.uid].get_opacity() < 1
+        or win.sidebar._rows[block.uid].has_css_class("dim-label")
     ]
 
 
@@ -343,27 +344,15 @@ def test_another_target_is_asked_again(window):
     assert _pump(lambda: _effective(window, "user") == "fallback")
     web = window.draft.blocks[1]
     window.select_block(window.draft.blocks[2].uid)
-    assert _pump(lambda: _dimmed(window) == ["web1 web2"])
+    assert _pump(lambda: _command(window) == "ssh -G db1")
+    assert _dimmed(window) == []               # web's block does not apply: listed alike
     window.target_entry.set_text("web1")       # a name the file names: checked, selected
-    assert _pump(lambda: _dimmed(window) == [] and _effective(window, "user") == "deploy")
+    assert _pump(lambda: _effective(window, "user") == "deploy")
     assert window.selected_uid == web.uid and window.check_entry.get_text() == "web1"
     window.target_entry.set_text("")           # the search ends: what it found stays
     _pump(lambda: False, seconds=0.5)
     assert window.selected_uid == web.uid and window.target_text() == "web1"
     assert _effective(window, "user") == "deploy"
-
-
-def test_a_block_being_worked_on_stays_bright(window):
-    """Adding or editing a block must not dim it under the hands."""
-    window.add_block("host")
-    block = window.draft.blocks[-1]
-    window.structured.patterns_row.set_text("elsewhere")
-    assert _settled(window)
-    assert _dimmed(window) == []
-    _check(window, "db1")                      # another host starts afresh
-    window.select_block(window.draft.blocks[2].uid)
-    assert _pump(lambda: _dimmed(window) == ["web1 web2", "elsewhere"])
-    assert block.uid in window.sidebar._rows
 
 
 def test_moving_a_block_changes_what_wins_and_undo_restores_it(window):
@@ -653,14 +642,12 @@ def test_the_sidebar_lists_the_blocks_and_a_typed_host_stays(window):
     _pump(lambda: False, seconds=0.4)
     assert window._request_serial == asked            # nothing new was asked
     assert window.check_entry.get_text() == "web1" and window.target_text() == "web1"
-    assert _dimmed(window) == []                      # just worked on: left bright
 
     window.check_entry.set_text("")                   # unpinned: the selection says
     assert window.target_text() == "web1"             # web's block is selected
     _pick(window, "Host db1 *.internal")
     assert window.target_text() == "db1"              # the first plain name
     assert _pump(lambda: _effective(window, "user") == "fallback")
-    assert _dimmed(window) == ["web1 web2"]
 
     window.delete_block(db.uid)                       # a selected block that goes:
     assert _block_rows(window) == ["Global", "Host web1 web2", "Host *"]
@@ -815,8 +802,9 @@ def test_a_source_s_line_is_shown_without_losing_the_host(gtk, tmp_path):
 
 
 def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
-    """A pattern or a Match rule names no host. Picking one dims the blocks
-    that apply to no host it applies to, each host being OpenSSH's answer."""
+    """A pattern or a Match rule names no host. Picking one says which
+    listed hosts it applies to, each host being OpenSSH's answer; the
+    sidebar lists every block alike."""
     win = _open_on(gtk, tmp_path, (
         "Host a.prod\n    User a\n\nHost b.prod c.test\n    User b\n\n"
         "Host d.test\n    User d\n\nHost *.prod\n    Port 2200\n\n"
@@ -828,23 +816,20 @@ def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
         status = win.structured.status_row
 
         _pick(win, "Host *.prod")
-        assert _pump(lambda: _dimmed(win) == ["d.test", "host *.test", "*.lab"])
-        assert win._evaluation is None
-        assert "a.prod, b.prod" in status.get_subtitle()
+        assert _pump(lambda: "a.prod, b.prod" in status.get_subtitle())
+        assert win._evaluation is None and _dimmed(win) == []
         assert _field(win, "port").entry.get_text() == "2200"
 
         _pick(win, "Match host *.test")                      # a rule, as a pattern
-        assert _pump(lambda: _dimmed(win) == ["a.prod", "*.prod", "*.lab"])
-        assert "c.test, d.test" in status.get_subtitle()
+        assert _pump(lambda: "c.test, d.test" in status.get_subtitle())
 
         _pick(win, "Host *.lab")                             # no listed host fits it:
         assert _pump(lambda: "none of the hosts" in status.get_subtitle())
-        assert _dimmed(win) == ["a.prod", "b.prod c.test", "d.test", "*.prod", "host *.test"]
 
         _pick(win, "Host a.prod")                            # a host: the usual answer
         assert _pump(lambda: _command(win) == "ssh -G a.prod")
-        assert _dimmed(win) == ["b.prod c.test", "d.test", "host *.test", "*.lab"]
         assert status.get_subtitle() == "Applies to a.prod."
+        assert _dimmed(win) == []
     finally:
         _close(win)
 
@@ -1260,11 +1245,10 @@ def test_a_selection_is_answered_in_the_same_step(gtk, tmp_path):
         client.evaluate_ssh_config_draft = lambda request: asked.append(request.host) or real(request)
 
         win.select_block(web.uid)                              # no pump: at once
-        assert _command(win) == "ssh -G web1" and _dimmed(win) == ["db1"]
+        assert _command(win) == "ssh -G web1"
         win.select_block(db.uid)
-        assert _command(win) == "ssh -G db1" and _dimmed(win) == ["web1 web2"]
+        assert _command(win) == "ssh -G db1"
         win.select_block(star.uid)                             # a pattern block
-        assert _dimmed(win) == []
         assert asked == []                                     # nothing was asked
 
         win.select_block(web.uid)
