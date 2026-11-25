@@ -88,6 +88,7 @@ from .sidebar import (
     build_sidebar,
     install_sidebar_css,
     reset_connection_list_drag_session,
+    sync_grip_color,
 )
 from .sidebar_paned import DEFAULT_MAX_WIDTH as DEFAULT_SIDEBAR_MAX_WIDTH, SidebarPaned
 
@@ -3214,6 +3215,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             grip = getattr(row, 'drag_grip', None)
             if grip is not None:
                 grip.set_visible(grips)
+                # 'Colored Grips': the colour moves to the dot while hidden.
+                sync_grip_color(row)
             setter = getattr(row, 'set_actions_reserved', None)
             if setter is not None:
                 try:

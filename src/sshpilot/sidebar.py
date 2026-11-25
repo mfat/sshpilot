@@ -443,6 +443,8 @@ def install_sidebar_css():
            Configuration's list of blocks (.advcfg-drag-handle). */
         .navigation-sidebar row .sidebar-drag-grip { opacity: 0.45; }
         .navigation-sidebar row:hover .sidebar-drag-grip { opacity: 0.9; }
+        /* 'Colored Grips' group colours: full strength, hover or not. */
+        .navigation-sidebar row .sidebar-drag-grip.sidebar-drag-grip-colored { opacity: 1; }
 
         paned.sidebar-paned > separator {
           box-shadow: none;
@@ -990,20 +992,70 @@ def _make_row_action_slot(button: Gtk.Widget) -> Gtk.Stack:
     return slot
 
 
+def _clear_grip_color(row: Gtk.Widget) -> None:
+    grip = getattr(row, 'drag_grip', None)
+    provider = getattr(row, '_grip_color_provider', None)
+    if grip is not None and provider is not None:
+        try:
+            grip.remove_css_class("sidebar-drag-grip-colored")
+            grip.get_style_context().remove_provider(provider)
+        except Exception:
+            pass
+    row._grip_color_provider = None  # type: ignore[attr-defined]
+
+
+def sync_grip_color(row: Gtk.Widget) -> None:
+    """Paint a 'grip'-mode row: the drag grip in the group colour (full
+    strength, so the colour reads), or, while the grips are hidden (narrow
+    sidebar, compact layout), the colour dot in its place, so the colour is
+    never lost. Rows in other modes are left alone."""
+    if not getattr(row, '_grip_mode', False):
+        return
+    rgba = getattr(row, '_grip_rgba', None)
+    grip = getattr(row, 'drag_grip', None)
+    _clear_grip_color(row)
+    if rgba is None:
+        row.color_dot.set_visible(False)
+        return
+    if grip is None or not grip.get_visible():
+        _update_color_dot(row, rgba)
+        return
+    row.color_dot.set_visible(False)
+    r, g, b = (int(c * 255) for c in (rgba.red, rgba.green, rgba.blue))
+    provider = Gtk.CssProvider()
+    provider.load_from_data(
+        (".sidebar-drag-grip-colored { color: %s; }"
+         % _standalone_glyph_color(f"#{r:02x}{g:02x}{b:02x}")).encode('utf-8')
+    )
+    grip.add_css_class("sidebar-drag-grip-colored")
+    grip.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+    row._grip_color_provider = provider  # type: ignore[attr-defined]
+
+
 def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     """Apply the selected group-color treatment to a sidebar row.
 
     Modes: ``fill`` (tinted card), ``badge`` (tag icon before the row icon),
     ``bar`` (leading accent bar), ``dot`` (dot before the row icon), ``text``
-    (coloured icon and title). Mutually exclusive, so we always clear the
+    (coloured icon and title), ``grip`` (coloured drag grip, see
+    :func:`sync_grip_color`). Mutually exclusive, so we always clear the
     others first. ``row`` must expose ``color_badge``, ``_update_color_badge``
     and ``color_dot``.
     """
     _clear_tint(row)
     _clear_bar(row)
     _clear_color_text(row)
+    _clear_grip_color(row)
+    row._grip_mode = False  # type: ignore[attr-defined]
+    row._grip_rgba = None  # type: ignore[attr-defined]
     row.color_badge.set_visible(False)
     row.color_dot.set_visible(False)
+
+    if mode == 'grip':
+        row._grip_mode = True  # type: ignore[attr-defined]
+        row._grip_rgba = rgba  # type: ignore[attr-defined]
+        sync_grip_color(row)
+        return
 
     if mode == 'dot':
         _update_color_dot(row, rgba)

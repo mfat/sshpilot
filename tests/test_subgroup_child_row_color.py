@@ -174,3 +174,20 @@ def test_setting_off_keeps_each_groups_own_color(paint):
     # Own colour wins, a colourless group borrows the nearest one, and member
     # rows stay uncoloured because the setting is off.
     assert colors == [RED, GREEN, GREEN, None]
+
+
+def test_colored_grips_fall_back_to_the_dot_while_grips_are_hidden(monkeypatch):
+    """'Colored Grips' must never lose the colour: a hidden grip (narrow
+    sidebar, compact layout) hands it to the dot."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    dots = []
+    monkeypatch.setattr(sidebar, '_update_color_dot', lambda row, rgba: dots.append(rgba))
+    grip = MagicMock()
+    grip.get_visible.return_value = False
+    row = SimpleNamespace(_grip_mode=True, _grip_rgba=RED, drag_grip=grip,
+                          color_dot=MagicMock())
+    sidebar.sync_grip_color(row)
+    assert dots == [RED]
+    grip.add_css_class.assert_not_called()

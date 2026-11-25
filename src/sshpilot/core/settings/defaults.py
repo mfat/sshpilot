@@ -21,7 +21,7 @@ TERMINAL_PANE_CHOICES = ('none', 'remote', 'local', 'both')
 
 # Sidebar group-colour treatments ('ui.group_color_display'), in the order the
 # Preferences combo lists them.
-GROUP_COLOR_DISPLAY_MODES = ('fill', 'badge', 'bar', 'dot', 'text')
+GROUP_COLOR_DISPLAY_MODES = ('fill', 'badge', 'bar', 'dot', 'text', 'grip')
 
 
 def get_default_config() -> Dict[str, Any]:

@@ -1307,6 +1307,7 @@ class PreferencesWindow(Adw.Window):
         color_display_options.append(_("Accent Bars"))
         color_display_options.append(_("Color Dots"))
         color_display_options.append(_("Colored Text"))
+        color_display_options.append(_("Colored Grips"))
         self.group_color_display_row.set_model(color_display_options)
 
         current_mode = 'fill'
