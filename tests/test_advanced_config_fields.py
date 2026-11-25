@@ -143,7 +143,7 @@ def test_effective_values_flag_missing_and_readable_key_files(tmp_path):
     assert fields.value_file_problems("user", [str(missing)], default=False) == []
 
 
-def test_connection_summary_spells_out_what_the_configuration_sets(tmp_path):
+def test_connection_summary_reads_what_the_configuration_sets(tmp_path):
     home = str(tmp_path)
     values = {
         "hostname": ["10.20.4.15"], "user": ["postgres"], "port": ["5432"],
@@ -155,10 +155,7 @@ def test_connection_summary_spells_out_what_the_configuration_sets(tmp_path):
     assert summary.hops == ["admin@bastion:2222", "edge"]
     assert summary.keys == ["~/.ssh/db_key", '"~/.ssh/other key"']
     assert summary.identities_only and not summary.port_default
-    assert summary.command == (
-        "ssh postgres@10.20.4.15 -p 5432 -J admin@bastion:2222,edge "
-        "-i ~/.ssh/db_key -i \"~/.ssh/other key\""
-    )
+    assert (summary.hostname, summary.user, summary.port) == ("10.20.4.15", "postgres", "5432")
 
 
 def test_connection_summary_leaves_openssh_defaults_out():
@@ -169,4 +166,3 @@ def test_connection_summary_leaves_openssh_defaults_out():
     summary = fields.connection_summary(values, defaults={"port", "identityfile"})
     assert summary.port_default and summary.keys == [] and summary.hops == []
     assert summary.proxy_command.startswith("nc ")
-    assert summary.command == "ssh me@web1 -o 'ProxyCommand=nc -X 5 -x proxy:1080 %h %p'"

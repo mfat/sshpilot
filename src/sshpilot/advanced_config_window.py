@@ -114,7 +114,6 @@ _CSS = """
 row:hover .advcfg-drag-handle { opacity: 0.9; }
 .advcfg-chip { padding: 2px 10px; border-radius: 999px; font-size: 0.9em; }
 .advcfg-summary { padding: 14px 16px; }
-.advcfg-headline { font-size: 1.15em; font-weight: bold; color: @success_color; }
 .advcfg-tile { padding: 8px 12px; border-radius: 8px;
   background-color: alpha(@accent_bg_color, 0.07); box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.14); }
 flowboxchild:hover .advcfg-tile { background-color: alpha(@accent_bg_color, 0.13); }
@@ -1275,13 +1274,6 @@ class AdvancedConfigBase:
         self._toasts.add_toast(Adw.Toast.new(text))
 
     # -- the host being checked: copy, test, the route -------------------------
-
-    def copy_text(self, text: str) -> None:
-        """Copy *text* (a command shown in a view) and say so."""
-        if not text:
-            return
-        self.get_clipboard().set(text)
-        self._toasts.add_toast(Adw.Toast.new(_("Copied “{command}”").format(command=text)))
 
     def copy_command(self) -> None:
         user, host = split_target(self.target_text())

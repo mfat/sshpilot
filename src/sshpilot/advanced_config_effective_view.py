@@ -344,8 +344,8 @@ class _EffectiveCell:
 
 
 class EffectiveView(Gtk.Box):
-    """*controller* supplies ``reveal_line``, ``reveal_source``,
-    ``source_file`` and ``copy_text``."""
+    """*controller* supplies ``reveal_line``, ``reveal_source`` and
+    ``source_file``."""
 
     def __init__(self, controller) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -412,26 +412,11 @@ class EffectiveView(Gtk.Box):
     # -- the summary ---------------------------------------------------------------
 
     def _build_summary(self) -> Gtk.Widget:
-        """What the answer comes to: the connection as one command line,
-        what OpenSSH was asked, and a tile per thing that matters."""
+        """What the answer comes to: what OpenSSH was asked, and a tile per
+        thing that matters."""
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         card.add_css_class("card")
         card.add_css_class("advcfg-summary")
-        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.headline = Gtk.Label(xalign=0, hexpand=True)
-        self.headline.add_css_class("monospace")
-        self.headline.add_css_class("advcfg-headline")
-        self.headline.set_ellipsize(Pango.EllipsizeMode.END)
-        top.append(self.headline)
-        self.copy_button = Gtk.Button(icon_name="edit-copy-symbolic",
-                                      tooltip_text=_("Copy Command"))
-        self.copy_button.add_css_class("flat")
-        self.copy_button.set_valign(Gtk.Align.CENTER)
-        self.copy_button.connect(
-            "clicked", lambda *_a: self.controller.copy_text(self.headline.get_label())
-        )
-        top.append(self.copy_button)
-        card.append(top)
         asked = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.asked = Gtk.Label(xalign=0)
         self.asked.add_css_class("caption")
@@ -467,8 +452,6 @@ class EffectiveView(Gtk.Box):
 
     def _fill_summary(self, answer: Answer, values: Dict[str, List[str]], defaults) -> None:
         summary = fields.connection_summary(values, defaults)
-        self.headline.set_label(summary.command)
-        self.headline.set_tooltip_text(summary.command)
         self.asked.set_label(messages.asked_text(answer.host))
         items = self._items
 

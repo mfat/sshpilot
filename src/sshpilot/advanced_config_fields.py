@@ -25,7 +25,6 @@ file rows (missing, readable by others).
 from __future__ import annotations
 
 import os
-import shlex
 import stat
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
@@ -248,16 +247,12 @@ class ConnectionSummary:
     #: Key files set by the configuration (empty: OpenSSH's default keys).
     keys: List[str]
     identities_only: bool
-    #: The same connection as one plain command line, for reading.
-    command: str
 
 
 def connection_summary(values: Dict[str, List[str]], defaults: Iterable[str],
                        home: Optional[str] = None) -> ConnectionSummary:
     """Sum up the options of ``ssh -G`` (*values*: key -> values as printed;
-    *defaults*: keys left at OpenSSH's default). The command line spells
-    out only what the configuration sets: it is for reading, never what a
-    connection is launched with (that is always ``ssh <alias>``)."""
+    *defaults*: keys left at OpenSSH's default)."""
     defaults = set(defaults)
 
     def one(key: str) -> str:
@@ -273,20 +268,9 @@ def connection_summary(values: Dict[str, List[str]], defaults: Iterable[str],
         home_relative(key_path(value, home) or _unquoted(value), home)
         for value in values.get("identityfile", ())
     ]
-    parts = ["ssh", shlex.quote(f"{user}@{hostname}" if user else hostname)]
-    port_default = "port" in defaults
-    if not port_default:
-        parts += ["-p", port]
-    if hops:
-        parts += ["-J", shlex.quote(",".join(hops))]
-    elif proxy_command:
-        parts += ["-o", shlex.quote(f"ProxyCommand={proxy_command}")]
-    for key in keys:
-        parts += ["-i", key]                # quoted already when it has a space
     return ConnectionSummary(
-        hostname=hostname, user=user, port=port, port_default=port_default,
+        hostname=hostname, user=user, port=port, port_default="port" in defaults,
         hops=hops, proxy_command=proxy_command, keys=keys,
         identities_only=one("identitiesonly").lower() == "yes",
-        command=" ".join(parts),
     )
 

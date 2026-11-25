@@ -673,8 +673,8 @@ def test_a_not_used_pill_shows_the_line_used_instead(gtk, tmp_path):
 
 
 def test_effective_sums_up_the_connection(gtk, tmp_path):
-    """The header: the connection as one command line, and a tile each for
-    the address, user, port, route and key, flagged like their rows."""
+    """The header: a tile each for the address, user, port, route and key,
+    flagged like their rows."""
     win = _open_on(gtk, tmp_path, (
         "Host db1\n    HostName 10.20.4.15\n    User postgres\n    Port 5432\n"
         "    Port 6543\n    ProxyJump bastion\n\nHost *\n    User fallback\n"
@@ -683,9 +683,8 @@ def test_effective_sums_up_the_connection(gtk, tmp_path):
         _pick(win, "Host db1")
         win.show_page("effective")
         effective = win.effective
-        assert _pump(lambda: effective.headline.get_label()
-                     == "ssh postgres@10.20.4.15 -p 5432 -J bastion")
         tiles = effective._tiles
+        assert _pump(lambda: tiles["host"].value.get_label() == "10.20.4.15")
         assert tiles["host"].value.get_label() == "10.20.4.15"
         assert tiles["host"].caption.get_label() == "alias db1"
         assert tiles["user"].value.get_label() == "postgres"
