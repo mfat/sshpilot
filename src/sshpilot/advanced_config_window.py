@@ -12,8 +12,7 @@ selected, in one of three views:
 
 The host being checked is the host the selected block names, unless the
 window keeps another in question (a source followed, a host name searched
-for, ``go_to`` with *pin*) until a block is picked in the sidebar. Test
-Connection is about it.
+for, ``go_to`` with *pin*) until a block is picked in the sidebar.
 
 Nothing here decides what applies. Every answer comes from the daemon, which
 asks OpenSSH (``ssh -G``) about the draft in the context a connection would
@@ -38,7 +37,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-import time
 from gettext import gettext as _
 from typing import Callable, Optional
 
@@ -63,7 +61,6 @@ from .advanced_config_sidebar import BlockSidebar, block_matches  # noqa: E402
 from .advanced_config_structured_view import AnswerView, StructuredView  # noqa: E402
 from .advanced_config_widgets import pill, set_pill  # noqa: E402
 from .api.errors import ErrorCode, SshPilotError  # noqa: E402
-from .api.models.common import SessionId  # noqa: E402
 from .api.models.connections import (  # noqa: E402
     EvaluateSshConfigDraftRequest,
     SaveSshConfigTextRequest,
@@ -91,9 +88,6 @@ _MIN_WIDTH, _MIN_HEIGHT = 360, 420
 #: when it is selected.
 _PREFETCH_DELAY_MS = 350
 _PREFETCH_HOSTS = 150
-
-#: How long Test Connection gives the host, prompts included, in seconds.
-_TEST_TIMEOUT = 120
 
 PAGES = ("structured", "effective", "raw")
 
@@ -221,7 +215,6 @@ class AdvancedConfigBase:
         self._pinned_host = ""
         #: The host to check was put there by the search (an exact name).
         self._check_from_search = False
-        self._testing = False
         self._host_setup(parent)
 
         self.editor = DraftEditor()
@@ -395,7 +388,7 @@ class AdvancedConfigBase:
         self.add_breakpoint(narrow)
 
     def _build_context_bar(self) -> Gtk.Widget:
-        """The block on screen, its file, and testing the host checked."""
+        """The block on screen and its file."""
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.add_css_class("advcfg-context")
         self.block_title = Gtk.Label(xalign=0)
@@ -408,15 +401,6 @@ class AdvancedConfigBase:
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         bar.append(spacer)
-        self.test_status = pill(style="muted")
-        bar.append(self.test_status)
-        self.test_button = Gtk.Button()
-        self.test_button.set_child(Adw.ButtonContent(
-            icon_name="media-playback-start-symbolic", label=_("Test Connection"),
-        ))
-        self.test_button.set_valign(Gtk.Align.CENTER)
-        self.test_button.connect("clicked", lambda *_a: self.test_connection())
-        bar.append(self.test_button)
         return bar
 
     # ------------------------------------------------------------------
@@ -1030,7 +1014,6 @@ class AdvancedConfigBase:
         self.structured.set_sensitive(not pending)
         self.sidebar.list.set_sensitive(not pending)
         self.sidebar.new_button.set_sensitive(not pending)
-        self._sync_test_button()
 
     def _sync_context(self) -> None:
         """The bar above the views: the block on screen."""
@@ -1038,29 +1021,11 @@ class AdvancedConfigBase:
         title = messages.block_list_title(block.kind, block.patterns) if block else ""
         if self.block_title.get_label() != title:
             self.block_title.set_label(title)
-        self._sync_test_button()
-
-    def _sync_test_button(self) -> None:
-        host = split_target(self.target_text())[1]
-        evaluation = self._evaluation
-        if self._testing:
-            tip = _("Testing…")
-        elif not host:
-            tip = _("Choose a block that names a host, or type one to check")
-        elif evaluation is not None and evaluation.pending_exec:
-            tip = _("Allow the Match exec command first: the test would run it")
-        else:
-            tip = _("Connect to {host} with the configuration shown here, saved or not").format(
-                host=host
-            )
-        self.test_button.set_sensitive(self._test_ready(host))
-        self.test_button.set_tooltip_text(tip)
 
     def _target_changed(self, *, idle: bool = False) -> None:
         # A command can depend on the host (%h, %r): agreement to run it
         # was for the host in question at the time.
         self._allowed_exec.clear()
-        set_pill(self.test_status, "", "muted")
         self._schedule_evaluation(idle=idle, now=not idle and self._answer_ready())
 
     def _toast_refusal(self, refusal) -> None:
@@ -1215,118 +1180,6 @@ class AdvancedConfigBase:
                 path=fields.home_relative(path)
             )
         self._toasts.add_toast(Adw.Toast.new(text))
-
-    # -- the host being checked: test, the route -------------------------------
-
-    def test_connection(self) -> None:
-        """Connect to the host being checked, as the configuration shown
-        here would have it (saved or not), through the app's own launch
-        path: the daemon registers a target that reads this draft, and a
-        one-shot ``true`` runs on it like any other remote command. Prompts
-        (password, passphrase, one-time code, host key) appear as for any
-        connection, over this window."""
-        user, host = split_target(self.target_text())
-        if not self._test_ready(host):
-            return
-        from .api.models.broadcast import (
-            BroadcastCommandRequest,
-            BroadcastExecutionPolicy,
-            HostCommandState,
-        )
-
-        try:
-            request = EvaluateSshConfigDraftRequest(
-                # Text typed in the Raw view and not applied is the newer.
-                text=self.raw.text() if self.raw.pending else self.editor.text,
-                host=host, user=user,
-                allowed_exec=tuple(sorted(self._allowed_exec)), file=self._file,
-            )
-        except (TypeError, ValueError):
-            return
-        self._testing = True
-        set_pill(self.test_status, _("Testing…"), "accent")
-        self._sync_test_button()
-        client = self._client
-        presenter = self._test_presenter()
-
-        def bind(operation_id) -> bool:
-            if presenter is not None and not self._closing:
-                try:
-                    presenter.set_session(SessionId(str(operation_id)))
-                except Exception:
-                    logger.debug("test prompt presenter bind failed", exc_info=True)
-            return False
-
-        def work():
-            details = client.open_draft_test_connection(request)
-            summary = client.start_broadcast_command(BroadcastCommandRequest(
-                (details.id,), "true",
-                BroadcastExecutionPolicy(
-                    concurrency_limit=1, timeout_seconds=float(_TEST_TIMEOUT),
-                ),
-            ))
-            operation_id = summary.operation.operation_id
-            GLib.idle_add(bind, operation_id)
-            finished = {"succeeded", "failed", "cancelled"}
-            # Long enough to type a password or a code into a prompt.
-            deadline = time.monotonic() + _TEST_TIMEOUT + 15
-            while summary.operation.state.value not in finished:
-                if time.monotonic() >= deadline or self._closing:
-                    client.cancel_broadcast_command(operation_id)
-                    return False, ""
-                time.sleep(0.1)
-                summary = client.get_broadcast_command(operation_id)
-            target = summary.targets[0] if summary.targets else None
-            if target is not None and target.state is HostCommandState.SUCCEEDED \
-                    and target.exit_code == 0:
-                return True, ""
-            # OpenSSH's own last word, as it said it.
-            lines = [line.strip() for line in (target.stderr if target else "").splitlines()
-                     if line.strip()]
-            return False, lines[-1] if lines else ""
-
-        def done(result, error) -> None:
-            self._testing = False
-            if error is not None:
-                logger.debug("connection test failed", exc_info=error)
-                result = (False, "")
-            ok, detail = result
-            if ok:
-                set_pill(self.test_status, messages.test_result_text(True), "success")
-            else:
-                text = messages.test_result_text(False, detail)
-                set_pill(self.test_status, messages.test_result_text(False), "error", text)
-                self._toasts.add_toast(Adw.Toast.new(text))
-            self._sync_test_button()
-
-        self._run(work, done)
-
-    def _test_ready(self, host: str) -> bool:
-        evaluation = self._evaluation
-        return bool(
-            host and not self._testing
-            and callable(getattr(self._client, "open_draft_test_connection", None))
-            and not (evaluation is not None and evaluation.pending_exec)
-        )
-
-    def _test_presenter(self):
-        """The prompts of a test, over this window: made once, bound to each
-        test's operation when it starts."""
-        presenter = getattr(self, "_test_prompts", None)
-        if presenter is not None:
-            return presenter
-        bridge = getattr(self._parent_window, "client_bridge", None)
-        if bridge is None:
-            return None
-        try:
-            from .daemon_interaction_dialogs import DaemonInteractionDialogs
-
-            presenter = DaemonInteractionDialogs(self._client, bridge, self)
-        except Exception:
-            logger.debug("test prompt presenter unavailable", exc_info=True)
-            return None
-        self._test_prompts = presenter
-        return presenter
 
     # -- the Raw view -------------------------------------------------------
 
@@ -1819,7 +1672,6 @@ class AdvancedConfigBase:
         block = self.editor.find_block(self.selected_uid)
         if answered and block is not None and not block.disabled:
             applies_selected = block.kind == GLOBAL or lines.headers.get(block.uid, 0) in matched
-        self._sync_test_button()        # a Match exec command may wait for consent
         user, host = split_target(self.target_text())
         self.structured.show_answer(AnswerView(
             evaluation, lines, host=host, applies=applies_selected,

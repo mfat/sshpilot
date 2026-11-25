@@ -337,11 +337,3 @@ def key_status_text(state: str, mode: int = 0) -> str:
     if state == "unchecked":
         return _("Checked when connecting")
     return ""
-
-
-def test_result_text(ok: bool, detail: str = "") -> str:
-    if ok:
-        return _("Connected")
-    if detail:
-        return _("Failed: {detail}").format(detail=detail)
-    return _("Failed")
