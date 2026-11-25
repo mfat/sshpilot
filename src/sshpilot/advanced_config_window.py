@@ -112,7 +112,21 @@ _CSS = """
 .advcfg-drag-handle { opacity: 0.45; }
 row:hover .advcfg-drag-handle { opacity: 0.9; }
 .advcfg-chip { padding: 2px 10px; border-radius: 999px; font-size: 0.9em; }
-.advcfg-command-bar { padding: 6px 6px 6px 14px; }
+.advcfg-summary { padding: 14px 16px; }
+.advcfg-headline { font-size: 1.15em; font-weight: bold; color: @success_color; }
+.advcfg-tile { padding: 8px 12px; border-radius: 8px;
+  background-color: alpha(@accent_bg_color, 0.07); box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.14); }
+flowboxchild:hover .advcfg-tile { background-color: alpha(@accent_bg_color, 0.13); }
+flowboxchild { padding: 0; border-radius: 8px; }
+.advcfg-tile-icon, .advcfg-tile-title { color: @accent_color; }
+.advcfg-tile.advcfg-attn-error { background-color: alpha(@error_color, 0.08);
+  box-shadow: inset 3px 0 0 0 @error_color, inset 0 0 0 1px alpha(@error_color, 0.25); }
+.advcfg-tile.advcfg-attn-warning { background-color: alpha(@warning_color, 0.09);
+  box-shadow: inset 3px 0 0 0 @warning_color, inset 0 0 0 1px alpha(@warning_color, 0.25); }
+.advcfg-tile.advcfg-attn-purple { background-color: alpha(@purple_3, 0.09);
+  box-shadow: inset 3px 0 0 0 @purple_3, inset 0 0 0 1px alpha(@purple_3, 0.25); }
+.advcfg-tile.advcfg-attn-error, .advcfg-tile.advcfg-attn-warning, .advcfg-tile.advcfg-attn-purple { color: inherit; }
+.advcfg-row-flash { background-color: alpha(@accent_bg_color, 0.18); }
 .advcfg-effective-list { background: none; }
 .advcfg-effective-list > row { padding: 0; }
 .advcfg-cell { padding: 9px 14px; min-height: 30px; }
@@ -1263,6 +1277,13 @@ class AdvancedConfigBase:
         self._toasts.add_toast(Adw.Toast.new(text))
 
     # -- the host being checked: copy, test, the route -------------------------
+
+    def copy_text(self, text: str) -> None:
+        """Copy *text* (a command shown in a view) and say so."""
+        if not text:
+            return
+        self.get_clipboard().set(text)
+        self._toasts.add_toast(Adw.Toast.new(_("Copied “{command}”").format(command=text)))
 
     def copy_command(self) -> None:
         user, host = split_target(self.target_text())

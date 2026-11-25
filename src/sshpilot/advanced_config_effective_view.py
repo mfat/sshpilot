@@ -5,8 +5,8 @@ Each value is counted as set by the block on screen, by another block or
 file (Settings ▸ SSH Options included), or left at OpenSSH's default; a
 chip per kind shows how many there are and filters the list. A source in
 this configuration is a button that shows its line. A value with a problem
-(lines of the option that go unused, a key file that is missing or that
-other users can read) is marked with a warning and says what is wrong.
+(lines of the block on screen that go unused or Settings override, a key
+file that is missing or that other users can read) is marked with a warning and says what is wrong.
 
 Showing an answer has to be cheap: one arrives after every click and every
 pause in typing. The list keeps one item per option for the life of the
@@ -185,6 +185,52 @@ def _columns_box() -> Gtk.Box:
     return Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18, hexpand=True)
 
 
+class _Tile:
+    """One tile of the summary: a title, a value and where it comes from."""
+
+    def __init__(self, icon: str, title: str, keys) -> None:
+        self.keys = keys
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.box.add_css_class("advcfg-tile")
+        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        image = Gtk.Image.new_from_icon_name(icon)
+        image.add_css_class("advcfg-tile-icon")
+        heading.append(image)
+        label = Gtk.Label(label=title, xalign=0)
+        label.add_css_class("caption-heading")
+        label.add_css_class("advcfg-tile-title")
+        heading.append(label)
+        self.box.append(heading)
+        # Ellipsized, and asking for little width: a long value (a route,
+        # a key path) must not widen every tile and push five off one line.
+        self.value = Gtk.Label(xalign=0, width_chars=6, max_width_chars=12)
+        self.value.add_css_class("monospace")
+        self.value.set_ellipsize(Pango.EllipsizeMode.END)
+        self.box.append(self.value)
+        self.caption = Gtk.Label(xalign=0, width_chars=6, max_width_chars=14)
+        self.caption.add_css_class("caption")
+        self.caption.add_css_class("dim-label")
+        self.caption.set_ellipsize(Pango.EllipsizeMode.END)
+        self.box.append(self.caption)
+        self.child = Gtk.FlowBoxChild(child=self.box)
+        self.child._keys = keys
+        self.child.set_tooltip_text(_("Show in the list"))
+
+    def show(self, value: str, caption: str, tooltip: str = "") -> None:
+        if self.value.get_label() != value:
+            self.value.set_label(value)
+        self.value.set_tooltip_text(tooltip or value)
+        if self.caption.get_label() != caption:
+            self.caption.set_label(caption)
+        self.caption.set_tooltip_text(caption or None)
+
+    def set_severity(self, severity: str) -> None:
+        for style in _SEVERITY:
+            (self.box.add_css_class if style == severity else self.box.remove_css_class)(
+                f"advcfg-attn-{style}"
+            )
+
+
 class _EffectiveCell:
     """The widgets of one visible row; bound to whichever item scrolls in."""
 
@@ -260,7 +306,7 @@ class _EffectiveCell:
         self.warning.set_opacity(1 if problems else 0)
         self.warning.set_from_icon_name({
             ERROR: "dialog-error-symbolic",
-            OVERRIDDEN: "emblem-system-symbolic",       # Settings decide it
+            OVERRIDDEN: "settings-symbolic",       # Settings decide it
         }.get(severity, "dialog-warning-symbolic"))
         for style in _SEVERITY:
             on = style == severity
@@ -288,8 +334,8 @@ class _EffectiveCell:
 
 
 class EffectiveView(Gtk.Box):
-    """*controller* supplies ``reveal_line``, ``reveal_source`` and
-    ``source_file``."""
+    """*controller* supplies ``reveal_line``, ``reveal_source``,
+    ``source_file`` and ``copy_text``."""
 
     def __init__(self, controller) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -301,19 +347,11 @@ class EffectiveView(Gtk.Box):
         self._stale = True
         self._shown = False
 
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        bar.add_css_class("card")
-        bar.add_css_class("advcfg-command-bar")
-        self.command = Gtk.Label(xalign=0, selectable=True)
-        self.command.add_css_class("monospace")
-        self.command.set_hexpand(True)
-        self.command.set_ellipsize(Pango.EllipsizeMode.END)
-        bar.append(self.command)
+        self.summary = self._build_summary()
+        self.append(self.summary)
         self.search = Gtk.SearchEntry(placeholder_text=_("Search options or values"))
         self.search.set_width_chars(24)
         self.search.connect("search-changed", lambda *_a: self._refilter())
-        bar.append(self.search)
-        self.append(bar)
 
         self._filter_kind = ALL
         self._filter = Gtk.CustomFilter.new(self._match)
@@ -329,6 +367,9 @@ class EffectiveView(Gtk.Box):
             self.chips.append(chip)
         self._chips[ALL].set_active(True)
         self._filter_kind = ALL
+        spacer = Gtk.Box(hexpand=True)
+        self.chips.append(spacer)
+        self.chips.append(self.search)              # the controls, together
         self.append(self.chips)
 
         self.store = Gio.ListStore(item_type=EffectiveItem)
@@ -357,6 +398,128 @@ class EffectiveView(Gtk.Box):
         self._chips[ATTENTION].add_css_class("advcfg-chip-attention")
         self._chips[ATTENTION].set_visible(False)
         self._set_chip_labels({ALL: 0, THIS_BLOCK: 0, OTHER: 0, DEFAULT: 0, ATTENTION: 0})
+
+    # -- the summary ---------------------------------------------------------------
+
+    def _build_summary(self) -> Gtk.Widget:
+        """What the answer comes to: the connection as one command line,
+        what OpenSSH was asked, and a tile per thing that matters."""
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        card.add_css_class("card")
+        card.add_css_class("advcfg-summary")
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.headline = Gtk.Label(xalign=0, hexpand=True)
+        self.headline.add_css_class("monospace")
+        self.headline.add_css_class("advcfg-headline")
+        self.headline.set_ellipsize(Pango.EllipsizeMode.END)
+        top.append(self.headline)
+        self.copy_button = Gtk.Button(icon_name="edit-copy-symbolic",
+                                      tooltip_text=_("Copy Command"))
+        self.copy_button.add_css_class("flat")
+        self.copy_button.set_valign(Gtk.Align.CENTER)
+        self.copy_button.connect(
+            "clicked", lambda *_a: self.controller.copy_text(self.headline.get_label())
+        )
+        top.append(self.copy_button)
+        card.append(top)
+        asked = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.asked = Gtk.Label(xalign=0)
+        self.asked.add_css_class("caption")
+        self.asked.add_css_class("dim-label")
+        asked.append(self.asked)
+        #: The question put to OpenSSH, as a command (``ssh -G host``).
+        self.command = Gtk.Label(xalign=0)
+        self.command.add_css_class("monospace")
+        self.command.add_css_class("caption")
+        self.command.add_css_class("dim-label")
+        asked.append(self.command)
+        card.append(asked)
+        self.tiles = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True)
+        self.tiles.set_min_children_per_line(2)
+        self.tiles.set_max_children_per_line(5)
+        self.tiles.set_column_spacing(8)
+        self.tiles.set_row_spacing(8)
+        self.tiles.set_activate_on_single_click(True)
+        self.tiles.connect("child-activated", lambda _box, child: self.reveal_item(child._keys[0]))
+        self._tiles: Dict[str, _Tile] = {}
+        for name, icon, title, keys in (
+            ("host", "network-server-symbolic", _("Connects To"), ("hostname",)),
+            ("user", "system-users-symbolic", _("User"), ("user",)),
+            ("port", "connector-symbolic", _("Port"), ("port",)),
+            ("route", "execute-to-symbolic", _("Route"), ("proxyjump", "proxycommand")),
+            ("key", "dialog-password-symbolic", _("Key"), ("identityfile", "identitiesonly")),
+        ):
+            tile = _Tile(icon, title, keys)
+            self._tiles[name] = tile
+            self.tiles.append(tile.child)
+        card.append(self.tiles)
+        return card
+
+    def _fill_summary(self, answer: Answer, values: Dict[str, List[str]], defaults) -> None:
+        summary = fields.connection_summary(values, defaults)
+        self.headline.set_label(summary.command)
+        self.headline.set_tooltip_text(summary.command)
+        self.asked.set_label(messages.asked_text(answer.host))
+        items = self._items
+
+        def source(*keys) -> str:
+            seen: List[str] = []
+            for key in keys:
+                item = items.get(key)
+                if item is not None and item.present and item.source not in seen:
+                    seen.append(item.source)
+            return " · ".join(seen)
+
+        tiles = self._tiles
+        tiles["host"].show(
+            summary.hostname,
+            messages.alias_text(answer.host) if summary.hostname != answer.host
+            else source("hostname"),
+        )
+        tiles["user"].show(summary.user, source("user"))
+        tiles["port"].show(summary.port, source("port"))
+        if summary.hops:
+            route = " → ".join([messages.route_start()] + summary.hops + [answer.host])
+            tiles["route"].show(route, source("proxyjump"))
+        elif summary.proxy_command:
+            tiles["route"].show("ProxyCommand", summary.proxy_command)
+        else:
+            tiles["route"].show(messages.direct_route(), messages.no_jump_host())
+        if summary.keys:
+            key = summary.keys[0] if len(summary.keys) == 1 else \
+                messages.and_more(summary.keys[0], len(summary.keys) - 1)
+            caption = "IdentitiesOnly" if summary.identities_only else source("identityfile")
+            tiles["key"].show(key, caption, "\n".join(summary.keys))
+        else:
+            tiles["key"].show(messages.default_keys(), source("identityfile"))
+        for tile in tiles.values():
+            severities = [items[key].severity for key in tile.keys
+                          if key in items and items[key].present and items[key].severity]
+            tile.set_severity(min(severities, key=_SEVERITY.index) if severities else "")
+
+    def reveal_item(self, key: str) -> None:
+        """Scroll to the row of option *key*, and flash it."""
+        item = self._items.get(key)
+        if item is None or not item.present:
+            return
+        if not self._match(item):                   # filtered out: show all
+            self.search.set_text("")
+            self.select_filter(ALL)
+            self._refilter()
+        for position in range(self.model.get_n_items()):
+            if self.model.get_item(position) is item:
+                self.list.scroll_to(position, Gtk.ListScrollFlags.FOCUS, None)
+                GLib.idle_add(self._flash, item)
+                return
+
+    @staticmethod
+    def _flash(item: "EffectiveItem") -> bool:
+        cell = item.cell
+        if cell is not None:
+            outer = cell.outer
+            outer.add_css_class("advcfg-row-flash")
+            GLib.timeout_add(1200, lambda: (outer.remove_css_class("advcfg-row-flash"), False)[1])
+        return False
 
     def _build_header(self) -> Gtk.Widget:
         """Titles over the columns of the rows: each laid out as a row's is."""
@@ -456,7 +619,7 @@ class EffectiveView(Gtk.Box):
         evaluation = answer.evaluation
         command = "ssh -G " + (f"-l {answer.user} " if answer.user else "") + answer.host
         self.command.set_label(command if answer.host else "ssh -G")
-        for widget in (self.chips, self.table):
+        for widget in (self.summary, self.chips, self.table):
             widget.set_visible(answer.answered)
         self.note.set_visible(not answer.answered)
         if not answer.answered:
@@ -496,7 +659,9 @@ class EffectiveView(Gtk.Box):
         }
         collected: Dict[str, list] = {}
         for item in evaluation.lines:
-            if item.state in (State.SHADOWED, State.FORCED):
+            # Only the block on screen's own lines: a Host * fallback that a
+            # host's block beats is how fallbacks work, not a problem.
+            if item.state in (State.SHADOWED, State.FORCED) and item.line in answer.block_lines:
                 name = keywords.get(option_at.get(item.line))
                 if name:
                     tally = unused if item.state is State.SHADOWED else overridden
@@ -531,6 +696,7 @@ class EffectiveView(Gtk.Box):
                 counts[ATTENTION] += bool(item.severity)
                 kind_changed = kind_changed or (item.kind, bool(item.severity)) != kind
         self._set_chip_labels(counts)
+        self._fill_summary(answer, values, defaults)
         self._add_items(added)
         # Refiltering makes every row anew: only when what is listed may
         # have changed. Otherwise only the texts of the rows change.

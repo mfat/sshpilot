@@ -141,3 +141,32 @@ def test_effective_values_flag_missing_and_readable_key_files(tmp_path):
     # OpenSSH's own default key list is tried only where the files exist.
     assert fields.value_file_problems("identityfile", [str(missing)], default=True) == []
     assert fields.value_file_problems("user", [str(missing)], default=False) == []
+
+
+def test_connection_summary_spells_out_what_the_configuration_sets(tmp_path):
+    home = str(tmp_path)
+    values = {
+        "hostname": ["10.20.4.15"], "user": ["postgres"], "port": ["5432"],
+        "proxyjump": ["admin@bastion:2222,edge"], "proxycommand": ["none"],
+        "identityfile": [f"{home}/.ssh/db_key", "~/.ssh/other key"],
+        "identitiesonly": ["yes"],
+    }
+    summary = fields.connection_summary(values, defaults=set(), home=home)
+    assert summary.hops == ["admin@bastion:2222", "edge"]
+    assert summary.keys == ["~/.ssh/db_key", '"~/.ssh/other key"']
+    assert summary.identities_only and not summary.port_default
+    assert summary.command == (
+        "ssh postgres@10.20.4.15 -p 5432 -J admin@bastion:2222,edge "
+        "-i ~/.ssh/db_key -i \"~/.ssh/other key\""
+    )
+
+
+def test_connection_summary_leaves_openssh_defaults_out():
+    values = {
+        "hostname": ["web1"], "user": ["me"], "port": ["22"], "proxyjump": ["none"],
+        "proxycommand": ["nc -X 5 -x proxy:1080 %h %p"], "identityfile": ["~/.ssh/id_rsa"],
+    }
+    summary = fields.connection_summary(values, defaults={"port", "identityfile"})
+    assert summary.port_default and summary.keys == [] and summary.hops == []
+    assert summary.proxy_command.startswith("nc ")
+    assert summary.command == "ssh me@web1 -o 'ProxyCommand=nc -X 5 -x proxy:1080 %h %p'"

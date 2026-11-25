@@ -238,6 +238,35 @@ def problem_count(count: int) -> str:
     return ngettext("{count} problem", "{count} problems", count).format(count=count)
 
 
+def asked_text(host: str) -> str:
+    """Under the command line Effective sums up: what OpenSSH was asked."""
+    return _("What OpenSSH resolves “{host}” to:").format(host=host)
+
+
+def alias_text(host: str) -> str:
+    """The name a connection is known by, when it differs from the address."""
+    return _("alias {host}").format(host=host)
+
+
+def route_start() -> str:
+    """The start of a route through jump hosts: this computer."""
+    # Translators: the first step of a route, e.g. "you → bastion → db1".
+    return _("you")
+
+
+def direct_route() -> str:
+    return _("Direct")
+
+
+def no_jump_host() -> str:
+    return _("No jump host or proxy command")
+
+
+def default_keys() -> str:
+    """No key file is set: OpenSSH tries its own (id_ed25519, id_rsa...)."""
+    return _("OpenSSH default keys")
+
+
 def and_more(first: str, more: int) -> str:
     """The first of several places, and how many others there are."""
     # Translators: e.g. "line 3 (Host web1) and 2 more".

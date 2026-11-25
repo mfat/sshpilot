@@ -648,6 +648,37 @@ def test_effective_marks_what_needs_attention_by_severity(gtk, tmp_path):
         _close(win)
 
 
+def test_effective_sums_up_the_connection(gtk, tmp_path):
+    """The header: the connection as one command line, and a tile each for
+    the address, user, port, route and key, flagged like their rows."""
+    win = _open_on(gtk, tmp_path, (
+        "Host db1\n    HostName 10.20.4.15\n    User postgres\n    Port 5432\n"
+        "    Port 6543\n    ProxyJump bastion\n\nHost *\n    User fallback\n"
+    ))
+    try:
+        _pick(win, "Host db1")
+        win.show_page("effective")
+        effective = win.effective
+        assert _pump(lambda: effective.headline.get_label()
+                     == "ssh postgres@10.20.4.15 -p 5432 -J bastion")
+        tiles = effective._tiles
+        assert tiles["host"].value.get_label() == "10.20.4.15"
+        assert tiles["host"].caption.get_label() == "alias db1"
+        assert tiles["user"].value.get_label() == "postgres"
+        assert tiles["port"].value.get_label() == "5432"
+        assert "bastion" in tiles["route"].value.get_label()
+        # db1's second Port line is not used: the port is flagged, not the
+        # user, whose Host * fallback losing to db1 is how fallbacks work.
+        assert "advcfg-attn-warning" in tiles["port"].box.get_css_classes()
+        assert not any(c.startswith("advcfg-attn") for c in tiles["user"].box.get_css_classes())
+        effective.select_filter("this")
+        effective.search.set_text("zzz")
+        tiles["port"].child.activate()                 # shown in the list, filters lifted
+        assert effective._filter_kind == "all" and not effective.search.get_text()
+    finally:
+        _close(win)
+
+
 def test_effective_column_titles_sit_over_their_columns(window):
     window.show_page("effective")
     effective = window.effective
