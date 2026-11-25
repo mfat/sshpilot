@@ -1914,6 +1914,7 @@ class PreferencesWindow(Adw.Window):
         )
         show_drag_handles_switch.connect('notify::active', self.on_sidebar_show_drag_handles_changed)
         row_details_group.add(show_drag_handles_switch)
+        self.show_drag_handles_switch = show_drag_handles_switch
         self._sidebar_mode_dependent_rows.append(show_drag_handles_switch)
         self._sidebar_mode_dependent_rows.append(show_group_icon_switch)
 
@@ -4820,8 +4821,26 @@ class PreferencesWindow(Adw.Window):
             logger.error("Failed to update group color display preference: %s", exc)
             return
 
+        if mode == 'grip':
+            self._ensure_drag_handles_shown()
+
         if not getattr(self, '_config_signal_id', None):
             self._trigger_sidebar_refresh()
+
+    def _ensure_drag_handles_shown(self) -> None:
+        """Colored Grips colours the drag handles, so choosing it turns
+        Display Drag Handles back on (through the switch when it is built,
+        so it shows the change and refreshes the sidebar)."""
+        try:
+            if bool(self.config.get_setting('ui.sidebar_show_drag_handles', True)):
+                return
+            switch = getattr(self, 'show_drag_handles_switch', None)
+            if switch is not None:
+                switch.set_active(True)
+            else:
+                self.config.set_setting('ui.sidebar_show_drag_handles', True)
+        except Exception as exc:
+            logger.error("Failed to turn drag handles on for Colored Grips: %s", exc)
 
     def on_group_color_child_rows_toggled(self, switch_row, _param):
         if getattr(self, '_child_rows_color_sync', False):
