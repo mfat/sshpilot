@@ -588,6 +588,9 @@ class RoutingCard:
             return
         self._shown = shown
         self.route.remove_all()
+        # Every stop as tall as the tallest, and no taller: a size group,
+        # not filling the line (the line grows when the window does).
+        self._heights = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.VERTICAL)
         if not stops:
             self.route.append(self._note(_("Type a host to check to see its route.")))
         else:
@@ -626,21 +629,21 @@ class RoutingCard:
             where.set_ellipsize(Pango.EllipsizeMode.END)
             where.set_max_width_chars(32)
             box.append(where)
-        # Every stop is as tall as the tallest, its text in the middle.
         box.set_valign(Gtk.Align.CENTER)
         if jump:
             # A jump host: its own block is a click away.
             button = Gtk.Button(child=box, tooltip_text=_("Show this host's block"))
             button.add_css_class("advcfg-hop")
-            button.set_valign(Gtk.Align.FILL)
+            button.set_valign(Gtk.Align.CENTER)
+            self._heights.add_widget(button)
             button.connect("clicked", lambda *_a, n=name: self.view.controller.show_host(
                 fields.hop_host(n)
             ))
             return button
-        stop = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        stop.set_valign(Gtk.Align.FILL)
-        box.set_vexpand(True)
-        stop.append(box)
+        stop = Gtk.CenterBox(orientation=Gtk.Orientation.VERTICAL)
+        stop.set_valign(Gtk.Align.CENTER)
+        stop.set_center_widget(box)
+        self._heights.add_widget(stop)
         stop.add_css_class("advcfg-hop")
         if index == count - 1 and index:
             stop.add_css_class("advcfg-hop-target")
