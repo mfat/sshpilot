@@ -616,7 +616,7 @@ def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
 
 def test_effective_marks_what_needs_attention_by_severity(gtk, tmp_path):
     """Bold: set by the block on screen. Red: a key file OpenSSH will not
-    use; amber: lines an earlier line beats; purple: lines Settings beat.
+    use, or lines an earlier line beats; purple: lines Settings beat.
     A Needs attention filter lists just those rows."""
     win = _open_on(gtk, tmp_path, (
         "Host web1\n    User deploy\n    IdentityFile ~/.ssh/nope_key\n    User other\n"
@@ -631,8 +631,8 @@ def test_effective_marks_what_needs_attention_by_severity(gtk, tmp_path):
         assert items["identityfile"].severity == "error"
         assert items["identityfile"].kind == "this"           # its line, though collected
         assert items["identityfile"].source.startswith("line 3")
-        assert items["user"].severity == "warning"
-        assert items["connecttimeout"].severity == "purple"
+        assert items["user"].severity == "ignored"
+        assert items["connecttimeout"].severity == "overridden"
         assert items["port"].severity == "" and items["port"].kind == "this"
         effective.select_filter("attention")
         assert _pump(lambda: sorted(i.key for i in effective.items())
@@ -643,7 +643,7 @@ def test_effective_marks_what_needs_attention_by_severity(gtk, tmp_path):
         assert "advcfg-explicit" in port.cell.key.get_css_classes()
         user = items["user"]
         assert _pump(lambda: user.cell is not None)
-        assert "advcfg-attn-warning" in user.cell.outer.get_css_classes()
+        assert "advcfg-attn-error" in user.cell.outer.get_css_classes()   # not used: red
     finally:
         _close(win)
 
@@ -669,7 +669,8 @@ def test_effective_sums_up_the_connection(gtk, tmp_path):
         assert "bastion" in tiles["route"].value.get_label()
         # db1's second Port line is not used: the port is flagged, not the
         # user, whose Host * fallback losing to db1 is how fallbacks work.
-        assert "advcfg-attn-warning" in tiles["port"].box.get_css_classes()
+        assert "advcfg-attn-error" in tiles["port"].box.get_css_classes()
+        assert tiles["port"].dot.get_visible() and not tiles["user"].dot.get_visible()
         assert not any(c.startswith("advcfg-attn") for c in tiles["user"].box.get_css_classes())
         effective.select_filter("this")
         effective.search.set_text("zzz")

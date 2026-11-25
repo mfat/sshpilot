@@ -29,7 +29,7 @@ _INCLUDE_LABEL = "Include"
 #: The pill style of each state (see ``advanced_config_window``).
 STATE_STYLES = {
     State.APPLIED: "success",
-    State.SHADOWED: "warning",
+    State.SHADOWED: "error",            # does not take effect: red, as in Effective
     State.ACCUMULATED: "accent",
     State.INACTIVE: "muted",
     State.FORCED: "purple",

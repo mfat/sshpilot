@@ -119,28 +119,25 @@ row:hover .advcfg-drag-handle { opacity: 0.9; }
 flowboxchild:hover .advcfg-tile { background-color: alpha(@accent_bg_color, 0.13); }
 flowboxchild { padding: 0; border-radius: 8px; }
 .advcfg-tile-icon, .advcfg-tile-title { color: @accent_color; }
-.advcfg-tile.advcfg-attn-error { background-color: alpha(@error_color, 0.08);
-  box-shadow: inset 3px 0 0 0 @error_color, inset 0 0 0 1px alpha(@error_color, 0.25); }
-.advcfg-tile.advcfg-attn-warning { background-color: alpha(@warning_color, 0.09);
-  box-shadow: inset 3px 0 0 0 @warning_color, inset 0 0 0 1px alpha(@warning_color, 0.25); }
-.advcfg-tile.advcfg-attn-purple { background-color: alpha(@purple_3, 0.09);
-  box-shadow: inset 3px 0 0 0 @purple_3, inset 0 0 0 1px alpha(@purple_3, 0.25); }
-.advcfg-tile.advcfg-attn-error, .advcfg-tile.advcfg-attn-warning, .advcfg-tile.advcfg-attn-purple { color: inherit; }
+.advcfg-tile.advcfg-attn-error { color: inherit; background-color: alpha(@error_color, 0.06);
+  box-shadow: inset 0 0 0 1px alpha(@error_color, 0.22); }
+.advcfg-tile.advcfg-attn-purple { color: inherit; background-color: alpha(@purple_3, 0.07);
+  box-shadow: inset 0 0 0 1px alpha(@purple_3, 0.22); }
+.advcfg-dot { min-width: 8px; min-height: 8px; border-radius: 999px; }
+.advcfg-dot.advcfg-attn-error { background-color: @error_color; }
+.advcfg-dot.advcfg-attn-purple { background-color: @purple_3; }
 .advcfg-row-flash { background-color: alpha(@accent_bg_color, 0.18); }
 .advcfg-effective-list { background: none; }
 .advcfg-effective-list > row { padding: 0; }
 .advcfg-cell { padding: 9px 14px; min-height: 30px; }
 .advcfg-explicit { font-weight: bold; }
 .advcfg-attn-error { color: @error_color; }
-.advcfg-attn-warning { color: @warning_color; }
 .advcfg-attn-purple { color: @purple_3; }
 .advcfg-cell.advcfg-attn-error {
   color: inherit; background-color: alpha(@error_color, 0.07); box-shadow: inset 3px 0 0 0 @error_color; }
-.advcfg-cell.advcfg-attn-warning {
-  color: inherit; background-color: alpha(@warning_color, 0.08); box-shadow: inset 3px 0 0 0 @warning_color; }
 .advcfg-cell.advcfg-attn-purple {
   color: inherit; background-color: alpha(@purple_3, 0.08); box-shadow: inset 3px 0 0 0 @purple_3; }
-.advcfg-chip-attention:not(:checked) { color: @warning_color; }
+.advcfg-chip-attention:not(:checked) { color: @error_color; }
 entry.warning { color: @warning_color; }
 """
 _css_installed = False

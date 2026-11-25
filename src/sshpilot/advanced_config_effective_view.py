@@ -40,12 +40,15 @@ ALL, THIS_BLOCK, OTHER, DEFAULT = "all", "this", "other", "default"
 #: The filter of the values that need attention (not a kind: any kind can).
 ATTENTION = "attention"
 
-#: How much a problem matters, most first, and the style it is shown in:
-#: a file OpenSSH will not use (red), lines of the configuration that go
-#: unused (amber, "Not used" in Structured), lines Settings override
-#: (purple, "Overridden" in Structured).
-ERROR, IGNORED, OVERRIDDEN = "error", "warning", "purple"
+#: How much a problem matters, most first: a file OpenSSH will not use,
+#: lines of the block that go unused ("Not used" in Structured), lines
+#: Settings override ("Overridden" in Structured).
+ERROR, IGNORED, OVERRIDDEN = "error", "ignored", "overridden"
 _SEVERITY = (ERROR, IGNORED, OVERRIDDEN)
+#: The colour each is shown in: red for what does not take effect as
+#: written, purple (as Structured's pill) for what Settings decide.
+_STYLE = {ERROR: "error", IGNORED: "error", OVERRIDDEN: "purple"}
+_STYLES = ("error", "purple")
 
 def value_problems(key: str, values: List[str], *, default: bool) -> List[str]:
     """What is wrong with the files an option's values name, worded."""
@@ -200,6 +203,9 @@ class _Tile:
         label.add_css_class("caption-heading")
         label.add_css_class("advcfg-tile-title")
         heading.append(label)
+        self.dot = Gtk.Box(valign=Gtk.Align.CENTER, visible=False)
+        self.dot.add_css_class("advcfg-dot")
+        heading.append(self.dot)
         self.box.append(heading)
         # Ellipsized, and asking for little width: a long value (a route,
         # a key path) must not widen every tile and push five off one line.
@@ -225,10 +231,13 @@ class _Tile:
         self.caption.set_tooltip_text(caption or None)
 
     def set_severity(self, severity: str) -> None:
-        for style in _SEVERITY:
-            (self.box.add_css_class if style == severity else self.box.remove_css_class)(
-                f"advcfg-attn-{style}"
-            )
+        """A tile with a problem gets a dot in its colour (and a faint tint)."""
+        shown = _STYLE.get(severity, "")
+        self.dot.set_visible(bool(shown))
+        for style in _STYLES:
+            on = style == shown
+            for widget in (self.box, self.dot):
+                (widget.add_css_class if on else widget.remove_css_class)(f"advcfg-attn-{style}")
 
 
 class _EffectiveCell:
@@ -304,12 +313,13 @@ class _EffectiveCell:
         # it without colour too.
         problems, severity = item.problems, item.severity
         self.warning.set_opacity(1 if problems else 0)
-        self.warning.set_from_icon_name({
-            ERROR: "dialog-error-symbolic",
-            OVERRIDDEN: "settings-symbolic",       # Settings decide it
-        }.get(severity, "dialog-warning-symbolic"))
-        for style in _SEVERITY:
-            on = style == severity
+        self.warning.set_from_icon_name(
+            "settings-symbolic" if severity == OVERRIDDEN      # Settings decide it
+            else "dialog-error-symbolic"
+        )
+        shown = _STYLE.get(severity, "")
+        for style in _STYLES:
+            on = style == shown
             for widget in (self.warning, self.key):
                 (widget.add_css_class if on else widget.remove_css_class)(f"advcfg-attn-{style}")
             (self.outer.add_css_class if on else self.outer.remove_css_class)(
@@ -320,7 +330,7 @@ class _EffectiveCell:
         text = problems[0] if len(problems) == 1 else (
             messages.problem_count(len(problems)) if problems else ""
         )
-        set_pill(self.problem, text, severity or "warning", "\n".join(problems))
+        set_pill(self.problem, text, shown or "error", "\n".join(problems))
         self.label.set_label(item.source)
         self.source.set_tooltip_text(item.tooltip or None)
         reachable = bool(item.line) or (
