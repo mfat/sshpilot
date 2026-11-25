@@ -101,10 +101,11 @@ _CSS = """
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
 .advcfg-context { padding: 12px 16px 0 16px; }
 .advcfg-title-card { padding: 0; }
+/* The card is libadwaita's .osd (dark, partly see-through, light text,
+   white accent); dimmer while the block is off. */
 .advcfg-card-band { padding: 12px 12px 12px 18px; border-radius: 12px;
-  background-color: @accent_bg_color; color: @accent_fg_color;
   box-shadow: 0 1px 3px 1px alpha(black, 0.07), 0 2px 6px 2px alpha(black, 0.03); }
-.advcfg-card-band.advcfg-band-off { background-color: @dark_1; color: white; }
+.advcfg-card-band.advcfg-band-off > * { opacity: 0.55; }
 .advcfg-card-band .dim-label { opacity: 0.8; }
 .advcfg-card-band button.flat:hover { background-color: alpha(currentColor, 0.15); }
 .advcfg-card-band switch { background-color: alpha(white, 0.3); }

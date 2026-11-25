@@ -665,11 +665,12 @@ class StructuredView(Gtk.Box):
         self.block_group.add_css_class("advcfg-title-card")
         # Shown with a block (see show): nothing to head before there is one.
         self.block_group.set_visible(False)
-        # A card in the accent colour, whole (grey while the block is off),
+        # A card in libadwaita's OSD style, whole (dimmed while the block is off),
         # holds the name and the actions; the note, notices and tiles sit
         # under it on the page.
         line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         line.add_css_class("advcfg-card-band")
+        line.add_css_class("osd")
         self.band = line
         # The name, and under it what kind of block and its file.
         names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
