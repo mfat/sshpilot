@@ -112,8 +112,6 @@ _CSS = """
 .advcfg-card-band switch slider { background-color: white; }
 .advcfg-card-body { padding: 10px 4px 0 4px; }
 .advcfg-card-title { font-size: 1.3em; font-weight: bold; }
-.advcfg-block-list > row.advcfg-drop-above { box-shadow: inset 0 2px 0 0 @accent_bg_color; }
-.advcfg-block-list > row.advcfg-drop-below { box-shadow: inset 0 -2px 0 0 @accent_bg_color; }
 .advcfg-block-list:drop(active) { box-shadow: none; }
 .advcfg-block-list > row.advcfg-file-row { min-height: 0; }
 .advcfg-flash { outline: 2px solid @accent_color; outline-offset: 2px; }

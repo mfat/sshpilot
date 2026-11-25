@@ -973,10 +973,12 @@ def test_a_block_is_dragged_in_the_sidebar_not_as_text(window):
     top = bounds.get_y() + 3
     sidebar._dragging = star.uid
     assert sidebar._on_drag_motion(None, 0, top)
-    assert row.has_css_class("advcfg-drop-above")          # where it would land
+    gap = sidebar._placeholder                              # where it would land:
+    assert gap.get_parent() is sidebar.list                  # a gap opens above web
+    assert gap.get_index() == row.get_index() - 1
     assert sidebar._on_drop(None, DragItem(star.uid), 0, top)
     assert [b.patterns for b in window.draft.blocks] == ["", "*", "web1 web2"]
-    assert not row.has_css_class("advcfg-drop-above")
+    assert gap.get_parent() is None
     # Above the global options: refused, and said why.
     found, bounds = sidebar._rows[glob.uid].compute_bounds(sidebar.list)
     assert not sidebar._on_drop(None, DragItem(star.uid), 0, bounds.get_y() + 3)

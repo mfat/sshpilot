@@ -23,10 +23,10 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 from .advanced_config_block_row import BlockRow  # noqa: E402
-from .advanced_config_widgets import DragItem, set_class  # noqa: E402
+from .advanced_config_widgets import DragItem  # noqa: E402
 from . import advanced_config_fields as fields  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
 from .ssh_config_blocks import GLOBAL, HOST, MATCH, Block  # noqa: E402
@@ -87,6 +87,11 @@ class BlockSidebar(Gtk.Box):
         self._current_file = ""
         #: The row a drop would land beside, and on which side.
         self._drop_row: Optional[Gtk.ListBoxRow] = None
+        self._drop_before = False
+        #: The gap that opens where a dragged block would land: the
+        #: connection list's own placeholder row (an accent DragIndicator).
+        self._placeholder: Optional[Gtk.ListBoxRow] = None
+        self._clear_source = 0
         self._dragging: Optional[int] = None
 
         self.target_entry = Gtk.SearchEntry()
@@ -111,7 +116,7 @@ class BlockSidebar(Gtk.Box):
         self.list.set_placeholder(nothing)
         target = Gtk.DropTarget.new(DragItem, Gdk.DragAction.MOVE)
         target.connect("motion", self._on_drag_motion)
-        target.connect("leave", lambda *_a: self._mark_drop(None, False))
+        target.connect("leave", lambda *_a: self._clear_drop_later())
         target.connect("drop", self._on_drop)
         self.list.add_controller(target)
         scroller = Gtk.ScrolledWindow()
@@ -245,7 +250,7 @@ class BlockSidebar(Gtk.Box):
         return self.target_entry.get_text().casefold().split()
 
     def _row_shown(self, row) -> bool:
-        if isinstance(row, FileRow):
+        if isinstance(row, FileRow) or getattr(row, "drop_placeholder", False):
             return True
         words = self.search_words()
         if not words:
@@ -272,13 +277,16 @@ class BlockSidebar(Gtk.Box):
 
     def _end_drag(self) -> None:
         self._dragging = None
-        self._mark_drop(None, False)
+        self._clear_drop_later()
 
     def _drop_place(self, y: float):
         """``(row, before)`` a drop at *y* would land beside, or None: a
         file's heading, or below the last block of another file, is no
         place for a block of this one."""
         row = self.list.get_row_at_y(int(y))
+        if row is not None and row is self._placeholder:
+            # Over the gap itself: it stays where it is (no jitter).
+            return (self._drop_row, self._drop_before) if self._drop_row is not None else None
         if not isinstance(row, BlockRow):
             return None
         found, bounds = row.compute_bounds(self.list)
@@ -293,21 +301,68 @@ class BlockSidebar(Gtk.Box):
         self._mark_drop(*place)
         return Gdk.DragAction.MOVE
 
+    def _placeholder_row(self) -> Gtk.ListBoxRow:
+        """The gap row, as the connection list makes it (sidebar.py)."""
+        if self._placeholder is None:
+            from .sidebar import _DROP_BAR_HEIGHT, DragIndicator
+
+            bar = DragIndicator()
+            bar.set_visible(True)
+            row = Gtk.ListBoxRow(selectable=False, activatable=False, focusable=False)
+            row.set_child(bar)
+            row.add_css_class("drop-placeholder-row")
+            row.set_size_request(-1, _DROP_BAR_HEIGHT + 2)
+            row.drop_placeholder = True
+            self._placeholder = row
+        return self._placeholder
+
     def _mark_drop(self, row, before: bool) -> None:
-        previous = self._drop_row
-        if previous is not None and previous is not row:
-            previous.remove_css_class("advcfg-drop-above")
-            previous.remove_css_class("advcfg-drop-below")
-        self._drop_row = row
-        if row is not None:
-            set_class(row, "advcfg-drop-above", before)
-            set_class(row, "advcfg-drop-below", not before)
+        """Open the gap beside *row* (None: close it)."""
+        self._cancel_clear()
+        placeholder = self._placeholder_row()
+        if row is None:
+            self._drop_row = None
+            if placeholder.get_parent() is not None:
+                self.list.remove(placeholder)
+            return
+        if placeholder.get_parent() is not None:
+            if self._drop_row is row and self._drop_before == before:
+                return                      # the same gap: nothing to move
+            # Out first, so the row's index is its place without the gap.
+            self.list.remove(placeholder)
+        self._drop_row, self._drop_before = row, before
+        index = row.get_index()
+        if index >= 0:
+            self.list.insert(placeholder, index if before else index + 1)
+
+    def _clear_drop_later(self) -> None:
+        """Close the gap once GTK has finished the crossing it is in: "leave"
+        comes in the middle of it, with the pointer perhaps on the gap, and
+        taking that row out then left GTK walking a detached widget (the
+        connection list's #1334)."""
+        if not self._clear_source:
+            self._clear_source = GLib.idle_add(self._clear_drop_now)
+
+    def _clear_drop_now(self) -> bool:
+        self._clear_source = 0
+        self._mark_drop(None, False)
+        return GLib.SOURCE_REMOVE
+
+    def _cancel_clear(self) -> None:
+        if self._clear_source:
+            GLib.source_remove(self._clear_source)
+            self._clear_source = 0
 
     def _on_drop(self, _target, value, _x, y) -> bool:
-        self._mark_drop(None, False)
         uid = value.uid if isinstance(value, DragItem) else None
-        place = self._drop_place(y)
-        if uid is None or place is None or place[0]._uid == uid:
+        # Where the gap is shown is where the block lands.
+        place = (self._drop_row, self._drop_before) if self._drop_row is not None \
+            else self._drop_place(y)
+        # Out now, as the connection list does at a drop: the list is put in
+        # order by index straight after, and the gap would offset it. (Only
+        # "leave" must wait: see _clear_drop_later.)
+        self._mark_drop(None, False)
+        if uid is None or place is None or place[0] is None or place[0]._uid == uid:
             return False
         row, before = place
         return bool(self.controller.drop_block(uid, row._uid, before))
