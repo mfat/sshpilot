@@ -18,10 +18,17 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, Graphene, Gtk, Pango  # noqa: E402
 
 from . import advanced_config_fields as fields  # noqa: E402
-from .advanced_config_widgets import LineDragItem, pill, set_class, set_pill  # noqa: E402
+from .advanced_config_widgets import (  # noqa: E402
+    LineDragItem,
+    gap_row,
+    lift_row,
+    pill,
+    set_class,
+    set_pill,
+)
 from .api.models.connections import SshConfigDraftLineState as State  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
 from .connection_dialog_auth import canonical_keyword  # noqa: E402
@@ -339,7 +346,7 @@ class LineRow:
         self.handle.set_tooltip_text(_("Drag to reorder"))
         self.handle.set_cursor_from_name("grab")
         source = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
-        source.connect("prepare", lambda *_a: Gdk.ContentProvider.new_for_value(LineDragItem(self.uid)))
+        source.connect("prepare", self._on_drag_prepare)
         source.connect("drag-begin", self._on_drag_begin)
         source.connect("drag-end", lambda *_a: view.line_drag_ended())
         source.connect("drag-cancel", lambda *_a: (view.line_drag_ended(), False)[1])
@@ -440,15 +447,20 @@ class LineRow:
         self.up.set_sensitive(not first)
         self.down.set_sensitive(not last)
 
-    def _on_drag_begin(self, source, drag) -> None:
-        """The line rides the pointer as the connection list's chip: an
-        icon and the line's text, not a picture of the whole row."""
-        from .dnd_payload import set_internal_drag_icon
+    def _on_drag_prepare(self, _source, x, y):
+        # Where the row was grabbed (the grip's point, in the row): the
+        # carried copy is held there.
+        found, point = self.handle.compute_point(self.row, Graphene.Point().init(x, y))
+        self._grab = (point.x, point.y) if found else (x, y)
+        return Gdk.ContentProvider.new_for_value(LineDragItem(self.uid))
 
-        self.view.line_drag_began(self.uid)
-        text = " ".join(part for part in (self.key.get_text(), self.value.get_text()) if part)
-        set_internal_drag_icon(source, self.row, drag=drag,
-                               icon_name="preferences-system-symbolic", label=text or _("Option"))
+    def _on_drag_begin(self, source, drag) -> None:
+        """GNOME's way (Settings, Nautilus): a solid copy of the row is
+        carried where it was grabbed, and the row itself is hidden while
+        the list makes room for it where it would land."""
+        lift_row(source, drag, self.row, *getattr(self, "_grab", (0, 0)))
+        self.view.line_drag_began(self.uid, self.row.get_height())
+        self.row.set_visible(False)
 
     def _on_changed(self, entry, field: str) -> None:
         if self.view.syncing.on:
@@ -766,24 +778,22 @@ class StructuredView(Gtk.Box):
         if row is not None:
             (row.up if delta < 0 else row.down).grab_focus()
 
-    def line_drag_began(self, uid: int) -> None:
+    def line_drag_began(self, uid: int, height: int = 0) -> None:
         self._line_drag = uid
+        self._open_gap(None)                  # an earlier gap, still waiting to close
+        # Room of the carried row's height (Nautilus's placeholder row).
+        self._gap = gap_row(height)
 
     def line_drag_ended(self) -> None:
-        self._line_drag = None
+        carried, self._line_drag = self._line_drag, None
+        row = self._rows.get(carried)
+        if row is not None:
+            row.row.set_visible(True)
         self._close_gap_later()
 
     def _gap_row(self) -> Gtk.ListBoxRow:
         if self._gap is None:
-            from .sidebar import _DROP_BAR_HEIGHT, DragIndicator
-
-            bar = DragIndicator()
-            bar.set_visible(True)
-            gap = Gtk.ListBoxRow(selectable=False, activatable=False, focusable=False)
-            gap.set_child(bar)
-            gap.add_css_class("drop-placeholder-row")
-            gap.set_size_request(-1, _DROP_BAR_HEIGHT + 2)
-            self._gap = gap
+            self._gap = gap_row(0)
         return self._gap
 
     def _line_place(self, y: float):

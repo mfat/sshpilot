@@ -143,6 +143,12 @@ flowboxchild { padding: 0; border-radius: 8px; }
 .advcfg-tile.advcfg-attn-purple { color: inherit; background-color: alpha(@purple_3, 0.07);
   box-shadow: inset 0 0 0 1px alpha(@purple_3, 0.22); }
 .advcfg-dot { min-width: 8px; min-height: 8px; border-radius: 999px; }
+/* Drag and drop of lines and blocks, as GNOME's lists do it: the carried
+   row's copy, and the room opened where it would land. */
+.advcfg-lifted-row { background-color: @card_bg_color; border-radius: 6px;
+  box-shadow: 0 2px 8px alpha(black, 0.25); }
+.advcfg-lifted-row > row { padding: 0; }
+row.advcfg-drop-gap { background: none; min-height: 0; padding: 0; }
 button.advcfg-fix { min-height: 22px; padding: 0 10px; font-size: 0.85em; border-radius: 999px; }
 .advcfg-dot.advcfg-attn-error { background-color: @error_color; }
 .advcfg-dot.advcfg-attn-purple { background-color: @purple_3; }

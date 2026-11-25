@@ -26,7 +26,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 from .advanced_config_block_row import BlockRow  # noqa: E402
-from .advanced_config_widgets import DragItem  # noqa: E402
+from .advanced_config_widgets import DragItem, gap_row, lift_row  # noqa: E402
 from . import advanced_config_fields as fields  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
 from .ssh_config_blocks import GLOBAL, HOST, MATCH, Block  # noqa: E402
@@ -88,8 +88,7 @@ class BlockSidebar(Gtk.Box):
         #: The row a drop would land beside, and on which side.
         self._drop_row: Optional[Gtk.ListBoxRow] = None
         self._drop_before = False
-        #: The gap that opens where a dragged block would land: the
-        #: connection list's own placeholder row (an accent DragIndicator).
+        #: The room that opens where a dragged block would land.
         self._placeholder: Optional[Gtk.ListBoxRow] = None
         self._clear_source = 0
         self._dragging: Optional[int] = None
@@ -263,24 +262,27 @@ class BlockSidebar(Gtk.Box):
 
     # -- dragging a block ----------------------------------------------------
 
-    def _on_drag_prepare(self, _source, _x, _y, row):
+    def _on_drag_prepare(self, _source, x, y, row):
         if not row._movable or self.controller.raw_pending:
             return None
+        row._grab = (x, y)                  # the carried copy is held there
         return Gdk.ContentProvider.new_for_value(DragItem(row._uid))
 
     def _on_drag_begin(self, source, drag, row) -> None:
-        """The block rides the pointer as the connection list's chip: its
-        icon and its name, not a picture of the whole row."""
-        from .advanced_config_block_row import ICONS
-        from .dnd_payload import set_internal_drag_icon
-
+        """GNOME's way (Settings, Nautilus): a solid copy of the row is
+        carried where it was grabbed; the row itself is hidden while the
+        list makes room for it where it would land."""
+        lift_row(source, drag, row, *getattr(row, "_grab", (0, 0)))
         self._dragging = row._uid
-        set_internal_drag_icon(source, row, drag=drag,
-                               icon_name=ICONS.get(getattr(row, "category", ""), "computer-symbolic"),
-                               label=row.title.get_label())
+        self._mark_drop(None, False)          # an earlier gap, still waiting to close
+        self._placeholder = gap_row(row.get_height())
+        row.set_visible(False)
 
     def _end_drag(self) -> None:
-        self._dragging = None
+        carried, self._dragging = self._dragging, None
+        row = self._rows.get(carried)
+        if row is not None:
+            row.set_visible(True)
         self._clear_drop_later()
 
     def _drop_place(self, y: float):
@@ -306,18 +308,10 @@ class BlockSidebar(Gtk.Box):
         return Gdk.DragAction.MOVE
 
     def _placeholder_row(self) -> Gtk.ListBoxRow:
-        """The gap row, as the connection list makes it (sidebar.py)."""
+        """The room opened where a carried block would land (its height,
+        made at drag-begin; see gap_row)."""
         if self._placeholder is None:
-            from .sidebar import _DROP_BAR_HEIGHT, DragIndicator
-
-            bar = DragIndicator()
-            bar.set_visible(True)
-            row = Gtk.ListBoxRow(selectable=False, activatable=False, focusable=False)
-            row.set_child(bar)
-            row.add_css_class("drop-placeholder-row")
-            row.set_size_request(-1, _DROP_BAR_HEIGHT + 2)
-            row.drop_placeholder = True
-            self._placeholder = row
+            self._placeholder = gap_row(0)
         return self._placeholder
 
     def _mark_drop(self, row, before: bool) -> None:
