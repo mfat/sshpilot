@@ -107,6 +107,10 @@ _CSS = """
   box-shadow: 0 1px 3px 1px alpha(black, 0.07), 0 2px 6px 2px alpha(black, 0.03); }
 .advcfg-card-band.advcfg-band-off > * { opacity: 0.55; }
 .advcfg-card-band .dim-label { opacity: 0.8; }
+.advcfg-card-band .advcfg-kind-connection { color: @blue_1; opacity: 1; }
+.advcfg-card-band .advcfg-kind-pattern { color: @green_1; opacity: 1; }
+.advcfg-card-band .advcfg-kind-match_rule { color: @purple_1; opacity: 1; }
+.advcfg-card-band .advcfg-kind-all_hosts { color: alpha(white, 0.75); opacity: 1; }
 .advcfg-card-band button.flat:hover { background-color: alpha(currentColor, 0.15); }
 .advcfg-card-band switch { background-color: alpha(white, 0.3); }
 .advcfg-card-band switch:checked { background-color: alpha(white, 0.45); }

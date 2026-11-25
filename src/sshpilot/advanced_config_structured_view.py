@@ -600,6 +600,11 @@ def _boxed_list() -> Gtk.ListBox:
     return listbox
 
 
+#: The kinds of block (ssh_config_blocks.block_category) the title card's
+#: type line is coloured for.
+_KIND_CLASSES = ("connection", "pattern", "match_rule", "all_hosts")
+
+
 def _card_tile(icon: str, title: str) -> tuple:
     """A tile of the title card: ``(tile, content box, severity dot)``."""
     tile = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -962,10 +967,14 @@ class StructuredView(Gtk.Box):
         if self.head_title.get_label() != title:
             self.head_title.set_label(title)
             self.head_title.set_tooltip_text(messages.block_title(block.kind, block.patterns))
+        category = block_category(block.kind, block.patterns)
         kind = messages.block_category_label(
-            block_category(block.kind, block.patterns), len(block.patterns.split()) or 1,
-            block.kind,
+            category, len(block.patterns.split()) or 1, block.kind,
         )
+        # The type line takes a pale colour per kind of block (the card is
+        # dark in both themes, so libadwaita's fixed light shades read on it).
+        for name in _KIND_CLASSES:
+            set_class(self.head_caption, f"advcfg-kind-{name}", name == category)
         if self.head_caption.get_label() != kind:
             self.head_caption.set_label(kind)
         if self.head_file.get_label() != self._file_name:
