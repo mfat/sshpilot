@@ -149,6 +149,8 @@ def get_default_config() -> Dict[str, Any]:
             # Set by "Don't Show Again" on the Advanced Configuration
             # editor's caution banner (advanced_config_window.py).
             'advanced_config_caution_dismissed': False,
+            # Set once the Colored Grips hint is answered (sidebar_grip_hint.py).
+            'colored_grips_hint_dismissed': False,
             # What happens to the sidebar when a session opens:
             # 'none' | 'hide'. ('minimize' / icon strip is retired; migration
             # rewrites any persisted 'minimize' to 'none'.)

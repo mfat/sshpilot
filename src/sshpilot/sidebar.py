@@ -1048,6 +1048,8 @@ def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     _clear_grip_color(row)
     row._grip_mode = False  # type: ignore[attr-defined]
     row._grip_rgba = None  # type: ignore[attr-defined]
+    # The colour shown, whatever the mode (sidebar_grip_hint.py looks for it).
+    row.group_rgba = rgba  # type: ignore[attr-defined]
     row.color_badge.set_visible(False)
     row.color_dot.set_visible(False)
 

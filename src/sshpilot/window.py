@@ -2485,6 +2485,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # The first start with the sidebar hidden explains the hover above.
         from . import sidebar_peek_hint
         sidebar_peek_hint.schedule(self)
+        # Upgraders still on Dots are offered the Colored Grips style.
+        from . import sidebar_grip_hint
+        sidebar_grip_hint.schedule(self)
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
 
