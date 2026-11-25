@@ -272,9 +272,12 @@ def _install_rail_css() -> None:
 
 
 def _rail_items():
+    """(view, accessible name, tooltip, icon) of each rail button."""
     return (
-        (CONNECTIONS, _("Connections"), "network-server-symbolic"),
-        (SECTIONS, _("Configuration"), "document-properties-symbolic"),
+        (CONNECTIONS, _("Connections"), _("Connections and groups"),
+         "network-server-symbolic"),
+        (SECTIONS, _("Configuration"), _("Advanced SSH configuration"),
+         "document-properties-symbolic"),
     )
 
 
@@ -285,7 +288,7 @@ def _sync_rail(window) -> None:
         return
     shown = current_view(window)
     unsaved = bool(getattr(window, "_config_unsaved", False))
-    for name, title, _icon in _rail_items():
+    for name, _title, tooltip, _icon in _rail_items():
         button = buttons[name]
         if name == shown:
             button.add_css_class("current")
@@ -295,7 +298,7 @@ def _sync_rail(window) -> None:
             # The dot Advanced Configuration's own title carries.
             window._view_rail_unsaved_dot.set_visible(unsaved)
             button.set_tooltip_text(
-                _("{view} (unsaved changes)").format(view=title) if unsaved else title
+                _("{view} (unsaved changes)").format(view=tooltip) if unsaved else tooltip
             )
 
 
@@ -322,12 +325,12 @@ def build_view_rail(window) -> Gtk.Widget:
     _install_rail_css()
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     buttons = {}
-    for name, title, icon in _rail_items():
+    for name, title, tooltip, icon in _rail_items():
         button = Gtk.Button()
         button.add_css_class("flat")
         button.set_can_focus(False)
         icon_utils.set_button_icon(button, icon)
-        button.set_tooltip_text(title)
+        button.set_tooltip_text(tooltip)
         button.update_property([Gtk.AccessibleProperty.LABEL], [title])
         button.connect("clicked", lambda _b, n=name: choose_view(window, n))
         buttons[name] = button
