@@ -468,9 +468,11 @@ class LineRow:
         for entry in (self.key, self.value):
             set_class(entry, "error", error is not None)
             set_class(entry, "advcfg-unused", struck)
-            # GtkText ignores CSS text-decoration: a Pango attribute it is.
-            if bool(entry.get_attributes()) != struck:
-                entry.set_attributes(_struck() if struck else None)
+            # GtkText ignores CSS text-decoration: a Pango attribute it is
+            # (cleared with an empty list: the binding refuses None).
+            if getattr(entry, "_struck", False) != struck:
+                entry._struck = struck
+                entry.set_attributes(_struck() if struck else Pango.AttrList())
         option = self.view.controller.editor.find_option(self.uid)[1]
         keyword = canonical_keyword(option.keyword) if option else ""
         # Empty: what the host gets from elsewhere, greyed in the field.
