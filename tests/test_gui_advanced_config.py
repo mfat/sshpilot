@@ -425,6 +425,28 @@ def test_a_new_match_exec_runs_only_after_consent(window, tmp_path):
     assert not window.structured.error_row.get_visible()
 
 
+def test_the_note_is_saved_cancelled_or_removed_and_the_title_follows(window):
+    structured = window.structured
+    web = window.draft.blocks[1]
+    assert structured.head_title.get_label() == "Host web1 web2"
+    structured.note_popover.popup()
+    structured.note_row.set_text("typed, then cancelled")
+    structured.note_popover.popdown()                    # Cancel: nothing written
+    assert web.note == "" and not structured.note_label.get_visible()
+    structured.note_popover.popup()
+    assert structured.note_row.get_text() == ""          # what was cancelled is gone
+    structured.note_row.set_text("Front ends")
+    structured.note_row.emit("activate")                 # Enter saves
+    assert window.draft.blocks[1].note == "Front ends"
+    assert structured.note_label.get_label() == "# Front ends"
+    structured.note_popover.popup()
+    assert structured.remove_note_button.get_visible()
+    structured.remove_note_button.emit("clicked")
+    assert window.draft.blocks[1].note == "" and not structured.note_label.get_visible()
+    structured.patterns_row.set_text("web1 web3")        # the title follows the typing
+    assert structured.head_title.get_label() == "Host web1 web3"
+
+
 def test_disabling_a_block_writes_comments_and_openssh_skips_it(window):
     web = window.draft.blocks[1]
     window.structured.enabled_row.set_active(False)          # the switch

@@ -22,7 +22,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_widgets import pill, set_class, set_pill  # noqa: E402
@@ -610,13 +610,23 @@ class StructuredView(Gtk.Box):
         self.stack.add_named(self.page, "block")
 
         # -- the block itself ---------------------------------------------------
-        # Above the lines: the note as the comment it is, on/off and the
-        # actions; what the block applies to, or what is wrong with it,
-        # only when there is something to say. Its Host or Match line is
-        # the first row of the lines, a field like the others.
+        # Above the lines: the block's name (read only: it follows the Host
+        # or Match row as it is typed), Note, on/off and the actions; under
+        # it the note as the comment it is, and what the block applies to
+        # or what is wrong with it, only when there is something to say.
         self.block_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.block_group.add_css_class("advcfg-block-head")
         line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.head_title = Gtk.Label(xalign=0, hexpand=True)
+        self.head_title.add_css_class("heading")
+        self.head_title.set_ellipsize(Pango.EllipsizeMode.END)
+        line.append(self.head_title)
+        self.note_button = Gtk.MenuButton(
+            icon_name="document-edit-symbolic", popover=self._build_note_popover(),
+        )
+        self.note_button.add_css_class("flat")
+        self.note_button.set_valign(Gtk.Align.CENTER)
+        line.append(self.note_button)
         self.enabled_row = Gtk.Switch(valign=Gtk.Align.CENTER)
         self.enabled_row.set_tooltip_text(
             _("On: OpenSSH reads this block. Off: it is written as comments, which OpenSSH ignores.")
@@ -638,35 +648,10 @@ class StructuredView(Gtk.Box):
         line.append(self.delete_button)
         self.block_group.append(line)
 
-        # The note: "+ Add note" until there is one, then a "# ..." line.
-        self.note_stack = Gtk.Stack(hhomogeneous=False, vhomogeneous=False, hexpand=True)
-        self.add_note_button = Gtk.Button(label=_("Add Note"), halign=Gtk.Align.START)
-        self.add_note_button.add_css_class("flat")
-        self.add_note_button.add_css_class("advcfg-add-note")
-        self.add_note_button.set_child(Adw.ButtonContent(
-            icon_name="list-add-symbolic", label=_("Add Note"),
-        ))
-        self.add_note_button.connect("clicked", lambda *_a: self._edit_note())
-        self.note_stack.add_named(self.add_note_button, "add")
-        note_line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        hash_mark = Gtk.Label(label="#")
-        hash_mark.add_css_class("monospace")
-        hash_mark.add_css_class("advcfg-comment")
-        note_line.append(hash_mark)
-        self.note_row = Gtk.Entry(hexpand=True, placeholder_text=_("A comment above the block"))
-        self.note_row.add_css_class("advcfg-head-entry")
-        self.note_row.add_css_class("advcfg-comment")
-        self.note_row.update_property([Gtk.AccessibleProperty.LABEL], [_("Note")])
-        self.note_row.connect("changed", self._on_note_changed)
-        focus = Gtk.EventControllerFocus()
-        # Left empty: back to Add Note (once the focus has moved on).
-        focus.connect("leave", lambda *_a: GLib.idle_add(
-            lambda: (self._sync_note_shown(), False)[1]
-        ))
-        self.note_row.add_controller(focus)
-        note_line.append(self.note_row)
-        self.note_stack.add_named(note_line, "note")
-        line.prepend(self.note_stack)
+        # The note, read only, as the comment it is in the file.
+        self.note_label = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        self.note_label.add_css_class("advcfg-comment")
+        self.block_group.append(self.note_label)
 
         # Off: one line that says so (the lines below are dimmed with it).
         self.disabled_label = Gtk.Label(
@@ -819,11 +804,13 @@ class StructuredView(Gtk.Box):
             [Gtk.AccessibleProperty.LABEL],
             [_("Host patterns") if block.kind == HOST else _("Match conditions")],
         )
-        self.note_stack.set_visible(not is_global)
+        title = messages.block_title(block.kind, block.patterns)
+        if self.head_title.get_label() != title:
+            self.head_title.set_label(title)
+        self.note_button.set_visible(not is_global)
         self.duplicate_button.set_visible(not is_global)
         self.syncing.set_text(self.patterns_row, block.patterns)
-        self.syncing.set_text(self.note_row, block.note)
-        self._sync_note_shown()
+        self._show_note(block.note if not is_global else "")
         if self.enabled_row.get_active() == block.disabled:
             self.syncing.on = True
             try:
@@ -917,23 +904,65 @@ class StructuredView(Gtk.Box):
     def _on_patterns_changed(self, row) -> None:
         if not self.syncing.on and self.uid is not None:
             self.controller.patterns_typed(self.uid, row.get_text())
+            # The name above follows the typing (the view is not shown
+            # again for an edit of its own).
+            self.head_title.set_label(messages.block_title(self.kind, row.get_text()))
 
-    def _on_note_changed(self, row) -> None:
-        if not self.syncing.on and self.uid is not None:
-            self.controller.note_typed(self.uid, row.get_text())
+    # -- the note -------------------------------------------------------------
 
-    def _edit_note(self) -> None:
-        self.note_stack.set_visible_child_name("note")
+    def _build_note_popover(self) -> Gtk.Popover:
+        """Write the note, then Save it; Cancel leaves it as it was, and
+        Remove takes it away."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        for side in ("top", "bottom", "start", "end"):
+            getattr(box, f"set_margin_{side}")(6)
+        self.note_row = Gtk.Entry(width_chars=36, placeholder_text=_("A comment above the block"))
+        self.note_row.update_property([Gtk.AccessibleProperty.LABEL], [_("Note")])
+        self.note_row.connect("activate", lambda *_a: self._save_note())
+        box.append(self.note_row)
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.remove_note_button = Gtk.Button(label=_("Remove"))
+        self.remove_note_button.add_css_class("destructive-action")
+        self.remove_note_button.connect("clicked", lambda *_a: self._save_note(""))
+        buttons.append(self.remove_note_button)
+        spacer = Gtk.Box(hexpand=True)
+        buttons.append(spacer)
+        cancel = Gtk.Button(label=_("Cancel"))
+        cancel.connect("clicked", lambda *_a: self.note_popover.popdown())
+        buttons.append(cancel)
+        save = Gtk.Button(label=_("Save"))
+        save.add_css_class("suggested-action")
+        save.connect("clicked", lambda *_a: self._save_note())
+        buttons.append(save)
+        box.append(buttons)
+        self.note_popover = Gtk.Popover(child=box)
+        # Opened: the note as it is (what was typed and cancelled is gone).
+        self.note_popover.connect("show", lambda *_a: self._open_note())
+        return self.note_popover
+
+    def _note(self) -> str:
+        block = self.controller.editor.find_block(self.uid) if self.uid is not None else None
+        return block.note if block is not None else ""
+
+    def _open_note(self) -> None:
+        note = self._note()
+        self.note_row.set_text(note)
+        self.remove_note_button.set_visible(bool(note))
         self.note_row.grab_focus()
 
-    def _sync_note_shown(self) -> None:
-        """The note line while there is a note or it is being written; the
-        Add Note button otherwise."""
-        root = self.note_row.get_root()
-        focus = root.get_focus() if root is not None else None
-        writing = focus is not None and (focus is self.note_row or focus.is_ancestor(self.note_row))
-        has_note = bool(self.note_row.get_text().strip())
-        self.note_stack.set_visible_child_name("note" if has_note or writing else "add")
+    def _save_note(self, text: Optional[str] = None) -> None:
+        text = self.note_row.get_text() if text is None else text
+        self.note_popover.popdown()
+        if self.uid is not None and text.strip() != self._note():
+            self.controller.note_typed(self.uid, text.strip())
+            self._show_note(self._note())
+
+    def _show_note(self, note: str) -> None:
+        shown = f"# {note}" if note else ""
+        if self.note_label.get_label() != shown:
+            self.note_label.set_label(shown)
+        self.note_label.set_visible(bool(note))
+        self.note_button.set_tooltip_text(_("Edit Note") if note else _("Add Note"))
 
     def _on_enabled(self, row, _pspec) -> None:
         if self.syncing.on or self.uid is None:
@@ -979,7 +1008,7 @@ class StructuredView(Gtk.Box):
         """Bring the field of option or block *uid* into view and flash it."""
         widget = self.option_widget(uid)
         if widget is None:
-            widget = self.header_row if self.header_row.get_visible() else self.block_group
+            widget = self.header_row if self.header_row.get_visible() else self.head_title
             self.page.scroll_to_top()
         else:
             # The row holding the field: the one a boxed list scrolls to.
