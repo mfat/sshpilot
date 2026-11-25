@@ -165,6 +165,30 @@ def key_file_status(value: str, home: Optional[str] = None) -> KeyFileStatus:
     return KeyFileStatus(KEY_OK, path, mode)
 
 
+#: Options of ``ssh -G`` whose values name files OpenSSH must find, and
+#: whether the file is a private key (one other users must not read).
+_VALUE_FILES = {"identityfile": True, "certificatefile": False}
+
+
+def value_file_problems(key: str, values: List[str], *, default: bool,
+                        home: Optional[str] = None) -> List[KeyFileStatus]:
+    """The files an option's values (as ``ssh -G`` prints them) name that
+    are missing, or, for a private key, readable by other users. OpenSSH's
+    own defaults (``~/.ssh/id_rsa`` and the rest, tried only when there)
+    are no problem; nor is what is known only when connecting."""
+    private = _VALUE_FILES.get(key)
+    if private is None or default:
+        return []
+    found = []
+    for value in values:
+        if not _unquoted(value).startswith(("/", "~/")):
+            continue                        # "none", tokens, another user's home
+        status = key_file_status(value, home)
+        if status.state == KEY_MISSING or (private and status.state == KEY_OPEN):
+            found.append(status)
+    return found
+
+
 def fix_key_permissions(path: str) -> bool:
     """Make *path* readable and writable by its owner only, as OpenSSH
     requires of a private key. False when it could not be done."""

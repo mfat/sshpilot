@@ -117,3 +117,27 @@ def test_lines_keep_the_block_order_each_with_its_control():
     ]
     added = block.options[1].uid
     assert dict(fields.line_kinds(block.options, keep={added}))[added] == fields.OTHER_KIND
+
+
+def test_effective_values_flag_missing_and_readable_key_files(tmp_path):
+    good = tmp_path / "id_good"
+    good.write_text("k")
+    good.chmod(0o600)
+    open_key = tmp_path / "id_open"
+    open_key.write_text("k")
+    open_key.chmod(0o644)
+    missing = tmp_path / "id_gone"
+    values = [str(good), str(open_key), str(missing), "none", "~/%h_key"]
+
+    found = fields.value_file_problems("identityfile", values, default=False,
+                                       home=str(tmp_path))
+    assert [(s.state, s.path) for s in found] == [
+        (fields.KEY_OPEN, str(open_key)), (fields.KEY_MISSING, str(missing)),
+    ]
+    # A certificate is public: only a missing one is a problem.
+    found = fields.value_file_problems("certificatefile", [str(open_key), str(missing)],
+                                       default=False)
+    assert [s.state for s in found] == [fields.KEY_MISSING]
+    # OpenSSH's own default key list is tried only where the files exist.
+    assert fields.value_file_problems("identityfile", [str(missing)], default=True) == []
+    assert fields.value_file_problems("user", [str(missing)], default=False) == []

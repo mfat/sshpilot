@@ -278,6 +278,8 @@ class AdvancedConfigBase:
         ):
             self.stack.add_titled_with_icon(widget, name, title, icon)
         self.stack.connect("notify::visible-child-name", self._on_page_shown)
+        #: Effective was on screen when it was hidden (see _sync_effective_page).
+        self._effective_left = False
 
         header = Adw.HeaderBar()
         if self.embedded:
@@ -448,9 +450,32 @@ class AdvancedConfigBase:
         return self._pinned_host
 
     def show_page(self, name: str) -> None:
-        """Make one of the three views the one on screen."""
+        """Make one of the three views the one on screen (Effective only
+        while it is offered: see :meth:`_sync_effective_page`)."""
+        if name == "effective" and not self.stack.get_page(self.effective).get_visible():
+            return
         if name in PAGES and self.stack.get_visible_child_name() != name:
             self.stack.set_visible_child_name(name)
+
+    def _sync_effective_page(self) -> None:
+        """Offer Effective only while there is a host to ask OpenSSH about.
+
+        ``ssh -G`` answers for one host. A block that names none (``Host *``,
+        a pattern, a Match rule, the global options) has nothing to show
+        there until a host is typed, so the page is hidden for it. Effective
+        on screen when it goes is left for Structured, and comes back when
+        the page does."""
+        page = self.stack.get_page(self.effective)
+        offered = bool(self.target_text())
+        if page.get_visible() == offered:
+            return
+        if not offered and self.stack.get_visible_child_name() == "effective":
+            self.stack.set_visible_child_name("structured")
+            self._effective_left = True     # after the switch, which clears it
+        page.set_visible(offered)
+        if offered and self._effective_left:
+            self._effective_left = False
+            self.stack.set_visible_child_name("effective")
 
     # -- the search field ------------------------------------------------
 
@@ -1407,6 +1432,8 @@ class AdvancedConfigBase:
 
     def _on_page_shown(self, *_args) -> None:
         name = self.stack.get_visible_child_name()
+        # Another page picked while Effective was hidden is where to stay.
+        self._effective_left = False
         self.effective.set_shown(name == "effective")
         self.raw.set_shown(name == "raw")
         if name == "raw":
@@ -1800,6 +1827,7 @@ class AdvancedConfigBase:
 
     def _show_answer(self) -> None:
         """Hand OpenSSH's answer (or its absence) to the views."""
+        self._sync_effective_page()
         evaluation = self._evaluation
         related = self._related if evaluation is None else None
         lines = self._evaluated_lines if evaluation is not None else self.editor.lines

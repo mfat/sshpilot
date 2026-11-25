@@ -228,6 +228,16 @@ def unknown_source() -> str:
     return _("Set by the configuration")
 
 
+def value_problem_text(file: str, problem: str) -> str:
+    """A file an Effective value names, and what is wrong with it."""
+    # Translators: e.g. "~/.ssh/id_work: File not found".
+    return _("{file}: {problem}").format(file=file, problem=problem)
+
+
+def problem_count(count: int) -> str:
+    return ngettext("{count} problem", "{count} problems", count).format(count=count)
+
+
 def shadowed_count(count: int) -> str:
     return ngettext(
         "{count} line not used", "{count} lines not used", count

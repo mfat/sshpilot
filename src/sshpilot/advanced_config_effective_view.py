@@ -4,7 +4,9 @@ being checked (``ssh -G``), and where each value comes from.
 Each value is counted as set by the block on screen, by another block or
 file (Settings ▸ SSH Options included), or left at OpenSSH's default; a
 chip per kind shows how many there are and filters the list. A source in
-this configuration is a button that shows its line.
+this configuration is a button that shows its line. A value with a problem
+(lines of the option that go unused, a key file that is missing or that
+other users can read) is marked with a warning and says what is wrong.
 
 Showing an answer has to be cheap: one arrives after every click and every
 pause in typing. The list keeps one item per option for the life of the
@@ -24,6 +26,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
+from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_widgets import pill, set_pill  # noqa: E402
 from .api.models.connections import (  # noqa: E402
     SshConfigDraftEvaluation,
@@ -34,6 +37,16 @@ from .gtk import advanced_config_messages as messages  # noqa: E402
 from .ssh_config_blocks import Block, LineMap  # noqa: E402
 
 ALL, THIS_BLOCK, OTHER, DEFAULT = "all", "this", "other", "default"
+
+def value_problems(key: str, values: List[str], *, default: bool) -> List[str]:
+    """What is wrong with the files an option's values name, worded."""
+    return [
+        messages.value_problem_text(
+            fields.home_relative(status.path),
+            messages.key_status_text(status.state, status.mode),
+        )
+        for status in fields.value_file_problems(key, values, default=default)
+    ]
 
 
 @dataclass
@@ -78,6 +91,9 @@ class EffectiveItem(GObject.Object):
         self.values = "\n".join(values)
         self.forced = forced
         self.unused = unused
+        #: What is wrong with the value, worded; empty when nothing is.
+        self.problems = ([messages.shadowed_count(unused)] if unused else []) + \
+            value_problems(self.key, values, default=default)
         #: The draft's line that supplies the value (0: none of its lines),
         #: or the other file and its line.
         self.line = 0
@@ -110,6 +126,12 @@ class _EffectiveCell:
         self.controller = controller
         self.item: Optional[EffectiveItem] = None
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        # Kept in place when hidden, so the keys stay in one column.
+        self.warning = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        self.warning.add_css_class("warning")
+        self.warning.set_valign(Gtk.Align.START)
+        self.warning.set_opacity(0)
+        self.box.append(self.warning)
         self.key = Gtk.Label(xalign=0)
         self.key.add_css_class("monospace")
         self.key.set_width_chars(24)
@@ -123,8 +145,8 @@ class _EffectiveCell:
         self.value.set_hexpand(True)
         self.value.set_valign(self.key.get_valign())
         self.box.append(self.value)
-        self.unused = pill(style="warning")
-        self.box.append(self.unused)
+        self.problem = pill(style="warning")
+        self.box.append(self.problem)
         # A source in this configuration is a button that shows the line,
         # in this file or in another of its files; a source elsewhere (the
         # system-wide file) is the same button, inert.
@@ -156,10 +178,15 @@ class _EffectiveCell:
         self.key.set_label(item.key)
         self.key.set_tooltip_text(item.key)
         self.value.set_label(item.values or "—")
-        dim = item.kind == DEFAULT
-        (self.value.add_css_class if dim else self.value.remove_css_class)("dim-label")
-        (self.key.add_css_class if dim else self.key.remove_css_class)("dim-label")
-        set_pill(self.unused, messages.shadowed_count(item.unused) if item.unused else "", "warning")
+        problems = item.problems
+        self.warning.set_opacity(1 if problems else 0)
+        (self.key.add_css_class if problems else self.key.remove_css_class)("warning")
+        # One problem is said in full; several are counted, and listed in
+        # the tooltip.
+        text = problems[0] if len(problems) == 1 else (
+            messages.problem_count(len(problems)) if problems else ""
+        )
+        set_pill(self.problem, text, "warning", "\n".join(problems))
         self.label.set_label(item.source)
         self.source.set_tooltip_text(item.tooltip or None)
         reachable = bool(item.line) or (

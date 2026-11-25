@@ -584,6 +584,41 @@ def test_the_effective_view_counts_where_values_come_from(window):
     assert _pump(lambda: [item.key for item in effective.items()] == ["connecttimeout"])
 
 
+def test_effective_is_hidden_for_a_block_that_names_no_host(window):
+    glob, web, star = window.draft.blocks
+    page = window.stack.get_page(window.effective)
+    window.show_page("effective")
+    window.check_entry.set_text("")                   # the selection says
+    window.select_block(star.uid)                     # Host *: no host to ask about
+    assert _pump(lambda: not page.get_visible())
+    assert window.stack.get_visible_child_name() == "structured"
+    window.show_page("effective")                     # not offered: not shown
+    assert window.stack.get_visible_child_name() == "structured"
+    window.check_entry.set_text("web1")               # a host typed: offered again
+    assert _pump(page.get_visible)
+    assert window.stack.get_visible_child_name() == "effective"   # where it was left
+    window.check_entry.set_text("")
+    assert _pump(lambda: not page.get_visible())
+    window.show_page("raw")                           # another page picked meanwhile
+    window.select_block(web.uid)
+    assert _pump(page.get_visible)
+    assert window.stack.get_visible_child_name() == "raw"
+
+
+def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
+    window.show_page("effective")
+    effective = window.effective
+    assert _pump(lambda: effective._chips["all"].get_label().startswith("All "))
+    effective.select_filter("default")
+    assert _pump(lambda: bool(effective.items()))
+    item = effective.items()[0]
+    assert item.cell is None or "dim-label" not in item.cell.value.get_css_classes()
+    effective.select_filter("this")
+    # web's IdentityFile ~/.ssh/a does not exist in the test's home.
+    (key,) = [i for i in effective.items() if i.key == "identityfile"]
+    assert key.problems and "File not found" in key.problems[-1]
+
+
 def test_only_the_view_on_screen_is_filled(window):
     window.show_page("structured")
     _field(window, "user").entry.set_text("other")
