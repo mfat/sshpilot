@@ -77,6 +77,7 @@ from .connection_dialog_validation import ConnectionDialogValidationMixin
 from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
 from .connection_dialog_effective import ConnectionDialogEffectiveMixin
+from .connection_dialog_route import ConnectionDialogRouteMixin
 from .connection_dialog_search import ConnectionDialogSearchMixin
 from .connection_dialog_host_names import ConnectionDialogHostNamesMixin
 from .connection_dialog_overrides import (
@@ -1625,6 +1626,7 @@ class ConnectionDialog(
     ConnectionDialogEffectiveMixin,
     ConnectionDialogSearchMixin,
     ConnectionDialogHostNamesMixin,
+    ConnectionDialogRouteMixin,
 ):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
 
@@ -1821,6 +1823,10 @@ class ConnectionDialog(
                 general_page.append(self._plugin_fields_box)
             general_page.append(group)
 
+        routing_page = _page_box()
+        routing_page.append(self._build_route_group())
+        routing_page.append(self._routing_group)
+
         authentication_page = _page_box()
         for group in self.build_authentication_groups():
             authentication_page.append(group)
@@ -1847,6 +1853,7 @@ class ConnectionDialog(
 
         return [
             ("connection", _("Connection"), general_page),
+            ("routing", _("Routing"), routing_page),
             ("authentication", _("Authentication"), authentication_page),
             ("forwarding", _("Port Forwarding"), forwarding_page),
             ("commands", _("Commands"), commands_page),
@@ -1858,6 +1865,7 @@ class ConnectionDialog(
     #: (icon_utils falls back to the icon theme).
     _PAGE_ICONS = {
         "connection": "network-server-symbolic",
+        "routing": "mail-forward-symbolic",
         "authentication": "dialog-password-symbolic",
         "forwarding": "network-transmit-receive-symbolic",
         "commands": "utilities-terminal-symbolic",
@@ -3526,6 +3534,55 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pass
 
 
+    def _build_forward_agent_rows(self, group):
+        """Forward agent, on the Authentication page: it lends this
+        computer's agent (and so its keys) to the remote host."""
+        # ssh_config(5): yes, no, an agent socket path, or $VARIABLE.
+        # Default leaves the Host block unauthored so a broader block wins.
+        self._forward_agent_modes = _FORWARD_AGENT_MODES
+        fa_model = Gtk.StringList()
+        for label in (
+            _("Default"),
+            _("Yes"),
+            _("No"),
+            _("Socket path"),
+            _("Environment variable"),
+        ):
+            fa_model.append(label)
+        self.forward_agent_row = Adw.ComboRow(title=_("Forward agent"))
+        self.forward_agent_row.set_subtitle(
+            _("Allow the remote host to use your local ssh-agent")
+        )
+        self.forward_agent_row.set_model(fa_model)
+        self.forward_agent_row.set_selected(0)
+        self.forward_agent_row.connect(
+            "notify::selected", self._on_forward_agent_mode_changed
+        )
+        group.add(self.forward_agent_row)
+
+        self.forward_agent_value_row = Adw.EntryRow(title=_("Agent socket"))
+        try:
+            self.forward_agent_value_row.set_subtitle(
+                _("Path to an ssh-agent socket")
+            )
+        except Exception:
+            pass
+        self._forward_agent_browse_btn = Gtk.Button(icon_name='document-open-symbolic')
+        self._forward_agent_browse_btn.add_css_class('flat')
+        self._forward_agent_browse_btn.set_valign(Gtk.Align.CENTER)
+        self._forward_agent_browse_btn.set_tooltip_text(_("Browse for agent socket"))
+        self._forward_agent_browse_btn.connect(
+            'clicked',
+            lambda *_a: self._browse_file(
+                _("Select agent socket"),
+                lambda p: self.forward_agent_value_row.set_text(p),
+            ),
+        )
+        self.forward_agent_value_row.add_suffix(self._forward_agent_browse_btn)
+        self.forward_agent_value_row.set_visible(False)
+        self._forward_agent_browse_btn.set_visible(False)
+        group.add(self.forward_agent_value_row)
+
     def build_authentication_groups(self):
         """Build PreferencesGroups for authentication settings."""
         cm = getattr(self, 'connection_manager', None)
@@ -3620,6 +3677,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.add_keys_to_agent_row.set_model(akta_model)
         self.add_keys_to_agent_row.set_selected(0)
         self.idonly_group.add(self.add_keys_to_agent_row)
+        self._build_forward_agent_rows(self.idonly_group)
 
         # --- Password / password-only options ---
         password_group = Adw.PreferencesGroup(title=_("Password"))
@@ -3885,7 +3943,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         wol_detect_row.set_activatable(False)
         wol_group.add(wol_detect_row)
 
-        # Routing / jump hosts.
+        # Routing / jump hosts: on the Routing page, under the route they
+        # draw (see _build_route_group).
         proxy_group = Adw.PreferencesGroup(
             title=_("Routing"),
             description=_("Optional SSH path settings used before authentication."),
@@ -3922,51 +3981,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         proxy_group.add(self.proxy_command_row)
 
-        # ssh_config(5): yes, no, an agent socket path, or $VARIABLE.
-        # Default leaves the Host block unauthored so a broader block wins.
-        self._forward_agent_modes = _FORWARD_AGENT_MODES
-        fa_model = Gtk.StringList()
-        for label in (
-            _("Default"),
-            _("Yes"),
-            _("No"),
-            _("Socket path"),
-            _("Environment variable"),
-        ):
-            fa_model.append(label)
-        self.forward_agent_row = Adw.ComboRow(title=_("Forward agent"))
-        self.forward_agent_row.set_subtitle(
-            _("Allow the remote host to use your local ssh-agent")
-        )
-        self.forward_agent_row.set_model(fa_model)
-        self.forward_agent_row.set_selected(0)
-        self.forward_agent_row.connect(
-            "notify::selected", self._on_forward_agent_mode_changed
-        )
-        proxy_group.add(self.forward_agent_row)
-
-        self.forward_agent_value_row = Adw.EntryRow(title=_("Agent socket"))
-        try:
-            self.forward_agent_value_row.set_subtitle(
-                _("Path to an ssh-agent socket")
-            )
-        except Exception:
-            pass
-        self._forward_agent_browse_btn = Gtk.Button(icon_name='document-open-symbolic')
-        self._forward_agent_browse_btn.add_css_class('flat')
-        self._forward_agent_browse_btn.set_valign(Gtk.Align.CENTER)
-        self._forward_agent_browse_btn.set_tooltip_text(_("Browse for agent socket"))
-        self._forward_agent_browse_btn.connect(
-            'clicked',
-            lambda *_a: self._browse_file(
-                _("Select agent socket"),
-                lambda p: self.forward_agent_value_row.set_text(p),
-            ),
-        )
-        self.forward_agent_value_row.add_suffix(self._forward_agent_browse_btn)
-        self.forward_agent_value_row.set_visible(False)
-        self._forward_agent_browse_btn.set_visible(False)
-        proxy_group.add(self.forward_agent_value_row)
 
         # Kept as attributes so _on_protocol_changed can hide the SSH-specific
         # parts when a plugin protocol is selected.
@@ -3975,9 +3989,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._organize_group = organize_group
         self._wol_group = wol_group
 
-        # Wake on LAN lives on its own page — see _build_connection_tab_pages —
-        # shown only for protocols that target a host (_apply_protocol_to_ui).
-        return [basic_group, proxy_group, organize_group]
+        # Wake on LAN and Routing live on pages of their own — see
+        # _build_connection_tab_pages. Wake on LAN is shown only for
+        # protocols that target a host, Routing only for SSH
+        # (_apply_protocol_to_ui).
+        return [basic_group, organize_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -4562,7 +4578,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     # _apply_protocol_to_ui. The pre-connection command applies to every
     # protocol that dials out (a VPN dial-up for a cluster, a port knock in
     # front of a Mosh host); the knock and Wake-on-LAN also need a host.
-    _SSH_ONLY_PAGES = ("authentication", "forwarding", "advanced")
+    _SSH_ONLY_PAGES = ("routing", "authentication", "forwarding", "advanced")
     #: Groups on the Commands page that are OpenSSH directives, so they mean
     #: nothing to a protocol sshPilot does not build an ssh command for.
     _SSH_ONLY_GROUPS = ("_ssh_commands_group",)

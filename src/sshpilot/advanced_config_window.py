@@ -111,10 +111,6 @@ _CSS = """
 .advcfg-block-list > row.advcfg-file-row { min-height: 0; }
 .advcfg-flash { outline: 2px solid @accent_color; outline-offset: 2px; }
 .advcfg-routing { padding: 12px 14px 14px 14px; }
-.advcfg-hop { padding: 4px 10px; border-radius: 8px; background-color: alpha(currentColor, 0.07); }
-button.advcfg-hop { background-color: alpha(@accent_color, 0.12); }
-button.advcfg-hop:hover { background-color: alpha(@accent_color, 0.2); }
-.advcfg-hop.advcfg-hop-target { background-color: alpha(@success_color, 0.14); }
 .advcfg-tunnel { padding: 2px 4px 2px 6px; border-radius: 8px;
   border: 1px solid alpha(@success_color, 0.35); background-color: alpha(@success_color, 0.06); }
 .advcfg-tunnel.dim-label { border-color: alpha(currentColor, 0.15); background-color: transparent; }

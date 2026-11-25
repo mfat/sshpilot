@@ -11,6 +11,7 @@ src/sshpilot/command_progress_dialog.py
 src/sshpilot/connection_dialog.py
 src/sshpilot/connection_dialog_auth.py
 src/sshpilot/connection_dialog_effective.py
+src/sshpilot/connection_dialog_route.py
 src/sshpilot/connection_dialog_field_helpers.py
 src/sshpilot/connection_dialog_host_names.py
 src/sshpilot/connection_dialog_login_profile.py
@@ -153,6 +154,7 @@ src/sshpilot/advanced_config_window.py
 src/sshpilot/gtk/advanced_config_messages.py
 src/sshpilot/advanced_config_sidebar.py
 src/sshpilot/advanced_config_structured_view.py
+src/sshpilot/route_strip.py
 src/sshpilot/advanced_config_effective_view.py
 src/sshpilot/advanced_config_raw_view.py
 src/sshpilot/sidebar_views.py

@@ -22,7 +22,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_widgets import pill, set_class, set_pill  # noqa: E402
@@ -30,6 +30,7 @@ from .api.models.connections import SshConfigDraftLineState as State  # noqa: E4
 from .gtk import advanced_config_messages as messages  # noqa: E402
 from .i18n import N_  # noqa: E402
 from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap  # noqa: E402
+from .route_strip import JUMP, TARGET, RouteStrip, Stop  # noqa: E402
 from .ssh_option_list import OPENSSH_KEYWORDS  # noqa: E402
 
 
@@ -557,10 +558,9 @@ class RoutingCard:
         card.add_css_class("card")
         card.add_css_class("advcfg-routing")
         card.append(self._caption(_("Route")))
-        self.route = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
-        self.route.set_max_children_per_line(24)
-        self.route.set_column_spacing(4)
-        self.route.set_row_spacing(6)
+        self.route = RouteStrip(
+            on_hop=lambda name: view.controller.show_host(fields.hop_host(name))
+        )
         card.append(self.route)
         card.append(self._caption(_("Port forwards")))
         self.tunnels = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
@@ -587,21 +587,11 @@ class RoutingCard:
         if shown == self._shown:
             return
         self._shown = shown
-        self.route.remove_all()
-        # Every stop as tall as the tallest, and no taller: a size group,
-        # not filling the line (the line grows when the window does).
-        self._heights = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.VERTICAL)
-        if not stops:
-            self.route.append(self._note(_("Type a host to check to see its route.")))
-        else:
-            entries = [(_("This computer"), GLib.get_host_name(), False)] + list(stops)
-            for index, (name, endpoint, jump) in enumerate(entries):
-                if index:
-                    arrow = Gtk.Image.new_from_icon_name("go-next-symbolic")
-                    arrow.add_css_class("dim-label")
-                    arrow.set_valign(Gtk.Align.CENTER)
-                    self.route.append(arrow)
-                self.route.append(self._stop(name, endpoint, index, len(entries), jump))
+        self.route.show_route(
+            [Stop(name, endpoint, kind=JUMP if jump else TARGET)
+             for name, endpoint, jump in stops],
+            _("Type a host to check to see its route."),
+        )
         self.tunnels.remove_all()
         if not tunnels:
             self.tunnels.append(self._note(_("No port forwards.")))
@@ -613,41 +603,6 @@ class RoutingCard:
         label = Gtk.Label(label=text, xalign=0)
         label.add_css_class("dim-label")
         return label
-
-    def _stop(self, name: str, endpoint: str, index: int, count: int, jump: bool):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        title = Gtk.Label(label=name, xalign=0)
-        if index:
-            title.add_css_class("monospace")
-        title.set_ellipsize(Pango.EllipsizeMode.END)
-        title.set_max_width_chars(24)
-        box.append(title)
-        if endpoint:
-            where = Gtk.Label(label=endpoint, xalign=0)
-            for name_ in ("caption", "dim-label", "monospace"):
-                where.add_css_class(name_)
-            where.set_ellipsize(Pango.EllipsizeMode.END)
-            where.set_max_width_chars(32)
-            box.append(where)
-        box.set_valign(Gtk.Align.CENTER)
-        if jump:
-            # A jump host: its own block is a click away.
-            button = Gtk.Button(child=box, tooltip_text=_("Show this host's block"))
-            button.add_css_class("advcfg-hop")
-            button.set_valign(Gtk.Align.CENTER)
-            self._heights.add_widget(button)
-            button.connect("clicked", lambda *_a, n=name: self.view.controller.show_host(
-                fields.hop_host(n)
-            ))
-            return button
-        stop = Gtk.CenterBox(orientation=Gtk.Orientation.VERTICAL)
-        stop.set_valign(Gtk.Align.CENTER)
-        stop.set_center_widget(box)
-        self._heights.add_widget(stop)
-        stop.add_css_class("advcfg-hop")
-        if index == count - 1 and index:
-            stop.add_css_class("advcfg-hop-target")
-        return stop
 
     def _tunnel(self, keyword: str, value: str, uid: Optional[int], source: str):
         listen, target = fields.forward_parts(keyword, value)
