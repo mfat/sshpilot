@@ -176,10 +176,12 @@ def window(gtk, tmp_path):
 
 def _check(win, host):
     """Keep *host* in question whichever block is selected, as typing it
-    above the views does (and ``go_to`` with *pin*). It need not be a host
-    the file names."""
-    win._set_typed(host)
-    win._target_changed()
+    above the views does. It need not be a host the file names."""
+    if win.check_entry.get_text() != host:
+        win.check_entry.set_text(host)          # typed by the user: it stays
+    else:                                       # nothing to type: asked again
+        win._pin_typed = bool(host)
+        win._target_changed()
 
 
 def _command(win):
@@ -769,6 +771,33 @@ def test_a_block_is_dragged_in_the_sidebar_not_as_text(window):
     found, bounds = sidebar._rows[glob.uid].compute_bounds(sidebar.list)
     assert not sidebar._on_drop(None, DragItem(star.uid), 0, bounds.get_y() + 3)
     assert [b.patterns for b in window.draft.blocks] == ["", "*", "web1 web2"]
+
+
+def test_picking_a_block_drops_a_host_the_window_put_in_question(window):
+    """A source followed from Effective (or a host searched for) puts that
+    host in question; a block picked in the sidebar afterwards is shown for
+    its own host, so Effective follows the selection."""
+    _check(window, "")
+    glob, web, star = window.draft.blocks
+    window.add_block("host")
+    db = window.draft.blocks[-1]
+    window.structured.patterns_row.set_text("db1")
+    assert _settled(window)
+    window.show_page("effective")
+    assert _pump(lambda: window.effective.command.get_label() == "ssh -G db1")
+    window.reveal_line(window._evaluated_lines.headers[db.uid])     # a source clicked
+    assert window.check_entry.get_text() == "db1"
+    window.show_page("effective")
+    _pick(window, "Host web1 web2")
+    assert window.check_entry.get_text() == "" and window.target_text() == "web1"
+    assert _pump(lambda: window.effective.command.get_label() == "ssh -G web1")
+    assert _pump(lambda: _effective(window, "user") == "deploy")
+
+    window.check_entry.set_text("db1")             # typed by the user: it stays
+    _pick(window, "Host web1 web2")
+    _pick(window, "Host db1")
+    _pick(window, "Host web1 web2")
+    assert window.check_entry.get_text() == "db1" and window.target_text() == "db1"
 
 
 def test_clicking_a_block_selects_it_and_alt_arrows_move_it(window):

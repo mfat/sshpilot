@@ -86,7 +86,7 @@ class FileRow(Gtk.ListBoxRow):
 
 
 class BlockSidebar(Gtk.Box):
-    """The list of blocks. *controller* supplies ``select_block``,
+    """The list of blocks. *controller* supplies ``block_picked``,
     ``open_file``, ``drop_block``, ``add_block``, ``search_changed`` and
     ``editor`` (for ``has_global``)."""
 
@@ -248,7 +248,7 @@ class BlockSidebar(Gtk.Box):
     def _on_row_selected(self, _list, row) -> None:
         if self._syncing or row is None or not isinstance(row, BlockRow):
             return
-        self.controller.select_block(row._uid)
+        self.controller.block_picked(row._uid)
 
     def _on_row_activated(self, _list, row) -> None:
         if isinstance(row, FileRow) and row.file != self._current_file:

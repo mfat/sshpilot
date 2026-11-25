@@ -192,6 +192,9 @@ class AdvancedConfigBase:
         #: The host typed above the views: the one OpenSSH is asked about,
         #: whichever block is selected. Empty: the selected block's own.
         self._pinned_host = ""
+        #: The pinned host was typed in the host-to-check field by the user
+        #: (not put there by the window: a source followed, a search, go_to).
+        self._pin_typed = False
         self._check_syncing = False
         #: The host to check was put there by the search (an exact name).
         self._check_from_search = False
@@ -517,6 +520,7 @@ class AdvancedConfigBase:
         finally:
             self._check_syncing = False
         self._pinned_host = text.strip()
+        self._pin_typed = False
         self._sync_context()
 
     def _on_check_typed(self, entry) -> None:
@@ -528,6 +532,7 @@ class AdvancedConfigBase:
         if host == self._pinned_host:
             return
         self._pinned_host = host
+        self._pin_typed = bool(host)
         self._sync_context()
         self._target_changed()
 
@@ -1460,6 +1465,21 @@ class AdvancedConfigBase:
     # ------------------------------------------------------------------
     # selection
     # ------------------------------------------------------------------
+
+    def block_picked(self, uid: Optional[int]) -> None:
+        """A block clicked (or reached with the keys) in the sidebar.
+
+        Picking a block means "show me this one": a host the window put in
+        question on its own (a source followed from Effective, a host name
+        searched for, ``go_to`` with *pin*) gives way to the block's own,
+        so Effective follows the selection. A host the user typed in the
+        host-to-check field stays: the field shows it, and clearing it
+        hands the question back to the selection."""
+        self.select_block(uid)
+        if self._pinned_host and not self._pin_typed:
+            self._check_from_search = False
+            self._set_typed("")
+            self._target_changed(idle=not self._answer_ready())
 
     def select_block(self, uid: Optional[int]) -> None:
         """Select a block, from the sidebar or the Raw view: the one shown,
