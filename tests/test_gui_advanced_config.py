@@ -648,6 +648,30 @@ def test_effective_marks_what_needs_attention_by_severity(gtk, tmp_path):
         _close(win)
 
 
+def test_a_not_used_pill_shows_the_line_used_instead(gtk, tmp_path):
+    """Structured's "Not used" pill is a link, as a source is in Effective."""
+    from gi.repository import Gtk
+    win = _open_on(gtk, tmp_path, (
+        "Host db1\n    User postgres\n    Port 5432\n\nHost *\n    User fallback\n"
+    ))
+    try:
+        db, star = win.draft.blocks
+        _check(win, "db1")
+        _pick(win, "Host *")
+        assert _settled(win)
+        user = _field(win, "user")
+        assert _pump(lambda: user.state.get_label() == "Not used")
+        assert user.state._target == ("", 2)                 # db1's User line
+        controllers = user.state.observe_controllers()
+        click = next(controllers.get_item(i) for i in range(controllers.get_n_items())
+                     if isinstance(controllers.get_item(i), Gtk.GestureClick))
+        click.emit("released", 1, 5.0, 5.0)
+        assert _pump(lambda: win.selected_uid == db.uid)
+        assert win.target_text() == "db1"                    # the host checked stays
+    finally:
+        _close(win)
+
+
 def test_effective_sums_up_the_connection(gtk, tmp_path):
     """The header: the connection as one command line, and a tile each for
     the address, user, port, route and key, flagged like their rows."""

@@ -96,17 +96,56 @@ class AnswerView:
         return self.states.get(line), self.errors.get(line)
 
 
+def _state_pill(view: "StructuredView") -> Gtk.Label:
+    """The pill that says what OpenSSH does with a line. A "Not used" one
+    is a link: a click shows the line that is used instead, as a source
+    does in Effective."""
+    label = pill(style="warning")
+    label._target = None
+    click = Gtk.GestureClick()
+    click.connect("released", lambda *_a: _follow_pill(view, label))
+    label.add_controller(click)
+    return label
+
+
+def _follow_pill(view: "StructuredView", label: Gtk.Label) -> None:
+    target = label._target
+    if target is None:
+        return
+    file, line = target
+    if file:
+        view.controller.reveal_source(file, line)
+    else:
+        view.controller.reveal_line(line)
+
+
+def _set_pill_target(label: Gtk.Label, target) -> None:
+    if getattr(label, "_target", None) == target:
+        return
+    label._target = target
+    label.set_cursor_from_name("pointer" if target else None)
+    set_class(label, "advcfg-pill-link", target is not None)
+
+
 def _line_pill(label: Gtk.Label, item, error) -> bool:
     """Say what OpenSSH does with a line: only what needs saying (not used,
     overridden, rejected). Returns whether the line is unused."""
     if error is not None:
         set_pill(label, _("Rejected"), "warning", messages.error_text(error))
+        _set_pill_target(label, None)
         return False
     if item is not None and item.state in (State.SHADOWED, State.FORCED):
         text = _("Not used") if item.state is State.SHADOWED else messages.state_label(item.state)
-        set_pill(label, text, messages.STATE_STYLES[item.state], messages.state_tooltip(item))
+        tooltip = messages.state_tooltip(item)
+        target = None
+        if item.state is State.SHADOWED and item.decided_line:
+            target = (item.decided_file, item.decided_line)
+            tooltip += "\n" + messages.show_line_hint()
+        set_pill(label, text, messages.STATE_STYLES[item.state], tooltip)
+        _set_pill_target(label, target)
         return True
     set_pill(label, "", "muted")
+    _set_pill_target(label, None)
     return False
 
 
@@ -165,7 +204,7 @@ class SingleRow:
         self.entry.set_hexpand(False)
         self.entry.update_property([Gtk.AccessibleProperty.LABEL], [fields.SPELLING[keyword]])
         self.entry.connect("changed", self._on_changed)
-        self.state = pill(style="warning")
+        self.state = _state_pill(view)
         self.reset = _icon_button(
             "user-trash-symbolic", _("Remove this line from the block"),
             lambda: view.controller.delete_option(self.uid),
@@ -203,7 +242,7 @@ class SwitchRow:
                                 subtitle=_descriptions().get(keyword, ""))
         self.row.set_model(Gtk.StringList.new(list(self._VALUES)))
         self.row.connect("notify::selected", self._on_selected)
-        self.state = pill(style="warning")
+        self.state = _state_pill(view)
         self.row.add_suffix(self.state)
         self.row.add_suffix(_icon_button(
             "user-trash-symbolic", _("Remove this line from the block"),
@@ -246,7 +285,7 @@ class IdentityRow:
         self.entry = _entry(width=38)
         self.entry.update_property([Gtk.AccessibleProperty.LABEL], ["IdentityFile"])
         self.entry.connect("changed", self._on_changed)
-        self.state = pill(style="warning")
+        self.state = _state_pill(view)
         self.fix = Gtk.Button(label=_("Fix"))
         self.fix.set_valign(Gtk.Align.CENTER)
         self.fix.set_tooltip_text(_("Make the key readable by you only (0600), as OpenSSH requires"))
@@ -298,7 +337,7 @@ class ForwardRow:
         self.row = Adw.ActionRow()
         self.entry = _entry(width=34)
         self.entry.connect("changed", self._on_changed)
-        self.state = pill(style="warning")
+        self.state = _state_pill(view)
         remove = _icon_button("user-trash-symbolic", _("Remove this forward"),
                               lambda: view.controller.delete_option(self.uid))
         for widget in (self.state, self.entry, remove):
@@ -460,7 +499,7 @@ class OtherRow:
         self.value.set_hexpand(True)
         self.value.update_property([Gtk.AccessibleProperty.LABEL], [_("Value")])
         self.value.connect("changed", self._on_changed, "value")
-        self.state = pill(style="warning")
+        self.state = _state_pill(view)
         remove = _icon_button("user-trash-symbolic", _("Remove option"),
                               lambda: view.controller.delete_option(self.uid))
         for widget in (self.key, self.value, self.state, remove):

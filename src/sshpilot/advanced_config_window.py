@@ -102,6 +102,7 @@ _CSS = """
 .advcfg-pill.error { background-color: alpha(@error_color, 0.16); color: @error_color; }
 .advcfg-pill.accent { background-color: alpha(@accent_color, 0.15); color: @accent_color; }
 .advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
+.advcfg-pill.advcfg-pill-link:hover { text-decoration: underline; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
 .advcfg-context { padding: 6px 12px; }
 .advcfg-block-list > row.advcfg-drop-above { box-shadow: inset 0 2px 0 0 @accent_bg_color; }

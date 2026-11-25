@@ -211,6 +211,11 @@ def pending_exec_many_hosts_text() -> str:
     )
 
 
+def show_line_hint() -> str:
+    """Under a "Not used" pill's reason: the pill is a link to that line."""
+    return _("Click to show that line.")
+
+
 def open_file_tooltip() -> str:
     return _("Show this file here")
 
