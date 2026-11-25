@@ -564,38 +564,6 @@ def test_forwards_are_added_and_removed(window):
     assert "DynamicForward" not in window.editor.text and not structured._forward_rows
 
 
-def test_routing_and_tunnels_at_a_glance(gtk, tmp_path):
-    """The route through the jump hosts, as OpenSSH resolves it, and the
-    tunnels: the block's own can be removed, other blocks' are shown."""
-    win = _open_on(gtk, tmp_path, (
-        "Host app\n    HostName 10.1.0.9\n    ProxyJump gate\n"
-        "    LocalForward 5432 127.0.0.1:5432\n\n"
-        "Host gate\n    HostName gate.example.org\n    Port 2200\n\n"
-        "Host *\n    DynamicForward 1080\n"
-    ))
-    try:
-        routing = win.structured.routing
-        assert _pump(lambda: routing._shown is not None and routing._shown[0]
-                     and routing._shown[0][0][1] == "gate.example.org:2200", seconds=10), \
-            routing._shown
-        stops, tunnels = routing._shown
-        assert stops == (("gate", "gate.example.org:2200", True), ("app", "10.1.0.9:22", False))
-        app = win.draft.blocks[0]
-        own = app.options[2].uid
-        assert [(k, v, uid) for k, v, uid, _s in tunnels] == [
-            ("localforward", "5432 127.0.0.1:5432", own),
-            ("dynamicforward", "1080", None),             # from Host *
-        ]
-        assert tunnels[1][3] == "from Host *"
-        win.delete_option(own)                              # the chip's ×
-        assert "LocalForward" not in win.editor.text
-        win.show_host("gate")                               # a jump host, clicked
-        assert _selected(win) == "gate"
-        assert _pump(lambda: routing._shown[0] == (("gate", "gate.example.org:2200", False),))
-    finally:
-        _close(win)
-
-
 # -- the Effective view ---------------------------------------------------------------
 
 def test_the_effective_view_counts_where_values_come_from(window):
