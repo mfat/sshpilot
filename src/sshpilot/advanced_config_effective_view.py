@@ -37,6 +37,15 @@ from .gtk import advanced_config_messages as messages  # noqa: E402
 from .ssh_config_blocks import Block, LineMap  # noqa: E402
 
 ALL, THIS_BLOCK, OTHER, DEFAULT = "all", "this", "other", "default"
+#: The filter of the values that need attention (not a kind: any kind can).
+ATTENTION = "attention"
+
+#: How much a problem matters, most first, and the style it is shown in:
+#: a file OpenSSH will not use (red), lines of the configuration that go
+#: unused (amber, "Not used" in Structured), lines Settings override
+#: (purple, "Overridden" in Structured).
+ERROR, IGNORED, OVERRIDDEN = "error", "warning", "purple"
+_SEVERITY = (ERROR, IGNORED, OVERRIDDEN)
 
 def value_problems(key: str, values: List[str], *, default: bool) -> List[str]:
     """What is wrong with the files an option's values name, worded."""
@@ -79,21 +88,34 @@ class EffectiveItem(GObject.Object):
         #: The last answer has this option.
         self.present = False
         self.kind = DEFAULT
-        self.set([], None, forced=False, default=True, unused=0, block_lines=frozenset())
+        self.set([], None, forced=False, default=True, block_lines=frozenset())
 
     def set(self, values: List[str], source, *, forced: bool, default: bool,
-            unused: int, block_lines: frozenset) -> None:
-        """Take a new answer; the row showing the item follows."""
-        told = (tuple(values), source, forced, default, unused, block_lines)
+            block_lines: frozenset, unused: int = 0, overridden: int = 0,
+            collected: tuple = ()) -> None:
+        """Take a new answer; the row showing the item follows. *unused*:
+        lines of the option that an earlier line beats; *overridden*: lines
+        Settings ▸ SSH Options beat; *collected*: ``(line, block)`` of each
+        line of an option OpenSSH collects from every line (IdentityFile,
+        SendEnv...), which has no one source."""
+        told = (tuple(values), source, forced, default, unused, overridden, block_lines,
+                collected)
         if told == getattr(self, "_told", None):
             return
         self._told = told
         self.values = "\n".join(values)
         self.forced = forced
         self.unused = unused
-        #: What is wrong with the value, worded; empty when nothing is.
-        self.problems = ([messages.shadowed_count(unused)] if unused else []) + \
-            value_problems(self.key, values, default=default)
+        #: What is wrong with the value: ``(severity, text)``, worst first.
+        found = [(ERROR, text) for text in value_problems(self.key, values, default=default)]
+        if unused:
+            found.append((IGNORED, messages.shadowed_count(unused)))
+        if overridden:
+            found.append((OVERRIDDEN, messages.overridden_count(overridden)))
+        found.sort(key=lambda problem: _SEVERITY.index(problem[0]))
+        self.problems = [text for _severity, text in found]
+        #: The worst problem's severity; "" when there is none.
+        self.severity = found[0][0] if found else ""
         #: The draft's line that supplies the value (0: none of its lines),
         #: or the other file and its line.
         self.line = 0
@@ -102,6 +124,15 @@ class EffectiveItem(GObject.Object):
         if forced:
             self.source = messages.forced_source()
             self.kind = OTHER
+        elif source is None and collected and not default:
+            # Every line counts: the first is the one shown, all are listed.
+            line, block = collected[0]
+            first = messages.where("", line, block)
+            self.source = first if len(collected) == 1 else \
+                messages.and_more(first, len(collected) - 1)
+            self.line = line
+            self.tooltip = "\n".join(messages.where("", n, b) for n, b in collected)
+            self.kind = THIS_BLOCK if any(n in block_lines for n, _b in collected) else OTHER
         elif source is None:
             self.source = messages.default_source() if default else messages.unknown_source()
             self.kind = DEFAULT if default else OTHER
@@ -142,16 +173,32 @@ def _header_over(template: Gtk.Widget, title: str, *, in_button: bool = False) -
     return stack
 
 
+def _cell_box() -> Gtk.Box:
+    """The padded box a row (or the header) is drawn in."""
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    box.add_css_class("advcfg-cell")
+    return box
+
+
+def _columns_box() -> Gtk.Box:
+    """The columns of a row (or of the header)."""
+    return Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18, hexpand=True)
+
+
 class _EffectiveCell:
     """The widgets of one visible row; bound to whichever item scrolls in."""
 
     def __init__(self, controller) -> None:
         self.controller = controller
         self.item: Optional[EffectiveItem] = None
-        self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        #: The row's content, padded here rather than by the list: a problem
+        #: tints it edge to edge. (Classes are never set on the list's own
+        #: row widget while binding: GTK aborts on the restyle mid-layout.)
+        self.outer = _cell_box()
+        self.box = _columns_box()
+        self.outer.append(self.box)
         # Kept in place when hidden, so the keys stay in one column.
         self.warning = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
-        self.warning.add_css_class("warning")
         self.warning.set_valign(Gtk.Align.START)
         self.warning.set_opacity(0)
         self.box.append(self.warning)
@@ -202,15 +249,32 @@ class _EffectiveCell:
         self.key.set_label(item.key)
         self.key.set_tooltip_text(item.key)
         self.value.set_label(item.values or "—")
-        problems = item.problems
+        # Bold: what the block on screen sets itself.
+        explicit = item.kind == THIS_BLOCK
+        for label in (self.key, self.value):
+            (label.add_css_class if explicit else label.remove_css_class)("advcfg-explicit")
+        # A problem colours the row (tint and edge), the icon, the name and
+        # the note, by the worst of its problems; the icon and the note say
+        # it without colour too.
+        problems, severity = item.problems, item.severity
         self.warning.set_opacity(1 if problems else 0)
-        (self.key.add_css_class if problems else self.key.remove_css_class)("warning")
+        self.warning.set_from_icon_name({
+            ERROR: "dialog-error-symbolic",
+            OVERRIDDEN: "emblem-system-symbolic",       # Settings decide it
+        }.get(severity, "dialog-warning-symbolic"))
+        for style in _SEVERITY:
+            on = style == severity
+            for widget in (self.warning, self.key):
+                (widget.add_css_class if on else widget.remove_css_class)(f"advcfg-attn-{style}")
+            (self.outer.add_css_class if on else self.outer.remove_css_class)(
+                f"advcfg-attn-{style}"
+            )
         # One problem is said in full; several are counted, and listed in
         # the tooltip.
         text = problems[0] if len(problems) == 1 else (
             messages.problem_count(len(problems)) if problems else ""
         )
-        set_pill(self.problem, text, "warning", "\n".join(problems))
+        set_pill(self.problem, text, severity or "warning", "\n".join(problems))
         self.label.set_label(item.source)
         self.source.set_tooltip_text(item.tooltip or None)
         reachable = bool(item.line) or (
@@ -256,7 +320,7 @@ class EffectiveView(Gtk.Box):
         self.chips = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self._chips: Dict[str, Gtk.ToggleButton] = {}
         group = None
-        for kind in (ALL, THIS_BLOCK, OTHER, DEFAULT):
+        for kind in (ALL, THIS_BLOCK, OTHER, DEFAULT, ATTENTION):
             chip = Gtk.ToggleButton(group=group)
             chip.add_css_class("advcfg-chip")
             chip.connect("toggled", self._on_chip)
@@ -273,7 +337,7 @@ class EffectiveView(Gtk.Box):
         factory.connect("setup", self._setup_row)
         factory.connect("bind", lambda _f, list_item: list_item._cell.bind(list_item.get_item()))
         self.list = Gtk.ListView(model=Gtk.NoSelection(model=self.model), factory=factory)
-        self.list.add_css_class("rich-list")
+        self.list.add_css_class("advcfg-effective-list")
         self.scroller = Gtk.ScrolledWindow()
         self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroller.set_vexpand(True)
@@ -289,12 +353,15 @@ class EffectiveView(Gtk.Box):
         self.note = Adw.StatusPage(icon_name="system-search-symbolic")
         self.note.set_vexpand(True)
         self.append(self.note)
-        self._set_chip_labels({ALL: 0, THIS_BLOCK: 0, OTHER: 0, DEFAULT: 0})
+        # Offered only while some value needs attention.
+        self._chips[ATTENTION].add_css_class("advcfg-chip-attention")
+        self._chips[ATTENTION].set_visible(False)
+        self._set_chip_labels({ALL: 0, THIS_BLOCK: 0, OTHER: 0, DEFAULT: 0, ATTENTION: 0})
 
     def _build_header(self) -> Gtk.Widget:
         """Titles over the columns of the rows: each laid out as a row's is."""
         cell = _EffectiveCell(self.controller)
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        header = _columns_box()
         cell.box.remove(cell.warning)
         cell.warning.set_opacity(0)
         header.append(cell.warning)                     # the icon's column
@@ -306,21 +373,16 @@ class EffectiveView(Gtk.Box):
         cell.box.remove(cell.source)
         cell.source.set_can_target(False)
         header.append(_header_over(cell.source, _("Comes From"), in_button=True))
-        # In a list styled as the rows' list, so the theme spaces and pads
-        # the titles exactly as it does the columns under them.
-        holder = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        holder.add_css_class("rich-list")
+        # Padded and spaced as a row is: the titles sit over the columns.
+        holder = _cell_box()
         holder.add_css_class("advcfg-table-header")
-        holder.set_can_target(False)
-        row = Gtk.ListBoxRow(activatable=False, selectable=False, focusable=False)
-        row.set_child(header)
-        holder.append(row)
+        holder.append(header)
         return holder
 
     def _setup_row(self, _factory, list_item) -> None:
         cell = _EffectiveCell(self.controller)
         list_item._cell = cell
-        list_item.set_child(cell.box)
+        list_item.set_child(cell.outer)
 
     # -- filters ---------------------------------------------------------------
 
@@ -333,7 +395,10 @@ class EffectiveView(Gtk.Box):
     def _match(self, item: EffectiveItem) -> bool:
         if not item.present:
             return False
-        if self._filter_kind != ALL and item.kind != self._filter_kind:
+        if self._filter_kind == ATTENTION:
+            if not item.severity:
+                return False
+        elif self._filter_kind != ALL and item.kind != self._filter_kind:
             return False
         needle = self.search.get_text().strip().lower()
         return not needle or needle in item.key or needle in item.values.lower()
@@ -350,12 +415,19 @@ class EffectiveView(Gtk.Box):
             # (Host *, an included file, Settings), not by this block.
             OTHER: _("Inherited"),
             DEFAULT: _("OpenSSH default"),
+            ATTENTION: _("Needs attention"),
         }
         for kind, chip in self._chips.items():
             # Translators: a filter and how many options it keeps, e.g. "All 84".
             label = _("{name} {count}").format(name=names[kind], count=counts.get(kind, 0))
             if chip.get_label() != label:
                 chip.set_label(label)
+        attention = self._chips[ATTENTION]
+        needed = counts.get(ATTENTION, 0) > 0
+        if attention.get_visible() != needed:
+            attention.set_visible(needed)
+            if not needed and attention.get_active():
+                self._chips[ALL].set_active(True)       # nothing left to show there
 
     def items(self) -> List[EffectiveItem]:
         """The options listed now, after the filters."""
@@ -412,38 +484,52 @@ class EffectiveView(Gtk.Box):
         forced = {item.key for item in evaluation.forced}
         defaults = set(evaluation.defaults)
         unused: Dict[str, int] = {}
+        overridden: Dict[str, int] = {}
         option_at = {number: uid for uid, number in answer.lines.options.items()}
         keywords = {
             option.uid: canonical_keyword(option.keyword)
             for block in answer.blocks for option in block.options
         }
+        block_of = {
+            option.uid: (block.header_text("") or "").strip()
+            for block in answer.blocks for option in block.options
+        }
+        collected: Dict[str, list] = {}
         for item in evaluation.lines:
             if item.state in (State.SHADOWED, State.FORCED):
                 name = keywords.get(option_at.get(item.line))
                 if name:
-                    unused[name] = unused.get(name, 0) + 1
+                    tally = unused if item.state is State.SHADOWED else overridden
+                    tally[name] = tally.get(name, 0) + 1
+            elif item.state is State.ACCUMULATED:
+                uid = option_at.get(item.line)
+                name = keywords.get(uid)
+                if name:
+                    collected.setdefault(name, []).append((item.line, block_of[uid]))
         # One item per option, kept for the life of the view: an item is
         # added the first time its option appears, and merely hidden when
         # an answer lacks it.
         added = [key for key in sorted(values) if key not in self._items]
         for key in added:
             self._items[key] = EffectiveItem(key)
-        counts = {ALL: 0, THIS_BLOCK: 0, OTHER: 0, DEFAULT: 0}
+        counts = {ALL: 0, THIS_BLOCK: 0, OTHER: 0, DEFAULT: 0, ATTENTION: 0}
         presence_changed = kind_changed = False
         for key, item in self._items.items():
-            kind = item.kind
+            kind = item.kind, bool(item.severity)
             present = key in values
             presence_changed = presence_changed or (present != item.present and key not in added)
             item.present = present
             if item.present:
                 item.set(
                     values[key], sources.get(key), forced=key in forced,
-                    default=key in defaults, unused=unused.get(key, 0),
-                    block_lines=answer.block_lines,
+                    default=key in defaults, block_lines=answer.block_lines,
+                    unused=unused.get(key, 0), overridden=overridden.get(key, 0),
+                    collected=tuple(collected.get(key, ())),
                 )
                 counts[ALL] += 1
                 counts[item.kind] += 1
-                kind_changed = kind_changed or item.kind != kind
+                counts[ATTENTION] += bool(item.severity)
+                kind_changed = kind_changed or (item.kind, bool(item.severity)) != kind
         self._set_chip_labels(counts)
         self._add_items(added)
         # Refiltering makes every row anew: only when what is listed may

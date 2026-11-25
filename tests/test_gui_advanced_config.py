@@ -614,12 +614,46 @@ def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
     assert key.problems and "File not found" in key.problems[-1]
 
 
+def test_effective_marks_what_needs_attention_by_severity(gtk, tmp_path):
+    """Bold: set by the block on screen. Red: a key file OpenSSH will not
+    use; amber: lines an earlier line beats; purple: lines Settings beat.
+    A Needs attention filter lists just those rows."""
+    win = _open_on(gtk, tmp_path, (
+        "Host web1\n    User deploy\n    IdentityFile ~/.ssh/nope_key\n    User other\n"
+        "    ConnectTimeout 30\n    Port 2222\n\nHost *\n    User fallback\n"
+    ))
+    try:
+        _pick(win, "Host web1")
+        win.show_page("effective")
+        effective = win.effective
+        assert _pump(lambda: effective._chips["attention"].get_visible())
+        items = effective._items
+        assert items["identityfile"].severity == "error"
+        assert items["identityfile"].kind == "this"           # its line, though collected
+        assert items["identityfile"].source.startswith("line 3")
+        assert items["user"].severity == "warning"
+        assert items["connecttimeout"].severity == "purple"
+        assert items["port"].severity == "" and items["port"].kind == "this"
+        effective.select_filter("attention")
+        assert _pump(lambda: sorted(i.key for i in effective.items())
+                     == ["connecttimeout", "identityfile", "user"])
+        port = items["port"]
+        effective.select_filter("all")
+        assert _pump(lambda: port.cell is not None)
+        assert "advcfg-explicit" in port.cell.key.get_css_classes()
+        user = items["user"]
+        assert _pump(lambda: user.cell is not None)
+        assert "advcfg-attn-warning" in user.cell.outer.get_css_classes()
+    finally:
+        _close(win)
+
+
 def test_effective_column_titles_sit_over_their_columns(window):
     window.show_page("effective")
     effective = window.effective
     assert _pump(lambda: any(item.cell for item in effective._items.values()))
     _pump(lambda: False, seconds=0.3)                  # laid out
-    header = effective.table.get_first_child().get_row_at_index(0).get_child()
+    header = effective.table.get_first_child().get_first_child()
     titles = []
     child = header.get_first_child()
     while child is not None:

@@ -238,6 +238,21 @@ def problem_count(count: int) -> str:
     return ngettext("{count} problem", "{count} problems", count).format(count=count)
 
 
+def and_more(first: str, more: int) -> str:
+    """The first of several places, and how many others there are."""
+    # Translators: e.g. "line 3 (Host web1) and 2 more".
+    return ngettext(
+        "{first} and {count} more", "{first} and {count} more", more
+    ).format(first=first, count=more)
+
+
+def overridden_count(count: int) -> str:
+    """Lines of an option that Settings ▸ SSH Options override."""
+    return ngettext(
+        "{count} line overridden by Settings", "{count} lines overridden by Settings", count
+    ).format(count=count)
+
+
 def shadowed_count(count: int) -> str:
     return ngettext(
         "{count} line not used", "{count} lines not used", count

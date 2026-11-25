@@ -113,7 +113,20 @@ _CSS = """
 row:hover .advcfg-drag-handle { opacity: 0.9; }
 .advcfg-chip { padding: 2px 10px; border-radius: 999px; font-size: 0.9em; }
 .advcfg-command-bar { padding: 6px 6px 6px 14px; }
-.advcfg-table-header { background: none; }
+.advcfg-effective-list { background: none; }
+.advcfg-effective-list > row { padding: 0; }
+.advcfg-cell { padding: 9px 14px; min-height: 30px; }
+.advcfg-explicit { font-weight: bold; }
+.advcfg-attn-error { color: @error_color; }
+.advcfg-attn-warning { color: @warning_color; }
+.advcfg-attn-purple { color: @purple_3; }
+.advcfg-cell.advcfg-attn-error {
+  color: inherit; background-color: alpha(@error_color, 0.07); box-shadow: inset 3px 0 0 0 @error_color; }
+.advcfg-cell.advcfg-attn-warning {
+  color: inherit; background-color: alpha(@warning_color, 0.08); box-shadow: inset 3px 0 0 0 @warning_color; }
+.advcfg-cell.advcfg-attn-purple {
+  color: inherit; background-color: alpha(@purple_3, 0.08); box-shadow: inset 3px 0 0 0 @purple_3; }
+.advcfg-chip-attention:not(:checked) { color: @warning_color; }
 entry.warning { color: @warning_color; }
 """
 _css_installed = False
