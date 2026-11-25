@@ -18,7 +18,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Graphene, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Graphene, Gtk, Pango  # noqa: E402
 
 from . import advanced_config_fields as fields  # noqa: E402
 from .advanced_config_widgets import (  # noqa: E402
@@ -501,9 +501,12 @@ class LineRow:
 
 
 #: The keywords Add Option offers at a click, in the order it lists them.
+#: The common options' menu, in sections: the connection, keys and agent,
+#: forwarding.
 _COMMON = (
-    "hostname", "user", "port", "identityfile", "identitiesonly", "proxyjump",
-    "forwardagent", "localforward", "remoteforward", "dynamicforward",
+    ("hostname", "user", "port", "proxyjump"),
+    ("identityfile", "identitiesonly", "forwardagent"),
+    ("localforward", "remoteforward", "dynamicforward"),
 )
 
 
@@ -757,23 +760,29 @@ class StructuredView(Gtk.Box):
         self.page.add(group)
 
     def _common_menu(self) -> Gtk.MenuButton:
-        """The options most blocks set, a click away."""
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        popover = Gtk.Popover(child=box)
-        popover.add_css_class("menu")
-        for keyword in _COMMON:
-            button = Gtk.Button(label=fields.SPELLING[keyword])
-            button.add_css_class("flat")
-            button.get_child().set_xalign(0)
-            button.connect("clicked", lambda *_a, k=keyword: (
-                popover.popdown(), self._add_common(k)
-            ))
-            box.append(button)
-        menu = Gtk.MenuButton(icon_name="view-more-symbolic", popover=popover,
-                              tooltip_text=_("Add a Common Option"))
-        menu.add_css_class("flat")
-        menu.set_valign(Gtk.Align.CENTER)
-        return menu
+        """The options most blocks set, a click away: a menu model, so it
+        looks and behaves as the app's other menus (GtkPopoverMenu), in
+        sections of options that go together."""
+        actions = Gio.SimpleActionGroup()
+        add = Gio.SimpleAction.new("add-common", GLib.VariantType.new("s"))
+        add.connect("activate", lambda _a, keyword: self._add_common(keyword.get_string()))
+        actions.add_action(add)
+        self.insert_action_group("directives", actions)
+        menu = Gio.Menu()
+        for section in _COMMON:
+            items = Gio.Menu()
+            for keyword in section:
+                item = Gio.MenuItem.new(fields.SPELLING[keyword], None)
+                item.set_action_and_target_value(
+                    "directives.add-common", GLib.Variant.new_string(keyword)
+                )
+                items.append_item(item)
+            menu.append_section(None, items)
+        button = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu,
+                                tooltip_text=_("Add a Common Option"))
+        button.add_css_class("flat")
+        button.set_valign(Gtk.Align.CENTER)
+        return button
 
     def _add_common(self, keyword: str) -> None:
         if self.uid is None:

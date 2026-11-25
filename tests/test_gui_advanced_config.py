@@ -669,6 +669,14 @@ def test_keyword_suggestions_are_chosen_with_the_keyboard(window):
     assert row.key.get_text() == "PasswordAuthentication" and not row.suggestions.visible()
 
 
+def test_the_common_options_menu_is_a_menu_model_that_adds_lines(window):
+    from gi.repository import GLib
+
+    web = window.draft.blocks[1]
+    window.structured.activate_action("directives.add-common", GLib.Variant.new_string("proxyjump"))
+    assert web.options[-1].key == "ProxyJump"
+
+
 def test_a_common_yes_no_option_is_added_as_yes(window):
     window.structured._add_common("identitiesonly")
     assert "    IdentitiesOnly yes\n" in window.editor.text
