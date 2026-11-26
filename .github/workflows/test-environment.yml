@@ -1,12 +1,15 @@
 name: Test environment
 
 # Builds the test-environment image (real mosh/kubectl/kind/docker/socat/picocom)
-# and runs the complete headless suite when a release is tagged, not on every
-# pull-request update. It can also be started manually when a change needs
-# integration coverage before release.
+# and runs the integration tests against those real tools, plus a real login
+# in a real window, on every push to dev and main and when a release is
+# tagged. The rest of the headless suite runs in tests.yml. The virtual-FIDO
+# job needs runner kernel modules GitHub keeps changing: it runs only when
+# started by hand.
 
 on:
   push:
+    branches: [dev, main]
     tags:
       - 'v*'
   workflow_dispatch:
@@ -37,7 +40,7 @@ jobs:
             --build-arg TEST_UID="$(id -u)" --build-arg TEST_GID="$(id -g)" \
             -t sshpilot-test-env .
 
-      - name: Run pytest (incl. real-tool integration) in the container
+      - name: Run the real-tool integration tests in the container
         # Mount the repo at /work and the host docker socket so the docker-exec
         # integration test can talk to the runner's daemon. --shm-size gives
         # /dev/shm room for a tmpfs basetemp (default is 64m); basetemp lives on
@@ -54,10 +57,10 @@ jobs:
         # virtual_fido requires runner-level UHID/hidraw setup and an
         # explicitly built pando85 binary; the dedicated job below provisions
         # that capability and runs it independently.
-        # The marker expression repeats pytest.ini's opt-in markers (e2e,
-        # stress, property): a command-line -m replaces addopts' -m, so naming
-        # only gui/virtual_fido silently ran the Hypothesis searches here. Keep
-        # it in sync with pytest.ini and tests.yml; integration stays in.
+        # Only the integration tests: tests.yml runs everything else on each
+        # push already. The marker expression repeats pytest.ini's opt-in
+        # markers (e2e, stress, property): a command-line -m replaces
+        # addopts' -m. Keep it in sync with pytest.ini.
         run: |
           docker run --rm \
             --network=host \
@@ -68,7 +71,7 @@ jobs:
             -v "$PWD":/work -w /work \
             -v /var/run/docker.sock:/var/run/docker.sock \
             sshpilot-test-env \
-            pytest -ra -m "not gui and not virtual_fido and not e2e and not stress and not property" \
+            pytest -ra -m "integration and not gui and not virtual_fido and not e2e and not stress and not property" \
               --basetemp=/pytest-tmp/basetemp
 
   gui-basics:
@@ -116,6 +119,8 @@ jobs:
 
   virtual-fido:
     name: Virtual HID FIDO (hosted runner)
+    # By hand only (workflow_dispatch): it depends on the runner's kernel.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -129,8 +134,13 @@ jobs:
           lsmod | grep '^uhid' || true
           ls -l /dev/uhid || true
           sudo apt-get update
-          sudo apt-get install -y "linux-modules-extra-$(uname -r)" pkg-config libudev-dev
-          sudo modprobe uhid
+          sudo apt-get install -y pkg-config libudev-dev
+          # Newer runner kernels build uhid in; the extra modules package
+          # exists only for some, so it is installed only when needed.
+          if [ ! -c /dev/uhid ]; then
+            sudo apt-get install -y "linux-modules-extra-$(uname -r)"
+            sudo modprobe uhid
+          fi
           test -c /dev/uhid
           ls -l /dev/uhid
           hidraw_major="$(awk '$2 == "hidraw" { print $1; exit }' /proc/devices)"

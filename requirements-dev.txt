@@ -25,6 +25,9 @@ anyio>=4.0
 # Test-only: test_combined_auth.py uses paramiko as a mock SSH server to
 # validate the native auth path; not a runtime dependency.
 paramiko>=3.4
+# Test-only: test_flatpak_dev_manifest.py and test_libghostty_vt_pins.py read
+# YAML manifests; without it they fail to collect.
+PyYAML>=6.0
 
 # Lint (pinned to match the CI Ruff version)
 ruff==0.15.17
