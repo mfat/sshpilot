@@ -6240,6 +6240,16 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Failed to zoom out terminal: {e}")
 
+    def scroll_to_bottom(self):
+        """Show the newest output; the scrollback stays available above it."""
+        scroll = getattr(getattr(self, 'backend', None), 'scroll_to_bottom', None)
+        if not callable(scroll):
+            return
+        try:
+            scroll()
+        except Exception:
+            logger.debug("Failed to scroll terminal to bottom", exc_info=True)
+
     def reset_zoom(self):
         """Reset terminal zoom to default (1.0x)"""
         try:

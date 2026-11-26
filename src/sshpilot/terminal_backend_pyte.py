@@ -434,6 +434,8 @@ class PyteTerminalView(Gtk.DrawingArea):
             self._sync_adjustment()
             self.queue_draw()
 
+    scroll_to_bottom = _scroll_to_bottom
+
     def scroll_lines(self, delta: int) -> None:
         """Scroll ``delta`` lines back into the scrollback (negative: forward)."""
         self.scroll_offset += int(delta)
@@ -1230,6 +1232,9 @@ class PyteTerminalBackend:
 
     def reset(self, clear_scrollback: bool, clear_screen: bool) -> None:
         self.view.reset(clear_scrollback)
+
+    def scroll_to_bottom(self) -> None:
+        self.view.scroll_to_bottom()
 
     def set_font_scale(self, scale: float) -> None:
         self.view.set_font_scale(scale)

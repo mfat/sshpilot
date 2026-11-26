@@ -237,6 +237,9 @@ class BaseTerminalBackend(Protocol):
     def reset(self, clear_scrollback: bool, clear_screen: bool) -> None:
         """Reset the terminal content."""
 
+    def scroll_to_bottom(self) -> None:
+        """Move the viewport to the newest output (scrollback is kept)."""
+
     def set_font_scale(self, scale: float) -> None:
         """Set the font scale for the terminal."""
 
@@ -1320,6 +1323,13 @@ class VTETerminalBackend:
         if clear_screen:
             self.vte.feed(b"\x1b[2J\x1b[H")
 
+    def scroll_to_bottom(self) -> None:
+        # scroll_on_output is off, so output arriving while the user is
+        # scrolled up never moves the view; once at the bottom VTE follows.
+        adj = self.vte.get_vadjustment()
+        if adj is not None:
+            adj.set_value(max(adj.get_lower(), adj.get_upper() - adj.get_page_size()))
+
     def set_font_scale(self, scale: float) -> None:
         self.vte.set_font_scale(scale)
 
@@ -2233,6 +2243,11 @@ class PyXtermTerminalBackend:
             manager = getattr(self._pyxterm, "TerminalManager", None)
             if manager:
                 manager().reset(self._terminal_id)  # type: ignore[attr-defined]
+
+    def scroll_to_bottom(self) -> None:
+        self._run_javascript(
+            "if (typeof window.term !== 'undefined') { window.term.scrollToBottom(); }"
+        )
 
     def set_font_scale(self, scale: float) -> None:
         """Set font scale/zoom for xterm.js terminal by changing fontSize option"""
