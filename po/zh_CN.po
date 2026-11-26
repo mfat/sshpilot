@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 10:34+0330\n"
+"POT-Creation-Date: 2026-11-26 10:45+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -120,13 +120,14 @@ msgstr "打开连接？"
 #: src/sshpilot/file_manager/pane.py:1028
 #: src/sshpilot/file_manager/pane.py:2859
 #: src/sshpilot/file_manager/pane.py:3520
-#: src/sshpilot/file_manager/progress_dialog.py:312
-#: src/sshpilot/file_manager_window.py:1919
-#: src/sshpilot/file_manager_window.py:2251
-#: src/sshpilot/file_manager_window.py:2312
-#: src/sshpilot/file_manager_window.py:2399
-#: src/sshpilot/file_manager_window.py:2479
-#: src/sshpilot/file_manager_window.py:3343 src/sshpilot/key_sources.py:274
+#: src/sshpilot/file_manager/progress_dialog.py:326
+#: src/sshpilot/file_manager/transfer_indicator.py:71
+#: src/sshpilot/file_manager_window.py:1938
+#: src/sshpilot/file_manager_window.py:2270
+#: src/sshpilot/file_manager_window.py:2331
+#: src/sshpilot/file_manager_window.py:2418
+#: src/sshpilot/file_manager_window.py:2498
+#: src/sshpilot/file_manager_window.py:3362 src/sshpilot/key_sources.py:274
 #: src/sshpilot/login_profile_dialogs.py:92
 #: src/sshpilot/login_profile_dialogs.py:162
 #: src/sshpilot/login_profile_dialogs.py:600
@@ -292,7 +293,7 @@ msgstr "您确定要删除所选的 {count} 个空分组吗？"
 #: src/sshpilot/actions.py:1162 src/sshpilot/authorized_keys_window.py:428
 #: src/sshpilot/command_blocks.py:2400 src/sshpilot/file_manager/pane.py:705
 #: src/sshpilot/file_manager/pane.py:2295
-#: src/sshpilot/file_manager_window.py:2480
+#: src/sshpilot/file_manager_window.py:2499
 #: src/sshpilot/login_profile_dialogs.py:860
 #: src/sshpilot/login_profile_dialogs.py:870
 #: src/sshpilot/login_profile_dialogs.py:1058 src/sshpilot/sidebar.py:5347
@@ -449,7 +450,7 @@ msgstr "固定到起始页"
 
 #: src/sshpilot/actions.py:1099 src/sshpilot/actions.py:1130
 #: src/sshpilot/file_manager/pane.py:699
-#: src/sshpilot/file_manager_window.py:2400
+#: src/sshpilot/file_manager_window.py:2419
 msgid "Rename"
 msgstr "重命名"
 
@@ -696,8 +697,8 @@ msgid "Failed to connect: {error}"
 msgstr "连接失败：{error}"
 
 #: src/sshpilot/authorized_keys_window.py:307
-#: src/sshpilot/file_manager_window.py:1416
-#: src/sshpilot/file_manager_window.py:1466 src/sshpilot/sidebar.py:2789
+#: src/sshpilot/file_manager_window.py:1427
+#: src/sshpilot/file_manager_window.py:1477 src/sshpilot/sidebar.py:2789
 msgid "Connection failed"
 msgstr "连接失败"
 
@@ -3465,15 +3466,15 @@ msgid "Delete failed"
 msgstr "移除失败"
 
 #: src/sshpilot/daemon_sftp_backend.py:1122
-#: src/sshpilot/file_manager_window.py:3845
-#: src/sshpilot/file_manager_window.py:4035
+#: src/sshpilot/file_manager_window.py:3871
+#: src/sshpilot/file_manager_window.py:4090
 #, python-brace-format
 msgid "Transferred {done} of {total}"
 msgstr "{done} / {total} 个文件"
 
 #: src/sshpilot/daemon_sftp_backend.py:1131
-#: src/sshpilot/file_manager_window.py:3850
-#: src/sshpilot/file_manager_window.py:4041
+#: src/sshpilot/file_manager_window.py:3876
+#: src/sshpilot/file_manager_window.py:4096
 #, python-brace-format
 msgid "Transferred {size}"
 msgstr "已传输 {size}"
@@ -3646,14 +3647,14 @@ msgid "Modified"
 msgstr "修改时间"
 
 #: src/sshpilot/file_manager/pane.py:2260
-#: src/sshpilot/file_manager_window.py:2247
-#: src/sshpilot/file_manager_window.py:2249
+#: src/sshpilot/file_manager_window.py:2266
+#: src/sshpilot/file_manager_window.py:2268
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:12
 msgid "New Folder"
 msgstr "新建文件夹"
 
 #: src/sshpilot/file_manager/pane.py:2261
-#: src/sshpilot/file_manager_window.py:2308
+#: src/sshpilot/file_manager_window.py:2327
 msgid "New File"
 msgstr "新建文件夹"
 
@@ -3712,7 +3713,7 @@ msgstr "文件管理器不可用"
 
 #: src/sshpilot/file_manager/pane.py:2772
 #: src/sshpilot/file_manager/pane.py:2824
-#: src/sshpilot/file_manager_window.py:2815
+#: src/sshpilot/file_manager_window.py:2834
 msgid "Local pane is unavailable"
 msgstr "本地窗格不可用"
 
@@ -3822,7 +3823,7 @@ msgid "Failed to show properties: {error}"
 msgstr "保存文件失败：{error}"
 
 #: src/sshpilot/file_manager/pane.py:3194
-#: src/sshpilot/file_manager_window.py:2151 src/sshpilot/window_dialogs.py:2830
+#: src/sshpilot/file_manager_window.py:2170 src/sshpilot/window_dialogs.py:2830
 msgid "Nothing selected"
 msgstr "未选择任何内容"
 
@@ -3901,8 +3902,8 @@ msgstr "上传失败：无效的窗口上下文"
 
 #: src/sshpilot/file_manager/pane.py:3984
 #: src/sshpilot/file_manager/pane.py:3991
-#: src/sshpilot/file_manager_window.py:2778
-#: src/sshpilot/file_manager_window.py:2794 src/sshpilot/text_editor.py:1539
+#: src/sshpilot/file_manager_window.py:2797
+#: src/sshpilot/file_manager_window.py:2813 src/sshpilot/text_editor.py:1539
 #, python-brace-format
 msgid "Upload failed: {error}"
 msgstr "上传失败：{error}"
@@ -3913,7 +3914,7 @@ msgstr "下载失败：无效的窗口上下文"
 
 #: src/sshpilot/file_manager/pane.py:4045
 #: src/sshpilot/file_manager/pane.py:4053
-#: src/sshpilot/file_manager_window.py:2873
+#: src/sshpilot/file_manager_window.py:2892
 #, python-brace-format
 msgid "Download failed: {error}"
 msgstr "上传失败：{error}"
@@ -3965,248 +3966,282 @@ msgstr "分屏视图"
 msgid "List View"
 msgstr "分屏视图"
 
-#: src/sshpilot/file_manager/progress_dialog.py:88
+#: src/sshpilot/file_manager/progress_dialog.py:95
 msgid "the server"
 msgstr "服务器"
 
-#: src/sshpilot/file_manager/progress_dialog.py:159
+#: src/sshpilot/file_manager/progress_dialog.py:173
 #, python-brace-format
 msgid "Downloading {count} File"
 msgid_plural "Downloading {count} Files"
 msgstr[0] "正在下载 {count} 个文件"
 
-#: src/sshpilot/file_manager/progress_dialog.py:163
+#: src/sshpilot/file_manager/progress_dialog.py:177
 #, python-brace-format
 msgid "Uploading {count} File"
 msgid_plural "Uploading {count} Files"
 msgstr[0] "正在上传 {count} 个文件"
 
-#: src/sshpilot/file_manager/progress_dialog.py:167
+#: src/sshpilot/file_manager/progress_dialog.py:181
 msgid "Copying Between Servers"
 msgstr "正在服务器之间复制"
 
-#: src/sshpilot/file_manager/progress_dialog.py:168
+#: src/sshpilot/file_manager/progress_dialog.py:182
 msgid "Moving Between Servers"
 msgstr "正在服务器之间移动"
 
-#: src/sshpilot/file_manager/progress_dialog.py:172
+#: src/sshpilot/file_manager/progress_dialog.py:186
 msgid "Copying on Server"
 msgstr "正在服务器上复制"
 
-#: src/sshpilot/file_manager/progress_dialog.py:173
+#: src/sshpilot/file_manager/progress_dialog.py:187
 msgid "Moving on Server"
 msgstr "正在服务器上移动"
 
-#: src/sshpilot/file_manager/progress_dialog.py:174
+#: src/sshpilot/file_manager/progress_dialog.py:188
 msgid "Deleting Files"
 msgstr "正在下载文件"
 
-#: src/sshpilot/file_manager/progress_dialog.py:176
+#: src/sshpilot/file_manager/progress_dialog.py:190
 msgid "Transferring Files"
 msgstr "正在传输文件"
 
-#: src/sshpilot/file_manager/progress_dialog.py:185
+#: src/sshpilot/file_manager/progress_dialog.py:199
 #, python-brace-format
 msgid "From {source} to {destination}"
 msgstr "从 {source} 到 {destination}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:189
+#: src/sshpilot/file_manager/progress_dialog.py:203
 #, python-brace-format
 msgid "From {host} to this computer"
 msgstr "从 {host} 到此计算机"
 
-#: src/sshpilot/file_manager/progress_dialog.py:191
+#: src/sshpilot/file_manager/progress_dialog.py:205
 #, python-brace-format
 msgid "From this computer to {host}"
 msgstr "从此计算机到 {host}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:192
+#: src/sshpilot/file_manager/progress_dialog.py:206
 #, python-brace-format
 msgid "On {host}"
 msgstr "在 {host} 上"
 
-#: src/sshpilot/file_manager/progress_dialog.py:284
+#: src/sshpilot/file_manager/progress_dialog.py:298
 msgid "Preparing transfer…"
 msgstr "正在准备传输…"
 
-#: src/sshpilot/file_manager/progress_dialog.py:294
+#: src/sshpilot/file_manager/progress_dialog.py:308
 msgid "From this computer"
 msgstr "来自此计算机"
 
-#: src/sshpilot/file_manager/progress_dialog.py:295
+#: src/sshpilot/file_manager/progress_dialog.py:309
 #, python-brace-format
 msgid "From {host}"
 msgstr "来自 {host}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:299
+#: src/sshpilot/file_manager/progress_dialog.py:313
 msgid "To this computer"
 msgstr "到此计算机"
 
-#: src/sshpilot/file_manager/progress_dialog.py:300
+#: src/sshpilot/file_manager/progress_dialog.py:314
 #, python-brace-format
 msgid "To {host}"
 msgstr "到 {host}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:307
+#: src/sshpilot/file_manager/progress_dialog.py:321
+#: src/sshpilot/file_manager/transfer_indicator.py:63
 #: src/sshpilot/scp_window.py:1270
 msgid "Show in Files"
 msgstr "显示文件窗格"
 
-#: src/sshpilot/file_manager/progress_dialog.py:439
+#: src/sshpilot/file_manager/progress_dialog.py:528
 #: src/sshpilot/window_dialogs.py:1692 src/sshpilot/window_dialogs.py:1704
 msgid "Done"
 msgstr "完成"
 
-#: src/sshpilot/file_manager/progress_dialog.py:573
+#: src/sshpilot/file_manager/progress_dialog.py:652
 #, python-brace-format
 msgid "{done} of {total}"
 msgstr "{done} / {total}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:645
+#: src/sshpilot/file_manager/progress_dialog.py:723
 msgid "Almost done…"
 msgstr "即将完成…"
 
-#: src/sshpilot/file_manager/progress_dialog.py:658
+#: src/sshpilot/file_manager/progress_dialog.py:737
 #, python-brace-format
 msgid "{speed:.1f} MB/s"
 msgstr "{speed:.1f} MB/s"
 
-#: src/sshpilot/file_manager/progress_dialog.py:660
+#: src/sshpilot/file_manager/progress_dialog.py:739
 #, python-brace-format
 msgid "{speed:.1f} KB/s"
 msgstr "{speed:.1f} KB/s"
 
-#: src/sshpilot/file_manager/progress_dialog.py:661
+#: src/sshpilot/file_manager/progress_dialog.py:740
 #, python-brace-format
 msgid "{speed} B/s"
 msgstr "{speed} B/s"
 
-#: src/sshpilot/file_manager/progress_dialog.py:705
+#: src/sshpilot/file_manager/progress_dialog.py:785
 #, python-brace-format
 msgid "Item {index} of {total}"
 msgid_plural "Item {index} of {total}"
 msgstr[0] "第 {index} 项，共 {total} 项"
 
-#: src/sshpilot/file_manager/progress_dialog.py:709
+#: src/sshpilot/file_manager/progress_dialog.py:789
 #, python-brace-format
 msgid "File {index} of {total}"
 msgid_plural "File {index} of {total}"
 msgstr[0] "第 {index} 个文件，共 {total} 个"
 
-#: src/sshpilot/file_manager/progress_dialog.py:725
+#: src/sshpilot/file_manager/progress_dialog.py:805
 #, python-brace-format
 msgid "{hours}h {minutes}m remaining"
 msgstr "剩余 {hours} 小时 {minutes} 分钟"
 
-#: src/sshpilot/file_manager/progress_dialog.py:728
+#: src/sshpilot/file_manager/progress_dialog.py:808
 #, python-brace-format
 msgid "{minutes}m remaining"
 msgstr "剩余 {minutes} 分钟"
 
-#: src/sshpilot/file_manager/progress_dialog.py:730
+#: src/sshpilot/file_manager/progress_dialog.py:810
 #, python-brace-format
 msgid "{seconds}s remaining"
 msgstr "剩余 {seconds} 秒"
 
 #. GB
-#: src/sshpilot/file_manager/progress_dialog.py:735
+#: src/sshpilot/file_manager/progress_dialog.py:815
 #, python-brace-format
 msgid "{size:.1f} GB"
 msgstr "{size:.1f} GB"
 
 #. MB
-#: src/sshpilot/file_manager/progress_dialog.py:737
+#: src/sshpilot/file_manager/progress_dialog.py:817
 #, python-brace-format
 msgid "{size:.1f} MB"
 msgstr "{size:.1f} MB"
 
 #. KB
-#: src/sshpilot/file_manager/progress_dialog.py:739
+#: src/sshpilot/file_manager/progress_dialog.py:819
 #, python-brace-format
 msgid "{size:.1f} KB"
 msgstr "{size:.1f} KB"
 
-#: src/sshpilot/file_manager/progress_dialog.py:741
+#: src/sshpilot/file_manager/progress_dialog.py:821
 #, python-brace-format
 msgid "{size} byte"
 msgid_plural "{size} bytes"
 msgstr[0] "{size} 字节"
 
-#: src/sshpilot/file_manager/progress_dialog.py:761
+#: src/sshpilot/file_manager/progress_dialog.py:841
 #, python-brace-format
 msgid "{count} file · {size}"
 msgid_plural "{count} files · {size}"
 msgstr[0] "{count} 个文件 · {size}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:764
+#: src/sshpilot/file_manager/progress_dialog.py:844
 #, python-brace-format
 msgid "Transferred {size} successfully"
 msgstr "已成功传输 {size}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:769
+#: src/sshpilot/file_manager/progress_dialog.py:849
 #, python-brace-format
 msgid "Successfully transferred {count} file"
 msgid_plural "Successfully transferred {count} files"
 msgstr[0] "已成功传输 {count} 个文件"
 
-#: src/sshpilot/file_manager/progress_dialog.py:772
+#: src/sshpilot/file_manager/progress_dialog.py:852
 msgid "Transfer completed successfully"
 msgstr "传输成功完成"
 
-#: src/sshpilot/file_manager/progress_dialog.py:786
+#: src/sshpilot/file_manager/progress_dialog.py:868
 msgid "Download Complete"
 msgstr "下载文件"
 
-#: src/sshpilot/file_manager/progress_dialog.py:787
+#: src/sshpilot/file_manager/progress_dialog.py:869
 msgid "Upload Complete"
 msgstr "已完成"
 
-#: src/sshpilot/file_manager/progress_dialog.py:788
+#: src/sshpilot/file_manager/progress_dialog.py:870
 msgid "Copy Complete"
 msgstr "已完成"
 
-#: src/sshpilot/file_manager/progress_dialog.py:789
+#: src/sshpilot/file_manager/progress_dialog.py:871
 msgid "Move Complete"
 msgstr "已完成"
 
-#: src/sshpilot/file_manager/progress_dialog.py:790
+#: src/sshpilot/file_manager/progress_dialog.py:872
 msgid "Delete Complete"
 msgstr "删除连接"
 
-#: src/sshpilot/file_manager/progress_dialog.py:793
+#: src/sshpilot/file_manager/progress_dialog.py:875
 msgid "Transfer Complete"
 msgstr "传输完成"
 
-#: src/sshpilot/file_manager/progress_dialog.py:799
+#: src/sshpilot/file_manager/progress_dialog.py:881
 #, python-brace-format
 msgid "Successfully deleted {count} item"
 msgid_plural "Successfully deleted {count} items"
 msgstr[0] "已成功删除 {count} 个项目"
 
-#: src/sshpilot/file_manager/progress_dialog.py:804
+#: src/sshpilot/file_manager/progress_dialog.py:886
 msgid "Delete completed successfully"
 msgstr "传输成功完成"
 
-#: src/sshpilot/file_manager/progress_dialog.py:820
+#: src/sshpilot/file_manager/progress_dialog.py:902
 msgid "Delete Failed"
 msgstr "创建副本失败"
 
-#: src/sshpilot/file_manager/progress_dialog.py:821
+#: src/sshpilot/file_manager/progress_dialog.py:903
 msgid "An error occurred while deleting"
 msgstr "传输过程中发生错误"
 
-#: src/sshpilot/file_manager/progress_dialog.py:823
+#: src/sshpilot/file_manager/progress_dialog.py:905
+#: src/sshpilot/file_manager_window.py:4010
 msgid "Transfer Failed"
 msgstr "传输失败"
 
-#: src/sshpilot/file_manager/progress_dialog.py:824
+#: src/sshpilot/file_manager/progress_dialog.py:906
 msgid "An error occurred during transfer"
 msgstr "传输过程中发生错误"
 
-#: src/sshpilot/file_manager/progress_dialog.py:829
+#: src/sshpilot/file_manager/progress_dialog.py:911
 #, python-brace-format
 msgid "Error: {message}"
 msgstr "错误：{message}"
+
+#. Details button — opens a dialog with the full error report (and Copy).
+#: src/sshpilot/file_manager/transfer_indicator.py:67
+#: src/sshpilot/file_manager_window.py:4013
+#: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:355
+#: src/sshpilot/terminal.py:614
+msgid "Details"
+msgstr "详细信息"
+
+#: src/sshpilot/file_manager/transfer_indicator.py:75
+msgid "Remove From List"
+msgstr "从列表中移除"
+
+#: src/sshpilot/file_manager/transfer_indicator.py:101
+#: src/sshpilot/scp_window.py:1379
+msgid "Cancelled"
+msgstr "已取消"
+
+#: src/sshpilot/file_manager/transfer_indicator.py:170
+#: src/sshpilot/file_manager/transfer_indicator.py:302
+msgid "Transfers"
+msgstr "传输"
+
+#: src/sshpilot/file_manager/transfer_indicator.py:182
+msgid "Clear Finished"
+msgstr "清除已完成"
+
+#: src/sshpilot/file_manager/transfer_indicator.py:287
+#, python-brace-format
+msgid "{count} transfer running"
+msgid_plural "{count} transfers running"
+msgstr[0] "{count} 个传输正在进行"
 
 #: src/sshpilot/file_manager/permissions.py:60
 #: src/sshpilot/file_manager/properties_dialog.py:624
@@ -4391,284 +4426,284 @@ msgstr "仅显示一个窗格（{shortcut}）"
 msgid "Show Both Panes ({shortcut})"
 msgstr "显示两个窗格（{shortcut}）"
 
-#: src/sshpilot/file_manager_window.py:1288
-#: src/sshpilot/file_manager_window.py:1306
+#: src/sshpilot/file_manager_window.py:1299
+#: src/sshpilot/file_manager_window.py:1317
 msgid "Connected — loading files…"
 msgstr "正在连接…"
 
-#: src/sshpilot/file_manager_window.py:1304
+#: src/sshpilot/file_manager_window.py:1315
 msgid "Connected"
 msgstr "已断开连接"
 
-#: src/sshpilot/file_manager_window.py:1334
+#: src/sshpilot/file_manager_window.py:1345
 #, python-brace-format
 msgid "File operation failed: {error}"
 msgstr "上传失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:1335
+#: src/sshpilot/file_manager_window.py:1346
 msgid "File operation failed"
 msgstr "生成密钥失败"
 
-#: src/sshpilot/file_manager_window.py:1415
-#: src/sshpilot/file_manager_window.py:1465
+#: src/sshpilot/file_manager_window.py:1426
+#: src/sshpilot/file_manager_window.py:1476
 #, python-brace-format
 msgid "Connection failed: {error}"
 msgstr "连接失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:1607
+#: src/sshpilot/file_manager_window.py:1626
 msgid "Directory refreshed"
 msgstr "目录"
 
-#: src/sshpilot/file_manager_window.py:1649
+#: src/sshpilot/file_manager_window.py:1668
 #, python-brace-format
 msgid "Not a directory: {path}"
 msgstr "不是目录：{path}"
 
-#: src/sshpilot/file_manager_window.py:1677
+#: src/sshpilot/file_manager_window.py:1696
 msgid "Directory reloaded"
 msgstr "目录"
 
-#: src/sshpilot/file_manager_window.py:1684
-#: src/sshpilot/file_manager_window.py:1756
+#: src/sshpilot/file_manager_window.py:1703
+#: src/sshpilot/file_manager_window.py:1775
 #, python-brace-format
 msgid "Failed to load directory: {error}"
 msgstr "加载失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:1795
+#: src/sshpilot/file_manager_window.py:1814
 msgid "Loading directory…"
 msgstr "工作目录"
 
-#: src/sshpilot/file_manager_window.py:1874
-#: src/sshpilot/file_manager_window.py:1883
-#: src/sshpilot/file_manager_window.py:1899
-#: src/sshpilot/file_manager_window.py:1937
-#: src/sshpilot/file_manager_window.py:2029
-#: src/sshpilot/file_manager_window.py:2046
+#: src/sshpilot/file_manager_window.py:1893
+#: src/sshpilot/file_manager_window.py:1902
+#: src/sshpilot/file_manager_window.py:1918
+#: src/sshpilot/file_manager_window.py:1956
+#: src/sshpilot/file_manager_window.py:2048
+#: src/sshpilot/file_manager_window.py:2065
 msgid "Connection lost. Please reconnect and try again."
 msgstr "重新连接到 SSH Pilot 守护进程并重试。"
 
-#: src/sshpilot/file_manager_window.py:1888
+#: src/sshpilot/file_manager_window.py:1907
 #, python-brace-format
 msgid "Connection error: {error}"
 msgstr "连接错误：{error}"
 
-#: src/sshpilot/file_manager_window.py:1908
+#: src/sshpilot/file_manager_window.py:1927
 #, python-brace-format
 msgid "'{filename}' already exists in the destination folder."
 msgstr "“{filename}”已存在于目标文件夹中。"
 
-#: src/sshpilot/file_manager_window.py:1911
+#: src/sshpilot/file_manager_window.py:1930
 #, python-brace-format
 msgid "{count} of {total} file already exists in the destination folder."
 msgid_plural ""
 "{count} of {total} files already exist in the destination folder."
 msgstr[0] "{total} 个文件中有 {count} 个已存在于目标文件夹中。"
 
-#: src/sshpilot/file_manager_window.py:1916
+#: src/sshpilot/file_manager_window.py:1935
 msgid "File Already Exists"
 msgid_plural "Files Already Exist"
 msgstr[0] "文件已存在"
 
-#: src/sshpilot/file_manager_window.py:1920
+#: src/sshpilot/file_manager_window.py:1939
 msgid "Skip Existing"
 msgstr "跳过已有文件"
 
-#: src/sshpilot/file_manager_window.py:1921 src/sshpilot/text_editor.py:491
+#: src/sshpilot/file_manager_window.py:1940 src/sshpilot/text_editor.py:491
 msgid "Replace All"
 msgstr "全部替换"
 
-#: src/sshpilot/file_manager_window.py:1949
+#: src/sshpilot/file_manager_window.py:1968
 #, python-brace-format
 msgid "Skipped existing file: {filename}"
 msgstr "已跳过现有文件：{filename}"
 
-#: src/sshpilot/file_manager_window.py:1952
+#: src/sshpilot/file_manager_window.py:1971
 #, python-brace-format
 msgid "Skipped {count} existing file"
 msgid_plural "Skipped {count} existing files"
 msgstr[0] "已跳过 {count} 个现有文件"
 
-#: src/sshpilot/file_manager_window.py:2113
-#: src/sshpilot/file_manager_window.py:2131
+#: src/sshpilot/file_manager_window.py:2132
+#: src/sshpilot/file_manager_window.py:2150
 msgid "Terminal is not available"
 msgstr "终端不可用"
 
-#: src/sshpilot/file_manager_window.py:2174
+#: src/sshpilot/file_manager_window.py:2193
 #, python-brace-format
 msgid "Cut {name}"
 msgstr "标签：{name}"
 
-#: src/sshpilot/file_manager_window.py:2174
+#: src/sshpilot/file_manager_window.py:2193
 #, python-brace-format
 msgid "Copied {name}"
 msgstr "已复制 {name}"
 
-#: src/sshpilot/file_manager_window.py:2178
+#: src/sshpilot/file_manager_window.py:2197
 #, python-brace-format
 msgid "Cut {count} item"
 msgid_plural "Cut {count} items"
 msgstr[0] "已剪切 {count} 个项目"
 
-#: src/sshpilot/file_manager_window.py:2180
-#: src/sshpilot/file_manager_window.py:3447
+#: src/sshpilot/file_manager_window.py:2199
+#: src/sshpilot/file_manager_window.py:3466
 #, python-brace-format
 msgid "Copied {count} item"
 msgid_plural "Copied {count} items"
 msgstr[0] "已复制 {count} 个项目"
 
-#: src/sshpilot/file_manager_window.py:2186
+#: src/sshpilot/file_manager_window.py:2205
 msgid "Clipboard is empty"
 msgstr "（日志为空）"
 
-#: src/sshpilot/file_manager_window.py:2218
+#: src/sshpilot/file_manager_window.py:2237
 msgid "Paste target is unavailable"
 msgstr "安全存储不可用。"
 
-#: src/sshpilot/file_manager_window.py:2247
+#: src/sshpilot/file_manager_window.py:2266
 msgid "Enter a name for the new folder"
 msgstr "输入新分组的名称："
 
-#: src/sshpilot/file_manager_window.py:2252
-#: src/sshpilot/file_manager_window.py:2313
+#: src/sshpilot/file_manager_window.py:2271
+#: src/sshpilot/file_manager_window.py:2332
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:312
 #: src/sshpilot/window_dialogs.py:3382
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:25
 msgid "Create"
 msgstr "创建"
 
-#: src/sshpilot/file_manager_window.py:2270
+#: src/sshpilot/file_manager_window.py:2289
 msgid "Folder already exists"
 msgstr "文件已存在"
 
-#: src/sshpilot/file_manager_window.py:2272
+#: src/sshpilot/file_manager_window.py:2291
 #, python-brace-format
 msgid "Failed to create folder: {error}"
 msgstr "创建分组失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2308
+#: src/sshpilot/file_manager_window.py:2327
 msgid "Enter a name for the new file"
 msgstr "输入新分组的名称："
 
-#: src/sshpilot/file_manager_window.py:2329
-#: src/sshpilot/file_manager_window.py:2344 src/sshpilot/preferences.py:4286
+#: src/sshpilot/file_manager_window.py:2348
+#: src/sshpilot/file_manager_window.py:2363 src/sshpilot/preferences.py:4286
 msgid "File already exists"
 msgstr "文件已存在"
 
-#: src/sshpilot/file_manager_window.py:2331
-#: src/sshpilot/file_manager_window.py:2347
+#: src/sshpilot/file_manager_window.py:2350
+#: src/sshpilot/file_manager_window.py:2366
 #, python-brace-format
 msgid "Failed to create file: {error}"
 msgstr "保存文件失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2394
+#: src/sshpilot/file_manager_window.py:2413
 msgid "Rename Item"
 msgstr "重命名"
 
-#: src/sshpilot/file_manager_window.py:2394
+#: src/sshpilot/file_manager_window.py:2413
 #, python-brace-format
 msgid "Enter a new name for {name}"
 msgstr "输入“{name}”的新名称。"
 
-#: src/sshpilot/file_manager_window.py:2410
+#: src/sshpilot/file_manager_window.py:2429
 msgid "Name cannot be empty"
 msgstr "名称不能为空"
 
-#: src/sshpilot/file_manager_window.py:2421
+#: src/sshpilot/file_manager_window.py:2440
 #, python-brace-format
 msgid "Failed to rename item: {error}"
 msgstr "重命名标签失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2423
+#: src/sshpilot/file_manager_window.py:2442
 #, python-brace-format
 msgid "Renamed to {name}"
 msgstr "终端：{name}"
 
-#: src/sshpilot/file_manager_window.py:2440
+#: src/sshpilot/file_manager_window.py:2459
 #, python-brace-format
 msgid "Renaming to {name}…"
 msgstr "正在重命名为 {name}…"
 
-#: src/sshpilot/file_manager_window.py:2472
+#: src/sshpilot/file_manager_window.py:2491
 #, python-brace-format
 msgid "Delete {name}?"
 msgstr "删除 {name}？"
 
-#: src/sshpilot/file_manager_window.py:2474
+#: src/sshpilot/file_manager_window.py:2493
 #, python-brace-format
 msgid "Delete {count} item?"
 msgid_plural "Delete {count} items?"
 msgstr[0] "删除 {count} 个项目？"
 
-#: src/sshpilot/file_manager_window.py:2476
+#: src/sshpilot/file_manager_window.py:2495
 msgid "Delete Item"
 msgid_plural "Delete Items"
 msgstr[0] "删除项目"
 
-#: src/sshpilot/file_manager_window.py:2502
+#: src/sshpilot/file_manager_window.py:2521
 #, python-brace-format
 msgid "{name} no longer exists"
 msgstr "{name} 不再存在"
 
-#: src/sshpilot/file_manager_window.py:2504
-#: src/sshpilot/file_manager_window.py:2566
-#: src/sshpilot/file_manager_window.py:2599
+#: src/sshpilot/file_manager_window.py:2523
+#: src/sshpilot/file_manager_window.py:2585
+#: src/sshpilot/file_manager_window.py:2618
 #, python-brace-format
 msgid "Failed to delete {name}: {error}"
 msgstr "删除 {name} 失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2508
-#: src/sshpilot/file_manager_window.py:3140
+#: src/sshpilot/file_manager_window.py:2527
+#: src/sshpilot/file_manager_window.py:3159
 #, python-brace-format
 msgid "Deleted {count} item"
 msgid_plural "Deleted {count} items"
 msgstr[0] "已删除 {count} 个项目"
 
-#: src/sshpilot/file_manager_window.py:2552
-#: src/sshpilot/file_manager_window.py:2637
+#: src/sshpilot/file_manager_window.py:2571
+#: src/sshpilot/file_manager_window.py:2656
 #, python-brace-format
 msgid "Failed to delete {count} items: {error}"
 msgstr "删除 {count} 个项目失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2563
-#: src/sshpilot/file_manager_window.py:3084
+#: src/sshpilot/file_manager_window.py:2582
+#: src/sshpilot/file_manager_window.py:3103
 msgid "Delete was cancelled"
 msgstr "解密已取消"
 
-#: src/sshpilot/file_manager_window.py:2730
+#: src/sshpilot/file_manager_window.py:2749
 msgid "No files selected for upload"
 msgstr "选择要上传的文件"
 
-#: src/sshpilot/file_manager_window.py:2745
+#: src/sshpilot/file_manager_window.py:2764
 msgid "Selected items are not accessible"
 msgstr "选择要授予访问权限的文件夹"
 
-#: src/sshpilot/file_manager_window.py:2748
+#: src/sshpilot/file_manager_window.py:2767
 #, python-brace-format
 msgid "Skipping inaccessible items: {name}"
 msgstr "正在跳过不可访问的项目：{name}"
 
-#: src/sshpilot/file_manager_window.py:2765
+#: src/sshpilot/file_manager_window.py:2784
 msgid "Upload failed: Connection lost"
 msgstr "上传失败：连接断开"
 
-#: src/sshpilot/file_manager_window.py:2773
+#: src/sshpilot/file_manager_window.py:2792
 msgid "Upload failed: Connection closed. Please reconnect."
 msgstr "上传失败：连接已关闭。请重新连接。"
 
-#: src/sshpilot/file_manager_window.py:2841
+#: src/sshpilot/file_manager_window.py:2860
 msgid "Invalid download request"
 msgstr "无效的下载请求"
 
 #. All files failed
-#: src/sshpilot/file_manager_window.py:3072
-#: src/sshpilot/file_manager_window.py:3094
-#: src/sshpilot/file_manager_window.py:3097
-#: src/sshpilot/file_manager_window.py:4355 src/sshpilot/window.py:1529
+#: src/sshpilot/file_manager_window.py:3091
+#: src/sshpilot/file_manager_window.py:3113
+#: src/sshpilot/file_manager_window.py:3116
+#: src/sshpilot/file_manager_window.py:4402 src/sshpilot/window.py:1529
 #: src/sshpilot/window_dialogs.py:2020
 msgid "Unknown error"
 msgstr "未知错误"
 
-#: src/sshpilot/file_manager_window.py:3103
+#: src/sshpilot/file_manager_window.py:3122
 #, python-brace-format
 msgid "{count} of {total} item failed"
 msgid_plural "{count} of {total} items failed"
@@ -4677,71 +4712,71 @@ msgstr[0] "{total} 个项目中有 {count} 个失败"
 #. Try to reconnect and then refresh
 #. The connection should be automatically re-established on next operation
 #. For now, just show a message and let user manually refresh
-#: src/sshpilot/file_manager_window.py:3228
+#: src/sshpilot/file_manager_window.py:3247
 msgid "Connection closed. Please refresh manually."
 msgstr "连接已关闭。请手动刷新。"
 
-#: src/sshpilot/file_manager_window.py:3231
-#: src/sshpilot/file_manager_window.py:3240
+#: src/sshpilot/file_manager_window.py:3250
+#: src/sshpilot/file_manager_window.py:3259
 #, python-brace-format
 msgid "Refresh failed: {error}"
 msgstr "保存失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:3337
+#: src/sshpilot/file_manager_window.py:3356
 msgid "You cannot move a folder into itself."
 msgstr "无法将目录复制到其自身内部"
 
-#: src/sshpilot/file_manager_window.py:3339
+#: src/sshpilot/file_manager_window.py:3358
 msgid "You cannot copy a folder into itself."
 msgstr "无法将目录复制到其自身内部"
 
-#: src/sshpilot/file_manager_window.py:3341
+#: src/sshpilot/file_manager_window.py:3360
 msgid "The destination folder is inside the source folder."
 msgstr "目标文件夹位于源文件夹内。"
 
-#: src/sshpilot/file_manager_window.py:3345
+#: src/sshpilot/file_manager_window.py:3364
 msgid "Skip"
 msgstr "跳过"
 
-#: src/sshpilot/file_manager_window.py:3347
+#: src/sshpilot/file_manager_window.py:3366
 msgid "Skip All"
 msgstr "全部跳过"
 
-#: src/sshpilot/file_manager_window.py:3422
-#: src/sshpilot/file_manager_window.py:3428
+#: src/sshpilot/file_manager_window.py:3441
+#: src/sshpilot/file_manager_window.py:3447
 #, python-brace-format
 msgid "{name} already exists"
 msgstr "{name} 已存在"
 
-#: src/sshpilot/file_manager_window.py:3444
+#: src/sshpilot/file_manager_window.py:3463
 #, python-brace-format
 msgid "Moved {count} item"
 msgid_plural "Moved {count} items"
 msgstr[0] "已移动 {count} 个项目"
 
-#: src/sshpilot/file_manager_window.py:3454
+#: src/sshpilot/file_manager_window.py:3473
 #, python-brace-format
 msgid "Local copy or move failed: {error}"
 msgstr "保存失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:3485
-#: src/sshpilot/file_manager_window.py:3558
-#: src/sshpilot/file_manager_window.py:3660
-#: src/sshpilot/file_manager_window.py:3995
+#: src/sshpilot/file_manager_window.py:3504
+#: src/sshpilot/file_manager_window.py:3577
+#: src/sshpilot/file_manager_window.py:3679
+#: src/sshpilot/file_manager_window.py:4050
 msgid "Remote connection unavailable"
 msgstr "守护进程连接不可用。"
 
-#: src/sshpilot/file_manager_window.py:3634
+#: src/sshpilot/file_manager_window.py:3653
 msgid "Files are no longer available"
 msgstr "文件管理器不可用"
 
-#: src/sshpilot/file_manager_window.py:3738
+#: src/sshpilot/file_manager_window.py:3757
 #, python-brace-format
 msgid "Failed to remove {name}: {error}"
 msgstr "移除 {name} 失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:4092
-#: src/sshpilot/file_manager_window.py:4361
+#: src/sshpilot/file_manager_window.py:4149
+#: src/sshpilot/file_manager_window.py:4408
 #, python-brace-format
 msgid "{count} of {total} file could not be transferred"
 msgid_plural "{count} of {total} files could not be transferred"
@@ -8874,12 +8909,6 @@ msgstr "强制终止"
 msgid "Open shell"
 msgstr "打开终端"
 
-#. Details button — opens a dialog with the full error report (and Copy).
-#: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:355
-#: src/sshpilot/terminal.py:614
-msgid "Details"
-msgstr "详细信息"
-
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:357
 msgid "Env"
 msgstr "环境变量"
@@ -12254,10 +12283,6 @@ msgstr "从：{path}"
 #, python-brace-format
 msgid "To: {path}"
 msgstr "到：{path}"
-
-#: src/sshpilot/scp_window.py:1379
-msgid "Cancelled"
-msgstr "已取消"
 
 #: src/sshpilot/scp_window.py:1388
 #, python-brace-format

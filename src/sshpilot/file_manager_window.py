@@ -1121,6 +1121,17 @@ class FileManagerWindow(Adw.Window):
             self._layout_toggle = (one, two)
             bar.append(linked)
 
+        # Transfers run in the background; this lists them (right end).
+        from .file_manager.transfer_indicator import TransferIndicator
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        bar.append(spacer)
+        self._transfer_indicator = TransferIndicator(
+            on_details=self._show_transfer_details,
+            on_failed=self._on_transfer_failed,
+        )
+        bar.append(self._transfer_indicator)
+
         # The bar and the panes share the toast overlay's child.
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._toast_overlay.set_child(None)
@@ -1499,6 +1510,14 @@ class FileManagerWindow(Adw.Window):
         """Close the file manager backend and clear UI state."""
         self._is_disposed = True
         self._teardown_left_backend()
+        indicator = self.__dict__.get("_transfer_indicator")
+        if indicator is not None:
+            for transfer in indicator.transfers():
+                try:
+                    transfer.discard()
+                except Exception:
+                    pass
+            indicator.shutdown()
         manager = getattr(self, "_manager", None)
         if isinstance(manager, (types.FunctionType, types.MethodType)):
             manager = None
@@ -3763,7 +3782,14 @@ class FileManagerWindow(Adw.Window):
         future.add_done_callback(_cleanup)
 
     def _on_progress_dialog_closed(self, dialog) -> None:
-        """Drop our reference when the user dismisses the progress dialog."""
+        """Drop our reference when a finished transfer's details close.
+
+        Closing a running transfer's details only hides them: it carries on
+        in the background and the window keeps feeding it progress.
+        """
+        is_reusable = getattr(dialog, "is_reusable", None)
+        if callable(is_reusable) and is_reusable():
+            return
         if getattr(self, "_aggregate_dialog", None) is dialog:
             self._aggregate_dialog = None
         transfer_dialogs = self._open_transfer_dialogs()
@@ -3954,13 +3980,42 @@ class FileManagerWindow(Adw.Window):
         )
         dialog.connect("closed", self._on_progress_dialog_closed)
         dialog.set_operation_details(total_files=total_files, filename=filename)
-        # AlertDialog.present takes a parent widget; MessageDialog
-        # already had it set via set_transient_for in the dialog ctor.
-        if _HAS_ALERT_DIALOG:
-            dialog.present(dialog_parent)
+        # Not presented: an Adw dialog is modal and locked the file manager
+        # for the whole transfer. The toolbar's transfer indicator lists it;
+        # its Details button presents this dialog on demand.
+        indicator = self.__dict__.get("_transfer_indicator")
+        if indicator is not None:
+            indicator.add(dialog)
         else:
-            dialog.present()
+            self._present_transfer_dialog(dialog)
         return dialog
+
+    def _present_transfer_dialog(self, dialog) -> None:
+        dialog_parent = self._progress_dialog_parent()
+        try:
+            if _HAS_ALERT_DIALOG:
+                dialog.present(dialog_parent)
+            else:
+                dialog.present()
+        except Exception as exc:
+            logger.debug("Failed to present the transfer details: %s", exc)
+
+    def _show_transfer_details(self, dialog) -> None:
+        """The indicator's Details: the transfer's progress dialog."""
+        self._present_transfer_dialog(dialog)
+
+    def _on_transfer_failed(self, dialog) -> None:
+        """A background transfer failed: say so, with a way to the details."""
+        snap = dialog.snapshot()
+        toast = Adw.Toast.new(snap.get("title") or _("Transfer Failed"))
+        toast.set_priority(Adw.ToastPriority.HIGH)
+        toast.set_timeout(8)
+        toast.set_button_label(_("Details"))
+        toast.connect("button-clicked", lambda *_a: self._show_transfer_details(dialog))
+        try:
+            self._toast_overlay.add_toast(toast)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
 
     def _start_transfer_batch(
         self,
@@ -4070,11 +4125,13 @@ class FileManagerWindow(Adw.Window):
             try:
                 result = completed.result()
             except (TransferCancelledException, CancelledError):
+                dialog.mark_cancelled()
                 return False
             except Exception as exc:
                 dialog.show_completion(success=False, error_message=format_transfer_start_error(exc))
                 return False
             if result.cancelled:
+                dialog.mark_cancelled()
                 return False
             dialog.set_files_completed(result.items_done)
             failures = result.failures
@@ -4161,16 +4218,6 @@ class FileManagerWindow(Adw.Window):
                         if source_pane is not None or destination_pane is not None else {}
                     ),
                 )
-            elif not self._aggregate_dialog.get_visible():
-                # Same batch, dialog object reused but not visible — re-present.
-                dialog_parent = self._progress_dialog_parent()
-                try:
-                    if _HAS_ALERT_DIALOG:
-                        self._aggregate_dialog.present(dialog_parent)
-                    else:
-                        self._aggregate_dialog.present()
-                except Exception as exc:
-                    logger.debug("Failed to re-present progress dialog: %s", exc)
 
             # Keep the file counter in sync. Name / From / To are owned by
             # ``_focus_batch_transfer`` so a multi-file start loop does not

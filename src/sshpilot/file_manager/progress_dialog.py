@@ -1,5 +1,12 @@
 """Modern HIG-compliant SFTP transfer progress dialog.
 
+Transfers run in the background: the file manager does not present this
+dialog when a transfer starts (an Adw dialog is modal, so it locked the
+file manager until dismissed). It tracks the transfer either way, the
+toolbar's transfer indicator reads ``snapshot()``, and the dialog opens on
+demand as the transfer's details. Closing it then only hides it; Cancel
+cancels.
+
 Subclasses ``Adw.AlertDialog`` when available (libadwaita ≥ 1.5) and falls
 back to ``Adw.MessageDialog`` on older systems. The heading names the
 operation and the body names the route ("From US to this computer"); the
@@ -119,11 +126,18 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self._completion_shown = False
         self._failed_files = []
 
-        # Tracks whether the dialog is currently presented. Used to make
-        # close() idempotent so that the shutdown cleanup path (which calls
-        # close again after the user has dismissed the dialog) doesn't trip
-        # the "trying to close a dialog that's not presented" Adwaita-CRITICAL.
+        # _closed: discarded for good (file manager closed, or replaced).
+        # _presented: on screen now. Closing a presented dialog only hides
+        # it; the transfer goes on in the background.
         self._closed = False
+        self._presented = False
+        # What the transfer indicator shows (see snapshot()).
+        self._heading_text = title
+        self._status_text = body
+        self._speed_text: Optional[str] = None
+        self._eta_text: Optional[str] = None
+        self._succeeded: Optional[bool] = None
+        self._error_message: Optional[str] = None
 
         # Bytes-driven speed/ETA state (populated by progress-bytes signal).
         # Always read/written on the main thread.
@@ -357,13 +371,88 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         return row, path_label
 
     def is_reusable(self) -> bool:
-        """Return True if this dialog can track another transfer in-place."""
-        if self.is_cancelled or self._closed or self._completion_shown:
-            return False
+        """Return True if this dialog can track another transfer in-place:
+        it is still running, whether or not it is on screen."""
+        return not (self.is_cancelled or self._closed or self._completion_shown)
+
+    # -- background use (transfer indicator) ------------------------------
+
+    def present(self, *args):  # type: ignore[override]
+        """Show the transfer's details; closing them leaves it running."""
+        if self._closed:
+            return None
+        self._presented = True
+        return super().present(*args)
+
+    def discard(self) -> None:
+        """Retire the dialog for good: hide it, stop its timer."""
+        self._stop_render_timer()
+        if self._presented:
+            self.close()
+        self._closed = True
+
+    def mark_cancelled(self) -> None:
+        """The transfer was cancelled elsewhere (not from this dialog)."""
+        self.is_cancelled = True
+        self._stop_render_timer()
+
+    def cancel(self) -> None:
+        """Cancel the transfer (the indicator's Cancel button)."""
+        self._cancel_active_transfers()
+        self._stop_render_timer()
+        if self._presented:
+            self.close()
+
+    def _futures_all_cancelled(self) -> bool:
+        futures = [f for f in self._futures if f is not None]
         try:
-            return bool(self.get_visible())
+            return bool(futures) and all(
+                f.done() and f.cancelled() for f in futures
+            )
         except Exception:
             return False
+
+    @property
+    def locate_path(self) -> Optional[str]:
+        return self._locate_path
+
+    def open_location(self) -> None:
+        """Show a finished download in the desktop file manager."""
+        self._on_locate_clicked(None)
+
+    def snapshot(self) -> dict:
+        """What the transfer indicator shows for this transfer.
+
+        ``state`` is running, done, failed or cancelled; ``fraction`` is None
+        while the size is unknown (the indicator pulses then).
+        """
+        if self._completion_shown:
+            state = "done" if self._succeeded else "failed"
+        elif self.is_cancelled or self._futures_all_cancelled():
+            state = "cancelled"
+        else:
+            state = "running"
+        fraction = None
+        if not (self._total_bytes <= 0 and self._latest_fraction in (None, 0.0)):
+            if self._latest_fraction is not None:
+                fraction = max(0.0, min(1.0, float(self._latest_fraction)))
+        if state == "running":
+            parts = [self._bytes_text(), self._speed_text, self._eta_text]
+            detail = " · ".join(part for part in parts if part)
+            subtitle = self.current_file or self._route_summary()
+        else:
+            # A cancelled transfer has no outcome to report beyond its title.
+            detail = "" if state == "cancelled" else (self._status_text or "")
+            subtitle = self._route_summary()
+        return {
+            "state": state,
+            "title": self._heading_text,
+            "subtitle": subtitle,
+            "detail": detail,
+            "fraction": fraction,
+            "error": self._error_message,
+            "can_locate": bool(self._locate_path),
+        }
 
     def set_operation_details(self, total_files, filename=None):
         """Set the operation details"""
@@ -424,6 +513,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
 
     def _set_status_text(self, text: str) -> None:
         """Keep the hidden status label and AlertDialog body in sync."""
+        self._status_text = text
         try:
             self.status_label.set_text(text)
         except (AttributeError, RuntimeError, GLib.Error):
@@ -467,41 +557,31 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         """
         if self._completion_shown:
             # Already in "Done" mode — just close.
-            self._stop_render_timer()
             self.close()
             return
         # Active-transfer mode — cancel everything.
-        self._cancel_active_transfers()
-        self._stop_render_timer()
-        self.close()
+        self.cancel()
 
     def _on_dialog_closed(self, _dialog) -> None:
         """Esc / parent-dismiss / WM-close all funnel through here.
 
-        If the dialog is dismissed while a transfer is still running (no
-        completion shown yet), treat it as a cancel so we don't leave the
-        worker uploading bytes in the background.
+        The dialog shows a transfer's details; dismissing it only hides
+        them. The transfer runs on in the background (the toolbar's transfer
+        indicator keeps it), and Cancel is what cancels.
         """
-        if not self._completion_shown and not self.is_cancelled:
-            self._cancel_active_transfers()
-        self._stop_render_timer()
-        # Mark as closed so a subsequent .close() (e.g. from the file
-        # manager's shutdown cleanup) becomes a silent no-op.
-        self._closed = True
+        self._presented = False
 
     def close(self) -> bool:  # type: ignore[override]
-        """Idempotent close — safe to call after the dialog is already gone.
+        """Hide the dialog if it is on screen; a no-op otherwise.
 
         Adw.Dialog.close() asserts that the dialog is currently presented and
         emits an Adwaita-CRITICAL otherwise. The file manager calls close()
         from several places (action button, completion, shutdown cleanup),
-        and timing means we sometimes hit a dialog that has already been
-        dismissed. Bail early in that case instead of letting the assert
-        fire.
+        and a background transfer's dialog is usually not on screen.
         """
-        if getattr(self, "_closed", False):
+        if not getattr(self, "_presented", False):
             return False
-        self._closed = True
+        self._presented = False
         try:
             return super().close()
         except Exception:
@@ -590,13 +670,12 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             separator.set_visible(bool(speed_text and time_text))
 
     def _render_tick(self) -> bool:
-        """Repaint speed/ETA/progress at fixed cadence. Returns False to stop."""
-        # If the dialog has been dismissed, drop the timer.
-        try:
-            visible = self.get_visible()
-        except Exception:
-            visible = False
-        if not visible or self._completion_shown:
+        """Repaint speed/ETA/progress at fixed cadence. Returns False to stop.
+
+        Runs while the transfer does, on screen or not: the transfer
+        indicator reads the speed and time it works out.
+        """
+        if self._closed or self._completion_shown or self.is_cancelled:
             self._render_timeout_id = None
             return False
 
@@ -645,6 +724,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                         _("Almost done…") if remaining == 0
                         else self._format_time(remaining / bps)
                     )
+        self._speed_text, self._eta_text = speed_text, eta_text
         try:
             self._set_speed_and_time(speed_text, eta_text)
         except (AttributeError, RuntimeError):
@@ -662,6 +742,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
 
     def _set_dialog_heading(self, text: str) -> None:
         """Set the dialog's primary heading on either base class."""
+        self._heading_text = text
         if _HAS_ALERT_DIALOG:
             self.set_heading(text)
         else:
@@ -777,6 +858,8 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         if self._completion_shown:
             return False
         self._completion_shown = True
+        self._succeeded = bool(success)
+        self._error_message = None if success else error_message
         self._stop_render_timer()
 
         show_locate = False

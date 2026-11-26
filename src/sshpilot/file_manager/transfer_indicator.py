@@ -1,0 +1,311 @@
+"""The file manager's transfer indicator (#1356).
+
+Transfers used to open a progress dialog each; an Adw dialog is modal, so the
+file manager was locked until it was dismissed. Transfers now run in the
+background. This button in the toolbar shows how many are running and opens a
+list of them, each with its progress, a Cancel button and its details (the
+transfer's progress dialog, opened on demand).
+
+The list reads each transfer's :meth:`SFTPProgressDialog.snapshot` on a
+quarter-second tick while anything runs; it never touches the transfer.
+"""
+
+from __future__ import annotations
+
+import logging
+from gettext import gettext as _, ngettext
+from typing import Callable, List, Optional
+
+from gi.repository import GLib, Gtk, Pango
+
+logger = logging.getLogger(__name__)
+
+# Finished transfers kept in the list until cleared; the oldest go first.
+_MAX_FINISHED = 20
+_TICK_MS = 250
+
+
+class _TransferRow:
+    """One transfer in the list: title, file, progress and buttons."""
+
+    def __init__(self, transfer, indicator: "TransferIndicator") -> None:
+        self.transfer = transfer
+        self.last_state: Optional[str] = None
+        self.row = Gtk.ListBoxRow()
+        self.row.set_activatable(False)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
+        outer.set_margin_start(10)
+        outer.set_margin_end(6)
+
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        text.set_hexpand(True)
+        self.title = Gtk.Label(xalign=0)
+        self.title.add_css_class("heading")
+        self.title.set_ellipsize(Pango.EllipsizeMode.END)
+        self.subtitle = Gtk.Label(xalign=0)
+        self.subtitle.add_css_class("caption")
+        self.subtitle.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        self.progress = Gtk.ProgressBar()
+        self.detail = Gtk.Label(xalign=0)
+        self.detail.add_css_class("caption")
+        self.detail.add_css_class("dim-label")
+        self.detail.set_ellipsize(Pango.EllipsizeMode.END)
+        for widget in (self.title, self.subtitle, self.progress, self.detail):
+            text.append(widget)
+        outer.append(text)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        buttons.set_valign(Gtk.Align.CENTER)
+        self.locate = self._button(
+            "folder-open-symbolic", _("Show in Files"),
+            lambda *_a: indicator.locate(self),
+        )
+        self.details = self._button(
+            "view-more-horizontal-symbolic", _("Details"),
+            lambda *_a: indicator.show_details(self),
+        )
+        self.cancel = self._button(
+            "process-stop-symbolic", _("Cancel"),
+            lambda *_a: indicator.cancel(self),
+        )
+        self.remove = self._button(
+            "window-close-symbolic", _("Remove From List"),
+            lambda *_a: indicator.remove(self),
+        )
+        for button in (self.locate, self.details, self.cancel, self.remove):
+            buttons.append(button)
+        outer.append(buttons)
+        self.row.set_child(outer)
+
+    @staticmethod
+    def _button(icon: str, tooltip: str, on_click: Callable) -> Gtk.Button:
+        from sshpilot import icon_utils
+
+        button = Gtk.Button()
+        icon_utils.set_button_icon(button, icon)
+        button.add_css_class("flat")
+        button.add_css_class("circular")
+        button.set_valign(Gtk.Align.CENTER)
+        button.set_tooltip_text(tooltip)
+        button.connect("clicked", on_click)
+        return button
+
+    def update(self, snap: dict) -> None:
+        state = snap["state"]
+        running = state == "running"
+        title = snap.get("title") or ""
+        if state == "cancelled":
+            title = _("Cancelled")
+        self.title.set_text(title)
+        self.subtitle.set_text(snap.get("subtitle") or "")
+        self.subtitle.set_visible(bool(snap.get("subtitle")))
+        detail = snap.get("detail") or ""
+        if state == "failed" and snap.get("error"):
+            detail = snap["error"]
+        self.detail.set_text(detail)
+        self.detail.set_visible(bool(detail))
+        self.detail.set_tooltip_text(detail or None)
+        if state == "failed":
+            self.detail.add_css_class("error")
+        else:
+            self.detail.remove_css_class("error")
+
+        self.progress.set_visible(running)
+        if running:
+            fraction = snap.get("fraction")
+            if fraction is None:
+                self.progress.pulse()
+            else:
+                self.progress.set_fraction(fraction)
+
+        self.cancel.set_visible(running)
+        self.remove.set_visible(not running)
+        self.locate.set_visible(state == "done" and snap.get("can_locate", False))
+        self.details.set_visible(state != "cancelled")
+        self.last_state = state
+
+
+class TransferIndicator(Gtk.MenuButton):
+    """Toolbar button listing the file manager's transfers.
+
+    Hidden while there are none. While any runs it shows a spinner and the
+    count; once all are finished, a check (or a warning when one failed)
+    until the list is cleared.
+    """
+
+    def __init__(
+        self,
+        *,
+        on_details: Callable[[object], None],
+        on_failed: Optional[Callable[[object], None]] = None,
+    ) -> None:
+        super().__init__()
+        self._on_details = on_details
+        self._on_failed = on_failed
+        self._rows: List[_TransferRow] = []
+        self._tick_id: Optional[int] = None
+
+        self.add_css_class("flat")
+        self.set_valign(Gtk.Align.CENTER)
+        self.set_visible(False)
+        face = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self._spinner = Gtk.Spinner()
+        self._status_icon = Gtk.Image()
+        self._count = Gtk.Label()
+        self._count.add_css_class("numeric")
+        for widget in (self._spinner, self._status_icon, self._count):
+            face.append(widget)
+        self.set_child(face)
+
+        popover = Gtk.Popover()
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.set_size_request(380, -1)
+        header = Gtk.Label(label=_("Transfers"), xalign=0)
+        header.add_css_class("heading")
+        content.append(header)
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_propagate_natural_height(True)
+        scrolled.set_max_content_height(420)
+        self._list = Gtk.ListBox()
+        self._list.add_css_class("boxed-list")
+        self._list.set_selection_mode(Gtk.SelectionMode.NONE)
+        scrolled.set_child(self._list)
+        content.append(scrolled)
+        self._clear_button = Gtk.Button(label=_("Clear Finished"))
+        self._clear_button.set_halign(Gtk.Align.END)
+        self._clear_button.connect("clicked", lambda *_a: self.clear_finished())
+        content.append(self._clear_button)
+        popover.set_child(content)
+        self.set_popover(popover)
+
+    # -- the list -----------------------------------------------------------
+
+    def add(self, transfer) -> None:
+        """Track a transfer (an SFTPProgressDialog) from its start."""
+        if any(row.transfer is transfer for row in self._rows):
+            return
+        row = _TransferRow(transfer, self)
+        self._rows.insert(0, row)
+        self._list.prepend(row.row)
+        self._trim_finished()
+        self._refresh()
+        self._ensure_tick()
+
+    def transfers(self) -> list:
+        return [row.transfer for row in self._rows]
+
+    def running_count(self) -> int:
+        return sum(1 for row in self._rows if row.last_state == "running")
+
+    def remove(self, row: _TransferRow) -> None:
+        if row not in self._rows:
+            return
+        self._rows.remove(row)
+        self._list.remove(row.row)
+        if row.last_state != "running":
+            discard = getattr(row.transfer, "discard", None)
+            if callable(discard):
+                discard()
+        self._refresh()
+
+    def clear_finished(self) -> None:
+        for row in [r for r in self._rows if r.last_state != "running"]:
+            self.remove(row)
+        if not self._rows:
+            self.popdown()
+
+    def cancel(self, row: _TransferRow) -> None:
+        try:
+            row.transfer.cancel()
+        except Exception:
+            logger.debug("Cancelling a transfer failed", exc_info=True)
+        self._refresh()
+
+    def show_details(self, row: _TransferRow) -> None:
+        self.popdown()
+        self._on_details(row.transfer)
+
+    def locate(self, row: _TransferRow) -> None:
+        try:
+            row.transfer.open_location()
+        except Exception:
+            logger.debug("Showing a download failed", exc_info=True)
+
+    def _trim_finished(self) -> None:
+        finished = [r for r in self._rows if r.last_state not in (None, "running")]
+        for row in finished[_MAX_FINISHED:]:
+            self.remove(row)
+
+    # -- refresh --------------------------------------------------------------
+
+    def _ensure_tick(self) -> None:
+        if self._tick_id is None:
+            self._tick_id = GLib.timeout_add(_TICK_MS, self._on_tick)
+
+    def _on_tick(self) -> bool:
+        self._refresh()
+        if self.running_count() == 0:
+            self._tick_id = None
+            return False
+        return True
+
+    def _refresh(self) -> None:
+        for row in list(self._rows):
+            try:
+                snap = row.transfer.snapshot()
+            except Exception:
+                logger.debug("Transfer snapshot failed", exc_info=True)
+                continue
+            previous = row.last_state
+            row.update(snap)
+            if previous == "running" and snap["state"] == "failed" and self._on_failed:
+                try:
+                    self._on_failed(row.transfer)
+                except Exception:
+                    logger.debug("Transfer failure notice failed", exc_info=True)
+        self._update_face()
+
+    def _update_face(self) -> None:
+        running = self.running_count()
+        self.set_visible(bool(self._rows))
+        self._clear_button.set_visible(any(r.last_state != "running" for r in self._rows))
+        if running:
+            self._status_icon.set_visible(False)
+            self._spinner.set_visible(True)
+            self._spinner.start()
+            self._count.set_text(str(running))
+            self._count.set_visible(True)
+            self.set_tooltip_text(
+                ngettext("{count} transfer running", "{count} transfers running", running)
+                .format(count=running)
+            )
+            return
+        self._spinner.stop()
+        self._spinner.set_visible(False)
+        self._count.set_visible(False)
+        failed = any(r.last_state == "failed" for r in self._rows)
+        from sshpilot import icon_utils
+
+        icon_utils.set_icon_from_name(
+            self._status_icon,
+            "dialog-warning-symbolic" if failed else "object-select-symbolic",
+        )
+        self._status_icon.set_visible(True)
+        self.set_tooltip_text(_("Transfers"))
+
+    def shutdown(self) -> None:
+        """Stop refreshing (the file manager is closing)."""
+        if self._tick_id is not None:
+            try:
+                GLib.source_remove(self._tick_id)
+            except Exception:
+                pass
+            self._tick_id = None
