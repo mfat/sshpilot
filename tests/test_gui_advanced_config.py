@@ -1138,6 +1138,29 @@ def test_a_source_s_line_is_shown_without_losing_the_host(gtk, tmp_path):
         _close(win)
 
 
+def test_wildcard_host_chips_fit_inside_the_applies_to_tile(gtk, tmp_path):
+    hosts = [f"long-production-server-{i:02}" for i in range(21)]
+    win = _open_on(gtk, tmp_path, "Host *\n    Compression yes\nHost " + " ".join(hosts) + "\n")
+    try:
+        _show(win)
+        _pick(win, "Host *")
+        view = win.structured
+        assert _pump(lambda: _applies(win) == hosts[:8]
+                     and view.applies_chips.get_child_at_index(8).get_height() > 0)
+        chips = _children(view.applies_chips)
+        assert chips[-1].get_child().get_label() == "+13"
+        bounds = []
+        for child in chips:
+            found, rect = child.compute_bounds(view.applies_box)
+            assert found
+            bounds.append(rect)
+            assert rect.get_y() + rect.get_height() <= view.applies_box.get_height() + 1
+        assert bounds[0].get_y() == bounds[1].get_y()
+        assert bounds[-1].get_y() > bounds[0].get_y()
+    finally:
+        _close(win)
+
+
 def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
     """A pattern or a Match rule names no host. Picking one says which
     listed hosts it applies to, each host being OpenSSH's answer; the

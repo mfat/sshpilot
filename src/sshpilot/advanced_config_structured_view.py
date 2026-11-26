@@ -721,9 +721,9 @@ class StructuredView(Gtk.Box):
         self.applies_label.add_css_class("dim-label")
         self.applies_label.set_ellipsize(Pango.EllipsizeMode.END)
         content.append(self.applies_label)
-        # Chips as wide as their names, not stretched across the line.
+        # The flow box needs the tile width to measure its wrapped height.
         self.applies_chips = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,
-                                         halign=Gtk.Align.START, max_children_per_line=12)
+                                         max_children_per_line=12)
         self.applies_chips.set_column_spacing(6)
         self.applies_chips.set_row_spacing(6)
         content.append(self.applies_chips)
@@ -1131,13 +1131,14 @@ class StructuredView(Gtk.Box):
             self.applies_chips.remove(child)
             child = following
         for name in shown[:self._APPLIES_SHOWN]:
-            chip = Gtk.Button(label=name, tooltip_text=messages.show_host_block(name))
+            chip = Gtk.Button(label=name, halign=Gtk.Align.START,
+                              tooltip_text=messages.show_host_block(name))
             chip.add_css_class("advcfg-host-chip")
             chip.connect("clicked", lambda *_a, n=name: self.controller.follow_host(n))
             self.applies_chips.append(chip)
         if len(shown) > self._APPLIES_SHOWN:
             rest = shown[self._APPLIES_SHOWN:]
-            more = Gtk.Label(label=f"+{len(rest)}", tooltip_text=", ".join(rest))
+            more = Gtk.Label(label=f"+{len(rest)}", halign=Gtk.Align.START, tooltip_text=", ".join(rest))
             more.add_css_class("dim-label")
             self.applies_chips.append(more)
 
