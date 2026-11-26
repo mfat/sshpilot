@@ -210,21 +210,16 @@ def test_dialog_marks_a_field_an_earlier_block_beats(gui):
     assert not dialog._override_banner.get_revealed()
 
 
-def test_config_buttons_open_the_viewer_and_editor_over_the_dialog(gui):
-    """The dialog is modal, so whatever it opens must be modal over it to be
-    usable: the effective-config viewer, and the SSH config editor."""
+def test_the_config_button_opens_advanced_configuration_over_the_dialog(gui):
+    """The dialog is modal, so what it opens must be opened over it to be
+    usable. Its one way into the configuration is Advanced Configuration,
+    at this host's block; the fields are re-marked after a save there."""
     from gi.repository import Gtk
-    from sshpilot.api.models.connections import EffectiveConfigComparison
     from sshpilot.connection_dialog import ConnectionDialog
     from sshpilot.connection_model import Connection
-    from sshpilot.effective_config_dialog import EffectiveConfigDialog
     from sshpilot.plugins.loader import ensure_builtin_protocols
 
     ensure_builtin_protocols()
-    comparison = EffectiveConfigComparison(
-        connection_id="web", host="web", available=True, has_diff=False,
-        own=("user admin",), full=("user admin", "port 22"),
-    )
     snapshot = GlobalSshOverrides(
         revision="r1", connect_timeout=0, strict_host_key_checking="",
         compression="", verbosity=0, debug_enabled=False, forced_options=(),
@@ -233,50 +228,34 @@ def test_config_buttons_open_the_viewer_and_editor_over_the_dialog(gui):
     parent = Gtk.Window()
     parent.connection_manager = _Manager()
     parent._daemon_ready = lambda: True
-    parent.client = types.SimpleNamespace(
-        get_global_ssh_overrides=lambda: snapshot,
-        get_effective_config=lambda _cid: comparison,
-    )
-    parent._open_ssh_config_editor = (
-        lambda parent=None, on_saved=None: opened.append((parent, on_saved))
-    )
+    parent.client = types.SimpleNamespace(get_global_ssh_overrides=lambda: snapshot)
+    parent.open_advanced_config = lambda **target: opened.append(target)
 
     new = ConnectionDialog(parent, connection_manager=parent.connection_manager)
-    assert new.edit_ssh_config_button.get_visible()
-    assert not new.effective_config_button.get_sensitive()  # nothing saved yet
+    assert new.advanced_config_button.get_visible()
+    assert not hasattr(new, "edit_ssh_config_button")       # the two older buttons are gone
+    assert not hasattr(new, "effective_config_button")
+    new.advanced_config_button.emit("activated")
+    assert opened[-1]["over"] is new and opened[-1]["host"] == ""   # no block yet
     new.close()
 
     connection = Connection({
         "nickname": "web", "host": "web", "hostname": "web.example.com",
-        "username": "admin", "__authored_directives": ("hostname", "user"),
+        "username": "admin", "source": "/home/u/.ssh/conf.d/web.conf",
+        "__authored_directives": ("hostname", "user"),
     })
     dialog = ConnectionDialog(
         parent, connection=connection, connection_manager=parent.connection_manager
     )
-    assert dialog.effective_config_button.get_sensitive()
-
-    dialog.edit_ssh_config_button.emit("clicked")
-    assert opened and opened[-1][0] is dialog
+    dialog.advanced_config_button.emit("activated")
+    target = opened[-1]
+    assert target["over"] is dialog and target["host"] == "web"
+    assert target["file"] == "/home/u/.ssh/conf.d/web.conf"
     reloads = []
     dialog._load_earlier_directives_async = lambda: reloads.append("earlier")
     dialog._load_inherited_values_async = lambda: reloads.append("inherited")
-    opened[-1][1]()  # the editor saved
+    target["on_saved"]()  # Advanced Configuration saved
     assert reloads == ["earlier", "inherited"]
-
-    dialog.effective_config_button.emit("clicked")
-
-    def viewer():
-        for window in Gtk.Window.list_toplevels():
-            if isinstance(window, EffectiveConfigDialog) and window.get_visible():
-                return window
-        return None
-
-    _pump(lambda: viewer() is not None)
-    window = viewer()
-    assert window.get_transient_for() is dialog and window.get_modal()
-    window._on_edit_clicked(None)
-    assert opened[-1][0] is window
-    window.close()
     dialog.close()
 
 
@@ -387,22 +366,65 @@ def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gu
     assert "ForwardX11" in dialog.x11_row.get_tooltip_text()
     # A selector on Default while the earlier block decides.
     assert dialog.forward_agent_row._sshpilot_override_state == GLOBAL
-    # Key login is still tried by "publickey": nothing to say.
-    assert getattr(dialog.auth_method_row, "_sshpilot_override_state", None) is None
+    # The host sets no order; the row shows the one in force: nothing to say.
+    assert getattr(dialog.auth_order_row, "_sshpilot_override_state", None) is None
     assert getattr(dialog, "_override_banner", None) is None or (
         not dialog._override_banner.get_revealed()
     )
 
-    # Password login is not in the earlier list: the choice here is not used.
-    dialog.auth_toggle.set_active(1)
-    assert dialog.auth_method_row._sshpilot_override_state == OVERRIDDEN
-    assert dialog.auth_method_row._sshpilot_override_icon.get_visible()
-    assert "publickey" in dialog.auth_method_row.get_tooltip_text()
+    # An order set here loses to the earlier list: it is not used. The rows
+    # can be moved once ssh -G has said what the host inherits. The daemon
+    # editor load starts that lookup (the contract suite covers it); this
+    # dialog is built from a bare Connection, so hand the section the
+    # answer the lookup ends in.
+    dialog.auth_policy.policy.set_inherited({"preferredauthentications": "publickey"})
+    dialog.auth_policy.sync()
+    assert dialog.auth_password_row._check.get_sensitive()
+    # Password is not in the inherited order: checking it gives the host an
+    # order of its own (publickey,password), which the earlier one beats.
+    dialog.auth_password_row._check.set_active(True)
+    assert dialog.auth_policy.policy.order == ["publickey", "password"]
+    assert dialog.auth_order_row._sshpilot_override_state == OVERRIDDEN
+    assert dialog.auth_order_row._sshpilot_override_icon.get_visible()
+    assert "publickey" in dialog.auth_order_row.get_tooltip_text()
     assert dialog._override_banner.get_revealed()
-    dialog.auth_toggle.set_active(0)
+    # The header shows the order set here; the line below the list states
+    # what is really tried.
+    assert dialog.auth_order_row.get_subtitle() == "publickey, password"
+    assert dialog.auth_policy.effective_row.get_subtitle() == "publickey"
+    dialog.auth_policy.reset_button.emit("clicked")
     assert not dialog._override_banner.get_revealed()
 
     # A local command cannot run while an earlier block forbids them.
     dialog.local_command_row.set_text("notify-send connected")
     assert dialog.local_command_row._sshpilot_override_state == OVERRIDDEN
     assert "PermitLocalCommand" in dialog.local_command_row.get_tooltip_text()
+
+
+def test_advanced_configuration_opened_from_a_modal_dialog_is_an_ordinary_window(gui):
+    """Opened from the connection editor it was a modal child of that
+    dialog, which a desktop does not let be maximized. It is the app's one
+    Advanced Configuration window, of the main window, in a window group of
+    its own so that the modal dialog does not stop input to it."""
+    from gi.repository import Gtk
+
+    main = gui.window
+    editor = Gtk.Window(transient_for=main, modal=True)     # stands for the editor
+    editor.present()
+    try:
+        window = main.open_advanced_config(host="nowhere", over=editor)
+        assert window is not None, "Advanced Configuration did not open"
+        assert not window.get_modal() and window.get_resizable()
+        assert window.get_transient_for() is main
+        assert window.get_group() is not main.get_group()
+        assert window.get_group() is not editor.get_group()
+        assert main.open_advanced_config(over=editor) is window     # still only one
+        assert main._open_advanced_config() is window               # the menu's too
+        window.close()
+        _pump(lambda: main._advanced_config_window is None)
+        assert main._advanced_config_window is None                 # closed: forgotten
+        fresh = main._open_advanced_config()                        # so the next one is new
+        assert fresh is not None and fresh is not window
+        fresh.close()
+    finally:
+        editor.destroy()

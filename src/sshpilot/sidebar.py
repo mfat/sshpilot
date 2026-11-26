@@ -438,9 +438,30 @@ def install_sidebar_css():
            draws the trailing inset border, so suppress the paned separator's
            own stroke to avoid a double line. GTK keeps a wider input area
            than it paints, so the divider stays grabbable. */
+        /* The drag grip, a row's first item (_set_child_with_grip): faint,
+           brighter on the hovered row, exactly as in Advanced
+           Configuration's list of blocks (.advcfg-drag-handle). */
+        .navigation-sidebar row .sidebar-drag-grip { opacity: 0.45; }
+        .navigation-sidebar row:hover .sidebar-drag-grip { opacity: 0.9; }
+        /* 'Colored Grips' group colours: full strength, hover or not. */
+        .navigation-sidebar row .sidebar-drag-grip.sidebar-drag-grip-colored { opacity: 1; }
+
         paned.sidebar-paned > separator {
           box-shadow: none;
           background: none;
+        }
+
+        /* The list beside the view rail is the middle pane of three (rail,
+           list, content): libadwaita's secondary-sidebar colours, which it
+           gives the middle pane of nested split views, while the rail keeps
+           the sidebar colours. Named colours, so libadwaita before CSS
+           variables has them too. */
+        .sidebar-pane.secondary-pane {
+          background-color: @secondary_sidebar_bg_color;
+          color: @secondary_sidebar_fg_color;
+        }
+        .sidebar-pane.secondary-pane:backdrop {
+          background-color: @secondary_sidebar_backdrop_color;
         }
 
         /* Detachable sidebar popup: an opaque panel floating over the work area
@@ -448,8 +469,8 @@ def install_sidebar_css():
            docked .sidebar-pane shell; the shadow lifts it off the content;
            the scrim is transparent and only captures click-outside. */
         .sidebar-popup {
-          background-color: @sidebar_bg_color;
-          color: @sidebar_fg_color;
+          background-color: @secondary_sidebar_bg_color;
+          color: @secondary_sidebar_fg_color;
           box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
         }
 
@@ -472,7 +493,7 @@ def install_sidebar_css():
            SearchPopup.set_transparent) — the terminal shows faintly
            through the panel while the rows stay readable. */
         .sidebar-popup.sidebar-popup-transparent {
-          background-color: alpha(@sidebar_bg_color, 0.94);
+          background-color: alpha(@secondary_sidebar_bg_color, 0.94);
         }
 
         /* Chrome-free panel for modes whose content draws its own frame
@@ -971,20 +992,72 @@ def _make_row_action_slot(button: Gtk.Widget) -> Gtk.Stack:
     return slot
 
 
+def _clear_grip_color(row: Gtk.Widget) -> None:
+    grip = getattr(row, 'drag_grip', None)
+    provider = getattr(row, '_grip_color_provider', None)
+    if grip is not None and provider is not None:
+        try:
+            grip.remove_css_class("sidebar-drag-grip-colored")
+            grip.get_style_context().remove_provider(provider)
+        except Exception:
+            pass
+    row._grip_color_provider = None  # type: ignore[attr-defined]
+
+
+def sync_grip_color(row: Gtk.Widget) -> None:
+    """Paint a 'grip'-mode row: the drag grip in the group colour (full
+    strength, so the colour reads), or, while the grips are hidden (narrow
+    sidebar, compact layout), the colour dot in its place, so the colour is
+    never lost. Rows in other modes are left alone."""
+    if not getattr(row, '_grip_mode', False):
+        return
+    rgba = getattr(row, '_grip_rgba', None)
+    grip = getattr(row, 'drag_grip', None)
+    _clear_grip_color(row)
+    if rgba is None:
+        row.color_dot.set_visible(False)
+        return
+    if grip is None or not grip.get_visible():
+        _update_color_dot(row, rgba)
+        return
+    row.color_dot.set_visible(False)
+    r, g, b = (int(c * 255) for c in (rgba.red, rgba.green, rgba.blue))
+    provider = Gtk.CssProvider()
+    provider.load_from_data(
+        (".sidebar-drag-grip-colored { color: %s; }"
+         % _standalone_glyph_color(f"#{r:02x}{g:02x}{b:02x}")).encode('utf-8')
+    )
+    grip.add_css_class("sidebar-drag-grip-colored")
+    grip.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+    row._grip_color_provider = provider  # type: ignore[attr-defined]
+
+
 def _apply_row_color(row: Gtk.Widget, mode: str, rgba: Optional[Gdk.RGBA]):
     """Apply the selected group-color treatment to a sidebar row.
 
     Modes: ``fill`` (tinted card), ``badge`` (tag icon before the row icon),
     ``bar`` (leading accent bar), ``dot`` (dot before the row icon), ``text``
-    (coloured icon and title). Mutually exclusive, so we always clear the
+    (coloured icon and title), ``grip`` (coloured drag grip, see
+    :func:`sync_grip_color`). Mutually exclusive, so we always clear the
     others first. ``row`` must expose ``color_badge``, ``_update_color_badge``
     and ``color_dot``.
     """
     _clear_tint(row)
     _clear_bar(row)
     _clear_color_text(row)
+    _clear_grip_color(row)
+    row._grip_mode = False  # type: ignore[attr-defined]
+    row._grip_rgba = None  # type: ignore[attr-defined]
+    # The colour shown, whatever the mode (sidebar_grip_hint.py looks for it).
+    row.group_rgba = rgba  # type: ignore[attr-defined]
     row.color_badge.set_visible(False)
     row.color_dot.set_visible(False)
+
+    if mode == 'grip':
+        row._grip_mode = True  # type: ignore[attr-defined]
+        row._grip_rgba = rgba  # type: ignore[attr-defined]
+        sync_grip_color(row)
+        return
 
     if mode == 'dot':
         _update_color_dot(row, rgba)
@@ -1048,7 +1121,7 @@ def _show_row_drop_indicator(row: Gtk.ListBoxRow, top: bool) -> None:
     attr = "drop_indicator_top" if top else "drop_indicator_bottom"
     indicator = getattr(row, attr)
     if indicator is None:
-        box = row.get_child()
+        box = getattr(row, "_main_box", None) or row.get_child()
         if box is None:
             return
         indicator = DragIndicator()
@@ -1250,6 +1323,31 @@ class SectionHeaderRow(Gtk.ListBoxRow):
         self.apply_descendant_visibility()
         self.emit("section-toggled", self.section_id, self._expanded)
 
+def _set_child_with_grip(row: Gtk.ListBoxRow, main_box: Gtk.Box) -> None:
+    """Give *row* its main box, with a drag grip as the first item of its
+    content, so it gets the row's own spacing whatever follows it (a group
+    dot, a connection icon) and however deep the row is indented. Faint,
+    brighter on hover (CSS ``.sidebar-drag-grip``), as Advanced
+    Configuration's blocks. Shown only while the sidebar is wide enough and
+    not compact (``MainWindow._apply_sidebar_row_actions``), as the row
+    buttons are. A hint only: the row's own whole-row drag is unchanged,
+    and pressing the grip starts it as pressing the row does.
+    ``row._main_box`` is the box (drop indicators and indentation)."""
+    from sshpilot import icon_utils
+
+    row._main_box = main_box
+    grip = icon_utils.new_image_from_icon_name("list-drag-handle-symbolic")
+    grip.add_css_class("sidebar-drag-grip")
+    grip.set_valign(Gtk.Align.CENTER)
+    grip.set_cursor_from_name("grab")
+    grip.set_tooltip_text(_("Drag to reorder"))
+    row.drag_grip = grip
+    content = main_box.get_first_child()
+    if content is not None:
+        content.prepend(grip)
+    row.set_child(main_box)
+
+
 class GroupRow(Gtk.ListBoxRow):
     """Row widget for group headers."""
 
@@ -1411,7 +1509,7 @@ class GroupRow(Gtk.ListBoxRow):
         main_box.append(content)
         main_box.append(self.drop_target_indicator)
 
-        self.set_child(main_box)
+        _set_child_with_grip(self, main_box)
         self.set_selectable(True)
         self.set_can_focus(True)
 
@@ -2025,8 +2123,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Now add the content to main_box
         main_box.append(content)
 
-        # Set the main box as the child directly (no pulse overlay)
-        self.set_child(main_box)
+        # The main box, with the hover grip floating at the row's start.
+        _set_child_with_grip(self, main_box)
 
         self.set_selectable(True)
 
@@ -2232,7 +2330,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         content = getattr(self, '_content_box', None)
         if not content:
-            main_box = self.get_child()
+            main_box = getattr(self, "_main_box", None) or self.get_child()
             if not main_box:
                 return
 
@@ -4757,12 +4855,17 @@ def _build_sidebar_header(window, sidebar_box):
     add_menu = Gio.Menu()
     add_menu.append(_('New Connection'), 'app.new-connection')
     add_menu.append(_('New Group'), 'win.create-group')
+    # Its own section: a rule is made in Advanced Configuration and shows in
+    # the Rules view, not in the connection list.
+    rule_section = Gio.Menu()
+    rule_section.append(_('New Host Rule…'), 'win.new-host-rule')
+    add_menu.append_section(None, rule_section)
     add_button = Gtk.MenuButton()
     add_button.add_css_class('flat')
     add_button.set_can_focus(False)
     add_button.set_icon_name('list-add-symbolic')
     add_button.set_menu_model(add_menu)
-    label_icon_button(add_button, _('New'), tooltip=_('New Connection or Group'))
+    label_icon_button(add_button, _('New'), tooltip=_('New Connection, Group or Host Rule'))
     window._sidebar_add_button = add_button
 
     window.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
@@ -5152,6 +5255,8 @@ def _attach_connection_list_context_menu(window):
                         # fallback would copy the connection's own ID.
                         menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: window._copy_connection_address()) if (conn and (getattr(conn, 'protocol', 'ssh') == 'ssh' or getattr(conn, 'hostname', ''))) else None,
                         menu.add_item('utilities-terminal-symbolic', _('Copy SSH Command'), lambda: window.on_copy_ssh_command_action(None, None)) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
+                        # The connection's Host block, among the blocks that apply to it.
+                        menu.add_item('document-properties-symbolic', _('Advanced Configuration'), lambda: window.on_advanced_config_for_connection_action()) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
                         menu.add_item('info-outline-symbolic', _('Dashboard…'), lambda: window.on_machine_info_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                     )
 
@@ -5722,6 +5827,8 @@ def _assemble_sidebar_shell(window, sidebar_box):
     # .sidebar-pane wrapper (sidebar-bg / backdrop / trailing hairline). The
     # deprecated .sidebar class only drew a border and cleared list fills.
     sidebar_toolbar_view.add_css_class('sidebar-pane')
+    # The middle of rail, list and content: secondary-sidebar colours.
+    sidebar_toolbar_view.add_css_class('secondary-pane')
     sidebar_toolbar_view.add_top_bar(window.sidebar_header_bar)
     sidebar_toolbar_view.set_content(sidebar_box)
     # Kept so the detachable sidebar popup can reparent sidebar_box out of here
@@ -5739,6 +5846,8 @@ def build_sidebar(window):
     sidebar_box.set_vexpand(True)
     window._sidebar_box = sidebar_box
 
+    from .sidebar_views import build_sidebar_view_stack
+
     _build_sidebar_header(window, sidebar_box)
     _build_sidebar_search(window, sidebar_box)
     _create_sidebar_connection_list(window, sidebar_box)
@@ -5746,7 +5855,9 @@ def build_sidebar(window):
     _attach_connection_list_shortcuts(window)
 
     window.connection_scrolled.set_child(window.connection_list)
-    sidebar_box.append(window.connection_scrolled)
+    # The list shares its place with the list of config sections
+    # (sidebar_views).
+    build_sidebar_view_stack(window, sidebar_box)
 
     _build_sidebar_toolbar(window, sidebar_box)
     _build_sidebar_popup_header(window, sidebar_box)

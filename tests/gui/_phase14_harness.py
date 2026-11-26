@@ -933,6 +933,8 @@ class Phase14Harness:
         """Close terminal/FM tabs so the next step starts from a clean UI."""
         win = self.gui.window
         try:
+            # Close without the per-tab "Confirm before disconnecting" prompt.
+            win.config.set_setting("confirm-disconnect", False)
         except Exception:
             pass
         # Bounded attempts — close_page can no-op while an ASK dialog is open.

@@ -208,10 +208,6 @@ def test_local_command_not_emitted_to_command():
 def test_password_auth_with_stored_password_uses_askpass():
     connection = runtime_connection(auth_method=1)
     credentials = CredentialLookup(password="secret")
-    # password_mode lives on NativeAuth only (SSHConnectionCommand has no
-    # such field), so resolve the auth contract directly before building.
-    auth = resolve_native_auth(connection, credentials)
-    assert auth.password_mode is True
     cmd, result = _build_from(connection, connection_manager=credentials)
     assert result.use_sshpass is False
     assert result.password == 'secret'
@@ -253,7 +249,7 @@ def test_password_auth_without_stored_password_not_sshpass():
             'auth_method': 1,
         },
     )
-    # auth_method=1 with no stored password => password_mode, but nothing to feed.
+    # Nothing saved: ssh prompts on the terminal, whatever the login order.
     assert result.use_sshpass is False
     assert result.password is None
     assert result.use_askpass is False
@@ -282,11 +278,12 @@ def test_in_memory_password_used_when_password_auth_selected():
 # --- resolve_native_auth modes ---
 
 
-def test_resolve_native_auth_password_mode():
+def test_resolve_native_auth_saved_password():
+    # The login order (password first or not) is the Host block's; a saved
+    # password is offered through askpass either way.
     connection = runtime_connection(auth_method=1)
     auth = resolve_native_auth(connection, CredentialLookup(password='p'))
     assert isinstance(auth, NativeAuth)
-    assert auth.password_mode is True
     assert auth.use_sshpass is False
     assert auth.password == 'p'
     assert auth.use_askpass is True
@@ -435,7 +432,6 @@ def test_resolve_native_auth_understands_daemon_authentication_method():
 
     auth = resolve_native_auth(connection, Credentials())
 
-    assert auth.password_mode is True
     assert auth.password == "stored-password"
     assert auth.use_askpass is True
 
@@ -546,10 +542,8 @@ def test_app_config_batch_mode_skipped_for_password_mode():
     cfg = _ConfigStub({'batch_mode': True})
     connection = runtime_connection(auth_method=1)
     credentials = CredentialLookup(password='secret')
-    # Password mode (auth_method=1), not a mutable Connection.password field,
-    # is what suppresses BatchMode.
+    # An interactive launch never gets BatchMode, whatever the login order.
     auth = resolve_native_auth(connection, credentials, cfg)
-    assert auth.password_mode is True
     assert auth.password == 'secret'
     assert auth.use_askpass is True
     cmd, result = _build_from(

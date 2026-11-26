@@ -31,7 +31,8 @@ _FIELD_LABELS = {
     LoginProfileField.USERNAME: N_("Username"),
     LoginProfileField.AUTH_METHOD: N_("Authentication"),
     LoginProfileField.KEY_SELECT_MODE: N_("Key selection"),
-    LoginProfileField.IDENTITY_FILES: N_("Private Keys"),
+    LoginProfileField.IDENTITIES_ONLY: N_("Only offer listed identities"),
+    LoginProfileField.IDENTITY_FILES: N_("Identity files"),
     LoginProfileField.CERTIFICATE_FILES: N_("Certificates"),
     LoginProfileField.ADD_KEYS_TO_AGENT: N_("Add keys to agent"),
     LoginProfileField.PKCS11_PROVIDER: N_("PKCS#11 provider"),
@@ -53,6 +54,7 @@ _KEY_SELECT_MODE_VALUES = {
     "2": N_("Specific keys and agent"),
 }
 _BOOL_VALUES = {"true": N_("Yes"), "false": N_("No")}
+_IDENTITIES_ONLY_VALUES = {"yes": N_("Yes"), "no": N_("No")}
 _ADD_KEYS_VALUES = {
     "yes": N_("Yes"),
     "no": N_("No"),
@@ -62,6 +64,7 @@ _ADD_KEYS_VALUES = {
 _VALUE_TABLES = {
     LoginProfileField.AUTH_METHOD: _AUTH_METHOD_VALUES,
     LoginProfileField.KEY_SELECT_MODE: _KEY_SELECT_MODE_VALUES,
+    LoginProfileField.IDENTITIES_ONLY: _IDENTITIES_ONLY_VALUES,
     LoginProfileField.PUBKEY_AUTH_NO: _BOOL_VALUES,
     LoginProfileField.FORWARD_AGENT: _BOOL_VALUES,
     LoginProfileField.ADD_KEYS_TO_AGENT: _ADD_KEYS_VALUES,
@@ -157,6 +160,33 @@ def format_preview(previews: Iterable[LoginProfileAssignmentPreview]) -> str:
     return "\n".join(lines)
 
 
+def format_update_replacement(preview) -> str:
+    """The confirmation for a profile edit that takes over user-set values.
+
+    Empty when the edit replaces none (no confirmation needed).
+    """
+    replaced = tuple(getattr(preview, "replaced", ()) or ())
+    if not replaced:
+        return ""
+    fields = []
+    for item in replaced:
+        for change in item.changes:
+            if change.field not in fields:
+                fields.append(change.field)
+    total = int(getattr(preview, "linked_count", 0) or len(replaced))
+    return ngettext(
+        "This replaces the following user-set values on {count} of {total} "
+        "linked connection: {fields}.",
+        "This replaces the following user-set values on {count} of {total} "
+        "linked connections: {fields}.",
+        total,
+    ).format(
+        count=len(replaced),
+        total=total,
+        fields=", ".join(field_label(field) for field in fields),
+    )
+
+
 def format_changes_inline(changes: Iterable[LoginProfileFieldChange]) -> str:
     """The changes for one connection on a single line (row subtitles)."""
     return "; ".join(format_field_change(change) for change in changes)
@@ -168,13 +198,41 @@ def profile_summary_line(profile: LoginProfileSummary) -> str:
     parts = []
     if settings.username:
         parts.append(settings.username)
-    if settings.auth_method == 1:
+    from ..connection_dialog_auth import AuthPolicy, split_policy_lines
+    from ..core.connections.auth_preferences import password_comes_first
+
+    # As the profile's authentication section reads its lines: the order,
+    # without the methods the profile itself disables.
+    policy = AuthPolicy.from_lines(split_policy_lines(settings.extra_ssh_config)[0])
+    methods = [
+        method for method in (policy.order or ())
+        if policy.own_switch(method) is not False
+    ]
+    if settings.auth_method == 1 or password_comes_first(methods):
         parts.append(_("password"))
     elif settings.identity_files:
         parts.append(", ".join(path.rsplit("/", 1)[-1] for path in settings.identity_files))
-    else:
-        parts.append(_("automatic keys"))
     return " · ".join(parts)
+
+
+def extra_option_has_own_setting(extra_text: str) -> str:
+    """The message for an Extra SSH options text that sets an option the
+    editor's authentication section owns; empty when it sets none.
+
+    A line typed there would stand above the section's own and decide the
+    setting without the section showing it.
+    """
+    import re
+
+    from ..connection_dialog_auth import is_policy_line
+
+    for line in (extra_text or "").splitlines():
+        if is_policy_line(line):
+            # The keyword as typed.
+            return _(
+                _REASON_TEMPLATES[LoginProfileErrorReason.EXTRA_MANAGED_OPTION]
+            ).format(keyword=re.split(r"[\s=]", line.strip(), maxsplit=1)[0])
+    return ""
 
 
 def format_detached_connections(count: int) -> str:

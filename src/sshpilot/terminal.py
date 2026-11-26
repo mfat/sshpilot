@@ -1758,6 +1758,7 @@ class TerminalWidget(Gtk.Box):
                 on_error=self._on_daemon_error,
                 on_state_changed=self._update_daemon_connection_state,
                 output_slice_bytes=getattr(self.backend, "output_slice_bytes", None),
+                display_barrier=self._daemon_display_barrier,
             )
 
             self._daemon_tab_state = self._daemon_controller.tab_state
@@ -1836,6 +1837,7 @@ class TerminalWidget(Gtk.Box):
                 on_error=self._on_daemon_error,
                 on_state_changed=self._update_daemon_connection_state,
                 output_slice_bytes=getattr(self.backend, "output_slice_bytes", None),
+                display_barrier=self._daemon_display_barrier,
             )
             self._daemon_tab_state = self._daemon_controller.tab_state
             self._daemon_tab_state.session_id = session_id
@@ -2004,6 +2006,7 @@ class TerminalWidget(Gtk.Box):
                 pause.reset()
         if pause is not None:
             pause.reset()
+        self._release_display_barrier_waiters()
 
     def _resume_selection_display_feed(self) -> None:
         pause = getattr(self, "_display_feed_pause", None)
@@ -2019,6 +2022,43 @@ class TerminalWidget(Gtk.Box):
             )
         if deferred:
             self._paint_display(deferred)
+        self._release_display_barrier_waiters()
+
+    def _daemon_display_barrier(self, callback) -> None:
+        """Call *callback* once the display has processed what it was fed.
+
+        Daemon flow control acknowledges output only through this, so the
+        daemon stops reading the PTY instead of the backlog moving into the
+        emulator. ``Vte.Terminal.feed()`` only queues bytes; VTE parses them
+        from its own main-loop source, ahead of a ``PRIORITY_LOW`` idle (and of
+        GTK's redraw), so that idle runs once the fed bytes are on screen. A
+        selection pause holds the callback until the deferred bytes are fed.
+        """
+        pause = getattr(self, "_display_feed_pause", None)
+        if pause is not None and pause.paused:
+            waiters = getattr(self, "_display_barrier_waiters", None)
+            if waiters is None:
+                waiters = self._display_barrier_waiters = []
+            waiters.append(callback)
+            return
+        hook = getattr(getattr(self, "backend", None), "call_when_output_processed", None)
+        if callable(hook):
+            hook(callback)
+            return
+
+        def run_once():
+            callback()
+            return False
+
+        GLib.idle_add(run_once, priority=GLib.PRIORITY_LOW)
+
+    def _release_display_barrier_waiters(self) -> None:
+        waiters = getattr(self, "_display_barrier_waiters", None)
+        if not waiters:
+            return
+        self._display_barrier_waiters = []
+        for callback in waiters:
+            self._daemon_display_barrier(callback)
 
     def _feed_display(self, data: bytes) -> None:
         """Paint bytes on the active terminal display via the backend abstraction."""
@@ -2131,12 +2171,13 @@ class TerminalWidget(Gtk.Box):
         try:
             # A known-good terminal prefix may end in the middle of an escape
             # sequence.  Reset the emulator parser before displaying local
-            # text; the damaged remote stream is permanently halted by the
-            # binding and must never resume in this parser state.
-            self.backend.reset(False, True)
+            # text. The session usually continues after this (#1426), so the
+            # scrollback and screen shown so far are kept: only the parser
+            # state is discarded.
+            self.backend.reset(False, False)
             self._highlighter.reset()
-            marker = b"\r\n[Earlier terminal output is no longer available]\r\n"
-            self._feed_display(marker)
+            marker = _("[Earlier terminal output is no longer available]")
+            self._feed_display(b"\r\n" + marker.encode("utf-8") + b"\r\n")
         except Exception as e:
             logger.error(f"Failed to feed continuity loss marker: {e}")
 
@@ -6432,19 +6473,22 @@ class TerminalWidget(Gtk.Box):
 
     def _on_drop_enter(self, drop_target, x, y):
         """Handle drag enter event - show visual feedback."""
+        # "No action" by value: the name Gdk.DragAction.NONE only exists
+        # from GTK 4.20, and raised here on older GTK.
+        refuse = Gdk.DragAction(0)
         try:
             # Check if we have a valid connection
             if not self.connection or not self.is_connected:
-                return Gdk.DragAction.NONE
+                return refuse
 
             # Only accept drops if we have a remote connection (not local shell)
             if self._is_local_terminal():
-                return Gdk.DragAction.NONE
+                return refuse
 
             return Gdk.DragAction.COPY
         except Exception as e:
             logger.debug(f"Error in drop enter: {e}", exc_info=True)
-            return Gdk.DragAction.NONE
+            return refuse
 
     def _on_drop_leave(self, drop_target):
         """Handle drag leave event."""

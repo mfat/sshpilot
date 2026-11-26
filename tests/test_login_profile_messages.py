@@ -69,7 +69,7 @@ def test_preview_text():
         )),
         LoginProfileAssignmentPreview("web2", "Deploy", ()),
     ))
-    assert text == "web1:\n  Username: alice → deploy\n  Private Keys: — → /k/a, /k/b"
+    assert text == "web1:\n  Username: alice → deploy\n  Identity files: — → /k/a, /k/b"
     assert format_changes_inline((
         LoginProfileFieldChange(LoginProfileField.AUTH_METHOD, "0", "1"),
         LoginProfileFieldChange(LoginProfileField.PUBKEY_AUTH_NO, "false", "true"),
@@ -80,10 +80,11 @@ def test_preview_text():
 
 
 def test_summary_line():
-    assert profile_summary_line(_summary(username="deploy")) == "deploy · automatic keys"
+    # Key selection not set: the profile says nothing about keys.
+    assert profile_summary_line(_summary(username="deploy")) == "deploy"
     assert profile_summary_line(_summary(username="root", auth_method=1)) == "root · password"
     assert profile_summary_line(
-        _summary(key_select_mode=1, identity_files=("~/.ssh/id_a", "/k/id_b"))
+        _summary(identities_only=True, identity_files=("~/.ssh/id_a", "/k/id_b"))
     ) == "id_a, id_b"
 
 
@@ -145,3 +146,31 @@ def test_secret_failures_after_saving():
     assert format_login_profile_error(passphrase).endswith(
         "\n\nThe key passphrase could not be stored."
     )
+
+
+def test_update_replacement_summarises_the_fields_and_counts():
+    from sshpilot.api.models.login_profiles import (
+        LoginProfileAssignmentPreview,
+        LoginProfileField,
+        LoginProfileFieldChange,
+        LoginProfileUpdatePreview,
+    )
+    from sshpilot.gtk.login_profile_messages import format_update_replacement
+
+    def item(cid, *fields):
+        return LoginProfileAssignmentPreview(cid, "P", tuple(
+            LoginProfileFieldChange(f, "old", "new") for f in fields
+        ))
+
+    preview = LoginProfileUpdatePreview(120, (
+        item("web1", LoginProfileField.USERNAME),
+        item("web2", LoginProfileField.USERNAME, LoginProfileField.IDENTITY_AGENT),
+    ))
+    assert format_update_replacement(preview) == (
+        "This replaces the following user-set values on 2 of 120 linked "
+        "connections: Username, IdentityAgent."
+    )
+    one = LoginProfileUpdatePreview(1, (item("web1", LoginProfileField.USERNAME),))
+    assert format_update_replacement(one).endswith("on 1 of 1 linked connection: Username.")
+    # Nothing replaced: no confirmation.
+    assert format_update_replacement(LoginProfileUpdatePreview(120, ())) == ""

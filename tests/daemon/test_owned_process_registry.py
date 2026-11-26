@@ -352,3 +352,109 @@ def test_registry_writes_reach_the_disk_before_the_rename(tmp_path, monkeypatch)
     finally:
         _reap(process)
     assert calls.index("fsync") < calls.index("replace")
+
+
+# -- ending the owned child a helper descends from ----------------------------
+
+_PARENT_OF_A_SLEEPER = (
+    "import subprocess, sys, time\n"
+    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+    "sys.stdout.write(str(child.pid) + '\\n'); sys.stdout.flush()\n"
+    "time.sleep(60)\n"
+)
+
+
+TOKEN = "prompt-token-1"
+
+
+@pytest.fixture
+def family(tmp_path):
+    """An active registry, a parent process and the PID of its child."""
+    from sshpilot.daemon import process_registry
+
+    registry = OwnedProcessRegistry(tmp_path / "processes.json")
+    previous = process_registry.active_registry()
+    process_registry.set_active_registry(registry)
+    parent = subprocess.Popen(
+        [sys.executable, "-c", _PARENT_OF_A_SLEEPER], stdout=subprocess.PIPE, text=True,
+        env={**os.environ, "SSHPILOT_DAEMON_ASKPASS_TOKEN": TOKEN},
+    )
+    child_pid = int(parent.stdout.readline())
+    try:
+        yield registry, parent, child_pid
+    finally:
+        process_registry.set_active_registry(previous)
+        for pid in (child_pid, parent.pid):
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
+        parent.wait(timeout=5)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+def test_the_owned_parent_of_a_helper_is_ended(family):
+    from sshpilot.daemon.process_registry import terminate_owned_ancestor
+
+    registry, parent, child_pid = family
+    registry.register(parent.pid, kind=KIND_SESSION)
+    assert terminate_owned_ancestor(child_pid, token=TOKEN) == parent.pid
+    assert parent.wait(timeout=5) != 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+def test_nothing_is_ended_when_no_ancestor_is_owned(family):
+    from sshpilot.daemon.process_registry import terminate_owned_ancestor
+
+    registry, parent, child_pid = family
+    # This test process is an ancestor too, and is not in the registry.
+    assert terminate_owned_ancestor(child_pid, token=TOKEN) is None
+    assert terminate_owned_ancestor(1, token=TOKEN) is None
+    assert terminate_owned_ancestor(0, token=TOKEN) is None
+    assert parent.poll() is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+def test_a_recycled_pid_in_the_registry_is_not_ended(family):
+    """The entry names the parent's PID but another process's start time."""
+    from sshpilot.daemon.process_registry import terminate_owned_ancestor
+
+    registry, parent, child_pid = family
+    registry.register(parent.pid, kind=KIND_SESSION)
+    entries = json.loads(registry.path.read_text())
+    text = registry.path.read_text()
+    real = identify_process(parent.pid).create_time
+    assert repr(real) in text or str(real) in text, entries
+    registry.path.write_text(text.replace(str(real), str(real - 1000.0)))
+    assert terminate_owned_ancestor(child_pid, token=TOKEN) is None
+    assert parent.poll() is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+def test_an_owned_ancestor_launched_for_another_prompt_is_not_ended(family):
+    """Review P1: owning the process is not enough; it must carry the
+    cancelled prompt's token."""
+    from sshpilot.daemon.process_registry import terminate_owned_ancestor
+
+    registry, parent, child_pid = family
+    registry.register(parent.pid, kind=KIND_SESSION)
+    assert terminate_owned_ancestor(child_pid, token="another-prompt") is None
+    assert terminate_owned_ancestor(child_pid, token="") is None
+    assert parent.poll() is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+def test_an_owned_ancestor_whose_token_cannot_be_read_is_not_ended(
+    family, monkeypatch, caplog
+):
+    from sshpilot.daemon import process_registry
+    from sshpilot.daemon.process_registry import terminate_owned_ancestor
+
+    registry, parent, child_pid = family
+    registry.register(parent.pid, kind=KIND_SESSION)
+    monkeypatch.setattr(process_registry, "_environment_value", lambda _pid, _name: None)
+    with caplog.at_level("WARNING", logger=process_registry.logger.name):
+        assert terminate_owned_ancestor(child_pid, token=TOKEN) is None
+    assert parent.poll() is None
+    # The reason is on record: a Cancel that ends nothing is otherwise silent.
+    assert "Cannot read the askpass token" in caplog.text

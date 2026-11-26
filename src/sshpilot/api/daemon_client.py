@@ -55,6 +55,8 @@ from .models.connections import (
     ConfigConflict,
     ConfigSyntaxError,
     EarlierDirective,
+    EvaluateSshConfigDraftRequest,
+    SshConfigDraftEvaluation,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
@@ -167,6 +169,7 @@ from .models.terminal import (
     TerminalInputStatus,
     TerminalInputStatusRequest,
     TerminalInput,
+    TerminalOutputAck,
     TerminalOutput,
 )
 from .models.transfers import (
@@ -410,6 +413,12 @@ SECRET_BACKEND_METHODS = frozenset({
     "login_profiles.delete",
 })
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
+# The reader hands terminal frames to the dispatch thread through a queue
+# bounded by bytes, not items: output arrives in PTY-read-sized frames (often
+# ~4 KiB), so the 256-item event bound held under 1 MiB and dropped output
+# during a burst while the frontend's own spool had room (#1426).
+DEFAULT_CLIENT_TERMINAL_QUEUE_BYTES = 16 * 1024 * 1024
+_CLIENT_TERMINAL_QUEUE_ITEMS = 65536
 _EVENT_STOP = object()
 receive_frame = receive_multiplexed_frame
 
@@ -426,6 +435,9 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_connection_store_snapshot": Capability.CONNECTIONS_READ,
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
+    "evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
+    "open_draft_test_connection": Capability.SESSIONS_WRITE,
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -459,6 +471,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "restart_daemon": Capability.DAEMON_CONTROL,
     "set_daemon_log_level": Capability.DAEMON_CONTROL,
     "send_terminal_input": Capability.TERMINAL_INPUT,
+    "acknowledge_terminal_output": Capability.TERMINAL_FLOW_CONTROL,
     "stop_daemon": Capability.DAEMON_CONTROL,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
     "resize_terminal": Capability.TERMINAL_RESIZE,
@@ -525,6 +538,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "reset_global_ssh_overrides": Capability.SSH_OVERRIDES_WRITE,
     "get_login_profiles": Capability.LOGIN_PROFILES_READ,
     "preview_login_profile_assignment": Capability.LOGIN_PROFILES_READ,
+    "preview_login_profile_update": Capability.LOGIN_PROFILES_READ,
     "create_login_profile": Capability.LOGIN_PROFILES_WRITE,
     "update_login_profile": Capability.LOGIN_PROFILES_WRITE,
     "delete_login_profile": Capability.LOGIN_PROFILES_WRITE,
@@ -666,7 +680,11 @@ class DaemonClient:
         self._pending_secret_responses: Dict[RequestId, _PendingSecretResponse] = {}
         self._abandoned_requests: "OrderedDict[RequestId, None]" = OrderedDict()
         self._event_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
-        self._terminal_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
+        self._terminal_queue: queue.Queue = queue.Queue(
+            maxsize=_CLIENT_TERMINAL_QUEUE_ITEMS
+        )
+        self._terminal_queue_bytes = 0
+        self._terminal_queue_byte_limit = DEFAULT_CLIENT_TERMINAL_QUEUE_BYTES
         self._terminal_subscribers: Dict[
             SessionId,
             Dict[int, _TerminalCallbacks],
@@ -889,6 +907,50 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid earlier SSH directives")
 
+    def get_inherited_auth(self, host: str) -> Tuple[EarlierDirective, ...]:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        if type(host) is not str or not host.strip():
+            raise TypeError("host must be a non-empty string")
+        result = self._request("connections.get_inherited_auth", {"host": host})
+        try:
+            return earlier_directives_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid inherited authentication lines")
+
+    def evaluate_ssh_config_draft(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> SshConfigDraftEvaluation:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from .transport.config_draft_codec import (
+            evaluate_ssh_config_draft_request_to_wire,
+            ssh_config_draft_evaluation_from_wire,
+        )
+
+        result = self._request(
+            "connections.evaluate_ssh_config_draft",
+            evaluate_ssh_config_draft_request_to_wire(request),
+        )
+        try:
+            return ssh_config_draft_evaluation_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid SSH config draft evaluation")
+
+    def open_draft_test_connection(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> ConnectionDetails:
+        self._require_capability(Capability.SESSIONS_WRITE)
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from .transport.config_draft_codec import evaluate_ssh_config_draft_request_to_wire
+
+        result = self._request(
+            "connections.open_draft_test",
+            evaluate_ssh_config_draft_request_to_wire(request),
+        )
+        try:
+            return connection_details_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid connection details")
+
     def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
         result = self._request("connections.list_config_conflicts", {})
@@ -920,11 +982,17 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid destination check")
 
-    def get_ssh_config_text(self) -> SshConfigText:
-        """Load the daemon-selected active SSH config text for the raw editor."""
+    def get_ssh_config_text(self, file: str = "") -> SshConfigText:
+        """Load the daemon-selected active SSH config text for the raw
+        editor, or (*file*) the text of a file it reads, named as
+        ``SshConfigText.files`` listed it."""
 
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
-        result = self._request("connections.get_ssh_config_text", {})
+        if type(file) is not str:
+            raise TypeError("file must be a string")
+        result = self._request(
+            "connections.get_ssh_config_text", {"file": file} if file else {}
+        )
         try:
             return ssh_config_text_from_wire(result)
         except (TypeError, ValueError):
@@ -1016,6 +1084,7 @@ class DaemonClient:
             {
                 "text": request.text,
                 "expected_revision": request.expected_revision,
+                **({"file": request.file} if request.file else {}),
             },
         )
         try:
@@ -2139,6 +2208,22 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid assignment preview")
 
+    def preview_login_profile_update(self, request):
+        from sshpilot.api.transport.login_profile_codec import (
+            login_profile_update_preview_from_wire,
+            preview_login_profile_update_request_to_wire,
+        )
+
+        self._require_capability(Capability.LOGIN_PROFILES_READ)
+        result = self._request(
+            "login_profiles.preview_update",
+            preview_login_profile_update_request_to_wire(request),
+        )
+        try:
+            return login_profile_update_preview_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid profile update preview")
+
     def create_login_profile(self, request):
         from sshpilot.api.transport import login_profile_codec as codec
 
@@ -2694,6 +2779,43 @@ class DaemonClient:
                     attachment_id=request.attachment_id,
                     sequence=input_sequence,
                     data=request.data,
+                )
+            )
+        )
+        with self._send_lock:
+            with self._state_lock:
+                transport = self._socket
+                if self._closed or transport is None:
+                    raise self._closed_error()
+            try:
+                transport.sendall(frame)
+            except OSError:
+                self._fail_transport(
+                    SshPilotError(
+                        ErrorCode.TRANSPORT_CLOSED,
+                        "The daemon transport failed",
+                        retryable=True,
+                        session_id=request.session_id,
+                    )
+                )
+                raise self._closed_error() from None
+
+    def acknowledge_terminal_output(self, request: TerminalOutputAck) -> None:
+        """Tell the daemon this attachment has displayed output up to a sequence.
+
+        Fire-and-forget binary frame; only meaningful for an attachment opened
+        with ``flow_control``. The daemon ignores stale or unknown attachments.
+        """
+        self._require_capability(Capability.TERMINAL_FLOW_CONTROL)
+        if type(request) is not TerminalOutputAck:
+            raise TypeError("terminal output acknowledgement is required")
+        frame = encode_binary_frame(
+            encode_terminal_payload(
+                TerminalFrame(
+                    kind=TerminalFrameKind.ACK,
+                    session_id=request.session_id,
+                    attachment_id=request.attachment_id,
+                    sequence=request.sequence,
                 )
             )
         )
@@ -3992,8 +4114,17 @@ class DaemonClient:
         return True
 
     def _queue_terminal_item(self, item: object) -> None:
+        size = len(item.data) if isinstance(item, TerminalOutput) else 0
         try:
-            self._terminal_queue.put_nowait(item)
+            with self._state_lock:
+                if (
+                    size
+                    and self._terminal_queue_bytes + size
+                    > self._terminal_queue_byte_limit
+                ):
+                    raise queue.Full
+                self._terminal_queue.put_nowait(item)
+                self._terminal_queue_bytes += size
         except queue.Full:
             if isinstance(item, TerminalOutput):
                 session_id = item.session_id
@@ -4009,6 +4140,9 @@ class DaemonClient:
             item = self._terminal_queue.get()
             if item is _EVENT_STOP:
                 return
+            if isinstance(item, TerminalOutput):
+                with self._state_lock:
+                    self._terminal_queue_bytes -= len(item.data)
             with self._state_lock:
                 overflow = tuple(self._terminal_overflow)
                 self._terminal_overflow.clear()
@@ -4298,6 +4432,8 @@ class DaemonClient:
                 self._terminal_queue.get_nowait()
             except queue.Empty:
                 break
+        with self._state_lock:
+            self._terminal_queue_bytes = 0
         try:
             self._terminal_queue.put_nowait(_EVENT_STOP)
         except queue.Full:

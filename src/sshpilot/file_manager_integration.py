@@ -16,6 +16,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk
 
 from .platform_utils import is_flatpak, is_macos
+from .api.connection_identity import file_manager_connection_id
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +357,7 @@ def create_internal_file_manager_tab(
     bridge = getattr(parent_window, "client_bridge", None) if parent_window else None
     connection_id = None
     if connection is not None:
-        connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
+        connection_id = file_manager_connection_id(connection)
 
     controller = FileManagerWindow(
         application=app,

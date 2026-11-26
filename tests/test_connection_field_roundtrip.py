@@ -128,13 +128,17 @@ CASES = {
         {"extra_ssh_config": "Compression yes"},
         {"extra_ssh_config": "compression yes"},
     ),
+    # The login order and the public-key switch are plain Host-block lines,
+    # carried verbatim; the editor's Key/Password choice is read back from them.
     "password_auth": (
-        {"auth_method": 1},
-        {"auth_method": 1},
+        {"extra_ssh_config": "PreferredAuthentications keyboard-interactive,password"},
+        {"auth_method": 1,
+         "extra_ssh_config": "preferredauthentications keyboard-interactive,password"},
     ),
     "password_auth_no_pubkey": (
-        {"auth_method": 1, "pubkey_auth_no": True},
-        {"auth_method": 1, "pubkey_auth_no": True},
+        {"extra_ssh_config": "PubkeyAuthentication no"},
+        {"auth_method": 1, "pubkey_auth_no": True,
+         "extra_ssh_config": "pubkeyauthentication no"},
     ),
 }
 

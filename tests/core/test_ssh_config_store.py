@@ -1346,3 +1346,73 @@ def test_unreadable_included_file_is_named_in_the_log(tmp_path, caplog):
         )
     finally:
         os.chmod(secret, 0o600)
+
+
+# ---------------------------------------------------------------------------
+# Host lines that are more than one host's
+# ---------------------------------------------------------------------------
+_SHARED = (
+    "Host web1 web2\n    User deploy\n    Port 2222\n\n"
+    "Host *.prod edge\n    User ops\n\n"
+    "Host prod !prod-db\n    Port 2200\n"
+)
+
+
+def test_a_shared_block_is_edited_only_when_the_caller_means_all_of_it(tmp_path):
+    root = _write(tmp_path / "config", _SHARED)
+    store = _store(root)
+    payload = {"nickname": "web1", "username": "changed", "port": 2222}
+    with pytest.raises(CoreError) as exc:
+        store.prepare_update("web1", payload, expected_generation=None)
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    prepared = store.prepare_update(
+        "web1", payload, expected_generation=None, shared_block=True
+    )
+    store.commit_prepared(prepared)
+    text = root.read_text()
+    assert "Host web1 web2\n    User changed\n    Port 2222\n" in text   # line kept
+    assert "Host *.prod edge\n    User ops\n" in text
+
+
+def test_a_shared_block_s_pattern_line_is_kept_as_written(tmp_path):
+    root = _write(tmp_path / "config", _SHARED)
+    store = _store(root)
+    prepared = store.prepare_update(
+        "edge", {"nickname": "edge", "username": "changed"},
+        expected_generation=None, shared_block=True,
+    )
+    assert "Host *.prod edge\n    User changed\n" in prepared.target_text
+
+
+def test_a_shared_block_cannot_rename_one_of_its_hosts_in_place(tmp_path):
+    root = _write(tmp_path / "config", _SHARED)
+    with pytest.raises(CoreError) as exc:
+        _store(root).prepare_update(
+            "edge", {"nickname": "edge2"}, expected_generation=None, shared_block=True
+        )
+    assert exc.value.code is ErrorCode.VALIDATION_ERROR
+    assert root.read_text() == _SHARED
+
+
+def test_splitting_a_name_from_a_pattern_line_leaves_the_pattern(tmp_path):
+    root = _write(tmp_path / "config", _SHARED)
+    prepared = _store(root).prepare_split(
+        "edge", "edge", {"nickname": "edge", "username": "alone"},
+        expected_generation=None,
+    )
+    assert "Host *.prod\n    User ops\n" in prepared.target_text     # not quoted
+    assert prepared.target_text.endswith("Host edge\n    User alone\n")
+
+
+def test_deleting_the_only_name_drops_a_line_left_with_negations(tmp_path):
+    root = _write(tmp_path / "config", _SHARED)
+    store = _store(root)
+    assert "prod" not in store.prepare_delete("prod").target_text.replace("*.prod", "")
+    assert "Host *.prod\n    User ops\n" in store.prepare_delete("edge").target_text
+
+
+def test_a_name_on_a_pattern_line_is_taken(tmp_path):
+    root = _write(tmp_path / "config", _SHARED)
+    with pytest.raises(CoreError) as exc:
+        _store(root).prepare_create({"nickname": "edge", "hostname": "e.example"})
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS

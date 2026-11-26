@@ -2392,3 +2392,150 @@ def test_mark_authenticated_commits_every_context_sharing_a_session_id(
         assert stored == [(CONNECTION_ID, "borrowed-secret")]
     finally:
         instance.close()
+
+
+_FAKE_SSH = """
+import os, subprocess, sys
+log, helper, prompt = sys.argv[1:4]
+# A helper may run with another launch's token (the review case: a helper
+# whose PID leads to a child that is not this prompt's).
+env = dict(os.environ)
+if len(sys.argv) > 4:
+    env["SSHPILOT_DAEMON_ASKPASS_TOKEN"] = sys.argv[4]
+# OpenSSH: a declined prompt is a wrong answer, so ask again, three times.
+for _attempt in range(3):
+    with open(log, "a") as handle:
+        handle.write("attempt\\n")
+    subprocess.run((helper, prompt), stdout=subprocess.DEVNULL, env=env)
+"""
+
+
+def _cancel_first_prompt_of_fake_ssh(
+    monkeypatch, tmp_path, *, owned: bool, prompt_of_another_launch: bool = False
+):
+    """Run a stand-in ssh that asks for a code three times; cancel the first.
+
+    Returns ``(attempts made, the stand-in's exit code)``.
+    """
+    from sshpilot.daemon import process_registry
+
+    registry = process_registry.OwnedProcessRegistry(tmp_path / "processes.json")
+    previous = process_registry.active_registry()
+    process_registry.set_active_registry(registry)
+    instance = InteractionBroker(secret_timeout=5, host_key_timeout=5)
+    log = tmp_path / "attempts"
+    child = None
+    try:
+        monkeypatch.setattr(
+            instance, "_effective_ssh_config", lambda _argv, _environment=None: {}
+        )
+        _argv, environment = instance.prepare_launch(
+            SessionLaunchSpec(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                protocol="ssh",
+                hostname="example.test",
+                username="alice",
+                port=22,
+            ),
+            lambda _connection_id, **_kwargs: (
+                ("/usr/bin/ssh", "example"),
+                _launch_environment(),
+            ),
+        )
+        extra = ()
+        if prompt_of_another_launch:
+            # A second launch: its helper prompts, but runs under this child.
+            _argv, other = instance.prepare_launch(
+                SessionLaunchSpec(
+                    session_id=SessionId("session-2"),
+                    connection_id=CONNECTION_ID,
+                    protocol="ssh",
+                    hostname="example.test",
+                    username="alice",
+                    port=22,
+                ),
+                lambda _connection_id, **_kwargs: (
+                    ("/usr/bin/ssh", "example"),
+                    _launch_environment(),
+                ),
+            )
+            extra = (other["SSHPILOT_DAEMON_ASKPASS_TOKEN"],)
+        child = subprocess.Popen(
+            (
+                sys.executable, "-c", _FAKE_SSH, str(log),
+                environment["SSH_ASKPASS"], "(alice@example.test) Verification code: ",
+                *extra,
+            ),
+            env=environment,
+        )
+        if owned:
+            registry.register(child.pid, kind=process_registry.KIND_SESSION)
+        interaction = _await_single_interaction(instance)
+        assert interaction is not None
+        instance.claim(interaction.id, CLIENT_A)
+        instance.respond(
+            InteractionDecisionRequest(
+                interaction_id=interaction.id,
+                secret_decision=SecretDecision.CANCEL,
+            ),
+            CLIENT_A,
+        )
+        code = child.wait(timeout=10)
+        assert [
+            summary
+            for summary in instance.list(CLIENT_A)
+            if summary.state is InteractionState.PENDING
+        ] == []
+        if not prompt_of_another_launch:
+            assert instance.classify_startup_failure(SESSION_ID) is (
+                ErrorCode.OPERATION_CANCELLED
+            )
+        return len(log.read_text().splitlines()), code
+    finally:
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+        instance.close()
+        process_registry.set_active_registry(previous)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+def test_cancelling_a_prompt_ends_the_connection_that_asked(monkeypatch, tmp_path) -> None:
+    """One Cancel must not reach the server as three failed logins.
+
+    Declining OpenSSH's retries silently (issue #1236) spared the user the
+    repeated dialog, but each retry is still an empty answer sent to the
+    server: measured against a google-authenticator sshd, one cancelled
+    code prompt logged three failures and tripped its rate limit, so the
+    next login was refused without a prompt. The child that asked is ended
+    at the cancel, before it can ask again.
+    """
+    import signal
+
+    attempts, code = _cancel_first_prompt_of_fake_ssh(monkeypatch, tmp_path, owned=True)
+    assert attempts == 1, "the connection went on to retry after the cancel"
+    assert code == -signal.SIGTERM
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+def test_a_cancel_never_ends_a_process_the_daemon_does_not_own(monkeypatch, tmp_path) -> None:
+    """Only a recorded child is signalled; anything else ends by itself,
+    its remaining prompts declined silently as before."""
+    attempts, code = _cancel_first_prompt_of_fake_ssh(monkeypatch, tmp_path, owned=False)
+    assert attempts == 3
+    assert code == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+def test_a_cancel_never_ends_an_owned_child_launched_for_another_prompt(
+    monkeypatch, tmp_path
+) -> None:
+    """Review P1: the helper's PID is reported by the helper. Owning the
+    process it leads to is not enough; it must be the child launched for
+    the prompt being cancelled (its askpass token), or nothing is ended."""
+    attempts, code = _cancel_first_prompt_of_fake_ssh(
+        monkeypatch, tmp_path, owned=True, prompt_of_another_launch=True
+    )
+    assert attempts == 3, "another prompt's cancel ended this connection"
+    assert code == 0

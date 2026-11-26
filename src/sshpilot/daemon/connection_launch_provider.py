@@ -491,9 +491,8 @@ class HeadlessConnectionView:
         Mirrors the retired frontend ``ConnectionManager`` gates.
         """
         try:
-            # Password auth never preloads keys.
-            if self.auth_method == 1:
-                return
+            # Which methods ssh tries is the Host block's business; like
+            # resolve_native_auth, nothing here depends on the login order.
             if self.identity_agent_disabled:
                 return
             if _string(self.identity_agent_directive):
@@ -1118,7 +1117,8 @@ class DaemonConnectionLaunchProvider:
         Mirrors the retired frontend runner exactly: the shared base-command
         builder composes app overrides, port and ``ClearAllForwardings`` (and
         deliberately skips flags ``ssh-copy-id`` cannot take), then the public
-        key, known-hosts path and the connection's auth preferences are added.
+        key and known-hosts path are added; the login methods are the Host
+        block's own.
         OpenSSH — not SSH Pilot — performs the remote installation.
         """
         if (
@@ -1185,29 +1185,9 @@ class DaemonConnectionLaunchProvider:
         # file to OpenSSH and the user's configuration, as a session does.
         argv += _isolated_known_hosts_override(connection, effective_config)
 
-        # Authentication preferences mirror the frontend runner: password
-        # method narrows PreferredAuthentications; a stored password alongside
-        # key auth keeps the combined method list.
+        # The login order and per-method switches come from the Host block,
+        # exactly as for `ssh-copy-id <alias>`; nothing is added here.
         manager = self._manager_shim(connection)
-        auth_method = connection.auth_method
-        prefer_password = auth_method == 1
-        stored_password = None
-        try:
-            stored_password = manager.get_connection_password(connection)
-        except Exception:
-            stored_password = None
-        combined_auth = bool(stored_password) and not prefer_password
-        if prefer_password:
-            argv += ["-o", "PreferredAuthentications=keyboard-interactive,password"]
-            if bool(connection.data.get("pubkey_auth_no")):
-                argv += ["-o", "PubkeyAuthentication=no"]
-        elif combined_auth:
-            argv += [
-                "-o",
-                "PreferredAuthentications=gssapi-with-mic,hostbased,"
-                "publickey,keyboard-interactive,password",
-            ]
-
         argv.append(host_value)
 
         # Sanitized daemon base environment (same allowlist the session path

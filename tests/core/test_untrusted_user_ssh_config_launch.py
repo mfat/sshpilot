@@ -7,7 +7,6 @@ import shutil
 import stat
 import subprocess
 import types
-from pathlib import Path
 
 import pytest
 
@@ -35,9 +34,7 @@ def test_windows_trusted_owner_without_geteuid(tmp_path, monkeypatch):
     """Windows has no POSIX UIDs; ownership must not call ``os.geteuid``."""
     config = tmp_path / "config"
     config.write_text("Host t\n  HostName 127.0.0.1\n")
-    monkeypatch.setattr(os, "name", "nt")
-    if hasattr(os, "geteuid"):
-        monkeypatch.delattr(os, "geteuid")
+    monkeypatch.delattr(os, "geteuid", raising=False)
     assert not hasattr(os, "geteuid")
     assert trusted_default_user_ssh_config_owner(str(config)) is True
 
@@ -48,9 +45,7 @@ def test_windows_user_config_launches_without_dash_f(tmp_path, monkeypatch):
     root = home_ssh / "config"
     root.write_text("Host plain\n    HostName 192.0.2.10\n")
     monkeypatch.setattr(paths, "openssh_user_dir", lambda: home_ssh)
-    monkeypatch.setattr(os, "name", "nt")
-    if hasattr(os, "geteuid"):
-        monkeypatch.delattr(os, "geteuid")
+    monkeypatch.delattr(os, "geteuid", raising=False)
     assert launch_config_file(root) is None
 
 

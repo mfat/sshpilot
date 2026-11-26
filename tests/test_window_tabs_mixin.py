@@ -45,6 +45,7 @@ _TAB_METHODS = (
     "_rename_tab_page",
     "_on_tabmenu_reconnect",
     "_on_tabmenu_manage_files",
+    "_on_tabmenu_reveal_sidebar",
     "_on_tabmenu_open_system_terminal",
     "_on_tabmenu_new_local",
     "_on_tabmenu_close",
@@ -56,8 +57,19 @@ _TAB_METHODS = (
     "_on_tabmenu_layout_default",
     "_on_tabmenu_layout_compact",
     "_on_tabmenu_fm_new_window",
+    "move_file_manager_tab_to_window",
+    "_attach_file_manager_window",
+    "_close_file_manager_window",
+    "install_file_manager_pane_shortcut",
+    "_toggle_selected_file_manager_pane",
+    "_file_manager_running_transfers",
+    "_confirm_file_manager_tab_close",
+    "_confirm_file_manager_window_close",
     "_launch_external_file_manager",
     "_on_tabmenu_rdp_detach",
+    "_on_tabmenu_hide_left_pane",
+    "_on_tabmenu_show_left_pane",
+    "_set_tab_file_manager_single_pane",
     "focus_rdp_tab",
     "detach_rdp_tab",
     "_attach_rdp_window",
@@ -118,6 +130,60 @@ def test_enabled_tab_actions_for_plugin_like_page():
         "tabmenu-close-others",
         "tabmenu-close-right",
     }
+
+
+class _FileManagerController:
+    def __init__(self, single):
+        self.single = single
+        self._connection = None
+
+    def is_single_pane(self):
+        return self.single
+
+    def set_single_pane(self, single):
+        self.single = single
+
+
+def _file_manager_tab_stub(controller):
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    embed = types.SimpleNamespace(_controller=controller)
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embed_for_child(self, _child):
+            return embed
+
+        def _tab_menu_target(self):
+            return object(), object()
+
+    return Stub()
+
+
+@pytest.mark.parametrize(
+    "single, offered, hidden",
+    [
+        (False, "tabmenu-hide-left-pane", "tabmenu-show-left-pane"),
+        (True, "tabmenu-show-left-pane", "tabmenu-hide-left-pane"),
+    ],
+)
+def test_file_manager_tab_menu_offers_the_left_pane_switch(single, offered, hidden):
+    """#1356: the left pane can be hidden from the tab's context menu too."""
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    stub = _file_manager_tab_stub(_FileManagerController(single))
+    enabled = stub._enabled_tab_actions(object())
+    assert offered in enabled
+    assert hidden not in enabled
+    assert offered in WindowTabsMixin._TAB_MENU_ACTIONS
+
+
+def test_left_pane_menu_items_switch_the_tabs_file_manager():
+    controller = _FileManagerController(False)
+    stub = _file_manager_tab_stub(controller)
+    stub._on_tabmenu_hide_left_pane(None)
+    assert controller.single is True
+    stub._on_tabmenu_show_left_pane(None)
+    assert controller.single is False
 
 
 def test_rdp_tab_context_menu_offers_move_to_new_window():
@@ -203,6 +269,16 @@ def test_tab_overview_button_visibility_honors_headerbar_preference():
 
     stub._user_tabs = False
     stub.config.values['ui.headerbar_show_tab_button'] = True
+    stub._update_tab_button_visibility()
+    assert button.visible is False
+    assert bar.visible is False
+
+    # The Configuration view is shown in place of the tabs: they go from
+    # the header bar too.
+    stub._user_tabs = True
+    stub._sidebar_view_stack = types.SimpleNamespace(
+        get_visible_child_name=lambda: 'sections'
+    )
     stub._update_tab_button_visibility()
     assert button.visible is False
     assert bar.visible is False
@@ -814,3 +890,318 @@ def test_pane_menu_runs_tab_handler_on_the_pane_terminal():
     assert seen == [(None, terminal)]
     # The override ends with the action; the tab menu targets tabs again.
     assert stub._tab_menu_target()[0] is Stub._tab_menu_page
+
+
+def _detach_stub(monkeypatch):
+    """A tab mixin with fake tab views and a fake detached window."""
+    from sshpilot import detached_tab_window
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    events = []
+
+    class TabView:
+        def __init__(self, name):
+            self.name, self.pages = name, []
+
+        def transfer_page(self, page, other, position):
+            events.append(("transfer", self.name, other.name, stub.__dict__.get("_transferring_tab_out")))
+            self.pages.remove(page)
+            other.pages.insert(position, page)
+
+        def get_selected_page(self):
+            return self.pages[0] if self.pages else None
+
+        def get_n_pages(self):
+            return len(self.pages)
+
+        def set_selected_page(self, page):
+            events.append(("select", self.name))
+
+    class Window:
+        def __init__(self, main, title, *, on_move_back, on_close, confirm_close=None):
+            self.title, self.on_move_back, self.on_close = title, on_move_back, on_close
+            self.confirm_close = confirm_close
+            self.tab_view = TabView("detached")
+
+        def set_default_size(self, w, h):
+            self.size = (w, h)
+
+        def add_controller(self, controller):
+            events.append(("controller", controller))
+
+        def present(self):
+            events.append(("present", self.title))
+
+    monkeypatch.setattr(detached_tab_window, "DetachedTabWindow", Window)
+
+    class Stub(WindowTabsMixin):
+        def __init__(self):
+            self.tab_view = TabView("main")
+
+        def connect(self, *_a):
+            return 1
+
+        def present(self):
+            events.append(("present", "main"))
+
+        def show_tab_view(self):
+            pass
+
+        def _launch_external_file_manager(self, _connection):  # pragma: no cover
+            raise AssertionError("must not open a second connection")
+
+    stub = Stub()
+    stub.install_file_manager_pane_shortcut = (
+        lambda window, view: window.add_controller(("F3", view))
+    )
+    return stub, events
+
+
+def test_open_in_new_window_moves_the_tab_page_and_back(monkeypatch):
+    """The page moves between tab views, as a detached RDP tab does: the
+    file manager, its connections and terminal panels carry on."""
+    stub, events = _detach_stub(monkeypatch)
+    embed = types.SimpleNamespace(get_width=lambda: 900, get_height=lambda: 600)
+    page = types.SimpleNamespace(get_title=lambda: "oracle Files", get_child=lambda: embed)
+    stub.tab_view.pages.append(page)
+
+    assert stub.move_file_manager_tab_to_window(page, embed) is True
+    window = stub._file_manager_windows[0]
+    # Moved, not closed: on_tab_detached sees the flag and leaves it alive.
+    assert events[0] == ("transfer", "main", "detached", True)
+    # F3 follows the file manager into its window.
+    assert ("controller", ("F3", window.tab_view)) in events
+    assert stub._transferring_tab_out is False
+    assert window.tab_view.pages == [page] and window.title == "oracle Files"
+    assert window.size == (900, 647)
+
+    window.on_move_back(window)
+    assert stub.tab_view.pages == [page]
+    assert stub._file_manager_windows == []
+    assert ("select", "main") in events
+
+
+def test_closing_the_detached_window_ends_the_file_manager(monkeypatch):
+    stub, _events = _detach_stub(monkeypatch)
+    torn = []
+    embed = types.SimpleNamespace(
+        get_width=lambda: 0, get_height=lambda: 0,
+        clear_terminal_panel=lambda: torn.append("terminals"),
+    )
+    page = types.SimpleNamespace(get_title=lambda: "", get_child=lambda: embed)
+    stub.tab_view.pages.append(page)
+    stub._file_manager_embeds_for_child = lambda child: [child] if child is embed else []
+    stub._teardown_file_manager_embed = lambda e: torn.append(("teardown", e))
+
+    stub.move_file_manager_tab_to_window(page, embed)
+    window = stub._file_manager_windows[0]
+    assert window.title  # untitled tabs still get a window title
+    window.on_close(window)
+
+    assert torn == ["terminals", ("teardown", embed)]
+    assert stub._file_manager_windows == []
+
+
+def test_tab_detach_keeps_a_transferred_file_manager_alive(monkeypatch):
+    """on_tab_detached tears down file managers of closed tabs, not of a tab
+    moving into its own window."""
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    torn = []
+
+    class Stub(WindowTabsMixin):
+        _transferring_tab_out = True
+
+        def _is_start_tab_page(self, _page):
+            return False
+
+        def _update_command_snippets_button_visibility(self):
+            pass
+
+        def _update_tab_button_visibility(self):
+            pass
+
+        def has_user_tabs(self):
+            return True
+
+        def _teardown_file_manager_embed(self, embed):  # pragma: no cover
+            torn.append(embed)
+
+    Stub().on_tab_detached(None, types.SimpleNamespace(get_child=lambda: object()), 0)
+    assert torn == []
+
+
+class _Mapped:
+    def __init__(self, mapped=True):
+        self.mapped = mapped
+
+    def get_mapped(self):
+        return self.mapped
+
+
+def _f3_stub(child, controller):
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embed_for_child(self, _child):
+            return types.SimpleNamespace(_controller=controller)
+
+    page = types.SimpleNamespace(get_child=lambda: child)
+    view = types.SimpleNamespace(get_selected_page=lambda: page)
+    return Stub(), view
+
+
+def test_window_f3_toggles_the_selected_file_manager_tab():
+    """F3 that no focused widget took toggles the selected file manager."""
+    controller = _FileManagerController(False)
+    stub, view = _f3_stub(_Mapped(), controller)
+    assert stub._toggle_selected_file_manager_pane(view) is True
+    assert controller.single is True
+    assert stub._toggle_selected_file_manager_pane(view) is True
+    assert controller.single is False
+
+
+def test_window_f3_leaves_terminal_tabs_and_hidden_tabs_alone():
+    """Not a file manager tab, or not on screen: F3 is not handled, so it
+    carries on to whatever else wants it."""
+    from sshpilot.terminal import TerminalWidget
+
+    controller = _FileManagerController(False)
+    terminal = TerminalWidget.__new__(TerminalWidget)
+    for child in (terminal, _Mapped(mapped=False), None):
+        stub, view = _f3_stub(child, controller)
+        assert stub._toggle_selected_file_manager_pane(view) is False
+    assert controller.single is False
+
+
+def test_closing_a_file_manager_tab_with_running_transfers_asks_first(monkeypatch):
+    """Closing cancels the transfers; ask, and finish the close per answer."""
+    from sshpilot import file_manager_window as fmw
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    asked = []
+    monkeypatch.setattr(fmw, "_quit_confirmed", False)
+    monkeypatch.setattr(
+        fmw, "confirm_cancel_transfers",
+        lambda parent, count, **kw: asked.append((count, kw)),
+    )
+    controller = types.SimpleNamespace(running_transfer_count=lambda: 2)
+    embed = types.SimpleNamespace(_controller=controller)
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embeds_for_child(self, _child):
+            return [embed]
+
+    finished = []
+    view = types.SimpleNamespace(close_page_finish=lambda page, ok: finished.append(ok))
+    page = types.SimpleNamespace(get_child=lambda: object())
+    stub = Stub()
+
+    assert stub._confirm_file_manager_tab_close(view, page) is True
+    count, kw = asked[0]
+    assert count == 2
+    kw["on_keep"]()
+    kw["on_confirm"]()
+    assert finished == [False, True]
+
+    # Confirming ends the tab as the ordinary close does: its terminal is
+    # disconnected before the page goes.
+    disconnected = []
+    terminal = types.SimpleNamespace(disconnect=lambda: disconnected.append(True))
+    stub.terminal_to_connection = {}
+    stub._close_tab_after_transfers_confirmed(
+        view, types.SimpleNamespace(get_child=lambda: terminal)
+    )
+    assert not disconnected  # not a tracked terminal: nothing to end
+    stub.terminal_to_connection = _IdentityMap(terminal)
+    stub._close_tab_after_transfers_confirmed(
+        view, types.SimpleNamespace(get_child=lambda: terminal)
+    )
+    assert disconnected == [True]
+    assert finished == [False, True, True, True]
+
+    controller.running_transfer_count = lambda: 0
+    assert stub._confirm_file_manager_tab_close(view, page) is False
+    monkeypatch.setattr(fmw, "_quit_confirmed", True)
+    controller.running_transfer_count = lambda: 2
+    assert stub._confirm_file_manager_tab_close(view, page) is False
+
+
+def test_a_terminal_tab_counts_the_transfers_of_its_files_panel():
+    """The files panel below a terminal is torn down with the tab, which
+    cancels its transfers: the tab close must ask for it too."""
+    from sshpilot.terminal import TerminalWidget
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    controller = types.SimpleNamespace(running_transfer_count=lambda: 3)
+    embed = types.SimpleNamespace(_controller=controller)
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embeds_for_child(self, _child):
+            return [embed]
+
+    terminal = TerminalWidget.__new__(TerminalWidget)
+    assert Stub()._file_manager_running_transfers(terminal) == 3
+    assert Stub()._file_manager_running_transfers(None) == 0
+
+
+class _IdentityMap:
+    """Stands in for terminal_to_connection with an unhashable test double."""
+
+    def __init__(self, *members):
+        self._members = members
+
+    def __contains__(self, item):
+        return any(item is member for member in self._members)
+
+
+def test_reveal_sidebar_expands_memberships_and_clears_filters(monkeypatch):
+    from unittest.mock import Mock
+    from sshpilot import sidebar, sidebar_views
+    from sshpilot.window_tabs import WindowTabsMixin
+    from sshpilot import window_tabs
+    monkeypatch.setattr(window_tabs.GLib, "idle_add", lambda fn: fn())
+
+    class Group:
+        def __init__(self, group_id):
+            self.group_id = group_id
+            self.group_info = {"expanded": False}
+        def _toggle_expand(self):
+            self.group_info["expanded"] = True
+
+    class Section:
+        _expanded = False
+        def _toggle_expand(self):
+            self._expanded = True
+
+    monkeypatch.setattr(sidebar, "GroupRow", Group)
+    monkeypatch.setattr(sidebar, "SectionHeaderRow", Section)
+    monkeypatch.setattr(sidebar_views, "show_view", Mock())
+    child, connection = object(), object()
+    root, nested, unrelated, section = Group("root"), Group("nested"), Group("other"), Section()
+    selected = Mock()
+    window = types.SimpleNamespace(
+        _tab_menu_target=lambda: (None, child),
+        terminal_to_connection={child: connection},
+        _search_popup=types.SimpleNamespace(visible=True, hide=Mock()),
+        _tag_filter="production", search_entry=Mock(),
+        lookup_action=lambda name: None,
+        _apply_sidebar_visible=Mock(), rebuild_connection_list=Mock(),
+        complete_pending_connection_rows=Mock(),
+        group_manager=types.SimpleNamespace(
+            get_connection_groups=lambda conn: ["nested"],
+            groups={"nested": {"parent_id": "root"}, "root": {}},
+        ),
+        connection_list=[section, root, nested, unrelated],
+        _rows_for_connection=lambda conn: [selected],
+        _select_only_row=Mock(),
+    )
+    WindowTabsMixin._on_tabmenu_reveal_sidebar(window, None)
+    assert window._tag_filter is None
+    window.search_entry.set_text.assert_called_once_with("")
+    window._search_popup.hide.assert_called_once_with(animate=False)
+    assert root.group_info["expanded"] and nested.group_info["expanded"]
+    assert not unrelated.group_info["expanded"]
+    assert section._expanded
+    window._select_only_row.assert_called_once_with(selected)
+    selected.grab_focus.assert_called_once()

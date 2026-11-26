@@ -34,11 +34,13 @@ from ...ssh_config_document import (
     _split_config_option,
     _split_keyword,
     include_patterns,
+    declared_hosts,
     split_config_lines,
 )
 from ...platform.paths import include_base_dir
 from ...ssh_config_formatter import MANAGED_HOST_OPTIONS
 from ..errors import CoreError, ErrorCode
+from .auth_preferences import PUBKEY_KEYWORD, canonical_keyword, password_comes_first
 from .models import ConnectionRecord
 
 _MAX_INCLUDE_DEPTH = 32
@@ -368,19 +370,19 @@ def _resolve_auth_method_from_config(config: Dict[str, Any]) -> Tuple[int, List[
             for p in prefer_auth_raw.split(",")
             if p.strip()
         ]
-        pubkey_auth = str(config.get("pubkeyauthentication", "")).strip().lower()
-        pubkey_auth_no = pubkey_auth == "no"
-        if pubkey_auth == "no":
+        # The first line of the setting decides, under any spelling OpenSSH
+        # accepts for it (DSAAuthentication is PubkeyAuthentication).
+        pubkey_auth = ""
+        for key, value in config.items():
+            if canonical_keyword(key) == PUBKEY_KEYWORD:
+                if isinstance(value, list):
+                    value = value[0] if value else ""
+                pubkey_auth = str(_unwrap_ssh_value(value)).strip().lower()
+                break
+        pubkey_auth_no = pubkey_auth in ("no", "false")
+        if pubkey_auth_no:
             return 1, prefer_auth_list, pubkey_auth_no
-        idx_pubkey = (
-            prefer_auth_list.index("publickey") if "publickey" in prefer_auth_list else None
-        )
-        idx_password = (
-            prefer_auth_list.index("password") if "password" in prefer_auth_list else None
-        )
-        if idx_pubkey is not None and (idx_password is None or idx_pubkey < idx_password):
-            return 0, prefer_auth_list, pubkey_auth_no
-        if idx_password is not None and (idx_pubkey is None or idx_password < idx_pubkey):
+        if password_comes_first(prefer_auth_list):
             return 1, prefer_auth_list, pubkey_auth_no
         return 0, prefer_auth_list, pubkey_auth_no
     except Exception:
@@ -445,12 +447,17 @@ def _parse_host_config(
 
     identity_files: List[str] = []
     identity_suppressed = False
+    # Where "IdentityFile none" stands among the block's key lines, so a
+    # save writes it back in place when the block lists keys as well.
+    identity_none_index: Optional[int] = None
     raw_identity_files: List[str] = []
     for entry in _as_list(config.get("identityfile")):
         unwrapped = _unwrap_ssh_value(entry)
         if unwrapped:
             raw_identity_files.append(str(unwrapped))
         if isinstance(unwrapped, str) and unwrapped.strip().lower() == "none":
+            if not identity_suppressed:
+                identity_none_index = len(identity_files)
             identity_suppressed = True
             continue
         if unwrapped:
@@ -489,6 +496,9 @@ def _parse_host_config(
             _unwrap_ssh_value(config["user"]) if "user" in config else None
         ),
         "__identity_raw_identity_files": raw_identity_files,
+        # Only a block that mixes "none" with keys: a lone "none" is simply
+        # replaced when a key is chosen.
+        "__identity_none_index": identity_none_index if identity_files else None,
         # Directives this host actually authored. ``config`` holds exactly the
         # block's own options — wildcard/negated blocks were diverted to
         # ``rules`` above — so its keys are the authorship evidence. The launch
@@ -885,13 +895,17 @@ def load_ssh_configuration(
         raw_copy.pop("uuid", None)
         host_cfg = dict(raw_copy)
         host_cfg["host"] = token
-        host_cfg["__host_tokens"] = list(tokens)
+        # The names only: a pattern beside them makes the line a rule as
+        # well (recorded by ``flush_block``), not this host any less a host.
+        host_cfg["__host_tokens"] = declared_hosts(tokens)
         connection_data = _parse_host_config(
             host_cfg, source=str(cfg_file), isolated=isolated, rules=rules
         )
         if not connection_data:
             return
         connection_data["source"] = str(cfg_file)
+        # What else is on the Host line: the block is theirs too.
+        connection_data["__shared_host_tokens"] = tuple(t for t in tokens if t != token)
         if token not in connections:
             connection_order.append(token)
         connections[token] = connection_data
@@ -914,8 +928,11 @@ def load_ssh_configuration(
             _parse_host_config(
                 host_cfg, source=str(cfg_file), isolated=isolated, rules=rules
             )
-            return
-        for token in cleaned:
+            # ``Host *.prod edge`` is a rule and it declares ``edge``:
+            # ``ssh edge`` uses the block, so the names it spells out are
+            # hosts like any other. A line of patterns only declares none,
+            # and so does a name a wildcard beside it already matches.
+        for token in declared_hosts(cleaned):
             _materialise(token, config, cleaned, cfg_file)
 
     def _absorb_option_lines(raw_lines, config: Dict[str, Any]) -> None:

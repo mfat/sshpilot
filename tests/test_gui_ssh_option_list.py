@@ -418,7 +418,7 @@ def test_a_note_saying_the_value_is_unused_draws_the_row_in_error_style(gui):
     value field and the note take Adwaita's error style; a plain remark keeps
     the dim style. Nothing is refused either way."""
     notes = {
-        "Compression": ("Not used: Host * sets yes", True),
+        "Compression": ("No effect: Host * sets yes", True),
         "SendEnv": ("Both are used", False),
     }
     options = _list(gui, note=lambda k, v: notes.get(k))

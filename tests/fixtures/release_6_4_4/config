@@ -1,0 +1,89 @@
+# my servers
+Host otp
+    HostName otp.example.com
+    User alice
+    PreferredAuthentications publickey,keyboard-interactive
+    IdentityFile ~/.ssh/id_work
+
+Host handpw
+    HostName handpw.example.com
+    PreferredAuthentications password,publickey
+    PubkeyAuthentication no
+    KbdInteractiveAuthentication no
+
+Host plain
+    HostName plain.example.com
+
+Host key-auto
+    HostName key-auto.example.com
+    User alice
+
+Host key-own
+    HostName key-own.example.com
+    User alice
+    IdentityFile ~/.ssh/id_own
+    IdentitiesOnly yes
+
+Host key-pref
+    HostName key-pref.example.com
+    User alice
+    IdentityFile ~/.ssh/id_pref
+
+Host key-agent
+    HostName key-agent.example.com
+    User alice
+    IdentityAgent ~/.1password/agent.sock
+    AddKeysToAgent yes
+
+Host pw
+    HostName pw.example.com
+    User alice
+    PreferredAuthentications keyboard-interactive,password
+
+Host pw-nokey
+    HostName pw-nokey.example.com
+    User alice
+    PreferredAuthentications keyboard-interactive,password
+    PubkeyAuthentication no
+
+Host pw-extra
+    HostName pw-extra.example.com
+    User alice
+    PreferredAuthentications keyboard-interactive,password
+    Compression yes
+    ServerAliveInterval 30
+
+Host linked-key
+    HostName linked-key.example.com
+    User deploy
+    IdentityFile /keys/deploy_ed25519
+    IdentitiesOnly yes
+
+Host linked-pw
+    HostName linked-pw.example.com
+    User ops
+    PreferredAuthentications keyboard-interactive,password
+    PubkeyAuthentication no
+
+Host linked-extra
+    HostName linked-extra.example.com
+    User tuned
+    ServerAliveInterval 15
+    Compression yes
+
+Host linked-jump
+    HostName linked-jump.example.com
+    User hop
+    ProxyCommand ssh -W %h:%p  bastion.example.com
+
+Host group-a
+    HostName group-a.example.com
+    User ops
+    PreferredAuthentications keyboard-interactive,password
+    PubkeyAuthentication no
+
+Host group-b
+    HostName group-b.example.com
+    User ops
+    PreferredAuthentications keyboard-interactive,password
+    PubkeyAuthentication no

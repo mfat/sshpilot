@@ -61,6 +61,12 @@ class _PtyState:
     input_chunks: Deque[memoryview] = field(default_factory=deque)
     queued_input_bytes: int = 0
     registered: bool = False
+    # Flow control: stop reading (the kernel PTY buffer then blocks the
+    # child's writes) while still writing queued input.
+    read_paused: bool = False
+    # Events currently registered with the selector; 0 when not registered
+    # (a paused PTY with no queued input has nothing to wait for).
+    selected_events: int = 0
 
 
 class PtyIoManager:
@@ -131,6 +137,12 @@ class PtyIoManager:
     def resize(self, handle: "PtyProcessHandle", dimensions: TerminalDimensions) -> None:
         handle.last_dimensions = dimensions
         self._submit(("resize", handle, dimensions))
+
+    def pause_reading(self, handle: "PtyProcessHandle") -> None:
+        self._submit(("read_paused", handle, True))
+
+    def resume_reading(self, handle: "PtyProcessHandle") -> None:
+        self._submit(("read_paused", handle, False))
 
     def unregister(self, handle: "PtyProcessHandle") -> None:
         try:
@@ -220,6 +232,7 @@ class PtyIoManager:
                     state,
                 )
                 state.registered = True
+                state.selected_events = selectors.EVENT_READ
                 command[2].set()
             elif kind == "unregister":
                 state = self._states.get(handle.master_fd)
@@ -231,6 +244,12 @@ class PtyIoManager:
                 with self._state_lock:
                     state = self._states.get(handle.master_fd)
                 if state is not None:
+                    self._set_interest(state)
+            elif kind == "read_paused":
+                with self._state_lock:
+                    state = self._states.get(handle.master_fd)
+                if state is not None and state.read_paused != command[2]:
+                    state.read_paused = command[2]
                     self._set_interest(state)
 
     def _read_pty(self, state: _PtyState) -> None:
@@ -274,25 +293,36 @@ class PtyIoManager:
     def _set_interest(self, state: _PtyState) -> None:
         if not state.registered:
             return
-        events = selectors.EVENT_READ
+        events = 0 if state.read_paused else selectors.EVENT_READ
         with self._state_lock:
             has_input = bool(state.input_chunks)
         if has_input:
             events |= selectors.EVENT_WRITE
+        if events == state.selected_events:
+            return
+        fd = state.handle.master_fd
         try:
-            self._selector.modify(state.handle.master_fd, events, state)
+            if not events:
+                self._selector.unregister(fd)
+            elif not state.selected_events:
+                self._selector.register(fd, events, state)
+            else:
+                self._selector.modify(fd, events, state)
         except (KeyError, OSError, ValueError):
-            pass
+            return
+        state.selected_events = events
 
     def _remove_state(self, state: _PtyState) -> None:
         with self._state_lock:
             self._states.pop(state.handle.master_fd, None)
         if state.registered:
-            try:
-                self._selector.unregister(state.handle.master_fd)
-            except (KeyError, OSError, ValueError):
-                pass
+            if state.selected_events:
+                try:
+                    self._selector.unregister(state.handle.master_fd)
+                except (KeyError, OSError, ValueError):
+                    pass
             state.registered = False
+            state.selected_events = 0
         self._close_master(state.handle)
 
     @staticmethod
@@ -382,6 +412,12 @@ class PtyProcessHandle(SessionProcessHandle):
     def resize(self, dimensions: TerminalDimensions) -> None:
         self.last_dimensions = dimensions
         self._manager.resize(self, dimensions)
+
+    def pause_output(self) -> None:
+        self._manager.pause_reading(self)
+
+    def resume_output(self) -> None:
+        self._manager.resume_reading(self)
 
     def notify_output(self, data: bytes) -> None:
         self._on_output(data)

@@ -68,10 +68,15 @@ attachment_id: 32 bytes (null-padded UTF-8, zero for output/status)
 data: remaining raw bytes
 ```
 
-Kinds currently cover output, input, continuity loss, and safe input rejection.
+Kinds currently cover output, input, continuity loss, safe input rejection,
+and output acknowledgement (`ACK`, client to daemon, flow control below).
 An input-rejection frame carries only a stable `ErrorCode` string and its safe
 session/attachment identifiers; it never echoes input. Output flags identify
-replay, EOF, and truncation. Each terminal payload is at most 64 KiB. IDs,
+replay, EOF, and truncation. `TRUNCATED` means bytes before the frame are gone:
+the daemon sets it only on the first frame of a replay whose requested start
+was evicted, never on a replay that merely stops short of the live end (a
+chunk of a chunked recovery), because the client reports every `TRUNCATED`
+frame as continuity loss. Each terminal payload is at most 64 KiB. IDs,
 flags, lengths, kinds, stream versions, and attachment requirements are
 validated before dispatch. Invalid binary input closes only the offending peer.
 
@@ -114,15 +119,60 @@ decoded or logged.
 limited to 1–1000. A size supplied at open is applied to the slave before
 launch; the latest pre-start resize wins. Running resize uses `TIOCSWINSZ`.
 
+## Flow control
+
+A fast producer (a colored log flood, `yes`) can outrun the frontend. Like
+kitty, ghostty or tabby, the daemon then stops reading the PTY instead of
+dropping output: the kernel PTY buffer fills and the child blocks in `write`,
+which over SSH closes the channel window and slows the remote program (#1426).
+
+- An attachment opts in with `AttachSessionRequest(flow_control=True)` when
+  the daemon advertises `terminal.flow_control`; the field is omitted when
+  false, so older daemons are unaffected.
+- The frontend sends binary `ACK` frames (`TerminalOutputAck`) carrying the
+  next byte it has not yet displayed. GTK acknowledges only after the display
+  has processed the bytes: `Vte.Terminal.feed()` merely queues them, so the
+  widget waits for a `PRIORITY_LOW` idle, which VTE's own parsing and GTK's
+  redraw run ahead of (the xterm.js backend uses its write callbacks). One
+  acknowledgement is in flight per tab; newer ones replace older ones. They
+  are sent on `GtkClientBridge.submit_terminal_ack`'s own worker, never the
+  shared API worker, so a slow request cannot hold a session's output.
+- `SessionRuntime` pauses reads while the input owner's flow-controlled
+  attachment is more than `FLOW_CONTROL_HIGH_BYTES` (1 MiB) behind the live
+  sequence and resumes within `FLOW_CONTROL_LOW_BYTES` (256 KiB). HIGH stays
+  below the 2 MiB replay ring, so what is still lost can normally be replayed;
+  the daemon-wide replay budget may trim a ring further when many sessions
+  are busy, and the frontend then continues past the gap (below).
+- A pause stops reads only; input (Ctrl+C) and resize still reach the PTY.
+  Detach, peer disconnect, input-ownership change, child exit and any
+  transition out of STARTING/RUNNING resume reads, so a stalled or crashed
+  frontend never holds a session beyond its own lifetime.
+- View-only attachments never pause a session: they keep the loss and replay
+  path below. Acks from unknown, foreign or view-only attachments are ignored.
+- `PtyIoManager` drops `EVENT_READ` for a paused PTY (and unregisters it when
+  no input is queued); the ConPTY reader waits on an event and drains without
+  blocking after a pause.
+
 ## Slow peers and continuity
 
-PTY reading and replay eviction continue even with no attached reader, keeping
-the child from blocking and memory bounded. When one peer exceeds its terminal
+Without flow control, PTY reading and replay eviction continue even with no
+attached reader, keeping the child from blocking and memory bounded. When one
+peer exceeds its terminal
 queue limit, only that peer/session stops receiving live output. Pending
 terminal frames for that session are dropped, a continuity-loss status frame
 reports the expected and currently available sequence, and the control channel
 remains usable. The client can request replay if the ring still covers the gap;
 otherwise truncation is visible. Healthy peers and other sessions continue.
+
+The GTK controller recovers in 512 KiB replay chunks and only accepts live
+output after the chunk that reaches the live end. When the ring no longer
+covers the gap (on replay, or on a reattach after a transport swap), it shows
+"[Earlier terminal output is no longer available]" (translated), resets the
+emulator's parser while keeping the scrollback and screen shown so far, and
+continues from the oldest retained byte; the view never fails for lost output
+alone. A recovery binding ignores replay frames that belong to a
+superseded attempt (ahead of its start before its own replay begins) and trims
+overlap, so overlapping attempts cannot restart each other.
 
 ## EOF, exit, close, and shutdown
 
@@ -141,8 +191,9 @@ idempotent.
 ## Client and GTK integration
 
 `DaemonClient` keeps one socket reader for JSON and binary frames. A separate
-bounded terminal-dispatch thread prevents slow frontend callbacks from delaying
-response correlation. `TerminalSubscription` is frontend-neutral and
+terminal-dispatch thread prevents slow frontend callbacks from delaying
+response correlation; its queue is bounded by bytes (16 MiB), not frames, since
+PTY-read-sized frames made a 256-item bound overflow under 1 MiB. `TerminalSubscription` is frontend-neutral and
 idempotent.
 
 `GtkClientBridge` batches terminal data into one GLib drain per binding and

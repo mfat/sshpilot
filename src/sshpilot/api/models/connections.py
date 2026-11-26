@@ -124,6 +124,7 @@ EDITABLE_CONFIG_FIELDS = frozenset({
     "pubkey_auth_no",
     "proxy_jump", "proxy_command", "forward_agent",
     "forward_agent_explicit_no", "forward_agent_target",
+    "identities_only_explicit_no",
     "forwarding_rules", "x11_forwarding",
     "pre_command", "local_command", "remote_command",
     "extra_ssh_config",
@@ -193,7 +194,7 @@ def _validate_field_value(key: str, value: Any) -> None:
             raise ValueError(f"{key} must be a non-negative integer")
     elif key in (
         "x11_forwarding", "pubkey_auth_no", "forward_agent",
-        "forward_agent_explicit_no",
+        "forward_agent_explicit_no", "identities_only_explicit_no",
     ):
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be a boolean")
@@ -523,6 +524,225 @@ class ConfigSyntaxError:
             raise ValueError("config syntax error line must be a positive integer")
 
 
+class SshConfigDraftLineState(str, Enum):
+    """What OpenSSH does with one option line of an evaluated draft."""
+
+    #: Its block applies and this line supplies the option's value.
+    APPLIED = "applied"
+    #: Its block applies, but an earlier line already set the option.
+    SHADOWED = "shadowed"
+    #: Its block applies; OpenSSH collects every value of this option.
+    ACCUMULATED = "accumulated"
+    #: Its block does not apply to the target.
+    INACTIVE = "inactive"
+    #: Its block applies, but Settings force the option on the command line.
+    FORCED = "forced"
+    #: An ``Include`` line that was read.
+    INCLUDE = "include"
+
+
+def _draft_text(value: Any, name: str, *, empty: bool = True) -> None:
+    if type(value) is not str or "\x00" in value or (not empty and not value):
+        raise ValueError(f"SSH config draft {name} is invalid")
+
+
+def _draft_line(value: Any, name: str, *, minimum: int = 0) -> None:
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"SSH config draft {name} is invalid")
+
+
+@dataclass(frozen=True)
+class EvaluateSshConfigDraftRequest:
+    """Ask what OpenSSH would use for ``host`` if ``text`` were saved.
+
+    ``text`` is the whole root SSH configuration as it would be written.
+    ``user`` and ``port`` stand for ``ssh -l``/``-p`` on the command line.
+    OpenSSH runs a ``Match exec`` command to evaluate its block, so a draft
+    is not evaluated while it holds such a command that the saved
+    configuration does not. ``allowed_exec`` lists, word for word, the new
+    commands the user agreed to run; any other new command keeps the draft
+    pending.
+    """
+
+    text: str = field(repr=False)
+    host: str
+    user: Optional[str] = None
+    port: Optional[int] = None
+    allowed_exec: Tuple[str, ...] = ()
+    #: The file ``text`` is a draft of, as ``SshConfigText.files`` listed it
+    #: (empty: the root). The draft of an included file is read where the
+    #: root reads the file, after everything the root reads before it.
+    file: str = ""
+
+    def __post_init__(self) -> None:
+        _draft_text(self.text, "text")
+        _draft_text(self.file, "file")
+        _draft_text(self.host, "host", empty=False)
+        if self.user is not None:
+            _draft_text(self.user, "user", empty=False)
+        if self.port is not None and (
+            type(self.port) is not int or not 1 <= self.port <= 65535
+        ):
+            raise ValueError("SSH config draft port is invalid")
+        if type(self.allowed_exec) is not tuple:
+            raise TypeError("SSH config draft allowed_exec must be a tuple")
+        for command in self.allowed_exec:
+            _draft_text(command, "allowed exec command", empty=False)
+
+
+@dataclass(frozen=True)
+class SshConfigDraftValue:
+    """One ``keyword value`` pair: a line of ``ssh -G`` or a forced option."""
+
+    key: str
+    value: str
+
+    def __post_init__(self) -> None:
+        _draft_text(self.key, "key", empty=False)
+        _draft_text(self.value, "value")
+
+
+@dataclass(frozen=True)
+class SshConfigDraftSource:
+    """The line that supplies an option's value.
+
+    ``file`` is empty for a line of the draft itself, else the file OpenSSH
+    read it from (an included file or the system-wide configuration).
+    ``block`` is the header of the block holding the line, empty above every
+    block.
+    """
+
+    key: str
+    file: str
+    line: int
+    block: str
+
+    def __post_init__(self) -> None:
+        _draft_text(self.key, "source key", empty=False)
+        _draft_text(self.file, "source file")
+        _draft_text(self.block, "source block")
+        _draft_line(self.line, "source line", minimum=1)
+
+
+@dataclass(frozen=True)
+class SshConfigDraftLine:
+    """The state of one option line of the draft.
+
+    For ``SHADOWED``, ``decided_file``/``decided_line``/``decided_block``
+    name the earlier line that set the option (as in
+    :class:`SshConfigDraftSource`); otherwise they are empty and 0.
+    """
+
+    line: int
+    state: SshConfigDraftLineState
+    decided_file: str = ""
+    decided_line: int = 0
+    decided_block: str = ""
+
+    def __post_init__(self) -> None:
+        _draft_line(self.line, "line", minimum=1)
+        if not isinstance(self.state, SshConfigDraftLineState):
+            raise TypeError("SSH config draft line state is invalid")
+        _draft_text(self.decided_file, "decided file")
+        _draft_text(self.decided_block, "decided block")
+        _draft_line(self.decided_line, "decided line")
+
+
+@dataclass(frozen=True)
+class SshConfigDraftInclude:
+    """The files one ``Include`` line of the draft reads, in order."""
+
+    line: int
+    files: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _draft_line(self.line, "include line", minimum=1)
+        if type(self.files) is not tuple:
+            raise TypeError("SSH config draft include files must be a tuple")
+        for path in self.files:
+            _draft_text(path, "include file", empty=False)
+
+
+@dataclass(frozen=True)
+class SshConfigDraftError:
+    """A line OpenSSH rejects. ``file`` is empty for the draft itself;
+    ``line`` is 0 when OpenSSH names none. ``diagnostic`` is OpenSSH's own
+    text, shown as it is and never interpreted."""
+
+    file: str
+    line: int
+    diagnostic: str
+
+    def __post_init__(self) -> None:
+        _draft_text(self.file, "error file")
+        _draft_text(self.diagnostic, "error diagnostic")
+        _draft_line(self.line, "error line")
+
+
+@dataclass(frozen=True)
+class SshConfigDraftEvaluation:
+    """What OpenSSH resolves for a host from a draft root configuration.
+
+    The draft is evaluated the way a launch reads the saved file: with the
+    system-wide configuration when the root is the user's own
+    ``~/.ssh/config`` (``system_config`` names it, empty when it is not
+    read), with ``Include`` lines read where OpenSSH reads them, and with
+    the options Settings force on the command line (``forced``).
+
+    ``pending_exec`` is not empty when the draft adds ``Match exec``
+    commands the request did not allow, each listed word for word: nothing
+    was evaluated. ``errors`` is not empty when OpenSSH rejects the draft.
+    Otherwise ``values`` is ``ssh -G`` for the host, ``defaults`` the
+    keywords whose value is OpenSSH's built-in one, ``matched_blocks`` the
+    header lines of the ``Host``/``Match`` blocks of the draft that apply,
+    ``lines`` the state of each option line, ``sources`` the line supplying
+    each option, and ``includes`` what each ``Include`` line read.
+    """
+
+    values: Tuple[SshConfigDraftValue, ...] = ()
+    defaults: Tuple[str, ...] = ()
+    matched_blocks: Tuple[int, ...] = ()
+    lines: Tuple[SshConfigDraftLine, ...] = ()
+    sources: Tuple[SshConfigDraftSource, ...] = ()
+    includes: Tuple[SshConfigDraftInclude, ...] = ()
+    forced: Tuple[SshConfigDraftValue, ...] = ()
+    errors: Tuple[SshConfigDraftError, ...] = ()
+    pending_exec: Tuple[str, ...] = ()
+    system_config: str = ""
+    isolated: bool = False
+
+    def __post_init__(self) -> None:
+        for name, kind in (
+            ("values", SshConfigDraftValue),
+            ("lines", SshConfigDraftLine),
+            ("sources", SshConfigDraftSource),
+            ("includes", SshConfigDraftInclude),
+            ("forced", SshConfigDraftValue),
+            ("errors", SshConfigDraftError),
+        ):
+            items = getattr(self, name)
+            if type(items) is not tuple or any(type(item) is not kind for item in items):
+                raise TypeError(f"SSH config draft {name} is invalid")
+        for name in ("defaults", "pending_exec"):
+            items = getattr(self, name)
+            if type(items) is not tuple:
+                raise TypeError(f"SSH config draft {name} must be a tuple")
+            for item in items:
+                _draft_text(item, name, empty=False)
+        if type(self.matched_blocks) is not tuple:
+            raise TypeError("SSH config draft matched_blocks must be a tuple")
+        for line in self.matched_blocks:
+            _draft_line(line, "matched block", minimum=1)
+        _draft_text(self.system_config, "system config")
+        if type(self.isolated) is not bool:
+            raise TypeError("SSH config draft isolated must be a boolean")
+
+    @property
+    def evaluated(self) -> bool:
+        """OpenSSH accepted the draft and resolved the host."""
+        return not self.errors and not self.pending_exec
+
+
 @dataclass(frozen=True)
 class EffectiveConfigComparison:
     """Daemon-owned authored-vs-effective OpenSSH comparison."""
@@ -669,6 +889,12 @@ class ConnectionEditorDetails(ConnectionDetails):
     # user had set them. Empty means "no evidence" (a record that did not come
     # from a parsed Host block), never "authored nothing".
     authored_directives: Tuple[str, ...] = ()
+    # The other tokens on the SSH ``Host`` line that declares this
+    # connection: more names, patterns, negations. Not empty means the block
+    # is not this host's alone: an update reaches every host the line
+    # matches and must say so (``UpdateConnectionRequest.shared_block``), or
+    # the connection is given a block of its own (``connections.split``).
+    shared_host_tokens: Tuple[str, ...] = ()
 
 
 # -- Secret request / response models --------------------------------------
@@ -857,6 +1083,12 @@ class UpdateConnectionRequest:
     ``expected_generation`` guards stale editors: ``None`` means no
     generation supplied (the check is skipped); zero is a legitimate
     first-generation value and is enforced like any other.
+
+    ``shared_block`` is the caller's word that it means every host of the
+    connection's ``Host`` line (``ConnectionEditorDetails.shared_host_tokens``
+    not empty). Without it such a block is not edited: the update fails with
+    ``MUTATION_AMBIGUOUS``. With it the line is kept as written, so the
+    nickname cannot change. It means nothing for a block of one host.
     """
 
     nickname: Union[str, None, _UNSET_TYPE] = UNSET
@@ -867,8 +1099,11 @@ class UpdateConnectionRequest:
     config_patch: Mapping[str, Any] = field(default_factory=dict)
     plugin_data: Mapping[str, Any] = field(default_factory=dict)
     expected_generation: Optional[int] = None  # stale-editor detection
+    shared_block: bool = False  # edit a Host block other hosts share
 
     def __post_init__(self) -> None:
+        if type(self.shared_block) is not bool:
+            raise TypeError("shared_block must be a boolean")
         has_core = any(
             v is not None and v is not UNSET
             for v in (self.nickname, self.hostname, self.username, self.port, self.display_name)
@@ -1061,19 +1296,51 @@ def delete_plugin_secret_request_from_wire(payload: dict) -> DeletePluginSecretR
 # -- Raw SSH config text (daemon-resolved editor document) -------------------
 
 @dataclass(frozen=True)
-class SshConfigText:
-    """The daemon-selected active SSH config text plus editor metadata.
+class SshConfigFileRef:
+    """One file of the SSH configuration: the root, or a file it reads
+    through ``Include``.
 
-    The daemon resolves which file is active (normal or isolated mode) and
+    ``file`` is how the file is asked for (``get_ssh_config_text``,
+    ``SaveSshConfigTextRequest``, ``EvaluateSshConfigDraftRequest``): empty
+    for the root, otherwise a name the daemon gave out. It is never a path
+    of the client's choosing: the daemon answers only for the names it
+    listed, the files its own reading of the configuration reached.
+    """
+
+    file: str
+    display_name: str
+    writable: bool
+
+    def __post_init__(self) -> None:
+        if type(self.file) is not str or "\x00" in self.file:
+            raise ValueError("SSH config file name must be safe text")
+        if type(self.display_name) is not str or not self.display_name.strip():
+            raise ValueError("SSH config display name must be a non-empty string")
+        if type(self.writable) is not bool:
+            raise TypeError("SSH config writable must be a boolean")
+
+
+@dataclass(frozen=True)
+class SshConfigText:
+    """The text of one SSH config file plus editor metadata.
+
+    The daemon resolves which root is active (normal or isolated mode) and
     never accepts a filesystem path from the client. ``display_name`` is the
     daemon-computed display label (home-collapsed); ``writable`` reflects
     whether the daemon's hardened atomic write path can replace the file.
+
+    ``file`` names the file the text is of (empty: the root) and ``files``
+    lists every file of the configuration, the root first: see
+    :class:`SshConfigFileRef`. ``revision`` is of the whole configuration,
+    whichever file was asked for.
     """
 
     text: str = field(repr=False)
     revision: str
     display_name: str
     writable: bool
+    file: str = ""
+    files: Tuple[SshConfigFileRef, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.text) is not str or "\x00" in self.text:
@@ -1083,24 +1350,35 @@ class SshConfigText:
             raise ValueError("SSH config display name must be a non-empty string")
         if type(self.writable) is not bool:
             raise TypeError("SSH config writable must be a boolean")
+        if type(self.file) is not str or "\x00" in self.file:
+            raise ValueError("SSH config file name must be safe text")
+        if type(self.files) is not tuple or any(
+            type(item) is not SshConfigFileRef for item in self.files
+        ):
+            raise TypeError("SSH config files must be a tuple of SshConfigFileRef")
 
 
 @dataclass(frozen=True)
 class SaveSshConfigTextRequest:
-    """Optimistic raw-text replacement of the daemon-selected SSH config.
+    """Optimistic raw-text replacement of one SSH config file.
 
     ``expected_revision`` is the revision returned by the preceding load;
     the daemon rejects the save when any participating config file changed
-    since the editor loaded it.
+    since the editor loaded it. ``file`` names the file to replace as
+    ``SshConfigText.files`` listed it (empty: the root); a name the
+    configuration no longer reads is refused.
     """
 
     text: str = field(repr=False)
     expected_revision: str
+    file: str = ""
 
     def __post_init__(self) -> None:
         if type(self.text) is not str or "\x00" in self.text:
             raise ValueError("SSH config text must be safe text")
         require_identifier(self.expected_revision, "expected SSH config revision")
+        if type(self.file) is not str or "\x00" in self.file:
+            raise ValueError("SSH config file name must be safe text")
 
 
 # -- Ásbrú import -----------------------------------------------------------

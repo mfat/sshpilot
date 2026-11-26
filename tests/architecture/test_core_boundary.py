@@ -76,6 +76,17 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("ssh_config_utils.py", "ssh_config_effective", "expand_ssh_tokens"),
         ("ssh_config_utils.py", "ssh_config_effective", "get_effective_ssh_config"),
         ("ssh_config_utils.py", "ssh_config_effective", "resolve_ssh_config_files"),
+        # -- authored path spellings kept on Host-block rewrite ----------
+        ("ssh_config_formatter.py", "ssh_config_effective", "expand_ssh_tokens"),
+        # -- authentication lines of a Host block -----------------------
+        ("connection_dialog.py", "connections.auth_preferences", "AUTH_POLICY_KEYWORDS"),
+        ("connection_dialog_auth.py", "connections.auth_preferences", "AUTH_POLICY_KEYWORDS"),
+        ("connection_dialog_auth.py", "connections.auth_preferences", "OPENSSH_DEFAULT_PREFERRED_AUTH"),
+        ("connection_dialog_auth.py", "connections.auth_preferences", "PREFERRED_AUTH_KEYWORD"),
+        ("connection_dialog_auth.py", "connections.auth_preferences", "split_option"),
+        ("connection_dialog_auth.py", "connections.auth_preferences", "AUTH_KEYWORD_ALIASES"),
+        ("connection_dialog_auth.py", "connections.auth_preferences", "canonical_keyword"),
+        ("gtk/login_profile_messages.py", "connections.auth_preferences", "password_comes_first"),
         # -- connection field validation --------------------------------
         ("ssh_connection_validator.py", "validation.connection", "SSHConnectionValidator"),
         ("ssh_connection_validator.py", "validation.connection", "ValidationResult"),
@@ -180,7 +191,6 @@ PENDING: dict[tuple[str, str, str], tuple[str, str]] = {
     ("backup_manager.py", "import_export", "migrate_payload"): ("M6", "payload migrate -> daemon"),
     # === M7 — ssh-process / askpass broker ==============================
     ("ssh_connection_builder.py", "ssh", "ProcessSpec"): ("M7", "process spec -> daemon"),
-    ("ssh_connection_builder.py", "ssh", "AuthMethod"): ("M7", "auth spec -> daemon"),
     ("ssh_connection_builder.py", "ssh", "HostKeyMode"): ("M7", "host-key mode -> daemon"),
     ("ssh_connection_builder.py", "ssh", "LaunchMode"): ("M7", "launch mode -> daemon"),
     ("ssh_connection_builder.py", "ssh", "SSHLaunchRequest"): ("M7", "launch request -> daemon"),
@@ -458,7 +468,7 @@ _PENDING_EXPECTED = {
     "M4": 4,
     "M5": 4,
     "M6": 4,
-    "M7": 6,
+    "M7": 5,
 }
 
 

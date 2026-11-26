@@ -1,11 +1,20 @@
-"""Fresh-install defaults: default operation mode, no chooser, color-dot groups."""
+"""Fresh-install defaults: default operation mode, no chooser, colored-grip groups."""
 
 from sshpilot.config import Config
 
 
-def test_group_color_display_defaults_to_color_dots():
+def test_group_color_display_defaults_to_colored_grips():
     defaults = Config.get_default_config(Config.__new__(Config))
-    assert defaults['ui']['group_color_display'] == 'dot'
+    assert defaults['ui']['group_color_display'] == 'grip'
+    assert defaults['ui']['sidebar_show_drag_handles'] is True
+
+
+def test_configs_from_before_the_key_keep_color_dots():
+    """Upgraders without the key keep the dots they always saw."""
+    from sshpilot.core.settings.migration import ensure_config_defaults
+
+    config, _updated = ensure_config_defaults({'ui': {}})
+    assert config['ui']['group_color_display'] == 'dot'
 
 
 def test_operation_mode_defaults_to_shared_ssh_config():

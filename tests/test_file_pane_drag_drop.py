@@ -527,3 +527,122 @@ def test_is_remote_descendant_guard(load_file_manager_window, monkeypatch):
     assert cls._is_remote_descendant("/", "/a") is False
     assert cls._is_path_into_itself("/a", "/a/b", posix=False) is True
     assert cls._is_path_into_itself("/a", "/ab", posix=False) is False
+
+
+def _server_to_server_drop(module, *, same_server, modifiers):
+    """Drop a file from a left pane on one server onto the right pane."""
+    FilePane = module.FilePane
+    FileEntry = module.FileEntry
+    entry = FileEntry("report.txt", False, 0, 0)
+
+    source_pane = FilePane.__new__(FilePane)
+    source_pane._entries = [entry]
+    source_pane._current_path = "/srv/data"
+    source_pane._is_remote = True
+    target_pane = FilePane.__new__(FilePane)
+    target_pane._entries = []
+    target_pane._current_path = "/root"
+    target_pane._is_remote = True
+    target_pane.show_toast = lambda *args, **kwargs: None
+    target_pane._resolve_drop_target_folder = lambda *args, **kwargs: None
+
+    DummyWindow = type("DummyWindow", (), {})
+    module.FileManagerWindow = DummyWindow
+    window = DummyWindow()
+    window._left_pane = source_pane
+    window._right_pane = target_pane
+    window._same_server = lambda a, b: same_server
+    calls = []
+    window._perform_pane_to_pane_remote_operation = (
+        lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+    target_pane._get_file_manager_window = lambda: window
+
+    class FakeEvent:
+        def get_modifier_state(self):
+            return modifiers
+
+    class FakeDropTarget:
+        def get_current_event(self):
+            return FakeEvent()
+
+    drag_value = _make_drag_value(module, source_pane, entry)
+    assert target_pane._on_drop_string(FakeDropTarget(), drag_value, 0.0, 0.0) is True
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert kwargs["source_pane"] is source_pane
+    assert kwargs["destination_pane"] is target_pane
+    return args[3]  # move?
+
+
+def test_drag_between_two_servers_copies_by_default(load_file_manager_window):
+    """A plain drag must not delete the originals on another machine."""
+    module = load_file_manager_window()
+    assert _server_to_server_drop(module, same_server=False, modifiers=0) is False
+
+
+def test_drag_between_two_servers_moves_with_shift(load_file_manager_window):
+    module = load_file_manager_window()
+    shift = module.Gdk.ModifierType.SHIFT_MASK
+    assert _server_to_server_drop(module, same_server=False, modifiers=shift) is True
+
+
+def test_drag_between_two_panes_on_one_server_moves(load_file_manager_window):
+    """One server in two panes is one file system, like two folders."""
+    module = load_file_manager_window()
+    assert _server_to_server_drop(module, same_server=True, modifiers=0) is True
+    control = module.Gdk.ModifierType.CONTROL_MASK
+    assert _server_to_server_drop(module, same_server=True, modifiers=control) is False
+
+
+def _copy_to_other_panes(module, *, left_local):
+    FilePane = module.FilePane
+    FileEntry = module.FileEntry
+    left = FilePane.__new__(FilePane)
+    right = FilePane.__new__(FilePane)
+    left._is_remote = not left_local
+    right._is_remote = True
+    left._current_path = "/srv/data"
+    right._current_path = "/root"
+    left._partner_pane, right._partner_pane = right, left
+    entry = FileEntry("report.txt", False, 0, 0)
+    left.get_selected_entries = lambda: [entry]
+    left.show_toast = lambda *a, **k: None
+
+    DummyWindow = type("DummyWindow", (), {})
+    module.FileManagerWindow = DummyWindow
+    window = DummyWindow()
+    window._left_pane, window._right_pane = left, right
+    window._local_pane = lambda: left if left_local else None
+    calls = []
+    window._perform_pane_to_pane_remote_operation = (
+        lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+    left._get_file_manager_window = lambda: window
+    right._get_file_manager_window = lambda: window
+    return left, right, entry, calls
+
+
+def test_copy_to_other_pane_is_offered_only_between_two_servers(load_file_manager_window):
+    """Upload and Download need this computer on one side; with a server in
+    each pane the transfer is Copy to Other Pane (#1356)."""
+    module = load_file_manager_window()
+    left, right, _entry, _calls = _copy_to_other_panes(module, left_local=False)
+    assert left._copy_to_other_available() and right._copy_to_other_available()
+    assert not left._download_available()
+
+    left, right, _entry, _calls = _copy_to_other_panes(module, left_local=True)
+    assert not left._copy_to_other_available()
+    assert not right._copy_to_other_available()
+    assert right._download_available()
+
+
+def test_copy_to_other_pane_copies_into_the_other_panes_folder(load_file_manager_window):
+    module = load_file_manager_window()
+    left, right, entry, calls = _copy_to_other_panes(module, left_local=False)
+
+    left._on_copy_to_other_clicked()
+
+    args, kwargs = calls[0]
+    assert args == ([entry], "/srv/data", "/root", False)
+    assert kwargs == {"source_pane": left, "destination_pane": right}

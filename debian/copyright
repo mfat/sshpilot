@@ -59,6 +59,11 @@ Copyright: 2009-2012 Marc-Andre Moreau
            2026 mFat
 License: Apache-2.0
 
+Files: src/sshpilot/resources/icons/scalable/actions/connections-rail-symbolic.svg
+Copyright: 2013-2022 Cole Bemis (portions, as part of Feather)
+           2022 Lucide Contributors
+License: ISC
+
 License: GPL-3+
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -123,3 +128,16 @@ License: Apache-2.0
  .
  On Debian systems, the complete text of the Apache License, Version 2.0 can
  be found in "/usr/share/common-licenses/Apache-2.0".
+
+License: ISC
+ Permission to use, copy, modify, and/or distribute this software for any
+ purpose with or without fee is hereby granted, provided that the above
+ copyright notice and this permission notice appear in all copies.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.

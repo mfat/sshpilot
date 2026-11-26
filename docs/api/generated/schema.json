@@ -1,6 +1,10 @@
 {
-  "api_implementation_version": "0.102",
+  "api_implementation_version": "0.119",
   "client_method_contract": {
+    "acknowledge_terminal_output": {
+      "capability": "terminal.flow_control",
+      "status": "daemon-only"
+    },
     "add_agent_key": {
       "capability": "identity.operate",
       "status": "daemon-only"
@@ -161,6 +165,10 @@
       "capability": "connections.write",
       "status": "implemented"
     },
+    "evaluate_ssh_config_draft": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
     "export_secret_backup": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
@@ -224,6 +232,10 @@
     "get_identity_state": {
       "capability": "identity.read",
       "status": "daemon-only"
+    },
+    "get_inherited_auth": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "get_interaction": {
       "capability": "interactions.read",
@@ -375,6 +387,10 @@
     },
     "move_connections": {
       "capability": "connections.groups",
+      "status": "daemon-only"
+    },
+    "open_draft_test_connection": {
+      "capability": "sessions.write",
       "status": "daemon-only"
     },
     "open_forward": {
@@ -733,6 +749,9 @@
     "connections.duplicate": {
       "capability": "connections.write"
     },
+    "connections.evaluate_ssh_config_draft": {
+      "capability": "connections.config.read"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
@@ -743,6 +762,9 @@
       "capability": "connections.config.read"
     },
     "connections.get_effective_config": {
+      "capability": "connections.config.read"
+    },
+    "connections.get_inherited_auth": {
       "capability": "connections.config.read"
     },
     "connections.get_launch_command": {
@@ -783,6 +805,9 @@
     },
     "connections.move": {
       "capability": "connections.groups"
+    },
+    "connections.open_draft_test": {
+      "capability": "sessions.write"
     },
     "connections.open_transient": {
       "capability": "sessions.write"
@@ -989,6 +1014,9 @@
       "capability": "login_profiles.read"
     },
     "login_profiles.preview_assignment": {
+      "capability": "login_profiles.read"
+    },
+    "login_profiles.preview_update": {
       "capability": "login_profiles.read"
     },
     "login_profiles.set_group": {
@@ -1318,6 +1346,7 @@
       "terminal.input",
       "terminal.resize",
       "terminal.replay",
+      "terminal.flow_control",
       "terminal.external_launch",
       "interactions",
       "interactions.read",
@@ -1667,6 +1696,7 @@
       "username",
       "auth_method",
       "key_select_mode",
+      "identities_only",
       "identity_files",
       "certificate_files",
       "identity_agent",
@@ -1831,6 +1861,7 @@
       "ended_before_output",
       "ssh_exited",
       "ssh_diagnostic",
+      "auth_methods_not_tried",
       "process_exited",
       "process_failed"
     ],
@@ -1901,6 +1932,14 @@
     "SocketDirection": [
       "incoming",
       "outgoing"
+    ],
+    "SshConfigDraftLineState": [
+      "applied",
+      "shadowed",
+      "accumulated",
+      "inactive",
+      "forced",
+      "include"
     ],
     "SshConfigUnavailableReason": [
       "dangling_link",
@@ -2232,6 +2271,13 @@
           "required": false,
           "sensitive": false,
           "type": "int"
+        },
+        {
+          "default": false,
+          "name": "flow_control",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -3195,6 +3241,13 @@
         {
           "default": [],
           "name": "authored_directives",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "shared_host_tokens",
           "required": false,
           "sensitive": false,
           "type": "tuple[str, ...]"
@@ -4681,6 +4734,53 @@
           "required": true,
           "sensitive": true,
           "type": "ErrorData"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "EvaluateSshConfigDraftRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "user",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": [],
+          "name": "allowed_exec",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "",
+          "name": "file",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"
@@ -6572,11 +6672,11 @@
           "type": "int"
         },
         {
-          "default": 0,
+          "default": null,
           "name": "key_select_mode",
           "required": false,
           "sensitive": false,
-          "type": "int"
+          "type": "Optional[int]"
         },
         {
           "default": [],
@@ -6628,11 +6728,11 @@
           "type": "bool"
         },
         {
-          "default": false,
+          "default": null,
           "name": "forward_agent",
           "required": false,
           "sensitive": false,
-          "type": "bool"
+          "type": "Optional[bool]"
         },
         {
           "default": "",
@@ -6654,6 +6754,13 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": null,
+          "name": "identities_only",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[bool]"
         }
       ],
       "status": "Schema only"
@@ -6741,6 +6848,25 @@
           "required": false,
           "sensitive": false,
           "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "LoginProfileUpdatePreview": {
+      "fields": [
+        {
+          "default": 0,
+          "name": "linked_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "replaced",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple['LoginProfileAssignmentPreview', ...]"
         }
       ],
       "status": "Implemented"
@@ -7735,6 +7861,25 @@
       ],
       "status": "Implemented"
     },
+    "PreviewLoginProfileUpdateRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "profile_id",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileId"
+        },
+        {
+          "default": null,
+          "name": "settings",
+          "required": true,
+          "sensitive": false,
+          "type": "LoginProfileSettings"
+        }
+      ],
+      "status": "Implemented"
+    },
     "ProcessCounts": {
       "fields": [
         {
@@ -8323,6 +8468,13 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": "",
+          "name": "file",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"
@@ -8809,6 +8961,13 @@
           "required": false,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "destination_service_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SftpServiceId]"
         }
       ],
       "status": "Implemented"
@@ -9555,6 +9714,251 @@
       ],
       "status": "Implemented"
     },
+    "SshConfigDraftError": {
+      "fields": [
+        {
+          "default": null,
+          "name": "file",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "line",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "diagnostic",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SshConfigDraftEvaluation": {
+      "fields": [
+        {
+          "default": [],
+          "name": "values",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[SshConfigDraftValue, ...]"
+        },
+        {
+          "default": [],
+          "name": "defaults",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "matched_blocks",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[int, ...]"
+        },
+        {
+          "default": [],
+          "name": "lines",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[SshConfigDraftLine, ...]"
+        },
+        {
+          "default": [],
+          "name": "sources",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[SshConfigDraftSource, ...]"
+        },
+        {
+          "default": [],
+          "name": "includes",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[SshConfigDraftInclude, ...]"
+        },
+        {
+          "default": [],
+          "name": "forced",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[SshConfigDraftValue, ...]"
+        },
+        {
+          "default": [],
+          "name": "errors",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[SshConfigDraftError, ...]"
+        },
+        {
+          "default": [],
+          "name": "pending_exec",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "",
+          "name": "system_config",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "isolated",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SshConfigDraftInclude": {
+      "fields": [
+        {
+          "default": null,
+          "name": "line",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "files",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SshConfigDraftLine": {
+      "fields": [
+        {
+          "default": null,
+          "name": "line",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "SshConfigDraftLineState"
+        },
+        {
+          "default": "",
+          "name": "decided_file",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "decided_line",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "decided_block",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SshConfigDraftSource": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "file",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "line",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "block",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SshConfigDraftValue": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SshConfigFileRef": {
+      "fields": [
+        {
+          "default": null,
+          "name": "file",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "display_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "writable",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
     "SshConfigText": {
       "fields": [
         {
@@ -9584,6 +9988,20 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": "",
+          "name": "file",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "files",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[SshConfigFileRef, ...]"
         }
       ],
       "status": "Implemented"
@@ -10015,6 +10433,32 @@
       ],
       "status": "Schema only"
     },
+    "TerminalOutputAck": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        },
+        {
+          "default": null,
+          "name": "sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
     "TransferItem": {
       "fields": [
         {
@@ -10368,6 +10812,13 @@
           "required": false,
           "sensitive": false,
           "type": "int | None"
+        },
+        {
+          "default": false,
+          "name": "shared_block",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"

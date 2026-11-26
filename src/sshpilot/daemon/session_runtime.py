@@ -69,6 +69,8 @@ from sshpilot.logging_support import log_context
 from .terminal_stream import (
     DEFAULT_GLOBAL_REPLAY_BYTES,
     DEFAULT_SESSION_REPLAY_BYTES,
+    FLOW_CONTROL_HIGH_BYTES,
+    FLOW_CONTROL_LOW_BYTES,
     ReplaySlice,
     TerminalReplayBuffer,
 )
@@ -97,6 +99,10 @@ class _AttachmentRecord:
     client_id: ClientId
     want_output: bool = False
     is_input_owner: bool = False
+    # Flow control: the frontend acknowledges displayed output, and this
+    # attachment's backlog can pause PTY reads while it owns input.
+    flow_control: bool = False
+    acked_sequence: int = 0
 
 
 @dataclass(frozen=True)
@@ -411,6 +417,8 @@ class _SessionRecord:
     replay: TerminalReplayBuffer = field(default_factory=TerminalReplayBuffer)
     terminal_capable: bool = False
     pty_eof: bool = False
+    # PTY reads are paused by flow control (see _update_output_gate_locked).
+    output_paused: bool = False
     input_owner_attachment_id: Optional[AttachmentId] = None
     output_clients: Set[ClientId] = field(default_factory=set)
     # Who output_clients held when the session closed. Terminal frames are
@@ -435,6 +443,8 @@ class _SessionRecord:
     pty_fallback: bool = False
     authenticated: bool = False
     diagnostic_failure_detail: Optional[str] = None
+    # That failure was a denial with no accepted method attempted.
+    diagnostic_methods_not_tried: bool = False
     diagnostic_result: Optional[SshDiagnosticResult] = None
     # Serializes handle.resize() dispatch for this session — see
     # SessionRuntime._dispatch_resize.
@@ -842,10 +852,15 @@ class SessionRuntime:
                         ):
                             if record.diagnostic_failure_detail is None:
                                 record.diagnostic_failure_detail = result.detail
+                                record.diagnostic_methods_not_tried = (
+                                    result.no_accepted_method_tried
+                                )
                             error_code = self._startup_failure_code(session_id)
                             record.failure = SessionFailure(
                                 code=self._diagnostic_failure_reason(
-                                    error_code, result.detail
+                                    error_code,
+                                    result.detail,
+                                    result.no_accepted_method_tried,
                                 ),
                                 error_code=error_code,
                                 diagnostic=result.detail,
@@ -988,6 +1003,9 @@ class SessionRuntime:
             if result.state is SshDiagnosticState.FAILED:
                 if record.diagnostic_failure_detail is None:
                     record.diagnostic_failure_detail = result.detail
+                    record.diagnostic_methods_not_tried = (
+                        result.no_accepted_method_tried
+                    )
                 if parked:
                     record.diagnostic_result = result
                 elif (
@@ -997,7 +1015,9 @@ class SessionRuntime:
                     error_code = self._startup_failure_code(session_id)
                     record.failure = SessionFailure(
                         code=self._diagnostic_failure_reason(
-                            error_code, result.detail
+                            error_code,
+                            result.detail,
+                            result.no_accepted_method_tried,
                         ),
                         error_code=error_code,
                         diagnostic=result.detail,
@@ -1118,10 +1138,12 @@ class SessionRuntime:
 
     @staticmethod
     def _diagnostic_failure_reason(
-        error_code: ErrorCode, diagnostic: str
+        error_code: ErrorCode, diagnostic: str, methods_not_tried: bool = False
     ) -> SessionFailureCode:
         if error_code is ErrorCode.OPERATION_CANCELLED:
             return SessionFailureCode.AUTH_CANCELLED
+        if diagnostic and methods_not_tried:
+            return SessionFailureCode.AUTH_METHODS_NOT_TRIED
         if diagnostic:
             return SessionFailureCode.SSH_DIAGNOSTIC
         return SessionFailureCode.AUTH_INCOMPLETE
@@ -1148,7 +1170,10 @@ class SessionRuntime:
         spec = record.launch_spec
         if spec is None or spec.protocol == "ssh":
             return reason, parameters
-        if reason is SessionFailureCode.SSH_DIAGNOSTIC:
+        if reason in {
+            SessionFailureCode.SSH_DIAGNOSTIC,
+            SessionFailureCode.AUTH_METHODS_NOT_TRIED,
+        }:
             return SessionFailureCode.PROCESS_FAILED, {}
         if reason in {
             SessionFailureCode.SSH_EXITED,
@@ -1247,6 +1272,15 @@ class SessionRuntime:
                 client_id=client_id,
                 want_output=request.want_terminal_output,
                 is_input_owner=False,
+                flow_control=(
+                    request.flow_control and request.want_terminal_output
+                ),
+                # The client is shown output from here (or from the oldest
+                # retained byte), so that is what it has yet to display.
+                acked_sequence=max(
+                    min(request.from_sequence, record.replay.end_sequence),
+                    record.replay.start_sequence,
+                ),
             )
 
             # Store attachment
@@ -1271,6 +1305,7 @@ class SessionRuntime:
             ):
                 record.input_owner_attachment_id = attachment_id
                 attachment_record.is_input_owner = True
+            self._update_output_gate_locked(record)
             replay = record.replay.replay(
                 min(request.from_sequence, record.replay.end_sequence),
                 record.replay.max_bytes,
@@ -1348,6 +1383,77 @@ class SessionRuntime:
                 record.input_owner_attachment_id = None
 
             record.updated_at = self._clock()
+            self._update_output_gate_locked(record)
+
+    def acknowledge_terminal_output(
+        self,
+        session_id: SessionId,
+        attachment_id: Optional[AttachmentId],
+        sequence: int,
+        *,
+        client_id: ClientId,
+    ) -> None:
+        """Record that a flow-controlled attachment displayed output.
+
+        Acks for unknown, foreign or non-flow-controlled attachments are
+        ignored: they race detach and reattach and carry no authority.
+        """
+
+        with self._lock:
+            record = self._records.get(session_id)
+            if record is None or attachment_id is None:
+                return
+            attachment = record.attachments.get(attachment_id)
+            if (
+                attachment is None
+                or attachment.client_id != client_id
+                or not attachment.flow_control
+            ):
+                return
+            sequence = min(sequence, record.replay.end_sequence)
+            if sequence <= attachment.acked_sequence:
+                return
+            attachment.acked_sequence = sequence
+            self._update_output_gate_locked(record)
+
+    def _update_output_gate_locked(self, record: _SessionRecord) -> None:
+        """Pause or resume this session's PTY reads for flow control.
+
+        Only the input owner's flow-controlled attachment slows a session; a
+        view-only attachment never does (it falls back to loss + replay).
+        Pausing stops reads only: input and resize still reach the PTY.
+        """
+
+        backlog = None
+        # Once the child has exited only its bounded PTY tail is left, and the
+        # session cannot end before that drains to EOF.
+        if (
+            record.state in {SessionState.STARTING, SessionState.RUNNING}
+            and record.exit_info is None
+        ):
+            owner_id = record.input_owner_attachment_id
+            owner = record.attachments.get(owner_id) if owner_id else None
+            if owner is not None and owner.flow_control:
+                backlog = record.replay.end_sequence - owner.acked_sequence
+        if record.output_paused:
+            should_pause = backlog is not None and backlog > FLOW_CONTROL_LOW_BYTES
+        else:
+            should_pause = backlog is not None and backlog > FLOW_CONTROL_HIGH_BYTES
+        if should_pause == record.output_paused:
+            return
+        handle = record.process_handle
+        method = getattr(
+            handle, "pause_output" if should_pause else "resume_output", None
+        )
+        if method is None:
+            record.output_paused = False
+            return
+        try:
+            method()
+        except Exception:
+            logger.debug("terminal flow-control toggle failed", exc_info=True)
+            return
+        record.output_paused = should_pause
 
     def receives_terminal(self, session_id: SessionId, client_id: ClientId) -> bool:
         with self._lock:
@@ -1715,6 +1821,7 @@ class SessionRuntime:
             record.input_owner_attachment_id = attachment_id
             attachment_record.is_input_owner = True
             record.updated_at = self._clock()
+            self._update_output_gate_locked(record)
 
     def release_input(
         self,
@@ -1748,6 +1855,7 @@ class SessionRuntime:
             record.input_owner_attachment_id = None
             attachment_record.is_input_owner = False
             record.updated_at = self._clock()
+            self._update_output_gate_locked(record)
 
     def replay_terminal(
         self,
@@ -1882,6 +1990,7 @@ class SessionRuntime:
                     record.output_clients.discard(client_id)
                     record.closed_output_clients.discard(client_id)
                     record.updated_at = self._clock()
+                    self._update_output_gate_locked(record)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -2037,6 +2146,7 @@ class SessionRuntime:
             }:
                 return
             record.exit_info = exit_info
+            self._update_output_gate_locked(record)
             if record.terminal_capable and not record.pty_eof:
                 return
             events.extend(self._final_exit_events_locked(record))
@@ -2054,6 +2164,7 @@ class SessionRuntime:
                 return
             start, _end = record.replay.append(data)
             self._enforce_global_replay_budget_locked(prefer=session_id)
+            self._update_output_gate_locked(record)
             output = TerminalOutput(
                 session_id=session_id,
                 sequence=start,
@@ -2236,7 +2347,10 @@ class SessionRuntime:
                     reason = SessionFailureCode.ENDED_BEFORE_OUTPUT
                 else:
                     reason = self._diagnostic_failure_reason(
-                        failure_code, failure_reason or ""
+                        failure_code,
+                        failure_reason or "",
+                        bool(record.diagnostic_failure_detail)
+                        and record.diagnostic_methods_not_tried,
                     )
                 reason, parameters = self._protocol_failure_reason(
                     record, reason, exit_info
@@ -2339,6 +2453,8 @@ class SessionRuntime:
         now = self._clock()
         record.state = new_state
         record.updated_at = now
+        # Closing, exiting or failing must drain the PTY to EOF.
+        self._update_output_gate_locked(record)
         if new_state is SessionState.EXITED:
             record.exited_at = now
         elif new_state is SessionState.CLOSED:

@@ -100,7 +100,7 @@ def test_remote_to_local_drop_downloads_a_posix_source(load_file_manager_window,
     target_pane._resolve_drop_target_folder = lambda *args, **kwargs: None
     downloads = []
     target_pane._handle_download_from_drag = (
-        lambda items, target_folder=None: downloads.append(items)
+        lambda items, target_folder=None, source_pane=None: downloads.append(items)
     )
 
     DummyWindow = type("DummyWindow", (), {})

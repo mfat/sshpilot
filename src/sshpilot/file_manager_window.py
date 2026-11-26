@@ -24,6 +24,7 @@ import pathlib
 import posixpath
 import shutil
 import threading
+import time
 import types
 import weakref
 from concurrent.futures import Future, CancelledError
@@ -72,6 +73,7 @@ from .file_manager.transfer_progress import (
 )
 from .gtk.sftp_error_messages import format_direct_sftp_error
 from .gtk.transfer_error_messages import format_transfer_start_error
+from .api.connection_identity import file_manager_connection_id
 
 import logging
 
@@ -111,6 +113,117 @@ def _sftp_session_ready(manager) -> bool:
         except Exception:
             return False
     return getattr(manager, "_sftp", None) is not None
+
+
+# Set once the user agreed to cancel running transfers to quit, so the file
+# manager windows closing as part of that quit do not ask again.
+_quit_confirmed = False
+
+# How long a closing file manager waits for cancelled transfers to wind down
+# (the daemon removes their partial files) before it closes the connection.
+_TRANSFER_DRAIN_SECONDS = 30.0
+
+
+def running_transfer_count_everywhere() -> int:
+    """Transfers running in every open file manager (tabs and windows)."""
+    total = 0
+    for window in list(_file_manager_windows_registry):
+        if getattr(window, "_is_disposed", False):
+            continue
+        count = getattr(window, "running_transfer_count", None)
+        if callable(count):
+            try:
+                total += count()
+            except Exception:
+                continue
+    return total
+
+
+def set_quit_confirmed(confirmed: bool = True) -> None:
+    global _quit_confirmed
+    _quit_confirmed = bool(confirmed)
+
+
+def confirm_cancel_transfers(
+    parent, count: int, *, quitting: bool = False,
+    on_confirm: Callable[[], None], on_keep: Optional[Callable[[], None]] = None,
+) -> None:
+    """Ask before closing (or quitting) cancels running transfers.
+
+    Cancelling is what keeps the server clean: closed mid-transfer, the
+    connection used to go away under the transfer and left its partial file
+    on the server.
+    """
+    if quitting:
+        heading = _("Quit and Cancel Transfers?")
+        body = ngettext(
+            "{count} file transfer is still running. Quitting cancels it.",
+            "{count} file transfers are still running. Quitting cancels them.",
+            count,
+        ).format(count=count)
+        confirm_label = _("Cancel Transfers and Quit")
+    else:
+        heading = _("Close and Cancel Transfers?")
+        body = ngettext(
+            "{count} file transfer is still running in this file manager. Closing it cancels the transfer.",
+            "{count} file transfers are still running in this file manager. Closing it cancels them.",
+            count,
+        ).format(count=count)
+        confirm_label = _("Cancel Transfers and Close")
+    dialog = Adw.AlertDialog.new(heading, body)
+    dialog.add_response("keep", _("Keep Transferring"))
+    dialog.add_response("cancel-transfers", confirm_label)
+    dialog.set_response_appearance("cancel-transfers", Adw.ResponseAppearance.DESTRUCTIVE)
+    dialog.set_default_response("keep")
+    dialog.set_close_response("keep")
+
+    def _on_response(_dialog, response: str) -> None:
+        # Act once the dialog is gone: a window does not close while one of
+        # its own dialogs is still up (the detached and standalone file
+        # manager windows close themselves from here).
+        callback = on_confirm if response == "cancel-transfers" else on_keep
+        if callback is not None:
+            GLib.idle_add(lambda: (callback(), False)[1])
+
+    dialog.connect("response", _on_response)
+    dialog.present(parent)
+
+
+class _ProgressRun:
+    """One copy, move or delete run and its dialog (see _show_progress_dialog).
+
+    Each run keeps its own futures, byte counts and progress listeners, so a
+    newer run taking the window's dialog slot neither freezes an older one's
+    progress nor decides its outcome. A run ends once every future it
+    registered has been settled on the main loop, not merely when they are
+    done: each settle records the file it finished, and deciding earlier
+    could report success before a later failure was counted.
+    """
+
+    def __init__(self, dialog, manager) -> None:
+        self.dialog = dialog
+        self.manager = manager
+        self.handler_ids: list = []
+        self.futures: list = []
+        self.settled: set = set()
+        self.cancelled = 0
+        self.future_to_filename: dict = {}
+        self.batch_expected: Dict[str, Optional[int]] = {}
+        self.batch_active_bytes: Dict[str, Tuple[int, int]] = {}
+        self.batch_settled_bytes: Dict[str, Tuple[int, int]] = {}
+        self.batch_file_meta: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {}
+        self.batch_focused_key: Optional[str] = None
+
+    def running(self) -> bool:
+        return len(self.settled) < len(self.futures)
+
+    def disconnect(self) -> None:
+        for handler_id in self.handler_ids:
+            try:
+                self.manager.disconnect(handler_id)
+            except (TypeError, RuntimeError, AttributeError):
+                pass
+        self.handler_ids = []
 
 
 # Global registry to track live file manager windows. Used to ensure
@@ -179,6 +292,12 @@ class FileManagerWindow(Adw.Window):
         self._is_disposed: bool = False
         self._manager = None
         self._manager_signal_handlers: list = []
+        # The left pane shows this computer unless a server is picked for it;
+        # then it has its own backend, connected like the right pane's.
+        self._left_manager = None
+        self._left_manager_signal_handlers: list = []
+        self._left_connection = None
+        self._left_connection_error_reported = False
 
         # Use ToolbarView like other Adw.Window instances
         # Container skeleton (ToolbarView/ToastOverlay/Paned) lives in the
@@ -199,16 +318,6 @@ class FileManagerWindow(Adw.Window):
         # Enable window controls (minimize, maximize, close) following GNOME HIG
         header_bar.set_show_start_title_buttons(True)
         header_bar.set_show_end_title_buttons(True)
-        
-        # Add toggle button to hide/show local pane
-        self._local_pane_toggle = Gtk.ToggleButton()
-        from sshpilot import icon_utils
-        icon_utils.set_button_icon(self._local_pane_toggle, "view-dual-symbolic")
-        self._local_pane_toggle.set_tooltip_text(_("Hide Local Pane"))
-        self._local_pane_toggle.set_active(False)  # Start unselected
-        self._local_pane_toggle.add_css_class("flat")  # Flat style
-        self._local_pane_toggle.connect("toggled", self._on_local_pane_toggle)
-        header_bar.pack_start(self._local_pane_toggle)
         
         # Toast overlay lives in the template.
         self._toast_overlay = self.toast_overlay
@@ -271,8 +380,8 @@ class FileManagerWindow(Adw.Window):
             border-radius: 8px;
         }
         
-        /* Pane toolbars are framed as Adwaita cards (see PaneToolbar); no
-           forced background/border here so the card styling shows through. */
+        /* Each pane's toolbar and file list share one Adwaita card (see
+           FilePane); no forced background/border here so it shows through. */
 
         /* Pane divider styling */
         paned {
@@ -349,6 +458,9 @@ class FileManagerWindow(Adw.Window):
         self._right_overlay.set_child(self._right_pane)
         panes.set_end_child(self._right_overlay)
         self._install_remote_host_button()
+        self._install_left_location_button()
+        self._install_layout_bar()
+        self._install_single_pane_shortcut()
 
         # Seed each pane with the persisted list and grid zoom levels. Each pane
         # tracks its own level from here on (zooming one does not affect the
@@ -406,6 +518,8 @@ class FileManagerWindow(Adw.Window):
         # the user to re-grant every time the file manager opens. Resolve the
         # start path once via ``_initial_local_path`` (portal grant or host ``~``).
         def _deferred_load_local():
+            if not self._is_local_pane(self._left_pane):
+                return False
             try:
                 local_path = self._initial_local_path()
                 if local_path:
@@ -457,7 +571,7 @@ class FileManagerWindow(Adw.Window):
         bridge = self._bridge
         connection_id = self._connection_id
         if connection_id is None and connection is not None:
-            connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
+            connection_id = file_manager_connection_id(connection)
         self._manager = create_file_manager_backend(
             host,
             username,
@@ -474,23 +588,7 @@ class FileManagerWindow(Adw.Window):
         )
 
         # Connect signals with error handling & track handlers for disconnect on teardown
-        self._manager_signal_handlers = []
-        try:
-            for signal_name, handler in [
-                ("connected", self._on_connected),
-                ("connection-error", self._on_connection_error),
-                ("progress", self._on_progress),
-                ("operation-error", self._on_operation_error),
-                ("directory-loaded", self._on_directory_loaded),
-                ("directory-counts", self._on_directory_counts),
-            ]:
-                try:
-                    handler_id = self._manager.connect(signal_name, handler)
-                    self._manager_signal_handlers.append((signal_name, handler_id))
-                except Exception as exc:
-                    logger.exception("Failed to connect file-manager signal %s: %s", signal_name, exc)
-        except Exception as exc:
-            logger.exception("Error connecting signals: %s", exc)
+        self._manager_signal_handlers = self._connect_backend_signals(self._manager)
 
         # Show initial progress before connecting
         try:
@@ -512,6 +610,240 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             logger.exception("Error connecting to server: %s", exc)
 
+    def _connect_backend_signals(self, manager) -> list:
+        """Wire a backend's signals to the window; returns the handler ids.
+
+        Both panes' backends share these handlers: each one routes by the
+        sender to the pane that backend serves.
+        """
+        handlers = []
+        for signal_name, handler in [
+            ("connected", self._on_connected),
+            ("connection-error", self._on_connection_error),
+            ("progress", self._on_progress),
+            ("operation-error", self._on_operation_error),
+            ("directory-loaded", self._on_directory_loaded),
+            ("directory-counts", self._on_directory_counts),
+        ]:
+            try:
+                handlers.append((signal_name, manager.connect(signal_name, handler)))
+            except Exception as exc:
+                logger.exception("Failed to connect file-manager signal %s: %s", signal_name, exc)
+        return handlers
+
+    # -- the left pane: this computer, or a server of its own ------------
+
+    def _install_left_location_button(self) -> None:
+        """Replace the left pane's "Local" title with a picker: this
+        computer, or any saved server (#1356)."""
+        toolbar = getattr(self._left_pane, "toolbar", None)
+        label = getattr(toolbar, "_pane_label", None)
+        parent = label.get_parent() if label is not None else None
+        if parent is None:
+            return
+        btn = Gtk.Button()
+        btn.add_css_class("flat")
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self._left_location_icon = Gtk.Image.new_from_icon_name("computer-symbolic")
+        self._left_location_icon.set_pixel_size(16)
+        box.append(self._left_location_icon)
+        self._left_location_label = Gtk.Label()
+        self._left_location_label.set_css_classes(["title"])
+        self._left_location_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self._left_location_label.set_max_width_chars(10)
+        box.append(self._left_location_label)
+        caret = Gtk.Image.new_from_icon_name("pan-down-symbolic")
+        caret.set_pixel_size(12)
+        box.append(caret)
+        btn.set_child(box)
+        btn.connect("clicked", self._on_left_location_clicked)
+        label.set_visible(False)
+        parent.insert_child_after(btn, label)
+        self._left_location_button = btn
+        self._update_left_location_button()
+
+    def _update_left_location_button(self) -> None:
+        label = getattr(self, "_left_location_label", None)
+        if label is None:
+            return
+        connection = self.__dict__.get("_left_connection")
+        if connection is None:
+            text = _("Local")
+            tooltip = _("Choose what this pane shows")
+            icon = "computer-symbolic"
+        else:
+            text = self._connection_display_name(connection)
+            tooltip = text
+            icon = "folder-remote-symbolic"
+        label.set_text(text)
+        # Ellipsizing lets a tight toolbar shrink the label to "…"; keep
+        # short names whole and cut long ones at the same 10 characters as
+        # the right pane's host button.
+        label.set_width_chars(min(len(text), 10))
+        try:
+            self._left_location_button.set_tooltip_text(tooltip)
+            self._left_location_icon.set_from_icon_name(icon)
+        except AttributeError:
+            pass
+
+    @staticmethod
+    def _connection_display_name(connection) -> str:
+        from .connection_display import get_connection_alias, get_connection_host
+        nickname = getattr(connection, "nickname", None)
+        if nickname and str(nickname).strip():
+            return str(nickname).strip()
+        return get_connection_alias(connection) or get_connection_host(connection) or ""
+
+    def _on_left_location_clicked(self, btn) -> None:
+        from .host_picker import show_host_picker
+        cm = self._connection_manager
+        show_host_picker(
+            None, btn, self._set_left_remote,
+            connections=cm.get_connections() if cm else [],
+            include_local_terminal=True,
+            on_select_local=self._set_left_local,
+            local_title=_("This Computer"),
+            local_subtitle=_("Browse local files"),
+            local_icon="computer-symbolic",
+        )
+
+    def _set_left_remote(self, connection) -> None:
+        """Browse *connection* in the left pane, on a backend of its own."""
+        if connection is None:
+            return
+        if connection is self._left_connection and self._left_manager is not None:
+            return
+        from .connection_display import get_connection_alias, get_connection_host
+        host = get_connection_host(connection) or get_connection_alias(connection) or ""
+        if not host:
+            self._left_pane.show_toast(_("Connection has no host"), timeout=5000)
+            return
+        self._teardown_left_backend()
+        self._drop_clipboard_from(self._left_pane)
+        self._left_connection = connection
+        pane = self._left_pane
+        pane.set_remote(True)
+        pane.clear_history()
+        self._pending_paths[pane] = "~"
+        self._pending_highlights[pane] = None
+        self._update_left_location_button()
+        self._sync_pane_roles()
+        self._start_left_connection()
+
+    def _set_left_local(self) -> None:
+        """Show this computer in the left pane again."""
+        if self._left_connection is None and self._is_local_pane(self._left_pane):
+            return
+        self._teardown_left_backend()
+        self._drop_clipboard_from(self._left_pane)
+        self._left_connection = None
+        pane = self._left_pane
+        pane.set_remote(False)
+        pane.clear_history()
+        self._pending_paths[pane] = None
+        self._pending_highlights[pane] = None
+        self._update_left_location_button()
+        self._sync_pane_roles()
+        try:
+            local_path = self._initial_local_path()
+            if local_path:
+                self._load_local(local_path)
+                pane.push_history(local_path)
+        except Exception as exc:
+            pane.show_toast(_("Failed to load local home: {error}").format(error=exc))
+
+    def _start_left_connection(self) -> None:
+        connection = self._left_connection
+        if connection is None:
+            return
+        pane = self._left_pane
+        pane._clear_load_error()
+        self._left_connection_error_reported = False
+        from .connection_display import get_connection_alias, get_connection_host
+        host = get_connection_host(connection) or get_connection_alias(connection) or ""
+        try:
+            port = int(getattr(connection, "port", 22) or 22)
+        except (TypeError, ValueError):
+            port = 22
+        manager = create_file_manager_backend(
+            host,
+            getattr(connection, "username", "") or "",
+            port,
+            password=None,
+            connection=connection,
+            connection_manager=self._connection_manager,
+            ssh_config=None,
+            daemon_client=self._daemon_client,
+            bridge=self._bridge,
+            connection_id=file_manager_connection_id(connection),
+            parent_widget=self,
+            config=self.config,
+        )
+        self._left_manager = manager
+        self._left_manager_signal_handlers = self._connect_backend_signals(manager)
+        try:
+            pane.show_connecting(
+                _("Connecting to {host}…").format(
+                    host=self._connection_display_name(connection) or host
+                )
+            )
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+        try:
+            manager.connect_to_server()
+        except Exception as exc:
+            logger.exception("Error connecting the left pane: %s", exc)
+
+    def _teardown_left_backend(self) -> None:
+        manager = self.__dict__.get("_left_manager")
+        handlers = getattr(self, "_left_manager_signal_handlers", None) or []
+        self._left_manager = None
+        self._left_manager_signal_handlers = []
+        self._left_connection_error_reported = False
+        if manager is None:
+            return
+        for _signal_name, handler_id in handlers:
+            try:
+                manager.disconnect(handler_id)
+            except Exception:
+                pass
+        # A transfer from the left pane's server goes on after the pane
+        # moves elsewhere; its connection closes once it ends.
+        self._close_backend_when_idle(manager)
+
+    def _reconnect_left(self) -> None:
+        self._teardown_left_backend()
+        if self._left_connection is not None:
+            self._start_left_connection()
+
+    def _reconnect_pane(self, pane) -> None:
+        """Retry the connection *pane* browses with."""
+        if pane is self._left_pane:
+            self._reconnect_left()
+        else:
+            self._reconnect()
+
+    def _sync_pane_roles(self) -> None:
+        """Re-derive what each pane offers once the left pane's role changed:
+        transfer buttons need this computer on one side, a pane terminal
+        needs the tab's own connection or this computer."""
+        for pane in (self._left_pane, self._right_pane):
+            refresh = getattr(pane, "refresh_transfer_actions", None)
+            if callable(refresh):
+                refresh()
+        can_toggle = callable(
+            getattr(self._embedded_parent, "toggle_file_manager_terminal", None)
+        )
+        for pane in (self._left_pane, self._right_pane):
+            pane.set_terminal_toggle_visible(
+                can_toggle and self._terminal_side(pane) is not None
+            )
+
+    def _drop_clipboard_from(self, pane) -> None:
+        """Entries copied from *pane* name paths on what it showed before."""
+        if getattr(self, "_clipboard_source_pane", None) is pane:
+            self._clear_clipboard()
+
     def _connect_sftp(self) -> None:
         """Connect the PTY-less SFTP backend with headless askpass auth.
 
@@ -527,7 +859,7 @@ class FileManagerWindow(Adw.Window):
         parent). Mirrors the resolution used for the overwrite-conflict dialog;
         Adw dialogs presented against the bare `self` never map when embedded."""
         if self._embedded_parent is not None:
-            return self._embedded_parent
+            return self._embedded_dialog_parent()
         try:
             transient = self.get_transient_for()
             if transient is not None:
@@ -607,10 +939,7 @@ class FileManagerWindow(Adw.Window):
                 except Exception:
                     pass
         if manager is not None:
-            try:
-                manager.close()
-            except Exception:
-                logger.debug("Error closing previous SFTP backend", exc_info=True)
+            self._close_backend_when_idle(manager)
         self._connection_error_reported = False
 
     def _reconnect(self) -> None:
@@ -680,6 +1009,12 @@ class FileManagerWindow(Adw.Window):
         except (TypeError, ValueError):
             self._port = 22
         self._nickname = getattr(connection, 'nickname', None)
+        # The daemon opens SFTP by connection id: a tab opened for another
+        # server kept its id here, so picking a new host reconnected to the
+        # old one under the new name.
+        if self._connection is not connection:
+            self._connection_id = file_manager_connection_id(connection)
+            self._ssh_config = None
         self._connection = connection
 
         placeholder = getattr(self, '_host_picker_placeholder', None)
@@ -735,7 +1070,9 @@ class FileManagerWindow(Adw.Window):
         # Embedded in a tab, each pane can show a terminal below it.
         can_toggle = callable(getattr(parent, "toggle_file_manager_terminal", None))
         for pane in (self._left_pane, self._right_pane):
-            pane.set_terminal_toggle_visible(can_toggle)
+            pane.set_terminal_toggle_visible(
+                can_toggle and self._terminal_side(pane) is not None
+            )
         return content
 
     def enable_embedding_mode(self) -> None:
@@ -813,23 +1150,242 @@ class FileManagerWindow(Adw.Window):
                 # Dialog might be destroyed or invalid, ignore
                 pass
 
-    def _on_local_pane_toggle(self, toggle_button: Gtk.ToggleButton) -> None:
-        """Handle local pane toggle button."""
-        is_active = toggle_button.get_active()
-        
-        if is_active:
-            # Hide local pane (button is pressed/selected)
-            self._left_pane.set_visible(False)
-            toggle_button.set_tooltip_text(_("Show Local Pane"))
+    # -- single pane view -----------------------------------------------
+
+    _SINGLE_PANE_KEY = "file_manager.single_pane"
+
+    def _install_layout_bar(self) -> None:
+        """A full-width toolbar above the panes, holding the one/two pane
+        switch as a segmented pair (#1356).
+
+        It sits in the content, not the header bar, which a file manager
+        opened as a tab hides. A new file manager starts as Settings says
+        (file_manager.single_pane); this switch, F3 and the tab menu change
+        only this one, as in Dolphin.
+        """
+        bar = Gtk.CenterBox()
+        bar.add_css_class("toolbar")
+        bar.set_vexpand(False)
+        bar.set_margin_start(8)
+        bar.set_margin_end(8)
+
+        shortcut = Gtk.accelerator_get_label(Gdk.KEY_F3, Gdk.ModifierType(0))
+        one_tip = _("Show One Pane ({shortcut})").format(shortcut=shortcut)
+        two_tip = _("Show Both Panes ({shortcut})").format(shortcut=shortcut)
+        self._syncing_layout = False
+        group = None
+        if hasattr(Adw, "ToggleGroup") and hasattr(Adw, "Toggle"):
+            # libadwaita 1.7+; the README's floor is 1.5 (Ubuntu 24.04).
+            try:
+                group = Adw.ToggleGroup()
+                for name, icon, tip in (
+                    ("one", "view-single-pane-symbolic", one_tip),
+                    ("two", "view-dual-symbolic", two_tip),
+                ):
+                    group.add(Adw.Toggle(name=name, icon_name=icon, tooltip=tip))
+                group.connect("notify::active-name", self._on_layout_group_changed)
+            except AttributeError:
+                group = None
+        if group is not None:
+            self._layout_toggle = group
+            bar.set_center_widget(group)
         else:
-            # Show local pane (button is unpressed/unselected)
-            self._left_pane.set_visible(True)
-            toggle_button.set_tooltip_text(_("Hide Local Pane"))
+            # libadwaita before 1.7: linked radio-style toggle buttons.
+            from sshpilot import icon_utils
+            linked = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            linked.add_css_class("linked")
+            one = Gtk.ToggleButton()
+            two = Gtk.ToggleButton()
+            two.set_group(one)
+            for button, icon, tip in ((one, "view-single-pane-symbolic", one_tip),
+                                      (two, "view-dual-symbolic", two_tip)):
+                icon_utils.set_button_icon(button, icon)
+                button.set_tooltip_text(tip)
+                linked.append(button)
+            one.connect("toggled", self._on_layout_buttons_changed)
+            self._layout_toggle = (one, two)
+            bar.set_center_widget(linked)
+
+        # Transfers run in the background; this lists them (right end).
+        from .file_manager.transfer_indicator import TransferIndicator
+        self._transfer_indicator = TransferIndicator(
+            on_details=self._show_transfer_details,
+            on_failed=self._on_transfer_failed,
+            on_finished=self._on_transfer_finished,
+            on_face=self._update_tab_indicator,
+        )
+        bar.set_end_widget(self._transfer_indicator)
+
+        # The bar and the panes share the toast overlay's child.
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._toast_overlay.set_child(None)
+        content.append(bar)
+        self.panes.set_vexpand(True)
+        content.append(self.panes)
+        self._toast_overlay.set_child(content)
+        self._layout_bar = bar
+
+        self._single_pane = self._load_single_pane_preference()
+        self._apply_single_pane(self._single_pane)
+
+    def _on_layout_group_changed(self, group, _pspec) -> None:
+        if not self._syncing_layout:
+            self.set_single_pane(group.get_active_name() == "one")
+
+    def _on_layout_buttons_changed(self, one_button) -> None:
+        if not self._syncing_layout:
+            self.set_single_pane(bool(one_button.get_active()))
+
+    def _sync_layout_toggle(self, single: bool) -> None:
+        control = self.__dict__.get("_layout_toggle")
+        if control is None:
+            return
+        self._syncing_layout = True
+        try:
+            if isinstance(control, tuple):
+                one, two = control
+                (one if single else two).set_active(True)
+            else:
+                control.set_active_name("one" if single else "two")
+        finally:
+            self._syncing_layout = False
+
+    def _settings(self):
+        config = getattr(self, "config", None)
+        if config is not None:
+            return config
+        try:
+            from .config import Config
+            return Config()
+        except Exception:
+            return None
+
+    def _load_single_pane_preference(self) -> bool:
+        getter = getattr(self._settings(), "get_setting", None)
+        if not callable(getter):
+            return False
+        try:
+            return bool(getter(self._SINGLE_PANE_KEY, False))
+        except Exception:
+            return False
+
+    def _apply_single_pane(self, single: bool) -> None:
+        self._left_pane.set_visible(not single)
+        self._sync_layout_toggle(single)
+
+    def _install_single_pane_shortcut(self) -> None:
+        """F3 shows or hides the left pane, as in Dolphin.
+
+        On the file manager's own content, not the tab: the terminals below
+        it are siblings of that content, so programs there keep F3.
+        """
+        controller = Gtk.ShortcutController()
+        controller.set_scope(Gtk.ShortcutScope.LOCAL)
+        action = Gtk.CallbackAction.new(lambda *_args: self._toggle_single_pane())
+        controller.add_shortcut(
+            Gtk.Shortcut.new(
+                Gtk.KeyvalTrigger.new(Gdk.KEY_F3, Gdk.ModifierType(0)), action
+            )
+        )
+        self._toolbar_view.add_controller(controller)
+
+    def _toggle_single_pane(self) -> bool:
+        self.set_single_pane(not self.is_single_pane())
+        return True
+
+    def is_single_pane(self) -> bool:
+        """True while the left pane is hidden."""
+        single = self.__dict__.get("_single_pane")
+        if single is not None:
+            return bool(single)
+        return not self._left_pane.get_visible()
+
+    def set_single_pane(self, single: bool) -> None:
+        """Hide or show the left pane; the layout switch, F3 and the tab
+        menu all come through here. Settings is left as it is."""
+        single = bool(single)
+        self._single_pane = single
+        self._apply_single_pane(single)
+
+    # -- which pane is where ---------------------------------------------
+
+    def _is_local_pane(self, pane) -> bool:
+        """True when *pane* shows this computer's files.
+
+        Only the left pane can; it does until a server is picked for it.
+        """
+        if pane is None or pane is not getattr(self, "_left_pane", None):
+            return False
+        return self.__dict__.get("_left_connection") is None
+
+    def _local_pane(self):
+        """The pane showing this computer, or None when both show servers."""
+        left = getattr(self, "_left_pane", None)
+        return left if self._is_local_pane(left) else None
+
+    def _manager_for(self, pane):
+        """The SFTP backend a remote *pane* browses with (None for local)."""
+        if pane is not None and pane is getattr(self, "_left_pane", None):
+            if self.__dict__.get("_left_connection") is None:
+                return None
+            return self.__dict__.get("_left_manager")
+        return getattr(self, "_manager", None)
+
+    def _managers(self) -> List[Any]:
+        managers = [getattr(self, "_manager", None), self.__dict__.get("_left_manager")]
+        return [m for m in managers if m is not None]
+
+    def _panes_of_sender(self, sender) -> List[FilePane]:
+        """The panes a backend signal belongs to.
+
+        A signal without a sender (direct calls) belongs to the right pane's
+        backend, as it did when there was only one.
+        """
+        left_manager = self.__dict__.get("_left_manager")
+        right = getattr(self, "_right_pane", None)
+        left = getattr(self, "_left_pane", None)
+        if sender is None:
+            if getattr(self, "_manager", None) is None:
+                return []
+            return [right] if right is not None else []
+        if sender is getattr(self, "_manager", None):
+            return [right] if right is not None else []
+        if left_manager is not None and sender is left_manager:
+            return [left] if left is not None else []
+        return []
+
+    def _same_server(self, first_pane, second_pane) -> bool:
+        """True when two remote panes browse the same saved connection."""
+        def _connection(pane):
+            if pane is getattr(self, "_left_pane", None):
+                return self.__dict__.get("_left_connection")
+            return getattr(self, "_connection", None)
+
+        a, b = _connection(first_pane), _connection(second_pane)
+        if a is None or b is None:
+            return False
+        if a is b:
+            return True
+        try:
+            return file_manager_connection_id(a) == file_manager_connection_id(b)
+        except Exception:
+            return False
 
     def _on_connected(self, sender=None, *_args) -> None:
         """Handle successful connection and load directories."""
         if getattr(self, "_is_disposed", False):
             logger.debug("Ignoring late connected event after file manager teardown")
+            return
+        left_manager = self.__dict__.get("_left_manager")
+        if left_manager is not None and sender is left_manager:
+            pane = self._left_pane
+            try:
+                pane.set_connecting_status(_("Connected — loading files…"))
+            except Exception:
+                pass
+            pending = self._pending_paths.get(pane)
+            if pending:
+                left_manager.listdir(pending)
             return
         manager = getattr(self, "_manager", None)
         if manager is None or callable(manager):
@@ -846,27 +1402,27 @@ class FileManagerWindow(Adw.Window):
         except Exception:
             pass
         for pane, pending in self._pending_paths.items():
-            if pending:
+            # A left pane on a server of its own lists through that backend.
+            if pending and self._manager_for(pane) is manager:
                 manager.listdir(pending)
 
 
     def _on_progress(self, sender, fraction: float, message: str) -> None:
-        manager = getattr(self, "_manager", None)
-        if sender is not None and sender is not manager:
+        if sender is not None and sender not in self._managers():
             return
         # While a transfer dialog owns the progress handlers, skip the legacy
         # path so per-file fractions cannot overwrite the batch aggregate.
-        if getattr(self, "_progress_handler_id", None):
+        if any(run.running() for run in self.__dict__.get("_progress_runs") or []):
             return
         self._show_progress(fraction, message)
 
     def _on_operation_error(self, sender, message: str) -> None:
         """Handle operation error with toast."""
-        manager = getattr(self, "_manager", None)
-        if getattr(self, "_is_disposed", False) or manager is None:
+        if getattr(self, "_is_disposed", False):
             logger.debug("Ignoring late operation-error event after file manager teardown")
             return
-        if sender is not None and sender is not manager:
+        sender_panes = self._panes_of_sender(sender)
+        if not sender_panes:
             return
         logger.warning("File manager operation error: %s", message)
         message = (
@@ -887,7 +1443,10 @@ class FileManagerWindow(Adw.Window):
         # A pane with a pending path means this error came from a directory
         # load — show the in-pane error state with Retry instead of a toast.
         target = next(
-            (p for p, pending in self._pending_paths.items() if pending is not None),
+            (
+                p for p, pending in self._pending_paths.items()
+                if pending is not None and p in sender_panes
+            ),
             None,
         )
         if target is not None:
@@ -922,6 +1481,10 @@ class FileManagerWindow(Adw.Window):
 
     def _on_connection_error(self, sender, message: str) -> None:
         """Handle connection / authentication failure with toast or alert."""
+        left_manager = self.__dict__.get("_left_manager")
+        if left_manager is not None and sender is left_manager:
+            self._on_left_connection_error(sender, message)
+            return
         manager = getattr(self, "_manager", None)
         if getattr(self, "_is_disposed", False) or manager is None:
             logger.debug("Ignoring late connection-error event after file manager teardown")
@@ -980,6 +1543,41 @@ class FileManagerWindow(Adw.Window):
 
         GLib.idle_add(show_error)
 
+    def _on_left_connection_error(self, sender, message: str) -> None:
+        """The left pane's own server failed: show it there, with Retry."""
+        if getattr(self, "_is_disposed", False):
+            return
+        logger.warning("File manager left pane connection error: %s", message)
+        if self._left_connection_error_reported:
+            return
+        self._left_connection_error_reported = True
+
+        def show_error():
+            if getattr(self, "_is_disposed", False) or self._left_manager is not sender:
+                return False
+            pane = self._left_pane
+            display_message = (
+                _("Connection failed: {error}").format(error=safe_display_text(message))
+                if message else _("Connection failed")
+            )
+            timeout_id = self._loading_toast_timeouts.get(pane)
+            if timeout_id is not None:
+                GLib.source_remove(timeout_id)
+                self._loading_toast_timeouts[pane] = None
+            try:
+                pane.dismiss_toasts()
+            except (AttributeError, RuntimeError, GLib.Error):
+                pass
+            failed_path = (
+                self._pending_paths.get(pane)
+                or getattr(pane, "_current_path", None)
+                or "~"
+            )
+            pane.show_load_error(failed_path, display_message)
+            return False
+
+        GLib.idle_add(show_error)
+
     def rebind_daemon_client(self, client: Any, bridge: Any = None) -> None:
         """Follow the app onto a replacement daemon client (see module helper)."""
         if client is None:
@@ -987,14 +1585,135 @@ class FileManagerWindow(Adw.Window):
         self._daemon_client = client
         if bridge is not None:
             self._bridge = bridge
-        manager = getattr(self, "_manager", None)
-        rebind = getattr(manager, "rebind_client", None)
-        if callable(rebind):
-            rebind(client, self._bridge)
+        for manager in self._managers():
+            rebind = getattr(manager, "rebind_client", None)
+            if callable(rebind):
+                rebind(client, self._bridge)
+
+    # -- transfers outliving the view ---------------------------------------
+
+    def _running_transfers(self) -> list:
+        indicator = self.__dict__.get("_transfer_indicator")
+        if indicator is None:
+            return []
+        try:
+            return indicator.running_transfers()
+        except Exception:
+            return []
+
+    def running_transfer_count(self) -> int:
+        """Transfers this file manager runs now (shown in the indicator or not)."""
+        return len(self._running_transfers())
+
+    def _close_backend_when_idle(self, manager) -> None:
+        """Close *manager* once the transfers running now have ended.
+
+        A transfer writes through the file manager's SFTP service. Closing
+        the service under it killed the transfer, and its partial file stayed
+        on the server, because the cleanup needs that very connection. The
+        backend's transfer listener must stay open too: it is what learns the
+        daemon finished (or cancelled) the transfer.
+        """
+        # While the file manager closes, wait for the futures taken before it
+        # cancelled them: a cancelled transfer no longer reads as running,
+        # but the daemon is still removing its partial file.
+        futures = self.__dict__.get("_draining_futures")
+        if futures is None:
+            futures = self._pending_transfer_futures(manager)
+        futures = [future for future in futures if not future.done()]
+
+        def _close() -> None:
+            try:
+                manager.close()
+            except Exception:
+                logger.debug("Error closing a file manager SFTP backend", exc_info=True)
+
+        if not futures:
+            _close()
+            return
+        logger.info(
+            "Keeping a file manager connection until %d transfer(s) end", len(futures)
+        )
+        # Only a closing file manager stops waiting: it cancelled these
+        # transfers and gives the daemon a while to wind them down. A pane
+        # that merely moved to another server leaves them running, however
+        # long they take.
+        deadline: List[float] = []
+
+        def _poll() -> bool:
+            if all(future.done() for future in futures):
+                _close()
+                return False
+            if self.__dict__.get("_cleanup_done"):
+                if not deadline:
+                    deadline.append(time.monotonic() + _TRANSFER_DRAIN_SECONDS)
+                elif time.monotonic() >= deadline[0]:
+                    _close()
+                    return False
+            return True
+
+        GLib.timeout_add(100, _poll)
+
+    def _pending_transfer_futures(self, manager=None) -> list:
+        """Futures of the running transfers; with *manager*, only of those
+        that go through that backend (a transfer that does not say which
+        backends it uses counts for all of them)."""
+        futures = []
+        for transfer in self._running_transfers():
+            backends = getattr(transfer, "_sshpilot_backends", None)
+            if (
+                manager is not None
+                and isinstance(backends, list)
+                and not any(backend is manager for backend in backends)
+            ):
+                continue
+            futures.extend(
+                future for future in getattr(transfer, "_futures", [])
+                if future is not None and not future.done()
+            )
+        return futures
+
+    @staticmethod
+    def _note_transfer_backends(transfer, *managers) -> None:
+        """Record which backends *transfer* goes through, so a pane leaving
+        a server waits for the transfers on that server only."""
+        if transfer is None:
+            return
+        try:
+            backends = getattr(transfer, "_sshpilot_backends", None)
+            if not isinstance(backends, list):
+                backends = []
+                transfer._sshpilot_backends = backends
+            for manager in managers:
+                if manager is not None and not any(b is manager for b in backends):
+                    backends.append(manager)
+        except Exception:
+            logger.debug("Could not note a transfer's backends", exc_info=True)
+
+    def cancel_running_transfers(self) -> int:
+        """Cancel every running transfer; returns how many there were."""
+        running = self._running_transfers()
+        for transfer in running:
+            try:
+                transfer.cancel()
+            except Exception:
+                logger.debug("Cancelling a transfer failed", exc_info=True)
+        return len(running)
 
     def _cleanup_manager(self) -> None:
-        """Close the file manager backend and clear UI state."""
+        """Close the file manager backend and clear UI state.
+
+        Transfers still running are cancelled, and the connections close only
+        once the daemon has wound them down (removing their partial files).
+        """
+        if self.__dict__.get("_cleanup_done"):
+            return
+        self._cleanup_done = True
+        self._draining_futures = self._pending_transfer_futures()
+        self.cancel_running_transfers()
         self._is_disposed = True
+        self._teardown_left_backend()
+        indicator = self.__dict__.get("_transfer_indicator")
         manager = getattr(self, "_manager", None)
         if isinstance(manager, (types.FunctionType, types.MethodType)):
             manager = None
@@ -1009,11 +1728,15 @@ class FileManagerWindow(Adw.Window):
 
         if manager is not None:
             self._manager = None
-            try:
-                logger.info("Cleaning up file manager backend resources")
-                manager.close()
-            except Exception as exc:
-                logger.error(f"Error closing file manager backend: {exc}", exc_info=True)
+            logger.info("Cleaning up file manager backend resources")
+            self._close_backend_when_idle(manager)
+        if indicator is not None:
+            for transfer in indicator.transfers():
+                try:
+                    transfer.discard()
+                except Exception:
+                    pass
+            indicator.shutdown()
         self._clear_progress_toast()
         try:
             _file_manager_windows_registry.discard(self)
@@ -1021,7 +1744,19 @@ class FileManagerWindow(Adw.Window):
             pass
 
     def _on_close_request(self, window) -> bool:
-        """Handle window close request - clean up resources."""
+        """Handle window close request - clean up resources.
+
+        A standalone file manager window with transfers running asks first;
+        closing cancels them cleanly.
+        """
+        count = self.running_transfer_count()
+        if count and not _quit_confirmed and not self.__dict__.get("_close_confirmed"):
+            def _confirmed() -> None:
+                self._close_confirmed = True
+                self.close()
+
+            confirm_cancel_transfers(self, count, on_confirm=_confirmed)
+            return True
         logger.info("FileManagerWindow close-request received, cleaning up")
         self._cleanup_manager()
         # Allow the window to close
@@ -1035,11 +1770,11 @@ class FileManagerWindow(Adw.Window):
     def _on_directory_loaded(
         self, sender, path: str, entries: Iterable[FileEntry]
     ) -> None:
-        manager = getattr(self, "_manager", None)
-        if getattr(self, "_is_disposed", False) or manager is None:
+        if getattr(self, "_is_disposed", False):
             logger.debug("Ignoring late directory-loaded event after file manager teardown")
             return
-        if sender is not None and sender is not manager:
+        sender_panes = self._panes_of_sender(sender)
+        if not sender_panes:
             return
         entries_list = list(entries)  # Convert to list for logging and reuse
         logger.debug(f"_on_directory_loaded: path={path}, entries_count={len(entries_list)}")
@@ -1047,22 +1782,30 @@ class FileManagerWindow(Adw.Window):
         # Prefer the pane explicitly waiting for this exact path; otherwise
         # assign to the next pane that still has a pending request. This makes
         # initial dual loads robust even if the backend normalizes paths.
-        target = next((pane for pane, pending in self._pending_paths.items() if pending == path), None)
+        # Only the panes this backend serves can take its listing.
+        target = next(
+            (
+                pane for pane, pending in self._pending_paths.items()
+                if pending == path and pane in sender_panes
+            ),
+            None,
+        )
         logger.debug(f"_on_directory_loaded: target pane found by exact path match: {target is not None}")
         
         if target is None:
             # Prefer whichever pane still has an outstanding remote refresh. If
             # no pane recorded the request (e.g. backend normalised the path
-            # before we tracked it) make the remote pane the default so results
-            # are never routed to the local view.
+            # before we tracked it) default to the backend's own pane so
+            # results are never routed to the local view.
             target = next(
-                (pane for pane, pending in self._pending_paths.items() if pending is not None),
+                (
+                    pane for pane, pending in self._pending_paths.items()
+                    if pending is not None and pane in sender_panes
+                ),
                 None,
             )
-            if target is None and self._right_pane in self._pending_paths:
-                target = self._right_pane
             if target is None:
-                target = self._left_pane
+                target = sender_panes[0]
             logger.debug(f"_on_directory_loaded: fallback target pane: {(target == self._right_pane and 'remote') or 'local'}")
         
         # Clear the pending flag for the resolved pane
@@ -1108,10 +1851,7 @@ class FileManagerWindow(Adw.Window):
     def _on_directory_counts(self, sender, path: str, counts) -> None:
         """Background folder item-counts arrived; forward to whichever pane is
         currently showing this path (the pane also guards on its current path)."""
-        manager = getattr(self, "_manager", None)
-        if sender is not None and sender is not manager:
-            return
-        for pane in (self._left_pane, self._right_pane):
+        for pane in self._panes_of_sender(sender):
             # Local folders are counted by _start_local_count_pass.
             if pane is None or not getattr(pane, "_is_remote", False):
                 continue
@@ -1128,6 +1868,10 @@ class FileManagerWindow(Adw.Window):
 
         This is a synchronous operation using the local filesystem.
         """
+        if self._local_pane() is None:
+            # The left pane browses a server now; a late local refresh
+            # must not paint this computer's files over it.
+            return
         try:
             path = os.path.expanduser(path or "~")
             if not os.path.isabs(path):
@@ -1215,7 +1959,7 @@ class FileManagerWindow(Adw.Window):
         is_refresh = current_path and os.path.normpath(path) == os.path.normpath(current_path)
         
         # Route local vs remote browsing
-        if pane is self._left_pane:
+        if self._is_local_pane(pane):
             # Local pane: expand ~ and navigate local filesystem
             local_path = os.path.expanduser(path) if path.startswith("~") else path
             if not local_path:
@@ -1247,11 +1991,14 @@ class FileManagerWindow(Adw.Window):
             # Remote pane: use SFTP manager. Absent (picker mode) or
             # disconnected (failed connect / dead session) → remember the
             # path and, when a host is known, reconnect; listed on 'connected'.
-            manager = self._manager
+            manager = self._manager_for(pane)
             if manager is None or not _sftp_session_ready(manager):
                 self._pending_paths[pane] = path
-                if manager is not None and self._host:
-                    self._reconnect()
+                if manager is not None:
+                    if pane is self._left_pane:
+                        self._reconnect_left()
+                    elif self._host:
+                        self._reconnect()
                 return
             self._pending_paths[pane] = path
 
@@ -1324,7 +2071,7 @@ class FileManagerWindow(Adw.Window):
             logger.warning(f"Failed to restore Flatpak folder access: {e}")
         return False  # Don't repeat this idle callback
 
-    def _check_file_conflicts(self, files_to_transfer: List[Tuple[str, str]], operation_type: str, callback: Callable[[List[Tuple[str, str]]], None]) -> None:
+    def _check_file_conflicts(self, files_to_transfer: List[Tuple[str, str]], operation_type: str, callback: Callable[[List[Tuple[str, str]]], None], *, remote_pane: Optional[FilePane] = None) -> None:
         """Check for file conflicts and show resolution dialog if needed.
 
         Args:
@@ -1332,6 +2079,14 @@ class FileManagerWindow(Adw.Window):
             operation_type: "upload" or "download"
             callback: Function to call with resolved file list
         """
+        # The server side of the transfer: the right pane's, or the pane
+        # given (a left pane browsing a server of its own).
+        if remote_pane is None:
+            remote_pane = getattr(self, "_right_pane", None)
+
+        def _current_manager():
+            return self._manager_for(remote_pane)
+
         logger.debug("=== CHECKING FILE CONFLICTS ===")
         logger.debug("Operation type: %s", operation_type)
         logger.debug("Files to transfer: %s", files_to_transfer)
@@ -1343,25 +2098,25 @@ class FileManagerWindow(Adw.Window):
                 # No conflicts, proceed with all transfers
                 # But first, verify connection is still valid for uploads
                 if operation_type == "upload":
-                    if self._manager is None:
+                    if _current_manager() is None:
                         logger.error("_finalize_conflicts: Manager is None, connection was closed during conflict check")
                         # Try to show error to user - find a pane to show toast
-                        if hasattr(self, '_right_pane') and self._right_pane:
-                            self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+                        if remote_pane is not None:
+                            remote_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                         return
                     
                     try:
-                        with self._manager._lock:
-                            if self._manager._sftp is None:
+                        with _current_manager()._lock:
+                            if _current_manager()._sftp is None:
                                 logger.error("_finalize_conflicts: SFTP connection closed during conflict check")
                                 # Try to show error to user - find a pane to show toast
-                                if hasattr(self, '_right_pane') and self._right_pane:
-                                    self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+                                if remote_pane is not None:
+                                    remote_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                                 return
                     except Exception as e:
                         logger.error(f"_finalize_conflicts: Error checking connection: {e}")
-                        if hasattr(self, '_right_pane') and self._right_pane:
-                            self._right_pane.show_toast(_("Connection error: {error}").format(error=e))
+                        if remote_pane is not None:
+                            remote_pane.show_toast(_("Connection error: {error}").format(error=e))
                         return
                 
                 logger.debug("No conflicts, proceeding with transfers")
@@ -1369,10 +2124,10 @@ class FileManagerWindow(Adw.Window):
                 return
 
             # Check if manager is still available before showing conflict dialog (for uploads)
-            if operation_type == "upload" and self._manager is None:
+            if operation_type == "upload" and _current_manager() is None:
                 logger.error("_finalize_conflicts: Manager is None, connection was closed during conflict check")
-                if hasattr(self, '_right_pane') and self._right_pane:
-                    self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+                if remote_pane is not None:
+                    remote_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                 return
             
             # Show conflict resolution dialog
@@ -1407,10 +2162,10 @@ class FileManagerWindow(Adw.Window):
                     return
                 
                 # Check if manager is still available for uploads
-                if operation_type == "upload" and self._manager is None:
+                if operation_type == "upload" and _current_manager() is None:
                     logger.error("_on_conflict_response: Manager is None, connection was closed")
-                    if hasattr(self, '_right_pane') and self._right_pane:
-                        self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+                    if remote_pane is not None:
+                        remote_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                     return
 
                 policy = ui_conflict_response_to_policy(response)
@@ -1439,8 +2194,8 @@ class FileManagerWindow(Adw.Window):
             try:
                 dialog_parent = self
                 if self._embedded_parent is not None:
-                    # If embedded as a tab, use the parent widget directly
-                    dialog_parent = self._embedded_parent
+                    # Embedded: the window the tab is in now
+                    dialog_parent = self._embedded_dialog_parent()
                 else:
                     # If standalone window, try to get transient parent if any
                     try:
@@ -1478,7 +2233,7 @@ class FileManagerWindow(Adw.Window):
                 _finalize_conflicts([])
                 return
 
-            if self._manager is None:
+            if _current_manager() is None:
                 logger.warning("Upload conflict check requested without an active SFTP manager")
                 _finalize_conflicts([])
                 return
@@ -1499,10 +2254,10 @@ class FileManagerWindow(Adw.Window):
                             logger.error("Connection closed during conflict check for %s: %s", pair[1], exc)
                             # Don't proceed with conflict resolution if connection is closed
                             # Check if manager is still available
-                            if self._manager is None:
+                            if _current_manager() is None:
                                 logger.error("Manager is None, aborting conflict check")
-                                if hasattr(self, '_right_pane') and self._right_pane:
-                                    self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+                                if remote_pane is not None:
+                                    remote_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                                 return
                         else:
                             logger.warning("Failed to check remote path %s: %s", pair[1], exc)
@@ -1516,14 +2271,14 @@ class FileManagerWindow(Adw.Window):
                     pending["remaining"] -= 1
                     if pending["remaining"] == 0:
                         # Before finalizing, check if manager is still available for uploads
-                        if operation_type == "upload" and self._manager is None:
+                        if operation_type == "upload" and _current_manager() is None:
                             logger.error("Manager is None when finalizing conflicts, connection was closed")
-                            if hasattr(self, '_right_pane') and self._right_pane:
-                                self._right_pane.show_toast(_("Connection lost. Please reconnect and try again."))
+                            if remote_pane is not None:
+                                remote_pane.show_toast(_("Connection lost. Please reconnect and try again."))
                             return
                         GLib.idle_add(_idle_finalize, list(conflicts))
 
-                future = self._manager.path_exists(dest)
+                future = _current_manager().path_exists(dest)
                 future.add_done_callback(_on_result)
 
             return
@@ -1566,13 +2321,18 @@ class FileManagerWindow(Adw.Window):
             getattr(self._embedded_parent, "open_file_manager_terminal_at", None)
         )
 
-    def _terminal_side(self, pane) -> str:
-        return "local" if pane is self._left_pane else "remote"
+    def _terminal_side(self, pane) -> Optional[str]:
+        """Which terminal a pane opens: this computer's, the tab's server's,
+        or none for a left pane on a server (the tab's terminal panels are
+        one local, under the left pane, and one on the tab's connection)."""
+        if pane is self._left_pane:
+            return "local" if self._is_local_pane(pane) else None
+        return "remote"
 
     def _op_open_terminal(self, pane, payload) -> None:
         """Open (or reuse) the pane's terminal and cd it into the folder."""
         opened = False
-        if self.can_open_terminal():
+        if self.can_open_terminal() and self._terminal_side(pane) is not None:
             try:
                 opened = self._embedded_parent.open_file_manager_terminal_at(
                     self._toolbar_view, payload.get("path") or "/",
@@ -1588,7 +2348,7 @@ class FileManagerWindow(Adw.Window):
         toggle = getattr(self._embedded_parent, "toggle_file_manager_terminal", None)
         active = bool(payload.get("active"))
         done = False
-        if callable(toggle):
+        if callable(toggle) and self._terminal_side(pane) is not None:
             try:
                 done = toggle(
                     self._toolbar_view, self._terminal_side(pane), active,
@@ -1609,7 +2369,7 @@ class FileManagerWindow(Adw.Window):
     def _on_directory_shown(self, pane, path: str, user_data=None) -> None:
         """Follow Folder Navigation: hand the new folder to the terminal."""
         sync = getattr(self._embedded_parent, "sync_file_manager_terminal", None)
-        if not callable(sync) or not path:
+        if not callable(sync) or not path or self._terminal_side(pane) is None:
             return
         try:
             sync(self._toolbar_view, path, self._terminal_side(pane))
@@ -1623,7 +2383,7 @@ class FileManagerWindow(Adw.Window):
             return
 
         directory = payload.get("directory") or self._pane_directory_text(pane) or "/"
-        if pane is self._left_pane:
+        if self._is_local_pane(pane):
             # Use the actual current path instead of the display path from path entry
             # This handles Flatpak portal paths correctly
             current_path = getattr(pane, '_current_path', None)
@@ -1664,7 +2424,7 @@ class FileManagerWindow(Adw.Window):
             force_move = bool(payload.get("force_move"))
         
         # For local pane destinations, use actual current path instead of display path
-        if pane is self._left_pane:
+        if self._is_local_pane(pane):
             current_path = getattr(pane, '_current_path', None)
             if current_path:
                 destination = current_path
@@ -1684,25 +2444,36 @@ class FileManagerWindow(Adw.Window):
             else:
                 self._update_paste_targets()
 
-        if source_pane is self._left_pane and pane is self._left_pane:
+        panes = (self._left_pane, self._right_pane)
+        if source_pane not in panes or pane not in panes:
+            pane.show_toast(_("Paste target is unavailable"))
+            return
+        source_local = self._is_local_pane(source_pane)
+        destination_local = self._is_local_pane(pane)
+        if source_local and destination_local:
             self._perform_local_clipboard_operation(
                 entries, source_dir, destination, move_requested,
                 on_started=_on_clipboard_op_started,
             )
-        elif source_pane is self._right_pane and pane is self._right_pane:
+        elif source_local:
+            self._perform_local_to_remote_clipboard_operation(entries, source_dir, destination, move_requested)
+            _on_clipboard_op_started()
+        elif destination_local:
+            self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
+            _on_clipboard_op_started()
+        elif source_pane is pane:
             self._perform_remote_clipboard_operation(
                 entries, source_dir, destination, move_requested,
                 on_started=_on_clipboard_op_started,
+                pane=pane,
             )
-        elif source_pane is self._left_pane and pane is self._right_pane:
-            self._perform_local_to_remote_clipboard_operation(entries, source_dir, destination, move_requested)
-            _on_clipboard_op_started()
-        elif source_pane is self._right_pane and pane is self._left_pane:
-            self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
-            _on_clipboard_op_started()
         else:
-            pane.show_toast(_("Paste target is unavailable"))
-            return
+            self._perform_pane_to_pane_remote_operation(
+                entries, source_dir, destination, move_requested,
+                source_pane=source_pane,
+                destination_pane=pane,
+                on_started=_on_clipboard_op_started,
+            )
     def _op_mkdir(self, pane) -> None:
         dialog = Adw.AlertDialog.new(_("New Folder"), _("Enter a name for the new folder"))
         entry = Gtk.Entry()
@@ -1718,12 +2489,12 @@ class FileManagerWindow(Adw.Window):
                 name = entry.get_text().strip()
                 if name:
                     current_dir = self._pane_directory_text(pane) or "/"
-                    if pane is self._left_pane:
+                    if self._is_local_pane(pane):
                         target_dir = self._local_pane_directory(pane)
                         new_path = os.path.join(target_dir, name)
                     else:
                         new_path = posixpath.join(current_dir or "/", name)
-                    if pane is self._left_pane:
+                    if self._is_local_pane(pane):
                         try:
                             os.makedirs(new_path, exist_ok=False)
                         except FileExistsError:
@@ -1735,7 +2506,7 @@ class FileManagerWindow(Adw.Window):
                             self._pending_highlights[self._left_pane] = name
                             self._load_local(os.path.dirname(new_path) or "/")
                     else:
-                        future = self._manager.mkdir(new_path)
+                        future = self._manager_for(pane).mkdir(new_path)
                         
                         # Simple direct refresh after operation completes
                         def _on_mkdir_done(completed_future):
@@ -1779,7 +2550,7 @@ class FileManagerWindow(Adw.Window):
                 name = entry.get_text().strip()
                 if name:
                     current_dir = self._pane_directory_text(pane) or "/"
-                    if pane is self._left_pane:
+                    if self._is_local_pane(pane):
                         target_dir = self._local_pane_directory(pane)
                         new_path = os.path.join(target_dir, name)
                         try:
@@ -1795,7 +2566,7 @@ class FileManagerWindow(Adw.Window):
                             self._open_path_in_editor(pane, new_path, name)
                     else:
                         new_path = posixpath.join(current_dir or "/", name)
-                        future = self._manager.touch(new_path)
+                        future = self._manager_for(pane).touch(new_path)
 
                         def _on_touch_done(completed_future, p=new_path, n=name) -> None:
                             try:
@@ -1840,7 +2611,7 @@ class FileManagerWindow(Adw.Window):
 
         entry = entries[0]
 
-        if pane is self._left_pane:
+        if self._is_local_pane(pane):
             base_dir = self._normalize_local_path(directory)
             source = os.path.join(base_dir, entry.name)
             join = os.path.join
@@ -1874,7 +2645,7 @@ class FileManagerWindow(Adw.Window):
                 dialog.close()
                 return
             target = join(base_dir, new_name)
-            if pane is self._left_pane:
+            if self._is_local_pane(pane):
                 try:
                     rename_local_file(source, target)
                 except Exception as exc:
@@ -1884,7 +2655,7 @@ class FileManagerWindow(Adw.Window):
                     self._pending_highlights[self._left_pane] = new_name
                     self._load_local(base_dir)
             else:
-                future = self._manager.rename(source, target)
+                future = self._manager_for(pane).rename(source, target)
                 
                 # Simple direct refresh after operation completes
                 def _on_rename_done(completed_future):
@@ -1922,7 +2693,7 @@ class FileManagerWindow(Adw.Window):
         if not entries:
             return
 
-        if pane is self._left_pane:
+        if self._is_local_pane(pane):
             base_dir = self._normalize_local_path(directory)
         else:
             base_dir = directory or "/"
@@ -1945,7 +2716,7 @@ class FileManagerWindow(Adw.Window):
             if response != "ok":
                 dialog.close()
                 return
-            if pane is self._left_pane:
+            if self._is_local_pane(pane):
                 deleted = 0
                 errors: List[str] = []
                 # Optimistic UI: drop rows immediately, then delete on disk.
@@ -2049,7 +2820,7 @@ class FileManagerWindow(Adw.Window):
                 try:
                     if len(targets) == 1:
                         path, recursive = targets[0]
-                        future = self._manager.remove(path, recursive=recursive)
+                        future = self._manager_for(pane).remove(path, recursive=recursive)
 
                         def _on_single_done(future_result: Future, _path=path) -> None:
                             try:
@@ -2079,16 +2850,20 @@ class FileManagerWindow(Adw.Window):
                             future,
                             total_files=1,
                             source_path=path,
+                            manager=self._manager_for(pane),
+                            source_pane=pane,
                         )
                         future.add_done_callback(_on_single_done)
                     else:
-                        future = self._manager.remove_many(targets)
+                        future = self._manager_for(pane).remove_many(targets)
                         self._show_progress_dialog(
                             "delete",
                             entry_names[0],
                             future,
                             total_files=total_count,
                             source_path=base_dir,
+                            manager=self._manager_for(pane),
+                            source_pane=pane,
                         )
                         future.add_done_callback(_on_batch_done)
                 except Exception as exc:
@@ -2118,8 +2893,8 @@ class FileManagerWindow(Adw.Window):
         try:
             dialog_parent = self
             if self._embedded_parent is not None:
-                # If embedded as a tab, use the parent widget directly
-                dialog_parent = self._embedded_parent
+                # Embedded: the window the tab is in now
+                dialog_parent = self._embedded_dialog_parent()
             else:
                 # If standalone window, try to get transient parent if any
                 try:
@@ -2136,12 +2911,12 @@ class FileManagerWindow(Adw.Window):
             dialog.present()  # Present without parent as fallback
 
     def _op_upload(self, pane, payload, user_data=None) -> None:
-        # Upload can be triggered from either pane, but we need to determine the target pane
+        # The local pane uploads to its partner; a pane on a server takes
+        # uploads itself (files dropped in from another app, or the remote
+        # pane's own upload request).
         if pane is self._left_pane:
-            # Upload from local to remote
-            target_pane = self._right_pane
+            target_pane = self._right_pane if self._is_local_pane(pane) else pane
         elif pane is self._right_pane:
-            # Upload from local to remote (when triggered from remote pane)
             target_pane = pane
         else:
             return
@@ -2220,15 +2995,16 @@ class FileManagerWindow(Adw.Window):
                 return
             
             # Check if manager is still available and connected
-            if self._manager is None:
+            manager = self._manager_for(target_pane)
+            if manager is None:
                 pane.show_toast(_("Upload failed: Connection lost"))
                 logger.error("_proceed_with_upload: Manager is None")
                 return
             
             # Check if SFTP connection is still valid
             try:
-                with self._manager._lock:
-                    if self._manager._sftp is None:
+                with manager._lock:
+                    if manager._sftp is None:
                         pane.show_toast(_("Upload failed: Connection closed. Please reconnect."))
                         logger.error("_proceed_with_upload: SFTP connection is None")
                         return
@@ -2258,16 +3034,21 @@ class FileManagerWindow(Adw.Window):
                     cleanup_dir = move_source_dir or str(path_obj.parent)
                     self._schedule_local_move_cleanup(future, path_obj, cleanup_dir, index=index)
 
-        self._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
+        self._check_file_conflicts(
+            files_to_transfer, "upload", _proceed_with_upload, remote_pane=target_pane
+        )
 
     def _op_download(self, pane, payload, user_data=None) -> None:
         logger.debug("=== DOWNLOAD OPERATION CALLED ===")
         logger.debug("Payload: %s", payload)
 
-        if pane is self._left_pane and payload.get("entries"):
+        if self._is_local_pane(pane) and payload.get("entries"):
             remote_pane = getattr(self, "_right_pane", None)
             if isinstance(remote_pane, FilePane):
                 pane = remote_pane
+        if self._local_pane() is None:
+            pane.show_toast(_("Local pane is unavailable"))
+            return
 
         move_remote_sources: List[str] = []
         move_remote_pane: Optional[FilePane] = None
@@ -2320,6 +3101,7 @@ class FileManagerWindow(Adw.Window):
                     items,
                     refresh_local_path=str(destination_base),
                     highlight_name=os.path.basename(items[-1][0]),
+                    remote_pane=pane,
                 )
             except Exception as e:
                 logger.error("_proceed_with_download: could not start download: %s", e, exc_info=True)
@@ -2334,7 +3116,9 @@ class FileManagerWindow(Adw.Window):
                         index=index,
                     )
 
-        self._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
+        self._check_file_conflicts(
+            files_to_transfer, "download", _proceed_with_download, remote_pane=pane
+        )
 
 
 
@@ -2506,13 +3290,16 @@ class FileManagerWindow(Adw.Window):
 
         future.add_done_callback(_on_done)
 
-    def _complete_delete_progress(self, future_result: Future) -> None:
+    def _complete_delete_progress(self, future_result: Future, dialog=None) -> None:
         """Drive delete completion UI from a remove / remove_many future.
 
         ``remove_many`` resolves with ``(failures, completed)`` even on cancel,
         so a bare ``exception()`` check would always report success.
+        *dialog* is the delete's own dialog when a newer operation has
+        replaced it as the current one.
         """
-        dialog = self._aggregate_dialog
+        if dialog is None:
+            dialog = self._aggregate_dialog
         if dialog is None or dialog.is_cancelled or getattr(dialog, "_closed", False):
             return
         try:
@@ -2657,11 +3444,12 @@ class FileManagerWindow(Adw.Window):
                 return
             # For remote pane, use SFTP
             self._pending_paths[pane] = path
-            if self._manager is None:
+            manager = self._manager_for(pane)
+            if manager is None:
                 return
             try:
                 logger.debug(f"_force_refresh_pane: calling manager.listdir for {path}")
-                self._manager.listdir(path)
+                manager.listdir(path)
             except Exception as e:
                 # Nothing is in flight, so later refreshes must not queue
                 # behind this one.
@@ -2697,6 +3485,8 @@ class FileManagerWindow(Adw.Window):
         return False
 
     def _refresh_local_listing(self, path: str) -> bool:
+        if self._local_pane() is None:
+            return False
         target = self._normalize_local_path(path)
         # Use the actual current path instead of the display path from path entry
         # This handles Flatpak portal paths correctly
@@ -2920,12 +3710,17 @@ class FileManagerWindow(Adw.Window):
         destination_dir: str,
         move: bool,
         on_started: Optional[Callable[[], None]] = None,
+        pane: Optional[FilePane] = None,
     ) -> None:
+        """Copy or move within the server *pane* (default: the right pane)
+        browses, as cut/paste and drops inside one pane do."""
         if not entries:
             return
-        manager = getattr(self, "_manager", None)
+        if pane is None:
+            pane = self._right_pane
+        manager = self._manager_for(pane)
         if manager is None:
-            self._right_pane.show_toast(_("Remote connection unavailable"))
+            pane.show_toast(_("Remote connection unavailable"))
             return
 
         valid, invalid = self._partition_clipboard_entries(
@@ -2955,12 +3750,103 @@ class FileManagerWindow(Adw.Window):
                     total_files=total_files,
                     source_path=source_path,
                     destination_path=destination_path,
+                    **({"manager": manager, "source_pane": pane}
+                       if pane is not self._right_pane else {}),
                 )
                 self._attach_refresh(
                     future,
-                    refresh_remote=self._right_pane,
+                    refresh_remote=pane,
                     highlight_name=entry.name,
                 )
+
+        if not invalid:
+            _run(valid)
+            return
+
+        self._confirm_into_itself_skip(
+            move=move,
+            total_count=len(entries),
+            invalid_count=len(invalid),
+            on_skip=lambda: _run(valid),
+        )
+
+    def _perform_pane_to_pane_remote_operation(
+        self,
+        entries: List[FileEntry],
+        source_dir: str,
+        destination_dir: str,
+        move: bool,
+        *,
+        source_pane: FilePane,
+        destination_pane: FilePane,
+        on_started: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """Copy or move between two panes that each browse a server (#1356).
+
+        The daemon moves the bytes from one SFTP session to the other; when
+        both panes browse the same server it copies there instead, so the
+        server can copy for itself. Existing destinations are refused by the
+        daemon, like a paste within one pane.
+        """
+        if not entries:
+            return
+        source_manager = self._manager_for(source_pane)
+        destination_manager = self._manager_for(destination_pane)
+        if source_manager is None or destination_manager is None:
+            destination_pane.show_toast(_("Remote connection unavailable"))
+            return
+
+        if self._same_server(source_pane, destination_pane):
+            valid, invalid = self._partition_clipboard_entries(
+                entries, source_dir, destination_dir, remote=True
+            )
+        else:
+            valid = [
+                (
+                    self._resolve_remote_entry_path(source_dir, entry),
+                    posixpath.join(destination_dir or "/", entry.name),
+                    entry,
+                )
+                for entry in entries
+            ]
+            invalid = []
+
+        def _run(work_items: List[Tuple[str, str, FileEntry]]) -> None:
+            if not work_items:
+                return
+            if on_started is not None:
+                on_started()
+            operation = "move" if move else "copy"
+            for source_path, destination_path, entry in work_items:
+                future = source_manager.copy_remote(
+                    source_path,
+                    destination_path,
+                    recursive=entry.is_dir,
+                    move=move,
+                    destination_manager=destination_manager,
+                )
+                self._show_progress_dialog(
+                    operation,
+                    entry.name,
+                    future,
+                    total_files=len(work_items),
+                    source_path=source_path,
+                    destination_path=destination_path,
+                    manager=source_manager,
+                    source_pane=source_pane,
+                    destination_pane=destination_pane,
+                )
+                self._note_transfer_backends(
+                    getattr(self, "_aggregate_dialog", None),
+                    source_manager, destination_manager,
+                )
+                self._attach_refresh(
+                    future,
+                    refresh_remote=destination_pane,
+                    highlight_name=entry.name,
+                )
+                if move:
+                    self._attach_refresh(future, refresh_remote=source_pane)
 
         if not invalid:
             _run(valid)
@@ -3036,10 +3922,10 @@ class FileManagerWindow(Adw.Window):
         """Open a (typically just-created) file in the text editor. Best-effort —
         the file already exists on disk/remote regardless of whether this opens."""
         try:
-            is_local = pane is self._left_pane
+            is_local = self._is_local_pane(pane)
             daemon_file_service = None
+            manager = None if is_local else self._manager_for(pane)
             if not is_local:
-                manager = getattr(self, "_manager", None)
                 make_service = getattr(manager, "make_file_editor_service", None) if manager else None
                 if make_service is not None:
                     try:
@@ -3051,7 +3937,7 @@ class FileManagerWindow(Adw.Window):
                 file_path=path,
                 file_name=name,
                 is_local=is_local,
-                sftp_manager=None if is_local else getattr(self, "_manager", None),
+                sftp_manager=manager,
                 daemon_file_service=daemon_file_service,
                 file_manager_window=self,
             )
@@ -3104,19 +3990,75 @@ class FileManagerWindow(Adw.Window):
         *,
         index: Optional[int] = None,
     ) -> None:
+        # The server the files are on now. The transfer runs in the
+        # background, and the pane may show another server by the time it
+        # ends: the originals must never be removed there.
+        source_manager = self._manager_for(pane)
+
+        def _notice(completed):
+            if getattr(completed, "_sshpilot_originals_kept_notice", False):
+                return
+            completed._sshpilot_originals_kept_notice = True
+            GLib.idle_add(
+                pane.show_toast,
+                _("The move ended as a copy: the originals could not be removed"),
+            )
+
         def _cleanup(completed: Future, path: str = source_path, target_pane: FilePane = pane) -> None:
             if not self._transfer_item_succeeded(completed, index):
                 return
             # Move sources may be files or trees; recursive handles both. The
             # download dialog is still up for the rest of the batch, so keep
             # this background delete off the shared progress signal.
-            cleanup_future = self._manager.remove(path, recursive=True, report_progress=False)
+            manager = source_manager
+            if manager is None:
+                return
+            current = self._manager_for(target_pane)
+            if current is not manager:
+                source_id = getattr(manager, "_connection_id", None)
+                same_server = (
+                    current is not None
+                    and isinstance(source_id, str)
+                    and getattr(current, "_connection_id", None) == source_id
+                )
+                if not same_server:
+                    # The pane left that server and its connection is
+                    # closing: the originals stay, the move ends as a copy.
+                    logger.info(
+                        "Not removing %s after the move: its pane shows another server now",
+                        path,
+                    )
+                    _notice(completed)
+                    return
+                # Reconnected to the same server: remove them through the
+                # connection the pane has now.
+                manager = current
+            try:
+                cleanup_future = manager.remove(path, recursive=True, report_progress=False)
+            except Exception:
+                _notice(completed)
+                return
+
+            def _removed(result):
+                try:
+                    result.result()
+                except Exception:
+                    _notice(completed)
+
+            cleanup_future.add_done_callback(_removed)
             self._attach_refresh(cleanup_future, refresh_remote=target_pane)
 
         future.add_done_callback(_cleanup)
 
     def _on_progress_dialog_closed(self, dialog) -> None:
-        """Drop our reference when the user dismisses the progress dialog."""
+        """Drop our reference when a finished transfer's details close.
+
+        Closing a running transfer's details only hides them: it carries on
+        in the background and the window keeps feeding it progress.
+        """
+        is_reusable = getattr(dialog, "is_reusable", None)
+        if callable(is_reusable) and is_reusable():
+            return
         if getattr(self, "_aggregate_dialog", None) is dialog:
             self._aggregate_dialog = None
         transfer_dialogs = self._open_transfer_dialogs()
@@ -3135,6 +4077,69 @@ class FileManagerWindow(Adw.Window):
             size /= 1024
         return f"{size:.1f} TB"
 
+    def _settle_run_future(self, run: "_ProgressRun", future_result: Future) -> None:
+        """Account for one finished future of *run*; end the run with the last.
+
+        Runs on the main loop, once per future. The outcome is decided only
+        when every registered future has been accounted for here.
+        """
+        if future_result in run.settled:
+            return
+        run.settled.add(future_result)
+        dialog = run.dialog
+        last = not run.running()
+        if last:
+            run.disconnect()
+        if dialog is None:
+            return
+        if dialog.operation_type == "delete":
+            if not future_result.cancelled():
+                self._complete_delete_progress(future_result, dialog)
+            return
+        try:
+            exception = None if future_result.cancelled() else future_result.exception()
+        except CancelledError:
+            exception = None
+        if future_result.cancelled() or isinstance(exception, TransferCancelledException):
+            # The daemon confirmed a cancel (the backend reports it as an
+            # error): neither a success nor a failure of that file.
+            run.cancelled += 1
+            self._settle_batch_transfer(future_result, success=False, run=run)
+        elif exception is not None:
+            self._settle_batch_transfer(future_result, success=False, run=run)
+            filename = run.future_to_filename.get(future_result, "unknown file")
+            logger.error("Transfer failed for %s: %s", filename, exception)
+            failed = getattr(dialog, "_failed_files", None)
+            if failed is not None:
+                failed.append((filename, str(exception)))
+        else:
+            self._settle_batch_transfer(future_result, success=True, run=run)
+            # Counted now, not on a later idle: the run's summary may be
+            # written by this very call.
+            dialog.set_files_completed(dialog.files_completed + 1)
+        if not last or dialog.is_cancelled:
+            return
+        failed = list(getattr(dialog, "_failed_files", None) or [])
+        if run.cancelled and not failed and dialog.files_completed == 0:
+            # Every file was cancelled: the run was.
+            dialog.mark_cancelled()
+            return
+        if not failed:
+            dialog.show_completion(success=True)
+            return
+        total = max(dialog.total_files, len(run.futures))
+        if len(failed) >= total:
+            dialog.show_completion(success=False, error_message=failed[0][1])
+            return
+        dialog.show_completion(
+            success=False,
+            error_message=ngettext(
+                "{count} of {total} file could not be transferred",
+                "{count} of {total} files could not be transferred",
+                total,
+            ).format(count=len(failed), total=total),
+        )
+
     def _reset_batch_progress_state(self) -> None:
         self._batch_expected: Dict[str, Optional[int]] = {}
         self._batch_active_bytes: Dict[str, Tuple[int, int]] = {}
@@ -3143,16 +4148,35 @@ class FileManagerWindow(Adw.Window):
         self._batch_file_meta: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {}
         self._batch_focused_key: Optional[str] = None
 
-    def _focus_batch_transfer(self, key: str, *, force: bool = False) -> None:
+    def _batch_state(self, run: Optional["_ProgressRun"]):
+        """(dialog, expected, active, settled, meta) of *run*, or of the
+        window's current batch when no run is given."""
+        if run is not None:
+            return (run.dialog, run.batch_expected, run.batch_active_bytes,
+                    run.batch_settled_bytes, run.batch_file_meta)
+        return (
+            getattr(self, "_aggregate_dialog", None),
+            getattr(self, "_batch_expected", None),
+            getattr(self, "_batch_active_bytes", {}),
+            getattr(self, "_batch_settled_bytes", {}),
+            getattr(self, "_batch_file_meta", {}),
+        )
+
+    def _focus_batch_transfer(self, key: str, *, force: bool = False,
+                              run: Optional["_ProgressRun"] = None) -> None:
         """Point the dialog's name / From / To labels at one batch member."""
-        dialog = self._aggregate_dialog
-        meta = getattr(self, "_batch_file_meta", {}).get(key)
+        dialog, _expected, _active, _settled, metas = self._batch_state(run)
+        meta = metas.get(key)
         if dialog is None or meta is None:
             return
-        if not force and getattr(self, "_batch_focused_key", None) == key:
+        focused = run.batch_focused_key if run is not None else getattr(self, "_batch_focused_key", None)
+        if not force and focused == key:
             return
         filename, source_path, destination_path = meta
-        self._batch_focused_key = key
+        if run is not None:
+            run.batch_focused_key = key
+        else:
+            self._batch_focused_key = key
         try:
             dialog.set_operation_details(
                 total_files=dialog.total_files or 1,
@@ -3163,32 +4187,32 @@ class FileManagerWindow(Adw.Window):
         except (AttributeError, RuntimeError, GLib.Error):
             pass
 
-    def _focus_next_active_batch_transfer(self, exclude_key: Optional[str] = None) -> None:
+    def _focus_next_active_batch_transfer(self, exclude_key: Optional[str] = None,
+                                          run: Optional["_ProgressRun"] = None) -> None:
         """After a file finishes, show another still-active transfer if needed."""
-        active = getattr(self, "_batch_active_bytes", {})
-        focused = getattr(self, "_batch_focused_key", None)
+        _dialog, expected, active, settled, _meta = self._batch_state(run)
+        focused = run.batch_focused_key if run is not None else getattr(self, "_batch_focused_key", None)
         if focused and focused != exclude_key and focused in active:
             return
         for key in active:
             if key != exclude_key:
-                self._focus_batch_transfer(key, force=True)
+                self._focus_batch_transfer(key, force=True, run=run)
                 return
         # Nothing active yet — fall back to any unfinished expected key.
-        settled = getattr(self, "_batch_settled_bytes", {})
-        for key in getattr(self, "_batch_expected", {}):
+        for key in expected or {}:
             if key != exclude_key and key not in settled:
-                self._focus_batch_transfer(key, force=True)
+                self._focus_batch_transfer(key, force=True, run=run)
                 return
 
-    def _publish_batch_transfer_progress(self) -> None:
+    def _publish_batch_transfer_progress(self, run: Optional["_ProgressRun"] = None) -> None:
         """Push aggregated batch bytes + an honest status string into the dialog."""
-        dialog = self._aggregate_dialog
+        dialog, expected, active, settled, _meta = self._batch_state(run)
         if dialog is None or dialog.is_cancelled:
             return
         batch = aggregate_batch_bytes(
-            expected=getattr(self, "_batch_expected", {}),
-            active=getattr(self, "_batch_active_bytes", {}),
-            settled=getattr(self, "_batch_settled_bytes", {}),
+            expected=expected or {},
+            active=active,
+            settled=settled,
             files_completed=dialog.files_completed,
             total_files=dialog.total_files,
         )
@@ -3210,14 +4234,13 @@ class FileManagerWindow(Adw.Window):
         except (AttributeError, RuntimeError, GLib.Error):
             pass
 
-    def _settle_batch_transfer(self, future_result: Future, *, success: bool) -> None:
+    def _settle_batch_transfer(self, future_result: Future, *, success: bool,
+                               run: Optional["_ProgressRun"] = None) -> None:
         """Move a finished transfer's bytes from active → settled for aggregation."""
         key = progress_key_for_future(future_result)
-        expected = getattr(self, "_batch_expected", None)
+        _dialog, expected, active, settled, _meta = self._batch_state(run)
         if expected is None:
             return
-        active = getattr(self, "_batch_active_bytes", {})
-        settled = getattr(self, "_batch_settled_bytes", {})
         if key in settled:
             return
         if key in active:
@@ -3241,12 +4264,30 @@ class FileManagerWindow(Adw.Window):
             done = total
         if done > 0 or total > 0:
             settled[key] = (done, total if total > 0 else done)
-        self._focus_next_active_batch_transfer(exclude_key=key)
-        self._publish_batch_transfer_progress()
+        self._focus_next_active_batch_transfer(exclude_key=key, run=run)
+        self._publish_batch_transfer_progress(run=run)
+
+    def _embedded_dialog_parent(self) -> Optional[Gtk.Widget]:
+        """Where dialogs go while embedded: the window the tab is in now.
+
+        A file manager tab can move into a window of its own (Open in New
+        Window); its dialogs follow it there instead of opening over the
+        main window. Before the content is rooted, the tab's main window.
+        """
+        if self._embedded_parent is None:
+            return None
+        content = getattr(self, "_toolbar_view", None)
+        try:
+            root = content.get_root() if content is not None else None
+        except Exception:
+            root = None
+        if isinstance(root, Gtk.Window) and root is not self:
+            return root
+        return self._embedded_parent
 
     def _progress_dialog_parent(self) -> Gtk.Widget:
         if self._embedded_parent is not None:
-            return self._embedded_parent
+            return self._embedded_dialog_parent()
         try:
             transient = self.get_transient_for()
             if transient is not None:
@@ -3255,25 +4296,181 @@ class FileManagerWindow(Adw.Window):
             pass
         return self
 
+    def _pane_host_label(self, pane=None) -> str:
+        """The server name a pane's dialogs show (default: the right pane's)."""
+        left_connection = self.__dict__.get("_left_connection")
+        if left_connection is not None and pane is getattr(self, "_left_pane", None):
+            return self._connection_display_name(left_connection)
+        return (str(self._nickname).strip() if self._nickname else '') or self._host
+
     def _present_progress_dialog(
-        self, operation_type: str, *, total_files: int, filename: Optional[str]
+        self,
+        operation_type: str,
+        *,
+        total_files: int,
+        filename: Optional[str],
+        source_pane=None,
+        destination_pane=None,
     ) -> SFTPProgressDialog:
-        """Create and show a fresh progress dialog."""
+        """Create and show a fresh progress dialog.
+
+        *source_pane* names the server the operation reads from; a different
+        *destination_pane* (a copy between two servers) names where it lands.
+        """
         logger.debug("Creating progress dialog")
         dialog_parent = self._progress_dialog_parent()
-        host_label = (str(self._nickname).strip() if self._nickname else '') or self._host
+        host_label = self._pane_host_label(source_pane)
+        destination_label = (
+            self._pane_host_label(destination_pane)
+            if destination_pane is not None else None
+        )
         dialog = SFTPProgressDialog(
-            parent=dialog_parent, operation_type=operation_type, host_label=host_label
+            parent=dialog_parent, operation_type=operation_type, host_label=host_label,
+            **({"destination_host_label": destination_label} if destination_label else {}),
         )
         dialog.connect("closed", self._on_progress_dialog_closed)
         dialog.set_operation_details(total_files=total_files, filename=filename)
-        # AlertDialog.present takes a parent widget; MessageDialog
-        # already had it set via set_transient_for in the dialog ctor.
-        if _HAS_ALERT_DIALOG:
-            dialog.present(dialog_parent)
+        # Not presented: an Adw dialog is modal and locked the file manager
+        # for the whole transfer. The toolbar's transfer indicator lists it;
+        # its Details button presents this dialog on demand.
+        indicator = self.__dict__.get("_transfer_indicator")
+        if indicator is not None:
+            indicator.add(dialog)
         else:
-            dialog.present()
+            self._present_transfer_dialog(dialog)
         return dialog
+
+    def _present_transfer_dialog(self, dialog) -> None:
+        dialog_parent = self._progress_dialog_parent()
+        try:
+            if _HAS_ALERT_DIALOG:
+                dialog.present(dialog_parent)
+            else:
+                dialog.present()
+        except Exception as exc:
+            logger.debug("Failed to present the transfer details: %s", exc)
+
+    def _show_transfer_details(self, dialog) -> None:
+        """The indicator's Details: the transfer's progress dialog."""
+        self._present_transfer_dialog(dialog)
+
+    def _own_tab_page(self):
+        """The tab this file manager is shown in, wherever it is now."""
+        if self._embedded_parent is None:
+            return None
+        content = getattr(self, "_toolbar_view", None)
+        try:
+            tab_view = content.get_ancestor(Adw.TabView) if content is not None else None
+            if tab_view is None:
+                return None
+            pages = tab_view.get_pages()
+            for index in range(pages.get_n_items()):
+                page = pages.get_item(index)
+                child = page.get_child() if page is not None else None
+                if child is not None and (child is content or content.is_ancestor(child)):
+                    return page
+        except Exception:
+            logger.debug("Finding the file manager's tab failed", exc_info=True)
+        return None
+
+    # Marks a tab whose indicator shows this file manager's transfers.
+    _TAB_FACE_ATTR = "_sshpilot_fm_transfer_face"
+
+    def _update_tab_indicator(
+        self, state: str, fraction: Optional[float], tooltip: Optional[str]
+    ) -> bool:
+        """Show the transfers on the tab too: it is what stays visible while
+        another tab is in front. The same ring as the toolbar button, a
+        spinner until a size is known, a warning after a failure.
+
+        Returns whether the tab took it; the indicator tells again otherwise
+        (the tab was between windows, say).
+        """
+        page = self._own_tab_page()
+        if page is None:
+            return False
+        try:
+            if state == "idle":
+                page.set_loading(False)
+                if getattr(page, self._TAB_FACE_ATTR, False):
+                    self._restore_tab_indicator(page)
+                return True
+            if state == "failed":
+                from sshpilot import icon_utils
+
+                icon = icon_utils.new_gicon_from_icon_name("dialog-warning-symbolic")
+                tooltip = _("Transfer Failed")
+            elif fraction is None:
+                icon = getattr(page, "_sshpilot_group_indicator_icon", None)
+            else:
+                from .file_manager.transfer_indicator import progress_ring_icon
+
+                icon = progress_ring_icon(
+                    fraction, self._tab_text_colour(page), self._tab_scale(page)
+                )
+            setattr(page, self._TAB_FACE_ATTR, True)
+            page.set_loading(state == "running" and fraction is None)
+            page.set_indicator_icon(icon)
+            page.set_indicator_tooltip(tooltip or "")
+            return True
+        except Exception:
+            logger.debug("Updating the tab's transfer indicator failed", exc_info=True)
+            return False
+
+    @staticmethod
+    def _restore_tab_indicator(page) -> None:
+        """Give the tab back what it shows now without transfers: its group
+        colour as it is today (it may have changed while they ran)."""
+        icon = getattr(page, "_sshpilot_group_indicator_icon", None)
+        page.set_indicator_icon(icon)
+        page.set_indicator_tooltip(_("Group color") if icon is not None else "")
+        setattr(page, FileManagerWindow._TAB_FACE_ATTR, False)
+
+    def _tab_text_colour(self, page):
+        """The colour the tab's label is drawn in: the tab bar's, which can
+        differ from the content area below it."""
+        widget = None
+        try:
+            root = page.get_child().get_root()
+            widget = getattr(root, "tab_bar", None)
+            if widget is None:
+                widget = page.get_child().get_ancestor(Adw.TabView)
+            return widget.get_color()
+        except Exception:
+            return self._toolbar_view.get_color()
+
+    @staticmethod
+    def _tab_scale(page) -> int:
+        try:
+            return page.get_child().get_scale_factor()
+        except Exception:
+            return 1
+
+    def _on_transfer_finished(self, dialog) -> None:
+        """A transfer long enough to show in the indicator finished (Nautilus
+        shows a toast too); a download offers to show where it landed."""
+        snap = dialog.snapshot()
+        toast = Adw.Toast.new(snap.get("title") or _("Transfer Complete"))
+        if snap.get("can_locate"):
+            toast.set_button_label(_("Show in Files"))
+            toast.connect("button-clicked", lambda *_a: dialog.open_location())
+        try:
+            self._toast_overlay.add_toast(toast)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
+
+    def _on_transfer_failed(self, dialog) -> None:
+        """A background transfer failed: say so, with a way to the details."""
+        snap = dialog.snapshot()
+        toast = Adw.Toast.new(snap.get("title") or _("Transfer Failed"))
+        toast.set_priority(Adw.ToastPriority.HIGH)
+        toast.set_timeout(8)
+        toast.set_button_label(_("Details"))
+        toast.connect("button-clicked", lambda *_a: self._show_transfer_details(dialog))
+        try:
+            self._toast_overlay.add_toast(toast)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
 
     def _start_transfer_batch(
         self,
@@ -3283,8 +4480,12 @@ class FileManagerWindow(Adw.Window):
         refresh_remote: Optional[FilePane] = None,
         refresh_local_path: Optional[str] = None,
         highlight_name: Optional[str] = None,
+        remote_pane: Optional[FilePane] = None,
     ) -> Future:
         """Upload or download ``(local, remote, recursive)`` items as one daemon transfer.
+
+        *remote_pane* is the pane whose server the transfer talks to; it
+        defaults to *refresh_remote*, then the right pane.
 
         The dialog follows that one transfer: bar and speed from its byte
         counts, the file counter from finished items, completion when the
@@ -3294,7 +4495,15 @@ class FileManagerWindow(Adw.Window):
         upload = operation_type == "upload"
         direction = TransferDirection.UPLOAD if upload else TransferDirection.DOWNLOAD
         logger.info("Starting %s of %d item(s) as one transfer", operation_type, len(items))
-        future = self._manager.transfer_batch(direction, items)
+        if remote_pane is None:
+            remote_pane = (
+                refresh_remote if refresh_remote is not None
+                else getattr(self, "_right_pane", None)
+            )
+        manager = self._manager_for(remote_pane)
+        if manager is None:
+            raise OSError(_("Remote connection unavailable"))
+        future = manager.transfer_batch(direction, items)
 
         def _names(index: int) -> Tuple[str, str, str]:
             local, remote, _recursive = items[index]
@@ -3316,14 +4525,15 @@ class FileManagerWindow(Adw.Window):
                 transfer_dialogs.remove(previous)
         name, source, destination = _names(0)
         dialog = self._present_progress_dialog(
-            operation_type, total_files=len(items), filename=name
+            operation_type, total_files=len(items), filename=name,
+            **({"source_pane": remote_pane} if remote_pane is not self.__dict__.get("_right_pane") else {}),
         )
         transfer_dialogs.append(dialog)
         self._progress_dialog = dialog
         dialog.set_paths(source, destination)
         dialog.set_future(future)
+        self._note_transfer_backends(dialog, manager)
 
-        manager = self._manager
         key = progress_key_for_future(future)
         state = {"focused": 0}
 
@@ -3371,11 +4581,13 @@ class FileManagerWindow(Adw.Window):
             try:
                 result = completed.result()
             except (TransferCancelledException, CancelledError):
+                dialog.mark_cancelled()
                 return False
             except Exception as exc:
                 dialog.show_completion(success=False, error_message=format_transfer_start_error(exc))
                 return False
             if result.cancelled:
+                dialog.mark_cancelled()
                 return False
             dialog.set_files_completed(result.items_done)
             failures = result.failures
@@ -3415,265 +4627,159 @@ class FileManagerWindow(Adw.Window):
         source_path: Optional[str] = None,
         destination_path: Optional[str] = None,
         expected_bytes: Optional[int] = None,
+        manager: Any = None,
+        source_pane=None,
+        destination_pane=None,
     ) -> None:
-        """Show and manage the progress dialog for a file operation."""
+        """Show and manage the progress dialog for a file operation.
+
+        *manager* is the backend whose progress signals drive the dialog
+        (default: the right pane's); *source_pane* / *destination_pane* name
+        the servers in its text. Futures of one kind on one backend join the
+        running run (its dialog); anything else starts a new run, and the
+        older one carries on in the background with its own state.
+        """
+        if manager is None:
+            manager = self._manager
+        run = self.__dict__.get("_progress_run")
         try:
             logger.debug("_show_progress_dialog called for %s %s", operation_type, filename)
-
-            # Reuse only when the existing dialog is still open and active.
-            # A dismissed/completed dialog keeps its Python wrapper around until
-            # the user starts another transfer; reusing that object skips
-            # present() and nothing appears on screen.
-            reuse_dialog = False
-            if (
-                hasattr(self, "_aggregate_dialog")
-                and self._aggregate_dialog
-                and self._aggregate_dialog.is_reusable()
-                and self._aggregate_dialog.operation_type == operation_type
-            ):
-                reuse_dialog = True
-                logger.debug("Reusing existing progress dialog for %s", operation_type)
-            else:
-                # Dismiss any stale or different-operation dialog.
-                if hasattr(self, "_aggregate_dialog") and self._aggregate_dialog:
+            reuse = (
+                run is not None
+                and run.dialog is not None
+                and run.dialog is getattr(self, "_aggregate_dialog", None)
+                and run.dialog.is_reusable()
+                and run.dialog.operation_type == operation_type
+                # Its progress listeners are on one backend.
+                and run.manager is manager
+            )
+            if not reuse:
+                previous = getattr(self, "_aggregate_dialog", None)
+                if previous is not None:
                     try:
-                        self._aggregate_dialog.close()
+                        # Only hides it: a running transfer goes on.
+                        previous.close()
                     except (AttributeError, RuntimeError):
                         pass
-                    self._aggregate_dialog = None
-
-            if not reuse_dialog:
-                self._aggregate_dialog = self._present_progress_dialog(
-                    operation_type, total_files=total_files, filename=filename
+                dialog = self._present_progress_dialog(
+                    operation_type, total_files=total_files, filename=filename,
+                    **(
+                        {"source_pane": source_pane, "destination_pane": destination_pane}
+                        if source_pane is not None or destination_pane is not None else {}
+                    ),
                 )
-            elif not self._aggregate_dialog.get_visible():
-                # Same batch, dialog object reused but not visible — re-present.
-                dialog_parent = self._progress_dialog_parent()
-                try:
-                    if _HAS_ALERT_DIALOG:
-                        self._aggregate_dialog.present(dialog_parent)
-                    else:
-                        self._aggregate_dialog.present()
-                except Exception as exc:
-                    logger.debug("Failed to re-present progress dialog: %s", exc)
+                run = _ProgressRun(dialog, manager)
+                self._connect_run(run)
+                self._progress_run = run
+                self._aggregate_dialog = dialog
+                # The window's batch fields follow the current run (helpers
+                # called without a run read them).
+                self._batch_expected = run.batch_expected
+                self._batch_active_bytes = run.batch_active_bytes
+                self._batch_settled_bytes = run.batch_settled_bytes
+                self._batch_file_meta = run.batch_file_meta
+                self._batch_focused_key = None
+                self._active_futures = run.futures
+                self._future_to_filename = run.future_to_filename
 
             # Keep the file counter in sync. Name / From / To are owned by
             # ``_focus_batch_transfer`` so a multi-file start loop does not
             # leave the dialog stuck on the last registered path.
-            self._aggregate_dialog.set_operation_details(total_files=total_files)
-            self._aggregate_dialog.set_future(future)
-
+            run.dialog.set_operation_details(total_files=total_files)
+            run.dialog.set_future(future)
+            self._note_transfer_backends(run.dialog, manager)
         except Exception as exc:
             logger.error("Error in _show_progress_dialog: %s", exc, exc_info=True)
             return
 
-        # Only connect progress signal handler when creating a new dialog
-        # When reusing, the handler is already connected
-        if not reuse_dialog:
-            # Store references for cleanup
-            self._progress_handler_id = None
-            self._progress_bytes_handler_id = None
-            self._active_futures = []  # Track all active futures for multi-file transfers
-            self._future_to_filename = {}  # Map futures to filenames for progress tracking
-            self._reset_batch_progress_state()
-
-            # Connect progress signal. Multi-file byte transfers are driven by
-            # the progress-bytes aggregator; this handler only covers deletes
-            # and single-file transfers (and starting messages).
-            def _on_progress(manager, progress: float, message: str) -> None:
-                if not (self._aggregate_dialog and
-                        not self._aggregate_dialog.is_cancelled and
-                        getattr(self, '_active_futures', None)):
-                    return
-                active_count = sum(
-                    1 for f in self._active_futures
-                    if f and not f.done() and not f.cancelled()
-                )
-                if active_count == 0:
-                    return
-                try:
-                    # Mass/recursive delete emits an overall 0..1 fraction on a
-                    # single future — do not re-apply multi-file math.
-                    if self._aggregate_dialog.operation_type == "delete":
-                        self._aggregate_dialog.update_progress(progress, message)
-                    elif self._aggregate_dialog.total_files > 1:
-                        # Concurrent transfers each emit their own fraction and
-                        # "Transferred X of Y" for that file alone. Ignore those
-                        # for the bar/status — batch aggregation owns them.
-                        # Keep only pre-byte starting messages so the dialog
-                        # isn't blank before the first chunk arrives.
-                        if getattr(self, "_batch_active_bytes", None) or getattr(
-                            self, "_batch_settled_bytes", None
-                        ):
-                            return
-                        self._aggregate_dialog.update_progress(0.0, message)
-                    else:
-                        self._aggregate_dialog.update_progress(progress, message)
-                except (AttributeError, RuntimeError, GLib.Error):
-                    # Dialog may have been destroyed mid-emit.
-                    pass
-
-            def _on_progress_bytes(manager, transferred, total, progress_key="") -> None:
-                if not (self._aggregate_dialog and not self._aggregate_dialog.is_cancelled):
-                    return
-                key = str(progress_key or "")
-                if not key:
-                    return
-                try:
-                    transferred_n = int(transferred or 0)
-                    total_n = int(total or 0)
-                except (TypeError, ValueError):
-                    return
-                active = getattr(self, "_batch_active_bytes", None)
-                expected = getattr(self, "_batch_expected", None)
-                if active is None or expected is None:
-                    return
-                if key not in expected:
-                    # Progress for a transfer outside this dialog batch.
-                    return
-                active[key] = (transferred_n, total_n)
-                try:
-                    GLib.idle_add(self._focus_batch_transfer, key)
-                    GLib.idle_add(self._publish_batch_transfer_progress)
-                except (AttributeError, RuntimeError, GLib.Error):
-                    pass
-
-            self._progress_handler_id = self._manager.connect("progress", _on_progress)
-            self._progress_bytes_handler_id = self._manager.connect(
-                "progress-bytes", _on_progress_bytes
-            )
-
-        # Add this future to the active futures list
-        if not hasattr(self, '_active_futures'):
-            self._active_futures = []
-        if future not in self._active_futures:
-            self._active_futures.append(future)
-
-        # Map future to filename for progress tracking
-        if not hasattr(self, '_future_to_filename'):
-            self._future_to_filename = {}
-        self._future_to_filename[future] = filename
-
-        if not hasattr(self, "_batch_expected"):
-            self._reset_batch_progress_state()
+        if future not in run.futures:
+            run.futures.append(future)
+        run.future_to_filename[future] = filename
         key = progress_key_for_future(future)
         exp = int(expected_bytes) if expected_bytes is not None and expected_bytes > 0 else None
-        first_in_batch = key not in self._batch_expected and not self._batch_expected
-        self._batch_expected[key] = exp
-        self._batch_file_meta[key] = (filename, source_path, destination_path)
+        first_in_batch = key not in run.batch_expected and not run.batch_expected
+        run.batch_expected[key] = exp
+        run.batch_file_meta[key] = (filename, source_path, destination_path)
         # Show the first file immediately; later files update the labels when
         # their progress-bytes arrive (or when a prior file settles).
         if first_in_batch or total_files <= 1:
-            self._focus_batch_transfer(key, force=True)
+            self._focus_batch_transfer(key, force=True, run=run)
         if exp is not None and total_files > 1:
-            self._publish_batch_transfer_progress()
+            self._publish_batch_transfer_progress(run=run)
 
         # Also update current_future for backward compatibility
         self._current_future = future
 
-        def _on_complete(future_result) -> None:
-            # Use GLib.idle_add to ensure we're on the main thread
-            def _cleanup():
-                # Remove this future from active futures list
-                if hasattr(self, '_active_futures') and future_result in self._active_futures:
-                    self._active_futures.remove(future_result)
-
-                # Only disconnect progress signals if all futures are done
-                active_count = sum(1 for f in getattr(self, '_active_futures', [])
-                                 if f and not f.done())
-                if active_count == 0:
-                    if (hasattr(self, '_progress_handler_id') and self._progress_handler_id and
-                        hasattr(self, '_manager') and self._manager is not None):
-                        try:
-                            self._manager.disconnect(self._progress_handler_id)
-                        except (TypeError, RuntimeError, AttributeError):
-                            pass
-                        self._progress_handler_id = None
-                    if (hasattr(self, '_progress_bytes_handler_id') and self._progress_bytes_handler_id and
-                        hasattr(self, '_manager') and self._manager is not None):
-                        try:
-                            self._manager.disconnect(self._progress_bytes_handler_id)
-                        except (TypeError, RuntimeError, AttributeError):
-                            pass
-                        self._progress_bytes_handler_id = None
-
-                # Update dialog to show completion
-                if self._aggregate_dialog:
-                    try:
-                        # Check if the future was cancelled first
-                        if future_result.cancelled():
-                            # Operation was cancelled, don't show completion
-                            # The dialog will be closed by the cancel handler
-                            pass
-                        elif self._aggregate_dialog.operation_type == "delete":
-                            self._complete_delete_progress(future_result)
-                        else:
-                            # Check for exceptions
-                            try:
-                                exception = future_result.exception()
-                                if exception:
-                                    self._settle_batch_transfer(future_result, success=False)
-                                    error_msg = str(exception)
-                                    # Get filename for this future
-                                    filename = self._future_to_filename.get(future_result, "unknown file")
-                                    # Track failed file
-                                    if hasattr(self._aggregate_dialog, '_failed_files'):
-                                        self._aggregate_dialog._failed_files.append((filename, error_msg))
-                                    logger.error(f"Upload failed for {filename}: {error_msg}")
-
-                                    # For multi-file operations, don't show completion until all files are done
-                                    active_count = sum(1 for f in getattr(self, '_active_futures', [])
-                                                     if f and not f.done())
-                                    if active_count == 0:
-                                        # All files are done (some may have failed)
-                                        # Show completion with summary
-                                        if hasattr(self._aggregate_dialog, '_failed_files') and self._aggregate_dialog._failed_files:
-                                            # Some files failed
-                                            failed_count = len(self._aggregate_dialog._failed_files)
-                                            if failed_count == self._aggregate_dialog.total_files:
-                                                # All files failed
-                                                error_summary = self._aggregate_dialog._failed_files[0][1] if self._aggregate_dialog._failed_files else _("Unknown error")
-                                                self._aggregate_dialog.show_completion(success=False, error_message=error_summary)
-                                            else:
-                                                # Some succeeded, some failed
-                                                total = self._aggregate_dialog.total_files
-                                                error_msg = ngettext(
-                                                    "{count} of {total} file could not be transferred",
-                                                    "{count} of {total} files could not be transferred",
-                                                    total,
-                                                ).format(count=failed_count, total=total)
-                                                self._aggregate_dialog.show_completion(success=False, error_message=error_msg)
-                                        else:
-                                            # All files succeeded (shouldn't happen if we're here, but handle it)
-                                            self._aggregate_dialog.show_completion(success=True)
-                                else:
-                                    # File completed successfully
-                                    self._settle_batch_transfer(future_result, success=True)
-                                    self._aggregate_dialog.increment_file_count()
-
-                                    # Only show completion dialog when ALL files are done
-                                    active_count = sum(1 for f in getattr(self, '_active_futures', [])
-                                                     if f and not f.done())
-                                    if active_count == 0:
-                                        # All files completed successfully
-                                        self._aggregate_dialog.show_completion(success=True)
-                            except CancelledError:
-                                # Future was cancelled, ignore
-                                pass
-                    except (AttributeError, RuntimeError, GLib.Error):
-                        # Dialog may have been destroyed
-                        pass
-
-                # Only clear current_future when all transfers are done
-                active_count = sum(1 for f in getattr(self, '_active_futures', [])
-                                 if f and not f.done())
-                if active_count == 0:
+        def _on_complete(future_result, run=run) -> None:
+            def _settle() -> bool:
+                try:
+                    self._settle_run_future(run, future_result)
+                except (AttributeError, RuntimeError, GLib.Error):
+                    logger.debug("Settling a transfer failed", exc_info=True)
+                if not any(r.running() for r in self._live_runs()):
                     self._current_future = None
+                return False
 
-            GLib.idle_add(_cleanup)
+            GLib.idle_add(_settle)
 
-        # Connect future completion
         future.add_done_callback(_on_complete)
+
+    def _live_runs(self) -> list:
+        runs = self.__dict__.get("_progress_runs")
+        if runs is None:
+            runs = self._progress_runs = []
+        runs[:] = [r for r in runs if r.running() or r is self.__dict__.get("_progress_run")]
+        return runs
+
+    def _connect_run(self, run: "_ProgressRun") -> None:
+        """Listen to *run*'s backend for *run* alone, until it ends."""
+        self._live_runs().append(run)
+
+        def _on_progress(_manager, progress: float, message: str) -> None:
+            dialog = run.dialog
+            if dialog is None or dialog.is_cancelled or not run.running():
+                return
+            try:
+                # Mass/recursive delete emits an overall 0..1 fraction on a
+                # single future — do not re-apply multi-file math.
+                if dialog.operation_type == "delete":
+                    dialog.update_progress(progress, message)
+                elif dialog.total_files > 1:
+                    # Concurrent transfers each emit their own fraction and
+                    # "Transferred X of Y" for that file alone. Ignore those
+                    # for the bar/status — batch aggregation owns them. Keep
+                    # only pre-byte starting messages so the dialog isn't
+                    # blank before the first chunk arrives.
+                    if run.batch_active_bytes or run.batch_settled_bytes:
+                        return
+                    dialog.update_progress(0.0, message)
+                else:
+                    dialog.update_progress(progress, message)
+            except (AttributeError, RuntimeError, GLib.Error):
+                pass
+
+        def _on_progress_bytes(_manager, transferred, total, progress_key="") -> None:
+            dialog = run.dialog
+            if dialog is None or dialog.is_cancelled:
+                return
+            key = str(progress_key or "")
+            if not key or key not in run.batch_expected:
+                # Progress of a transfer outside this run.
+                return
+            try:
+                run.batch_active_bytes[key] = (int(transferred or 0), int(total or 0))
+            except (TypeError, ValueError):
+                return
+            try:
+                GLib.idle_add(lambda: (self._focus_batch_transfer(key, run=run), False)[1])
+                GLib.idle_add(lambda: (self._publish_batch_transfer_progress(run=run), False)[1])
+            except (AttributeError, RuntimeError, GLib.Error):
+                pass
+
+        run.handler_ids = [
+            run.manager.connect("progress", _on_progress),
+            run.manager.connect("progress-bytes", _on_progress_bytes),
+        ]
 
     @staticmethod
     def _normalize_local_path(path: Optional[str]) -> str:
@@ -3755,7 +4861,7 @@ def launch_file_manager_window(
     connection_id = None
     if connection is not None:
         try:
-            connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
+            connection_id = file_manager_connection_id(connection)
         except Exception:
             connection_id = None
 

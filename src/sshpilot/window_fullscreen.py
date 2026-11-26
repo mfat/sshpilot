@@ -591,6 +591,7 @@ class WindowFullscreenController:
         """Edge-to-edge terminal with the chrome folded into a top overlay."""
         self.presentation = PRESENTATION_TERMINAL
         self._set_sidebar_visible(False)
+        self._set_widget_visible('view_rail', False)
         self._set_widget_visible('update_banner_container', False)
         self._set_widget_visible('tips_banner_container', False)
         self._set_widget_visible('broadcast_banner', False)
@@ -621,6 +622,7 @@ class WindowFullscreenController:
     def _capture_ui_state(self) -> dict:
         return {
             'sidebar_visible': self._get_sidebar_visible(),
+            'view_rail_visible': self._get_widget_visible('view_rail'),
             'header_visible': self._get_widget_visible('header_bar'),
             'tab_bar_visible': self._get_widget_visible('tab_bar'),
             'update_banner_visible': self._get_widget_visible('update_banner_container'),
@@ -633,6 +635,7 @@ class WindowFullscreenController:
         if not saved:
             return
         self._set_sidebar_visible(saved.get('sidebar_visible'))
+        self._set_widget_visible('view_rail', saved.get('view_rail_visible'))
         self._set_widget_visible('header_bar', saved.get('header_visible'))
         if restore_tab_bar:
             self._set_widget_visible('tab_bar', saved.get('tab_bar_visible'))

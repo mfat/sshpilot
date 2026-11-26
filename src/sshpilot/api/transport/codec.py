@@ -128,6 +128,7 @@ from ..models.connections import (
     LookupKeyPassphraseRequest,
     RenameGroupRequest,
     SaveSshConfigTextRequest,
+    SshConfigFileRef,
     SplitConnectionRequest,
     SshConfigText,
     StoreConnectionPasswordRequest,
@@ -2448,6 +2449,7 @@ def connection_editor_details_to_wire(
             "source": details.source,
             "generation": details.generation,
             "authored_directives": list(details.authored_directives),
+            "shared_host_tokens": list(details.shared_host_tokens),
         }
     )
     return result
@@ -2467,6 +2469,7 @@ def connection_editor_details_from_wire(
             "target_summary",
             "config_read_only",
             "authored_directives",
+            "shared_host_tokens",
             "plugin_data",
         },
         context="connection editor details",
@@ -2500,6 +2503,14 @@ def connection_editor_details_from_wire(
         raise ValueError("authored_directives must be an array")
     authored_directives = tuple(
         _text(item, "authored directive", allow_empty=False) for item in raw_authored
+    )
+    # Additive, like the above: an older daemon omits it, and empty already
+    # means "a block of this host's own".
+    raw_shared = data.get("shared_host_tokens", [])
+    if type(raw_shared) is not list:
+        raise ValueError("shared_host_tokens must be an array")
+    shared_host_tokens = tuple(
+        _text(item, "shared host token", allow_empty=False) for item in raw_shared
     )
     raw_plugin_data = data.get("plugin_data", {})
     if type(raw_plugin_data) is not dict:
@@ -2565,6 +2576,7 @@ def connection_editor_details_from_wire(
         source=_text(data["source"], "source", allow_empty=True),
         generation=_integer(data["generation"], "generation"),
         authored_directives=authored_directives,
+        shared_host_tokens=shared_host_tokens,
     )
 
 
@@ -2905,6 +2917,8 @@ def update_connection_request_to_wire(
         result["plugin_data"] = dict(request.plugin_data)
     if request.expected_generation is not None:
         result["expected_generation"] = request.expected_generation
+    if request.shared_block:
+        result["shared_block"] = True
     return result
 
 
@@ -2921,6 +2935,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
             "config_patch",
             "plugin_data",
             "expected_generation",
+            "shared_block",
         },
         context="update connection request",
     )
@@ -2956,6 +2971,10 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     if expected_generation is not None:
         expected_generation = _integer(expected_generation, "expected generation")
 
+    shared_block = data.get("shared_block", False)
+    if type(shared_block) is not bool:
+        raise ValueError("shared_block must be a boolean")
+
     raw_plugin_data = data.get("plugin_data", {})
     if type(raw_plugin_data) is not dict:
         raise ValueError("plugin_data must be an object")
@@ -2968,6 +2987,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
         config_patch=config_patch,
         plugin_data=dict(raw_plugin_data),
         expected_generation=expected_generation,
+        shared_block=shared_block,
     )
 
 
@@ -3425,6 +3445,11 @@ def ssh_config_text_to_wire(result: SshConfigText) -> Dict[str, Any]:
         "revision": result.revision,
         "display_name": result.display_name,
         "writable": result.writable,
+        "file": result.file,
+        "files": [
+            {"file": item.file, "display_name": item.display_name, "writable": item.writable}
+            for item in result.files
+        ],
     }
 
 
@@ -3434,13 +3459,30 @@ def ssh_config_text_from_wire(value: Any) -> SshConfigText:
     data = _strict_fields(
         value,
         required={"text", "revision", "display_name", "writable"},
+        # Additive: a daemon that predates included files names neither.
+        optional={"file", "files"},
         context="ssh config text",
     )
+    raw_files = data.get("files", [])
+    if type(raw_files) is not list:
+        raise ValueError("ssh config files must be an array")
+    files = []
+    for raw in raw_files:
+        item = _strict_fields(
+            raw, required={"file", "display_name", "writable"}, context="ssh config file"
+        )
+        files.append(SshConfigFileRef(
+            file=_text(item["file"], "ssh config file name", allow_empty=True),
+            display_name=_text(item["display_name"], "ssh config display name"),
+            writable=_boolean(item["writable"], "ssh config writable"),
+        ))
     return SshConfigText(
         text=_text(data["text"], "ssh config text", allow_empty=True),
         revision=_identifier(data["revision"], "ssh config revision"),
         display_name=_text(data["display_name"], "ssh config display name"),
         writable=_boolean(data["writable"], "ssh config writable"),
+        file=_text(data.get("file", ""), "ssh config file name", allow_empty=True),
+        files=tuple(files),
     )
 
 
@@ -3452,11 +3494,13 @@ def save_ssh_config_text_request_from_wire(
     data = _strict_fields(
         value,
         required={"text", "expected_revision"},
+        optional={"file"},
         context="save ssh config text request",
     )
     return SaveSshConfigTextRequest(
         text=_text(data["text"], "ssh config text", allow_empty=True),
         expected_revision=_identifier(data["expected_revision"], "expected ssh config revision"),
+        file=_text(data.get("file", ""), "ssh config file name", allow_empty=True),
     )
 
 
@@ -3736,19 +3780,23 @@ def open_session_request_from_wire(value: Any) -> OpenSessionRequest:
 def attach_session_request_to_wire(request: AttachSessionRequest) -> Dict[str, Any]:
     if type(request) is not AttachSessionRequest:
         raise TypeError("attach session request is required")
-    return {
+    wire = {
         "session_id": request.session_id,
         "request_input": request.request_input,
         "want_terminal_output": request.want_terminal_output,
         "from_sequence": request.from_sequence,
     }
+    if request.flow_control:
+        # Omitted when off: daemons before API 0.118 reject unknown fields.
+        wire["flow_control"] = True
+    return wire
 
 
 def attach_session_request_from_wire(value: Any) -> AttachSessionRequest:
     data = _strict_fields(
         value,
         required={"session_id", "request_input"},
-        optional={"want_terminal_output", "from_sequence"},
+        optional={"want_terminal_output", "from_sequence", "flow_control"},
         context="attach session request",
     )
     return AttachSessionRequest(
@@ -3761,6 +3809,10 @@ def attach_session_request_from_wire(value: Any) -> AttachSessionRequest:
         from_sequence=_integer(
             data.get("from_sequence", 0),
             "terminal replay sequence",
+        ),
+        flow_control=_boolean(
+            data.get("flow_control", False),
+            "terminal flow control",
         ),
     )
 
@@ -5396,6 +5448,8 @@ def sftp_copy_request_to_wire(request: SftpCopyRequest) -> Dict[str, Any]:
     # Sent only when set, so a plain copy stays readable by older daemons.
     if request.as_operation:
         wire["as_operation"] = True
+    if request.destination_service_id is not None:
+        wire["destination_service_id"] = request.destination_service_id
     return wire
 
 
@@ -5403,9 +5457,10 @@ def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
     data = _strict_fields(
         value,
         required={"service_id", "source_path", "destination_path"},
-        optional={"recursive", "move", "as_operation"},
+        optional={"recursive", "move", "as_operation", "destination_service_id"},
         context="SFTP copy request",
     )
+    destination_service_id = data.get("destination_service_id")
     return SftpCopyRequest(
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         source_path=_text(data["source_path"], "SFTP copy source path"),
@@ -5413,6 +5468,10 @@ def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
         recursive=_boolean(data.get("recursive", False), "SFTP copy recursive"),
         move=_boolean(data.get("move", False), "SFTP copy move"),
         as_operation=_boolean(data.get("as_operation", False), "SFTP copy as operation"),
+        destination_service_id=(
+            None if destination_service_id is None
+            else _sftp_service_id(destination_service_id, "SFTP destination service id")
+        ),
     )
 
 

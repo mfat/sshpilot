@@ -38,8 +38,81 @@ def test_is_reusable_false_when_cancelled():
     assert _bare_dialog(is_cancelled=True).is_reusable() is False
 
 
-def test_is_reusable_false_when_not_visible():
-    assert _bare_dialog(visible=False).is_reusable() is False
+def test_is_reusable_while_running_in_the_background():
+    """Transfers run in the background (#1356): a dialog that was never put
+    on screen still tracks its transfer and takes more of the batch."""
+    assert _bare_dialog(visible=False).is_reusable() is True
+
+
+def _background_dialog():
+    dlg = _bare_dialog(visible=False)
+    dlg._presented = False
+    dlg._current_future = None
+    dlg._futures = []
+    dlg._render_timeout_id = None
+    dlg._total_bytes = 0
+    dlg._transferred_bytes = 0
+    dlg._latest_fraction = None
+    dlg._latest_message = None
+    dlg.current_file = "big.iso"
+    dlg._heading_text = "Uploading 1 File"
+    dlg._status_text = ""
+    dlg._speed_text = "2.0 MB/s"
+    dlg._eta_text = "5s remaining"
+    dlg._succeeded = None
+    dlg._error_message = None
+    dlg._locate_path = None
+    dlg._host_label = dlg._destination_host_label = "srv"
+    return dlg
+
+
+def test_closing_the_details_does_not_cancel_the_transfer():
+    dlg = _background_dialog()
+    future = Future()
+    dlg.set_future(future)
+    dlg._presented = True
+
+    dlg._on_dialog_closed(dlg)
+
+    assert not future.cancelled()
+    assert dlg.is_cancelled is False
+    assert dlg._presented is False
+    assert dlg.is_reusable()
+
+
+def test_cancel_cancels_the_running_transfer():
+    dlg = _background_dialog()
+    future = Future()
+    dlg.set_future(future)
+
+    dlg.cancel()
+
+    assert future.cancelled()
+    snap = dlg.snapshot()
+    assert snap["state"] == "cancelled"
+    assert snap["detail"] == ""  # the route is already the subtitle
+
+
+def test_snapshot_reports_progress_then_the_outcome():
+    dlg = _background_dialog()
+    dlg._total_bytes, dlg._transferred_bytes, dlg._latest_fraction = 100, 40, 0.4
+    snap = dlg.snapshot()
+    assert snap["state"] == "running" and snap["fraction"] == 0.4
+    assert "2.0 MB/s" in snap["detail"] and snap["subtitle"] == "big.iso"
+
+    dlg._completion_shown, dlg._succeeded = True, False
+    dlg._error_message = "Permission denied"
+    snap = dlg.snapshot()
+    assert snap["state"] == "failed" and snap["error"] == "Permission denied"
+
+
+def test_a_cancelled_future_reads_as_cancelled_without_the_dialog():
+    """Cancelled elsewhere (the daemon, another path): not left 'running'."""
+    dlg = _background_dialog()
+    future = Future()
+    dlg.set_future(future)
+    future.cancel()
+    assert dlg.snapshot()["state"] == "cancelled"
 
 
 def test_complete_delete_progress_reports_partial_failures(load_file_manager_window):
@@ -90,3 +163,20 @@ def test_delete_items_done_floors_fractional_recursive_progress():
     assert done(1.0, 1, 0) == 1
     # Never move the counter backwards.
     assert done(0.1, 10, 3) == 3
+
+
+def test_a_cancelled_transfer_never_turns_into_a_failure():
+    """The daemon confirms a cancel as an error. That must not flip the
+    indicator row from cancelled to failed, where it would stay for good."""
+    import types as _types
+
+    from sshpilot.file_manager import progress_dialog
+
+    stopped = []
+    dialog = _types.SimpleNamespace(
+        is_cancelled=True, _completion_shown=False,
+        _stop_render_timer=lambda: stopped.append(True),
+    )
+    progress_dialog.SFTPProgressDialog._show_completion_ui(dialog, False, "cancelled")
+    assert dialog._completion_shown is False
+    assert not stopped

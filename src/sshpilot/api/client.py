@@ -20,6 +20,8 @@ from .models.connections import (
     ConfigConflict,
     ConfigSyntaxError,
     EarlierDirective,
+    EvaluateSshConfigDraftRequest,
+    SshConfigDraftEvaluation,
     EffectiveConfigComparison,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
@@ -122,6 +124,7 @@ from .models.terminal import (
     TerminalInputStatus,
     TerminalInputStatusRequest,
     TerminalInput,
+    TerminalOutputAck,
 )
 from .models.common import (
     ConnectionId,
@@ -190,6 +193,8 @@ from .models.login_profiles import (
     LoginProfileSnapshot,
     LoginProfileSummary,
     PreviewLoginProfileAssignmentRequest,
+    PreviewLoginProfileUpdateRequest,
+    LoginProfileUpdatePreview,
     SetGroupLoginProfileRequest,
     SetLoginProfileSecretRequest,
     UpdateLoginProfileRequest,
@@ -250,6 +255,14 @@ class SshPilotClient(Protocol):
     def get_earlier_directives(self, host: str) -> Tuple[EarlierDirective, ...]:
         ...
 
+    def get_inherited_auth(self, host: str) -> Tuple[EarlierDirective, ...]:
+        ...
+
+    def evaluate_ssh_config_draft(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> SshConfigDraftEvaluation:
+        ...
+
     def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:
         ...
 
@@ -261,7 +274,7 @@ class SshPilotClient(Protocol):
     ) -> UnsavedHostCheckResult:
         ...
 
-    def get_ssh_config_text(self) -> SshConfigText:
+    def get_ssh_config_text(self, file: str = "") -> SshConfigText:
         ...
 
     def prepare_external_terminal_launch(
@@ -302,6 +315,13 @@ class SshPilotClient(Protocol):
         self, request: CreateConnectionRequest
     ) -> ConnectionDetails:
         """Register an unsaved target; open sessions on the returned id."""
+        ...
+
+    def open_draft_test_connection(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> ConnectionDetails:
+        """Register an unsaved target that reaches ``request.host`` as the
+        SSH configuration draft would; run commands on the returned id."""
         ...
 
     def preview_asbru_import(self, source: str) -> AsbruImportPreview:
@@ -462,6 +482,9 @@ class SshPilotClient(Protocol):
         ...
 
     def send_terminal_input(self, request: TerminalInput) -> None:
+        ...
+
+    def acknowledge_terminal_output(self, request: TerminalOutputAck) -> None:
         ...
 
     def get_terminal_input_status(
@@ -766,6 +789,12 @@ class SshPilotClient(Protocol):
         self, request: PreviewLoginProfileAssignmentRequest
     ) -> Tuple[LoginProfileAssignmentPreview, ...]:
         """Host-block settings an assignment would change, per connection."""
+        ...
+
+    def preview_login_profile_update(
+        self, request: PreviewLoginProfileUpdateRequest
+    ) -> LoginProfileUpdatePreview:
+        """Linked connections' own values a profile edit would replace."""
         ...
 
     def assign_login_profile(self, request: AssignLoginProfileRequest) -> bool:

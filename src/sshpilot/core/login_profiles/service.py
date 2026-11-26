@@ -49,7 +49,11 @@ from .models import (
     ProfileLink,
     apply_profile_to_data,
     auth_fingerprint,
+    has_legacy_link_fields,
+    is_legacy_auth_link,
+    link_fingerprint,
     matches_legacy_auth_fingerprint,
+    profile_owned_fields,
     auth_projection,
     diff_projections,
     profile_owned_keywords,
@@ -120,6 +124,17 @@ class AssignmentPreview:
     connection_id: str
     profile_name: str  # "" when the target resolves to no profile
     changes: Tuple[FieldChange, ...]
+
+
+def _user_set(field: str, value: Any) -> bool:
+    """A value the connection holds itself (not empty, not the default)."""
+    if field == "key_select_mode":
+        return value not in (None, 0)
+    if field == "identities_only":
+        return value not in (None, "")
+    if field == "forward_agent":
+        return bool(value)
+    return value not in (None, "", [], ())
 
 
 @dataclass(frozen=True)
@@ -608,14 +623,79 @@ class LoginProfileService:
                     previews.append(AssignmentPreview(cid, "", ()))
                     continue
                 keys = profile_owned_keywords(eff.profile)
-                before = auth_projection(record.data, keys, expand_paths=True)
+                fields = profile_owned_fields(eff.profile)
+                before = auth_projection(
+                    record.data, keys, expand_paths=True, owned_fields=fields
+                )
                 after = auth_projection(
-                    apply_profile_to_data(record.data, eff.profile), keys, expand_paths=True
+                    apply_profile_to_data(record.data, eff.profile), keys,
+                    expand_paths=True, owned_fields=fields,
                 )
                 previews.append(
                     AssignmentPreview(cid, eff.profile.name, diff_projections(before, after))
                 )
             return tuple(previews)
+
+    def preview_update(
+        self, profile_id: str, changes: Mapping[str, Any]
+    ) -> Tuple[int, Tuple[AssignmentPreview, ...]]:
+        """Which linked connections' own values an edit would replace.
+
+        Returns ``(linked_count, previews)``. A preview lists, for one linked
+        connection, the fields the edited profile starts to set (it did not
+        before) where the connection holds a value of its own that differs.
+        Values the profile already set are its own and are not reported, nor
+        are fields the connection leaves empty. No side effects.
+        """
+        with self._lock:
+            current = self._state.get(profile_id)
+            if current is None:
+                raise _not_found()
+            settings = self._settings(changes)
+            try:
+                updated = current.with_changes(**settings)
+            except (TypeError, ValueError) as exc:
+                raise _invalid_value(exc) from exc
+            newly = tuple(
+                f for f in profile_owned_fields(updated)
+                if f not in profile_owned_fields(current)
+            )
+            new_keys = tuple(
+                k for k in profile_owned_keywords(updated)
+                if k not in profile_owned_keywords(current)
+            )
+            snapshot = self._snapshot()
+            metadata = self._metadata_map(snapshot)
+            group_links = self._group_links()
+            linked = 0
+            previews: List[AssignmentPreview] = []
+            for cid in self._ssh_ids(snapshot):
+                eff = effective_profile(
+                    cid, parse_link(metadata.get(cid)), snapshot.groups,
+                    group_links, self._state,
+                )
+                if eff is None or eff.profile.id != profile_id:
+                    continue
+                linked += 1
+                if not newly and not new_keys:
+                    continue
+                record = self._repository.get_record(cid)
+                if record is None:
+                    continue
+                before = auth_projection(
+                    record.data, new_keys, expand_paths=True, owned_fields=newly
+                )
+                after = auth_projection(
+                    apply_profile_to_data(record.data, updated), new_keys,
+                    expand_paths=True, owned_fields=newly,
+                )
+                replaced = tuple(
+                    change for change in diff_projections(before, after)
+                    if _user_set(change.field, change.before)
+                )
+                if replaced:
+                    previews.append(AssignmentPreview(cid, updated.name, replaced))
+            return linked, tuple(previews)
 
     def assign_connections(
         self,
@@ -697,12 +777,14 @@ class LoginProfileService:
         new_id = getattr(updated, "id", None) or connection_id
         written = self._repository.get_record(new_id) or updated
         keys = profile_owned_keywords(profile)
+        fields = profile_owned_fields(profile)
         applied = ProfileLink(
             link.mode,
             link.profile_id,
-            auth_fingerprint(written.data, keys),
+            auth_fingerprint(written.data, keys, owned_fields=fields),
             revision_token(profile),
             keys,
+            fields,
         )
         self._repository.update_connection_metadata(
             new_id, {LINK_METADATA_KEY: applied.to_metadata()}
@@ -732,7 +814,7 @@ class LoginProfileService:
                 continue
             previous = self._state.get((link.rev or "").split(":", 1)[0])
             previous_name = previous.name if previous else ""
-            fingerprint = auth_fingerprint(record.data, link.extra_keys)
+            fingerprint = link_fingerprint(record.data, link)
             if link.applied and fingerprint != link.applied:
                 if matches_legacy_auth_fingerprint(record.data, link.extra_keys, link.applied):
                     # Upgrade only the metadata after validating the old hash;
@@ -749,6 +831,29 @@ class LoginProfileService:
                 if link.mode == LINK_EXPLICIT:
                     self._detach_locked(cid)
                     detached.append(DetachedConnection(cid, previous_name, DETACH_MISSING))
+                continue
+            if (
+                link.applied
+                and (is_legacy_auth_link(link.applied) or has_legacy_link_fields(link))
+                and link.rev == revision_token(eff.profile)
+            ):
+                # Recorded by a version where a profile owned every field.
+                # It matched above, so the block is as that version wrote it:
+                # record what the profile owns now, without rewriting the
+                # block. Otherwise a field the dialog now leaves editable
+                # (one the profile does not set) would read as drift. Links
+                # that list a retired field (key_select_mode) move to the
+                # profile's current fields the same way.
+                keys = profile_owned_keywords(eff.profile)
+                fields = profile_owned_fields(eff.profile)
+                upgraded = ProfileLink(
+                    link.mode, link.profile_id,
+                    auth_fingerprint(record.data, keys, owned_fields=fields),
+                    link.rev, keys, fields,
+                )
+                self._repository.update_connection_metadata(
+                    cid, {LINK_METADATA_KEY: upgraded.to_metadata()}
+                )
                 continue
             if link.rev != revision_token(eff.profile) or not link.applied:
                 try:

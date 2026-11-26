@@ -1276,3 +1276,111 @@ def test_group_only_delete_keeps_the_ssh_blocks(tmp_path):
     assert [g.name for g in snap.groups] == ["Child"]
     assert snap.groups[0].parent_id is None
     assert "Host web" in root.read_text()
+
+
+def test_a_shared_host_block_is_edited_through_the_api_only_when_asked(tmp_path):
+    """End to end below the wire: the editor is told the block is shared,
+    a plain update is refused, and one that says so edits it for all."""
+    from sshpilot.api.errors import SshPilotError
+
+    text = "Host web1 web2\n    User deploy\n\nHost *.prod edge\n    User ops\n"
+    repo, root, _ = _repo(tmp_path, text)
+    application = ConnectionApplicationService(repo, client_name="test")
+
+    assert application.get_connection_editor("web1").shared_host_tokens == ("web2",)
+    assert application.get_connection_editor("edge").shared_host_tokens == ("*.prod",)
+
+    with pytest.raises(SshPilotError):
+        application.update_connection("web1", UpdateConnectionRequest(username="all"))
+    assert root.read_text() == text
+
+    application.update_connection(
+        "web1", UpdateConnectionRequest(username="all", shared_block=True)
+    )
+    application.update_connection(
+        "edge", UpdateConnectionRequest(username="prod-ops", shared_block=True)
+    )
+    assert root.read_text() == (
+        "Host web1 web2\n    User all\n\nHost *.prod edge\n    User prod-ops\n"
+    )
+    records = {record.id: record for record in repo.snapshot().connections}
+    assert records["web2"].username == "all"            # the same block
+
+
+def test_an_included_config_file_is_read_and_saved_by_the_name_the_daemon_gave(tmp_path):
+    from sshpilot.api.errors import SshPilotError
+    from sshpilot.api.models.connections import SaveSshConfigTextRequest
+
+    included = tmp_path / "hosts.conf"
+    included.write_text("Host inc\n    User old\n")
+    repo, root, _ = _repo(tmp_path, f"Include {included}\n\nHost top\n    User me\n")
+    application = ConnectionApplicationService(repo, client_name="test")
+
+    whole = application.get_ssh_config_text()
+    assert whole.file == "" and whole.text.startswith("Include ")
+    assert [item.file for item in whole.files] == ["", str(included)]
+    assert all(item.writable for item in whole.files)
+
+    part = application.get_ssh_config_text(str(included))
+    assert part.file == str(included) and part.text == "Host inc\n    User old\n"
+    assert part.revision == whole.revision          # one revision for the tree
+
+    # A path the daemon did not list is not a file it answers for.
+    outside = tmp_path / "outside.conf"
+    outside.write_text("Host x\n")
+    with pytest.raises(SshPilotError):
+        application.get_ssh_config_text(str(outside))
+    with pytest.raises(SshPilotError):
+        application.save_ssh_config_text(
+            SaveSshConfigTextRequest("Host y\n", whole.revision, file=str(outside))
+        )
+    assert outside.read_text() == "Host x\n"
+
+    saved = application.save_ssh_config_text(
+        SaveSshConfigTextRequest("Host inc\n    User new\n", part.revision, file=str(included))
+    )
+    assert saved.file == str(included) and saved.revision != part.revision
+    assert included.read_text() == "Host inc\n    User new\n"
+    assert root.read_text().startswith("Include ")  # the root is untouched
+    records = {record.id: record for record in repo.snapshot().connections}
+    assert records["inc"].username == "new"         # reloaded at once
+
+    with pytest.raises(SshPilotError):              # the old revision is stale now
+        application.save_ssh_config_text(
+            SaveSshConfigTextRequest("Host inc\n", part.revision, file=str(included))
+        )
+
+
+def test_a_refused_change_says_which_refusal_it_is(tmp_path):
+    """The API carries a code for a change refused before any write; one
+    whose outcome is unknown carries none."""
+    from sshpilot.api.errors import ErrorCode as ApiCode, MutationRefusal, SshPilotError
+    from sshpilot.core.connection_application_service import _map_core_error
+
+    text = "Host web1 web2\n    User deploy\n\nHost twice\n    User a\n\nHost twice\n    Port 2\n"
+    repo, root, _ = _repo(tmp_path, text)
+    application = ConnectionApplicationService(repo, client_name="test")
+
+    def refusal(connection_id):
+        with pytest.raises(SshPilotError) as caught:
+            application.update_connection(connection_id, UpdateConnectionRequest(username="x"))
+        assert caught.value.code is ApiCode.MUTATION_AMBIGUOUS
+        return caught.value.details.get("refusal")
+
+    assert refusal("web1") == MutationRefusal.SHARED_DECLARATION.value
+    assert refusal("twice") == MutationRefusal.MULTIPLE_DECLARATIONS.value
+    assert root.read_text() == text
+
+    for message, expected in (
+        ("Connection identity is unresolved", MutationRefusal.IDENTITY_UNRESOLVED.value),
+    ):
+        mapped = _map_core_error(CoreError(
+            ErrorCode.MUTATION_AMBIGUOUS, message, details={"refusal": expected}
+        ))
+        assert mapped.details == {"refusal": expected}
+    unknown = _map_core_error(CoreError(ErrorCode.MUTATION_AMBIGUOUS, "outcome unknown"))
+    assert unknown.details == {} and "may have completed" in unknown.message
+    made_up = _map_core_error(CoreError(
+        ErrorCode.MUTATION_AMBIGUOUS, "x", details={"refusal": "not a code"}
+    ))
+    assert made_up.details == {}

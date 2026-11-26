@@ -301,6 +301,8 @@ class _QueuedReplayClient(_TerminalClient):
                     truncated=truncated,
                     eof=False,
                     returned_end=returned_end,
+                    requested_sequence=request.after_sequence,
+                    available_start=self.recovery_start,
                 ),
             )
             if queued_before:

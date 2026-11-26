@@ -225,11 +225,13 @@ Synthetic representation:
 | `request_input` | `bool` | No | `true` | No |
 | `want_terminal_output` | `bool` | No | `false` | No |
 | `from_sequence` | `int` | No | `0` | No |
+| `flow_control` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "flow_control": false,
   "from_sequence": 0,
   "request_input": true,
   "session_id": "session-12",
@@ -754,7 +756,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Full v1 connection response without secret values or sensitive paths.
 
-**Related methods:** `create_connection`, `get_connection`, `open_transient_connection`, `update_connection`
+**Related methods:** `create_connection`, `get_connection`, `open_draft_test_connection`, `open_transient_connection`, `update_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -901,6 +903,7 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `source` | `str` | No | `` | No |
 | `generation` | `int` | No | `0` | No |
 | `authored_directives` | `tuple[str, ...]` | No | `[]` | No |
+| `shared_host_tokens` | `tuple[str, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -946,6 +949,7 @@ Synthetic representation:
   "remote_command": "",
   "request_tty": "",
   "security_key_provider": "",
+  "shared_host_tokens": [],
   "source": "",
   "target_summary": "",
   "username": "user",
@@ -1998,7 +2002,7 @@ for the host whatever the host's own block says. ``block`` is the header
 of the block that holds the line (``Host *``, ``Match all``), empty for a
 line above every block; ``file`` and ``line`` locate it.
 
-**Related methods:** `get_earlier_directives`, `get_effective_config`, `list_config_conflicts`
+**Related methods:** `get_earlier_directives`, `get_effective_config`, `get_inherited_auth`, `list_config_conflicts`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2116,6 +2120,46 @@ Synthetic representation:
   "error": "<sensitive value omitted>",
   "protocol_version": {},
   "request_id": "request-3"
+}
+```
+
+<!-- api-model: EvaluateSshConfigDraftRequest -->
+## `EvaluateSshConfigDraftRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Ask what OpenSSH would use for ``host`` if ``text`` were saved.
+
+``text`` is the whole root SSH configuration as it would be written.
+``user`` and ``port`` stand for ``ssh -l``/``-p`` on the command line.
+OpenSSH runs a ``Match exec`` command to evaluate its block, so a draft
+is not evaluated while it holds such a command that the saved
+configuration does not. ``allowed_exec`` lists, word for word, the new
+commands the user agreed to run; any other new command keeps the draft
+pending.
+
+**Related methods:** `evaluate_ssh_config_draft`, `open_draft_test_connection`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `text` | `str` | Yes | — | No |
+| `host` | `str` | Yes | — | No |
+| `user` | `str | None` | No | `null` | No |
+| `port` | `int | None` | No | `null` | No |
+| `allowed_exec` | `tuple[str, ...]` | No | `[]` | No |
+| `file` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "allowed_exec": [],
+  "file": "",
+  "host": "example",
+  "port": null,
+  "text": "example",
+  "user": null
 }
 ```
 
@@ -3571,7 +3615,7 @@ Synthetic representation:
 | `name` | `str` | Yes | — | No |
 | `username` | `str` | No | `` | No |
 | `auth_method` | `int` | No | `0` | No |
-| `key_select_mode` | `int` | No | `0` | No |
+| `key_select_mode` | `Optional[int]` | No | `null` | No |
 | `identity_files` | `Tuple[str, ...]` | No | `[]` | No |
 | `certificate_files` | `Tuple[str, ...]` | No | `[]` | No |
 | `identity_agent` | `str` | No | `` | No |
@@ -3579,10 +3623,11 @@ Synthetic representation:
 | `pkcs11_provider` | `str` | No | `` | No |
 | `security_key_provider` | `str` | No | `` | No |
 | `pubkey_auth_no` | `bool` | No | `false` | No |
-| `forward_agent` | `bool` | No | `false` | No |
+| `forward_agent` | `Optional[bool]` | No | `null` | No |
 | `forward_agent_target` | `str` | No | `` | No |
 | `proxy_command` | `str` | No | `` | No |
 | `extra_ssh_config` | `str` | No | `` | No |
+| `identities_only` | `Optional[bool]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -3592,11 +3637,12 @@ Synthetic representation:
   "auth_method": 0,
   "certificate_files": [],
   "extra_ssh_config": "",
-  "forward_agent": false,
+  "forward_agent": null,
   "forward_agent_target": "",
+  "identities_only": null,
   "identity_agent": "",
   "identity_files": [],
-  "key_select_mode": 0,
+  "key_select_mode": null,
   "name": "example",
   "pkcs11_provider": "",
   "proxy_command": "",
@@ -3665,6 +3711,35 @@ Synthetic representation:
   "id": "production",
   "revision": {},
   "settings": {}
+}
+```
+
+<!-- api-model: LoginProfileUpdatePreview -->
+## `LoginProfileUpdatePreview`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** What saving a profile edit would do to its linked connections.
+
+``linked_count`` counts the connections using the profile (explicitly or
+through their group). ``replaced`` lists, per affected connection, the
+values of its own that the edit would replace: fields the edited profile
+starts to set where the connection holds a different value.
+
+**Related methods:** `preview_login_profile_update`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `linked_count` | `int` | No | `0` | No |
+| `replaced` | `Tuple['LoginProfileAssignmentPreview', ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "linked_count": 0,
+  "replaced": []
 }
 ```
 
@@ -4390,6 +4465,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: PreviewLoginProfileUpdateRequest -->
+## `PreviewLoginProfileUpdateRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** An edit to preview: the profile and its complete new settings.
+
+**Related methods:** `preview_login_profile_update`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `profile_id` | `LoginProfileId` | Yes | — | No |
+| `settings` | `LoginProfileSettings` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "profile_id": {},
+  "settings": {}
+}
+```
+
 <!-- api-model: ProcessCounts -->
 ## `ProcessCounts`
 
@@ -4907,11 +5006,13 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** Optimistic raw-text replacement of the daemon-selected SSH config.
+**Purpose:** Optimistic raw-text replacement of one SSH config file.
 
 ``expected_revision`` is the revision returned by the preceding load;
 the daemon rejects the save when any participating config file changed
-since the editor loaded it.
+since the editor loaded it. ``file`` names the file to replace as
+``SshConfigText.files`` listed it (empty: the root); a name the
+configuration no longer reads is refused.
 
 **Related methods:** `save_ssh_config_text`
 **Related events:** None
@@ -4920,12 +5021,14 @@ since the editor loaded it.
 | --- | --- | ---: | --- | ---: |
 | `text` | `str` | Yes | — | Yes |
 | `expected_revision` | `str` | Yes | — | No |
+| `file` | `str` | No | `` | No |
 
 Synthetic representation:
 
 ```json
 {
   "expected_revision": "example",
+  "file": "",
   "text": "<sensitive value omitted>"
 }
 ```
@@ -5370,7 +5473,11 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** Copy or move a remote SFTP path within one service.
+**Purpose:** Copy or move a remote SFTP path within one service, or to another.
+
+``destination_service_id`` names a second SFTP service (another server,
+or another session on the same one) that receives the copy; the source
+paths stay on ``service_id``. Such a copy always runs as an operation.
 
 **Related methods:** `sftp_copy`
 **Related events:** None
@@ -5383,6 +5490,7 @@ Synthetic representation:
 | `recursive` | `bool` | No | `false` | No |
 | `move` | `bool` | No | `false` | No |
 | `as_operation` | `bool` | No | `false` | No |
+| `destination_service_id` | `Optional[SftpServiceId]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -5390,6 +5498,7 @@ Synthetic representation:
 {
   "as_operation": false,
   "destination_path": {},
+  "destination_service_id": null,
   "move": false,
   "recursive": false,
   "service_id": {},
@@ -6020,17 +6129,255 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SshConfigDraftError -->
+## `SshConfigDraftError`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** A line OpenSSH rejects. ``file`` is empty for the draft itself;
+``line`` is 0 when OpenSSH names none. ``diagnostic`` is OpenSSH's own
+text, shown as it is and never interpreted.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `file` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+| `diagnostic` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "diagnostic": "example",
+  "file": "example",
+  "line": 0
+}
+```
+
+<!-- api-model: SshConfigDraftEvaluation -->
+## `SshConfigDraftEvaluation`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** What OpenSSH resolves for a host from a draft root configuration.
+
+The draft is evaluated the way a launch reads the saved file: with the
+system-wide configuration when the root is the user's own
+``~/.ssh/config`` (``system_config`` names it, empty when it is not
+read), with ``Include`` lines read where OpenSSH reads them, and with
+the options Settings force on the command line (``forced``).
+
+``pending_exec`` is not empty when the draft adds ``Match exec``
+commands the request did not allow, each listed word for word: nothing
+was evaluated. ``errors`` is not empty when OpenSSH rejects the draft.
+Otherwise ``values`` is ``ssh -G`` for the host, ``defaults`` the
+keywords whose value is OpenSSH's built-in one, ``matched_blocks`` the
+header lines of the ``Host``/``Match`` blocks of the draft that apply,
+``lines`` the state of each option line, ``sources`` the line supplying
+each option, and ``includes`` what each ``Include`` line read.
+
+**Related methods:** `evaluate_ssh_config_draft`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `values` | `tuple[SshConfigDraftValue, ...]` | No | `[]` | No |
+| `defaults` | `tuple[str, ...]` | No | `[]` | No |
+| `matched_blocks` | `tuple[int, ...]` | No | `[]` | No |
+| `lines` | `tuple[SshConfigDraftLine, ...]` | No | `[]` | No |
+| `sources` | `tuple[SshConfigDraftSource, ...]` | No | `[]` | No |
+| `includes` | `tuple[SshConfigDraftInclude, ...]` | No | `[]` | No |
+| `forced` | `tuple[SshConfigDraftValue, ...]` | No | `[]` | No |
+| `errors` | `tuple[SshConfigDraftError, ...]` | No | `[]` | No |
+| `pending_exec` | `tuple[str, ...]` | No | `[]` | No |
+| `system_config` | `str` | No | `` | No |
+| `isolated` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "defaults": [],
+  "errors": [],
+  "forced": [],
+  "includes": [],
+  "isolated": false,
+  "lines": [],
+  "matched_blocks": [],
+  "pending_exec": [],
+  "sources": [],
+  "system_config": "",
+  "values": []
+}
+```
+
+<!-- api-model: SshConfigDraftInclude -->
+## `SshConfigDraftInclude`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The files one ``Include`` line of the draft reads, in order.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `line` | `int` | Yes | — | No |
+| `files` | `tuple[str, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "files": [],
+  "line": 0
+}
+```
+
+<!-- api-model: SshConfigDraftLine -->
+## `SshConfigDraftLine`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The state of one option line of the draft.
+
+For ``SHADOWED``, ``decided_file``/``decided_line``/``decided_block``
+name the earlier line that set the option (as in
+:class:`SshConfigDraftSource`); otherwise they are empty and 0.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `line` | `int` | Yes | — | No |
+| `state` | `SshConfigDraftLineState` | Yes | — | No |
+| `decided_file` | `str` | No | `` | No |
+| `decided_line` | `int` | No | `0` | No |
+| `decided_block` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "decided_block": "",
+  "decided_file": "",
+  "decided_line": 0,
+  "line": 0,
+  "state": "applied"
+}
+```
+
+<!-- api-model: SshConfigDraftSource -->
+## `SshConfigDraftSource`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** The line that supplies an option's value.
+
+``file`` is empty for a line of the draft itself, else the file OpenSSH
+read it from (an included file or the system-wide configuration).
+``block`` is the header of the block holding the line, empty above every
+block.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key` | `str` | Yes | — | No |
+| `file` | `str` | Yes | — | No |
+| `line` | `int` | Yes | — | No |
+| `block` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "block": "example",
+  "file": "example",
+  "key": "example",
+  "line": 0
+}
+```
+
+<!-- api-model: SshConfigDraftValue -->
+## `SshConfigDraftValue`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One ``keyword value`` pair: a line of ``ssh -G`` or a forced option.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `key` | `str` | Yes | — | No |
+| `value` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key": "example",
+  "value": "example"
+}
+```
+
+<!-- api-model: SshConfigFileRef -->
+## `SshConfigFileRef`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One file of the SSH configuration: the root, or a file it reads
+through ``Include``.
+
+``file`` is how the file is asked for (``get_ssh_config_text``,
+``SaveSshConfigTextRequest``, ``EvaluateSshConfigDraftRequest``): empty
+for the root, otherwise a name the daemon gave out. It is never a path
+of the client's choosing: the daemon answers only for the names it
+listed, the files its own reading of the configuration reached.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `file` | `str` | Yes | — | No |
+| `display_name` | `str` | Yes | — | No |
+| `writable` | `bool` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "display_name": "example",
+  "file": "example",
+  "writable": false
+}
+```
+
 <!-- api-model: SshConfigText -->
 ## `SshConfigText`
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** The daemon-selected active SSH config text plus editor metadata.
+**Purpose:** The text of one SSH config file plus editor metadata.
 
-The daemon resolves which file is active (normal or isolated mode) and
+The daemon resolves which root is active (normal or isolated mode) and
 never accepts a filesystem path from the client. ``display_name`` is the
 daemon-computed display label (home-collapsed); ``writable`` reflects
 whether the daemon's hardened atomic write path can replace the file.
+
+``file`` names the file the text is of (empty: the root) and ``files``
+lists every file of the configuration, the root first: see
+:class:`SshConfigFileRef`. ``revision`` is of the whole configuration,
+whichever file was asked for.
 
 **Related methods:** `get_ssh_config_text`, `save_ssh_config_text`
 **Related events:** None
@@ -6041,12 +6388,16 @@ whether the daemon's hardened atomic write path can replace the file.
 | `revision` | `str` | Yes | — | No |
 | `display_name` | `str` | Yes | — | No |
 | `writable` | `bool` | Yes | — | No |
+| `file` | `str` | No | `` | No |
+| `files` | `tuple[SshConfigFileRef, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
 ```json
 {
   "display_name": "example",
+  "file": "",
+  "files": [],
   "revision": "example",
   "text": "<sensitive value omitted>",
   "writable": false
@@ -6435,6 +6786,36 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: TerminalOutputAck -->
+## `TerminalOutputAck`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** The frontend has displayed a session's output up to ``sequence``.
+
+Sent only for attachments opened with ``flow_control``. While the input
+owner's attachment is far enough behind, the daemon stops reading the
+session's PTY, so a fast producer slows down instead of losing output.
+
+**Related methods:** `acknowledge_terminal_output`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `session_id` | `SessionId` | Yes | — | No |
+| `attachment_id` | `AttachmentId` | Yes | — | No |
+| `sequence` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "attachment_id": "attachment-2",
+  "sequence": 0,
+  "session_id": "session-12"
+}
+```
+
 <!-- api-model: TransferItem -->
 ## `TransferItem`
 
@@ -6649,6 +7030,12 @@ explicitly present keys in the incoming JSON — omission means preserve.
 generation supplied (the check is skipped); zero is a legitimate
 first-generation value and is enforced like any other.
 
+``shared_block`` is the caller's word that it means every host of the
+connection's ``Host`` line (``ConnectionEditorDetails.shared_host_tokens``
+not empty). Without it such a block is not edited: the update fails with
+``MUTATION_AMBIGUOUS``. With it the line is kept as written, so the
+nickname cannot change. It means nothing for a block of one host.
+
 **Related methods:** `update_connection`
 **Related events:** None
 
@@ -6662,6 +7049,7 @@ first-generation value and is enforced like any other.
 | `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
 | `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 | `expected_generation` | `int | None` | No | `null` | No |
+| `shared_block` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -6674,6 +7062,7 @@ Synthetic representation:
   "nickname": "`UNSET`",
   "plugin_data": {},
   "port": "`UNSET`",
+  "shared_block": false,
   "username": "`UNSET`"
 }
 ```

@@ -1,0 +1,499 @@
+{
+  "groups": [
+    {
+      "color": "",
+      "id": "prod",
+      "members": [
+        {
+          "id": "1d8ca4c2-0c2c-4fa9-82f6-540efdb5abde",
+          "kind": "ssh_uuid"
+        },
+        {
+          "id": "9ddddbab-c241-48f1-a56d-664e33c6d1e3",
+          "kind": "ssh_uuid"
+        }
+      ],
+      "name": "Prod",
+      "order": 0
+    }
+  ],
+  "identities": {
+    "1c7ccbe7-a936-49b0-9b83-f10c50f0fc5e": {
+      "display_name": "linked-extra",
+      "projection": {
+        "alias": "linked-extra",
+        "declaration_order": 12,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "linked-extra.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "tuned",
+        "username_is_explicit": true,
+        "username_literal": "tuned"
+      },
+      "tombstone": false
+    },
+    "1d8ca4c2-0c2c-4fa9-82f6-540efdb5abde": {
+      "display_name": "group-a",
+      "projection": {
+        "alias": "group-a",
+        "declaration_order": 14,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "group-a.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "ops",
+        "username_is_explicit": true,
+        "username_literal": "ops"
+      },
+      "tombstone": false
+    },
+    "336afec0-b294-4a29-bd49-25f699e1622c": {
+      "display_name": "linked-key",
+      "projection": {
+        "alias": "linked-key",
+        "declaration_order": 10,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "linked-key.example.com",
+        "identity_file_evidence_mode": "explicit_files",
+        "identity_file_evidence_reason": "static_literal",
+        "identity_file_evidence_status": "safe_static_literal",
+        "identity_file_evidence_values": [
+          "/keys/deploy_ed25519"
+        ],
+        "identity_files": [
+          "/keys/deploy_ed25519"
+        ],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "deploy",
+        "username_is_explicit": true,
+        "username_literal": "deploy"
+      },
+      "tombstone": false
+    },
+    "3aa228cf-37d0-410d-bde8-ef68394265d6": {
+      "display_name": "key-own",
+      "projection": {
+        "alias": "key-own",
+        "declaration_order": 4,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "key-own.example.com",
+        "identity_file_evidence_mode": "explicit_files",
+        "identity_file_evidence_reason": "static_literal",
+        "identity_file_evidence_status": "safe_static_literal",
+        "identity_file_evidence_values": [
+          "~/.ssh/id_own"
+        ],
+        "identity_files": [
+          "~/.ssh/id_own"
+        ],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "alice",
+        "username_is_explicit": true,
+        "username_literal": "alice"
+      },
+      "tombstone": false
+    },
+    "47133de6-b801-4626-ac32-ef292d9b7fe8": {
+      "display_name": "linked-jump",
+      "projection": {
+        "alias": "linked-jump",
+        "declaration_order": 13,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "linked-jump.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "hop",
+        "username_is_explicit": true,
+        "username_literal": "hop"
+      },
+      "tombstone": false
+    },
+    "6f9bb3da-f950-411d-8cf6-2de04f53e4d9": {
+      "display_name": "key-agent",
+      "projection": {
+        "alias": "key-agent",
+        "declaration_order": 6,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "key-agent.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "alice",
+        "username_is_explicit": true,
+        "username_literal": "alice"
+      },
+      "tombstone": false
+    },
+    "97c05c3a-5291-4daf-893e-ca3539486f76": {
+      "display_name": "otp",
+      "projection": {
+        "alias": "otp",
+        "declaration_order": 0,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "otp.example.com",
+        "identity_file_evidence_mode": "explicit_files",
+        "identity_file_evidence_reason": "static_literal",
+        "identity_file_evidence_status": "safe_static_literal",
+        "identity_file_evidence_values": [
+          "~/.ssh/id_work"
+        ],
+        "identity_files": [
+          "~/.ssh/id_work"
+        ],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "alice",
+        "username_is_explicit": true,
+        "username_literal": "alice"
+      },
+      "tombstone": false
+    },
+    "9ddddbab-c241-48f1-a56d-664e33c6d1e3": {
+      "display_name": "group-b",
+      "projection": {
+        "alias": "group-b",
+        "declaration_order": 15,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "group-b.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "ops",
+        "username_is_explicit": true,
+        "username_literal": "ops"
+      },
+      "tombstone": false
+    },
+    "a3d267dc-740a-4078-9069-ec46cb8615fe": {
+      "display_name": "handpw",
+      "projection": {
+        "alias": "handpw",
+        "declaration_order": 1,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "handpw.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "",
+        "username_is_explicit": false,
+        "username_literal": null
+      },
+      "tombstone": false
+    },
+    "c4baedac-9301-4ef8-921c-2675a0c828e9": {
+      "display_name": "pw-nokey",
+      "projection": {
+        "alias": "pw-nokey",
+        "declaration_order": 8,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "pw-nokey.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "alice",
+        "username_is_explicit": true,
+        "username_literal": "alice"
+      },
+      "tombstone": false
+    },
+    "cd7d33b7-47fa-4c33-8ef6-4f96f7e0884e": {
+      "display_name": "pw-extra",
+      "projection": {
+        "alias": "pw-extra",
+        "declaration_order": 9,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "pw-extra.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "alice",
+        "username_is_explicit": true,
+        "username_literal": "alice"
+      },
+      "tombstone": false
+    },
+    "d09d8477-cbf9-4721-aab5-a0dba7770f83": {
+      "display_name": "linked-pw",
+      "projection": {
+        "alias": "linked-pw",
+        "declaration_order": 11,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "linked-pw.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "ops",
+        "username_is_explicit": true,
+        "username_literal": "ops"
+      },
+      "tombstone": false
+    },
+    "f34580ed-d48d-4b59-a44d-e920e5a76c5f": {
+      "display_name": "key-auto",
+      "projection": {
+        "alias": "key-auto",
+        "declaration_order": 3,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "key-auto.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "alice",
+        "username_is_explicit": true,
+        "username_literal": "alice"
+      },
+      "tombstone": false
+    },
+    "f7642938-94d3-49ad-9170-383f897ab18d": {
+      "display_name": "pw",
+      "projection": {
+        "alias": "pw",
+        "declaration_order": 7,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "pw.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "alice",
+        "username_is_explicit": true,
+        "username_literal": "alice"
+      },
+      "tombstone": false
+    },
+    "fc674902-5f66-4978-b981-52976e38cef9": {
+      "display_name": "key-pref",
+      "projection": {
+        "alias": "key-pref",
+        "declaration_order": 5,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "key-pref.example.com",
+        "identity_file_evidence_mode": "explicit_files",
+        "identity_file_evidence_reason": "static_literal",
+        "identity_file_evidence_status": "safe_static_literal",
+        "identity_file_evidence_values": [
+          "~/.ssh/id_pref"
+        ],
+        "identity_files": [
+          "~/.ssh/id_pref"
+        ],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "alice",
+        "username_is_explicit": true,
+        "username_literal": "alice"
+      },
+      "tombstone": false
+    },
+    "fe4794ec-987d-4e68-a2e4-3a3eacce3581": {
+      "display_name": "plain",
+      "projection": {
+        "alias": "plain",
+        "declaration_order": 2,
+        "destination_evidence_reason": "explicit_static",
+        "destination_evidence_status": "trustworthy",
+        "hostname": "plain.example.com",
+        "identity_file_evidence_mode": "unspecified",
+        "identity_file_evidence_reason": "no_identityfile_directive",
+        "identity_file_evidence_status": "unavailable",
+        "identity_file_evidence_values": [],
+        "identity_files": [],
+        "port": 22,
+        "source": "@ROOT@/config",
+        "username": "",
+        "username_is_explicit": false,
+        "username_literal": null
+      },
+      "tombstone": false
+    }
+  },
+  "last_reconciled_ssh_revision": "c0759897846cd308bbef9373029f2cad47c5b980d014007f83bf29b19825b6e9",
+  "legacy_orphans": [],
+  "metadata": {
+    "1c7ccbe7-a936-49b0-9b83-f10c50f0fc5e": {
+      "login_profile": {
+        "applied": "415372eca76cfe13d5f26ad63ab0f96c",
+        "extra_keys": [
+          "serveraliveinterval",
+          "compression"
+        ],
+        "id": "lp-ab6159c204097ac1",
+        "mode": "explicit",
+        "rev": "lp-ab6159c204097ac1:1"
+      }
+    },
+    "1d8ca4c2-0c2c-4fa9-82f6-540efdb5abde": {
+      "login_profile": {
+        "applied": "24f7d02d231437e9fb84d79f053b8772",
+        "extra_keys": [],
+        "mode": "inherit",
+        "rev": "lp-aae886942794d444:1"
+      }
+    },
+    "336afec0-b294-4a29-bd49-25f699e1622c": {
+      "login_profile": {
+        "applied": "ec2ea38a7631e2c4f06ffdf892d68fad",
+        "extra_keys": [],
+        "id": "lp-9c2a0dabad7bb9f2",
+        "mode": "explicit",
+        "rev": "lp-9c2a0dabad7bb9f2:1"
+      }
+    },
+    "47133de6-b801-4626-ac32-ef292d9b7fe8": {
+      "login_profile": {
+        "applied": "v2:217d71a1a59562a9c7559662da1ebe8c",
+        "extra_keys": [
+          "proxycommand"
+        ],
+        "id": "lp-e9361b1dfef8a963",
+        "mode": "explicit",
+        "rev": "lp-e9361b1dfef8a963:1"
+      }
+    },
+    "9ddddbab-c241-48f1-a56d-664e33c6d1e3": {
+      "login_profile": {
+        "applied": "24f7d02d231437e9fb84d79f053b8772",
+        "extra_keys": [],
+        "mode": "inherit",
+        "rev": "lp-aae886942794d444:1"
+      }
+    },
+    "d09d8477-cbf9-4721-aab5-a0dba7770f83": {
+      "login_profile": {
+        "applied": "24f7d02d231437e9fb84d79f053b8772",
+        "extra_keys": [],
+        "id": "lp-aae886942794d444",
+        "mode": "explicit",
+        "rev": "lp-aae886942794d444:1"
+      }
+    }
+  },
+  "non_ssh_connections": [],
+  "non_ssh_metadata": {},
+  "observed_ssh_revision": "c0759897846cd308bbef9373029f2cad47c5b980d014007f83bf29b19825b6e9",
+  "pending_ambiguities": [],
+  "root_connections": [
+    {
+      "id": "97c05c3a-5291-4daf-893e-ca3539486f76",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "a3d267dc-740a-4078-9069-ec46cb8615fe",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "fe4794ec-987d-4e68-a2e4-3a3eacce3581",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "f34580ed-d48d-4b59-a44d-e920e5a76c5f",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "3aa228cf-37d0-410d-bde8-ef68394265d6",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "fc674902-5f66-4978-b981-52976e38cef9",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "6f9bb3da-f950-411d-8cf6-2de04f53e4d9",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "f7642938-94d3-49ad-9170-383f897ab18d",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "c4baedac-9301-4ef8-921c-2675a0c828e9",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "cd7d33b7-47fa-4c33-8ef6-4f96f7e0884e",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "336afec0-b294-4a29-bd49-25f699e1622c",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "d09d8477-cbf9-4721-aab5-a0dba7770f83",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "1c7ccbe7-a936-49b0-9b83-f10c50f0fc5e",
+      "kind": "ssh_uuid"
+    },
+    {
+      "id": "47133de6-b801-4626-ac32-ef292d9b7fe8",
+      "kind": "ssh_uuid"
+    }
+  ],
+  "sidecar_generation": 34,
+  "version": 2
+}

@@ -5,6 +5,209 @@ notes remain separate.
 
 ## Unreleased
 
+- `SftpCopyRequest` gains `destination_service_id`: the copy (or move) lands
+  on that second SFTP service, owned by the same client, while the source
+  stays on `service_id`. Such a copy always runs as an `sftp_copy_tree`
+  operation (`runs_as_operation`), so `sftp_copy` returns an
+  `OperationSummary`. Another server receives the bytes through its own
+  session; two services on the same connection copy through the source
+  session alone, so the server's `copy-data` still applies. The folder-into-
+  itself check applies only on one server. An existing destination fails
+  with `destination_already_exists`; a failure on the receiving side is
+  reported against the destination service (its lost connection fails that
+  service, not the source). The field is sent only when set, so other copies
+  are unchanged on the wire. The API implementation version is 0.119;
+  Protocol remains 1.0.
+- Terminal output flow control (capability `terminal.flow_control`):
+  `AttachSessionRequest` gains `flow_control` (sent only when true, so older
+  daemons are unaffected), and `acknowledge_terminal_output` sends a new
+  binary `ACK` frame (`TerminalFrameKind.ACK = 5`) carrying a
+  `TerminalOutputAck`. While the input owner's flow-controlled attachment is
+  more than 1 MiB behind, the daemon stops reading the session's PTY instead
+  of dropping output for that peer; reads resume within 256 KiB, and on
+  detach, disconnect, ownership change, child exit and close. The client's
+  terminal dispatch queue is bounded by bytes (16 MiB) instead of 256 frames.
+  The `TRUNCATED` output flag is now set only on the first frame of a replay
+  whose requested start was evicted, not on every frame of a replay that
+  stops short of the live end; `DaemonClient` reports `TRUNCATED` frames as
+  continuity loss, so chunked replay recovery previously restarted on every
+  chunk.
+  Additive. The API implementation version is 0.118; Protocol remains 1.0.
+- `open_draft_test_connection` (`connections.open_draft_test`, capability
+  `sessions.write`, plus `connections.config.read`) registers an unsaved
+  target that reaches a host as an SSH configuration draft would: it takes
+  an `EvaluateSshConfigDraftRequest`, reads the draft as a launch reads the
+  saved file, and returns the `ConnectionDetails` of a transient connection
+  whose launch passes the draft with `-F`. Commands run on it through the
+  ordinary launch path (Advanced Configuration's Test Connection). A draft
+  with a `Match exec` command that is not in `allowed_exec` is refused with
+  `INVALID_REQUEST`. Additive. The API implementation version is 0.117;
+  Protocol remains 1.0.
+- A `Host` pattern (a wildcard or a negation) is refused as a connection
+  name, on create, rename and split: a connection is one host, and the
+  pattern used to be written as a rule block that showed up as no connection
+  at all. The refusal is `VALIDATION_FAILED` with `details["reason"]`, a new
+  `ValidationReason`: `host_pattern`. The frontend owns the wording; a
+  `VALIDATION_FAILED` without a reason says no more than before. The API
+  implementation version is 0.116; Protocol remains 1.0.
+- A connection change refused before anything was written says which
+  refusal it is. `MUTATION_AMBIGUOUS` covered two different things: a write
+  whose outcome the daemon could not determine, and a change it would not
+  start. The second now carries `details["refusal"]`, a `MutationRefusal`:
+  `identity_unresolved` (hosts left the SSH configuration while others with
+  the same destination arrived, so the daemon cannot tell which of them the
+  connections it knew are), `shared_declaration` (the `Host` line names
+  other hosts and the update did not set `shared_block`),
+  `multiple_declarations` (more than one `Host` line declares the
+  connection) and `declaration_changed` (the declaring line is gone). The
+  message is `The connection-store change was refused`; without a refusal it
+  stays `... may have completed`. The frontend owns the wording. Additive: a
+  client that does not read `details` behaves as before. The API
+  implementation version is 0.115; Protocol remains 1.0.
+- The files an SSH configuration reads through `Include` can be read,
+  evaluated and saved, not only the root. `SshConfigText.files` lists every
+  file of the configuration as `SshConfigFileRef(file, display_name,
+  writable)`, the root first with an empty `file`; `SshConfigText.file` names
+  the file the text is of. `connections.get_ssh_config_text` takes an optional
+  `file`, and `SaveSshConfigTextRequest` and `EvaluateSshConfigDraftRequest`
+  gained a `file` field (empty: the root, as before). A `file` is a name the
+  daemon gave out, never a path of the client's choosing: one that is not in
+  the daemon's own reading of the configuration fails with
+  `VALIDATION_ERROR`. `revision` stays that of the whole configuration. The
+  draft of an included file is evaluated where the root reads the file,
+  after everything read before it: `matched_blocks` is empty and every line
+  `inactive` when the root does not read the file for the host (an `Include`
+  under a `Host` line that does not apply), and a line another file decides
+  is `shadowed` with that file in `decided_file`. All of it is optional on
+  the wire. The API implementation version is 0.114; Protocol remains 1.0.
+- An SSH `Host` line that names more than one host is no longer a dead end.
+  `ConnectionEditorDetails.shared_host_tokens` lists the other tokens on the
+  line that declares the connection (more names, patterns, negations); empty
+  means the block is the connection's alone. `connections.update` still
+  refuses such a block with `MUTATION_AMBIGUOUS`, unless
+  `UpdateConnectionRequest.shared_block` is true: the block is then edited
+  for every host of the line, the line itself is kept as written, and a
+  changed nickname fails with `VALIDATION_ERROR` (`connections.split` gives
+  the connection a block of its own). Both fields are optional on the wire:
+  an older daemon omits the first and an older client the second.
+  Behaviour, no schema: a plain name beside a pattern on a `Host` line is
+  now a connection (`Host *.prod edge` lists `edge`; the line stays a rule
+  too), unless a wildcard on the same line already matches it (`Host old *`
+  declares nothing). Deleting or splitting a name off such a line keeps the
+  patterns, and drops a line left with negations only. The API
+  implementation version is 0.113; Protocol remains 1.0.
+- `SessionFailureCode.AUTH_METHODS_NOT_TRIED` (`auth_methods_not_tried`, no
+  parameters): an SSH session was denied and OpenSSH attempted none of the
+  methods the server accepts, because the connection's configuration
+  (`PreferredAuthentications`, a method switched off) leaves all of them out.
+  Such a failure was `SSH_DIAGNOSTIC` before; `diagnostic` still carries
+  OpenSSH's `Permission denied (...)` line, which names the methods the
+  server accepts. The API implementation version is 0.112; Protocol remains
+  1.0.
+- `connections.evaluate_ssh_config_draft(EvaluateSshConfigDraftRequest(text,
+  host, user, port, allowed_exec))` returns `SshConfigDraftEvaluation`: what
+  OpenSSH (`ssh -G`) would use for `host` if `text` were saved as the root
+  SSH configuration. The draft is read as a launch reads the saved file: with
+  the system-wide configuration when the root is the user's `~/.ssh/config`
+  (`system_config` names it), without it for a root launched with `-F`
+  (Isolated Mode), with `Include` lines read by OpenSSH, and with the options
+  Settings force (`forced`). `matched_blocks` are the `Host`/`Match` blocks of
+  the draft that apply, asked of OpenSSH itself; `lines` gives each option
+  line a `SshConfigDraftLineState`, `sources` the line behind each value, and
+  `includes` the files each `Include` read. OpenSSH runs `Match exec`
+  commands to evaluate them, so a draft is not evaluated while it holds a
+  command that neither the saved configuration nor `allowed_exec` contains,
+  word for word: `pending_exec` lists those. Evaluations run on a lane of
+  their own, and a client's newer request supersedes its earlier ones, which
+  fail with `OPERATION_CANCELLED`. A rejected draft
+  returns `errors` with OpenSSH's own diagnostics. Nothing is written.
+  Capability `connections.config.read`. Added in 0.110 with a boolean
+  `run_new_exec`; 0.111 replaced it with `allowed_exec`, so agreeing to one
+  command cannot cover another. The API implementation version is 0.111;
+  Protocol remains 1.0.
+- Behaviour only, no schema change. A login-profile settings payload that
+  omits `identities_only` comes from a client where no field could be left
+  unset, so its form defaults are not settings: `forward_agent: false` and
+  `key_select_mode: 0` without keys read as not set, and a password-mode
+  profile (`auth_method: 1`) sets none of the key fields that mode hid.
+  Current clients' values are taken as sent. In a connection `config_patch`,
+  `auth_method` and `pubkey_auth_no` edit the Host block's authentication
+  lines only when they differ from what the block reads as (for a new
+  connection: from key login with public keys allowed), so sending back the
+  details that were read changes nothing.
+- `LoginProfileSettings.identities_only` (`bool | null`, `null` = not set)
+  holds a login profile's IdentitiesOnly, as the connection editor edits it,
+  and `LoginProfileField.IDENTITIES_ONLY` names it in assignment previews
+  (raw values `yes`, `no`, or empty). `key_select_mode` is now legacy input
+  only: a stored or sent mode is read as `identities_only` (1 = `true`;
+  Automatic drops the key list it never wrote) and the daemon always
+  returns `null` for it. A profile owns `identities_only` and
+  `identity_files` separately, so one that lists keys leaves a linked
+  connection's own IdentitiesOnly alone. A settings payload may omit
+  `identities_only` (older clients do); it reads as `null`. Links recorded
+  before keep their fingerprints, including ones that list
+  `key_select_mode` among their fields, which then move to the profile's
+  current fields without rewriting the Host block. The API implementation version is 0.109; Protocol remains 1.0.
+- `identities_only_explicit_no` is an editable connection config field (a
+  boolean in `EDITABLE_CONFIG_FIELDS`). The connection editor now edits
+  `IdentitiesOnly` as Default / Yes / No on its own, with no key selection
+  mode: `key_select_mode` stays the stored encoding (1 = `IdentitiesOnly yes`,
+  2 = `IdentityFile` lines without it, 0 = neither), derived by the editor,
+  and the flag lets choosing Default remove an authored `IdentitiesOnly no`.
+  The API implementation version is 0.108; Protocol remains 1.0.
+- `preview_login_profile_update(PreviewLoginProfileUpdateRequest(profile_id,
+  settings))` returns `LoginProfileUpdatePreview(linked_count, replaced)`: the
+  linked connections whose own values an edit would replace, because the
+  edited profile starts setting that field. Requires `login_profiles.read`. The
+  API implementation version is 0.107; Protocol remains 1.0.
+- `connections.get_inherited_auth(host)` returns, as `EarlierDirective` lines,
+  what a host would get for `PreferredAuthentications` and the per-method
+  authentication switches if its own blocks set none of them: the first line
+  of the files a launch reads that sets each, outside the host's own `Host`
+  blocks. A keyword no line sets is absent (OpenSSH's default applies). Works
+  for a host that is not saved yet. The connection editor uses it for a value
+  reset after loading and for new connections. Requires
+  `connections.config.read`. The API implementation version is 0.106;
+  Protocol remains 1.0.
+- A login profile applies only what it sets. `LoginProfileSettings.key_select_mode`
+  and `forward_agent` are optional (`null` = not set); empty text and lists are
+  not set. A linked connection keeps its own value for every field the profile
+  leaves unset, and the dialog locks only the rows the profile sets. Links
+  record a `v4:` fingerprint of the fields they own (link metadata `fields`),
+  so editing anything else never detaches. Profiles stored by earlier versions
+  read Automatic key selection and an off agent switch as not set. The API
+  implementation version is 0.105; Protocol remains 1.0.
+- Login profiles hold their authentication order and per-method switches as
+  plain lines of `extra_ssh_config` (`PreferredAuthentications`,
+  `PubkeyAuthentication`, `PasswordAuthentication`,
+  `KbdInteractiveAuthentication`, `GSSAPIAuthentication`,
+  `HostbasedAuthentication`), now accepted there. Lines a profile sets
+  replace a linked connection's own; what it leaves unset stays the
+  connection's (a key-login profile no longer removes a connection's
+  password-first order). `LoginProfileSettings.auth_method` and
+  `pubkey_auth_no` are deprecated: a profile created, updated or stored with
+  `auth_method` 1 or `pubkey_auth_no` true is converted to those lines and
+  reads back with 0 and false. Links applied from now on record a `v3:`
+  fingerprint of what the profile owns; links recorded before keep their
+  fingerprint until the profile is next applied. Preview changes no longer
+  report `auth_method` or `pubkey_auth_no`; the lines appear under `extra`.
+  The API implementation version is 0.104; Protocol remains 1.0.
+- A connection's authentication settings are plain Host-block lines.
+  `PreferredAuthentications` and `PubkeyAuthentication` are no longer
+  generated by the writer: like `PasswordAuthentication`,
+  `KbdInteractiveAuthentication`, `GSSAPIAuthentication` and
+  `HostbasedAuthentication`, they are carried in `extra_ssh_config` exactly as
+  the block writes them, and a save that does not change them leaves them as
+  written. `auth_method` and `pubkey_auth_no` in a config patch still work:
+  password login puts `keyboard-interactive,password` first in the order
+  (OpenSSH's order otherwise) unless it already puts `password` ahead of
+  `publickey`; key login removes such an order and `PubkeyAuthentication no`;
+  `pubkey_auth_no` sets or removes `PubkeyAuthentication no`. Read back,
+  `ConnectionDetails.authentication_method` and
+  `ConnectionEditorDetails.pubkey_auth_no` are derived from those lines. A
+  saved password no longer changes the order, and lists earlier versions
+  wrote are no longer rewritten. The API implementation version is 0.103;
+  Protocol remains 1.0.
 - Login profiles gain a `proxy_command` field, shown as its own Proxy command
   row in the profile editor, matching the connection dialog. When the profile
   sets a command, that command is written to each linked connection and a

@@ -54,6 +54,7 @@ class LoginProfileField(str, Enum):
     USERNAME = "username"
     AUTH_METHOD = "auth_method"
     KEY_SELECT_MODE = "key_select_mode"
+    IDENTITIES_ONLY = "identities_only"
     IDENTITY_FILES = "identity_files"
     CERTIFICATE_FILES = "certificate_files"
     IDENTITY_AGENT = "identity_agent"
@@ -145,7 +146,10 @@ class LoginProfileSettings:
     name: str
     username: str = ""
     auth_method: int = 0  # 0 = key, 1 = password
-    key_select_mode: int = 0  # 0 = automatic, 1 = specific keys only, 2 = specific keys + agent
+    # Legacy input (profiles before ``identities_only``): 0 = automatic,
+    # 1 = specific keys only, 2 = specific keys + agent. Read as
+    # ``identities_only`` (1 = yes); always None in what the daemon returns.
+    key_select_mode: Optional[int] = None
     identity_files: Tuple[str, ...] = ()
     certificate_files: Tuple[str, ...] = ()
     identity_agent: str = ""
@@ -153,10 +157,13 @@ class LoginProfileSettings:
     pkcs11_provider: str = ""
     security_key_provider: str = ""
     pubkey_auth_no: bool = False
-    forward_agent: bool = False
+    forward_agent: Optional[bool] = None  # None = not set
     forward_agent_target: str = ""
     proxy_command: str = ""
     extra_ssh_config: str = ""
+    # IdentitiesOnly, as in the connection editor. None = not set: a linked
+    # connection keeps its own value.
+    identities_only: Optional[bool] = None
 
     def __post_init__(self) -> None:
         _check_text(self.name, "name")
@@ -167,12 +174,18 @@ class LoginProfileSettings:
         _check_text(self.extra_ssh_config, "extra_ssh_config", multiline=True)
         if type(self.auth_method) is not int or self.auth_method not in _AUTH_METHODS:
             raise ValueError("auth_method must be 0 or 1")
-        if type(self.key_select_mode) is not int or self.key_select_mode not in _KEY_SELECT_MODES:
-            raise ValueError("key_select_mode must be 0, 1 or 2")
+        if self.key_select_mode is not None and (
+            type(self.key_select_mode) is not int
+            or self.key_select_mode not in _KEY_SELECT_MODES
+        ):
+            raise ValueError("key_select_mode must be 0, 1, 2 or None")
         _check_str_tuple(self.identity_files, "identity_files")
         _check_str_tuple(self.certificate_files, "certificate_files")
         _check_bool(self.pubkey_auth_no, "pubkey_auth_no")
-        _check_bool(self.forward_agent, "forward_agent")
+        if self.forward_agent is not None:
+            _check_bool(self.forward_agent, "forward_agent")
+        if self.identities_only is not None:
+            _check_bool(self.identities_only, "identities_only")
 
 
 @dataclass(frozen=True)
@@ -417,6 +430,19 @@ class PreviewLoginProfileAssignmentRequest:
 
 
 @dataclass(frozen=True)
+class PreviewLoginProfileUpdateRequest:
+    """An edit to preview: the profile and its complete new settings."""
+
+    profile_id: LoginProfileId
+    settings: LoginProfileSettings
+
+    def __post_init__(self) -> None:
+        require_identifier(self.profile_id, "login profile id")
+        if type(self.settings) is not LoginProfileSettings:
+            raise TypeError("settings must be LoginProfileSettings")
+
+
+@dataclass(frozen=True)
 class LoginProfileFieldChange:
     """One Host-block setting an assignment would change.
 
@@ -503,3 +529,24 @@ class LoginProfilesChangedEvent:
             type(item) is not DetachedConnectionInfo for item in self.detached
         ):
             raise TypeError("detached must be a tuple of DetachedConnectionInfo")
+
+
+@dataclass(frozen=True)
+class LoginProfileUpdatePreview:
+    """What saving a profile edit would do to its linked connections.
+
+    ``linked_count`` counts the connections using the profile (explicitly or
+    through their group). ``replaced`` lists, per affected connection, the
+    values of its own that the edit would replace: fields the edited profile
+    starts to set where the connection holds a different value.
+    """
+
+    linked_count: int = 0
+    replaced: Tuple["LoginProfileAssignmentPreview", ...] = ()
+
+    def __post_init__(self) -> None:
+        _check_count(self.linked_count, "linked_count")
+        if type(self.replaced) is not tuple or any(
+            type(item) is not LoginProfileAssignmentPreview for item in self.replaced
+        ):
+            raise TypeError("replaced must be a tuple of LoginProfileAssignmentPreview")

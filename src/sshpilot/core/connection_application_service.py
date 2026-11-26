@@ -27,10 +27,16 @@ import getpass
 import ipaddress
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from ..api.capabilities import Capabilities, Capability
-from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
+from ..api.errors import (
+    ErrorCode,
+    MutationRefusal,
+    SshPilotError,
+    ValidationReason,
+    unsupported_capability,
+)
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
 from ..api.models.pre_command import (
@@ -63,8 +69,10 @@ from ..api.models.connections import (
     DeleteConnectionsRequest,
     DeleteConnectionsResult,
     ForwardingRule,
+    EvaluateSshConfigDraftRequest,
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
+    SshConfigDraftEvaluation,
     SshConfigText,
     UpdateConnectionRequest,
     UNSET,
@@ -95,6 +103,8 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
     "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
+    "evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -1008,6 +1018,7 @@ class ConnectionApplicationService:
                 connection_id=request.connection_id,
             )
         data: Dict[str, Any] = dict(request.config_patch)
+        self._apply_legacy_auth_choice(data, request.config_patch or {})
         data["nickname"] = request.nickname
         data["protocol"] = "ssh"
         if request.hostname is not None:
@@ -1277,6 +1288,51 @@ class ConnectionApplicationService:
                 line=int(item["line"]),
             )
             for item in found
+        )
+
+    def get_inherited_auth(self, host: str) -> Tuple[EarlierDirective, ...]:
+        """The authentication lines *host* would get if it set none itself.
+
+        For each of PreferredAuthentications and the per-method switches
+        (PubkeyAuthentication, PasswordAuthentication,
+        KbdInteractiveAuthentication / ChallengeResponseAuthentication,
+        GSSAPIAuthentication, HostbasedAuthentication): the first line of the
+        files a launch reads that sets it for *host*, outside the host's own
+        ``Host`` blocks. A keyword with no such line is absent: OpenSSH's
+        default applies. Works for a saved host (what removing its own line
+        leaves) and for one not saved yet (what a new block inherits).
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from ..api.models.common import validate_ssh_host_alias
+        from .connections.auth_preferences import AUTH_POLICY_KEYWORDS
+        from .ssh_config_effective import inherited_directives, launch_config_file
+
+        try:
+            validate_ssh_host_alias(host)
+        except (TypeError, ValueError):
+            return ()
+        if not host or host != host.strip() or any(
+            char.isspace() or char in "*?!" for char in host
+        ):
+            return ()
+        root = str(self._repository.root_config_path)
+        try:
+            found = inherited_directives(
+                host, launch_config_file(root), AUTH_POLICY_KEYWORDS
+            )
+        except Exception:
+            logger.debug("Inherited authentication lookup failed", exc_info=True)
+            return ()
+        return tuple(
+            EarlierDirective(
+                key=str(item["key"]),
+                value=str(item["value"]),
+                block=str(item["block"]),
+                file=str(item["file"]),
+                line=int(item["line"]),
+            )
+            for _key, item in sorted(found.items())
         )
 
     def list_config_syntax_errors(self) -> Tuple[ConfigSyntaxError, ...]:
@@ -1628,13 +1684,157 @@ class ConnectionApplicationService:
         except ValueError:
             return value.rstrip(".")
 
-    def get_ssh_config_text(self) -> SshConfigText:
-        """Return the daemon-selected active SSH config text for the raw editor."""
+    def evaluate_ssh_config_draft(
+        self,
+        request: EvaluateSshConfigDraftRequest,
+        cancelled: Optional[Callable[[], bool]] = None,
+    ) -> SshConfigDraftEvaluation:
+        """What OpenSSH would use for a host if the draft root were saved.
+
+        The draft is read as a launch reads the saved file: the same test
+        decides whether the system-wide configuration applies (the root is
+        the user's own ``~/.ssh/config`` and is launched without ``-F``),
+        and the options Settings force are passed ahead of it. Nothing is
+        written. See :mod:`sshpilot.core.ssh_config_draft`.
+
+        *cancelled* is polled while OpenSSH runs; when it turns true the
+        query is killed and ``OPERATION_CANCELLED`` is raised (the daemon
+        passes it so an edit supersedes the evaluation before it).
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        if type(request) is not EvaluateSshConfigDraftRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "An SSH config draft request is required",
+            )
+        from .ssh_config_draft import (
+            DraftContext,
+            DraftEvaluationCancelled,
+            evaluate_draft,
+        )
+
+        target_path = None
+        if request.file:
+            # A name the daemon gave out, checked against its own reading
+            # of the configuration: never a path of the client's.
+            try:
+                target_path = str(self._repository.ssh_config_file_path(request.file))
+            except CoreError as error:
+                raise _map_core_error(error) from error
+        try:
+            saved_text = self._repository.get_ssh_config_text(
+                *([request.file] if request.file else [])
+            ).text
+        except Exception:
+            # No readable file yet: every Match exec in the draft is new.
+            saved_text = ""
+        context = DraftContext(
+            root_path=str(self._repository.root_config_path),
+            isolated=bool(self._repository.ssh_config_isolated),
+            overrides=tuple(self._forced_ssh_option_args()),
+            target_path=target_path,
+        )
+        try:
+            return evaluate_draft(request, context, saved_text, cancelled)
+        except DraftEvaluationCancelled:
+            raise SshPilotError(
+                ErrorCode.OPERATION_CANCELLED,
+                "The SSH config draft evaluation was superseded",
+            ) from None
+
+    def open_draft_test_connection(
+        self, request: EvaluateSshConfigDraftRequest
+    ) -> ConnectionDetails:
+        """Register a target that connects to ``request.host`` as the draft
+        would have it, were it saved: an unsaved ("transient") connection
+        whose launch passes the draft with ``-F``, read as a launch reads
+        the saved file (the same reading :meth:`evaluate_ssh_config_draft`
+        asks OpenSSH about). Sessions and one-shot commands open it by the
+        returned id like any other connection, through the same launch
+        path, prompts included. Nothing is written to the configuration.
+
+        A ``Match exec`` command the saved file does not have runs only once
+        agreed (``request.allowed_exec``), as for an evaluation: a draft with
+        one not agreed to is refused.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        if type(request) is not EvaluateSshConfigDraftRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "An SSH config draft request is required",
+            )
+        from .ssh_config_draft import DraftContext, new_exec_commands, write_draft_for_launch
+        from .ssh_config_effective import _safe_host_identifier
+
+        host = _safe_host_identifier(request.host)
+        if not host or any(char.isspace() for char in host):
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED, "The host to test is invalid",
+                details={"field": "host"},
+            )
+        target_path = None
+        if request.file:
+            try:
+                target_path = str(self._repository.ssh_config_file_path(request.file))
+            except CoreError as error:
+                raise _map_core_error(error) from error
+        try:
+            saved_text = self._repository.get_ssh_config_text(
+                *([request.file] if request.file else [])
+            ).text
+        except Exception:
+            saved_text = ""
+        if new_exec_commands(request.text, saved_text, request.allowed_exec):
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "The draft has a Match exec command that was not agreed to",
+            )
+        context = DraftContext(
+            root_path=str(self._repository.root_config_path),
+            isolated=bool(self._repository.ssh_config_isolated),
+            target_path=target_path,
+        )
+        try:
+            in_use = tuple(self._transient_ids_in_use())
+        except Exception:
+            logger.debug("Transient in-use lookup failed", exc_info=True)
+            in_use = ()
+        try:
+            record = self._repository.open_draft_test_connection(
+                lambda folder: write_draft_for_launch(request.text, context, str(folder)),
+                host, request.user, in_use=in_use,
+            )
+        except SshPilotError:
+            raise
+        except CoreError as error:
+            raise _map_core_error(error) from error
+        except Exception as error:
+            logger.exception("Draft test connection preparation failed")
+            raise self._persistence_error() from error
+        if record is None:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                "The SSH configuration does not read this file",
+                details={"field": "file"},
+            )
+        return self._record_to_details(record)
+
+    def get_ssh_config_text(self, file: str = "") -> SshConfigText:
+        """Return the text of the daemon-selected SSH config for the raw
+        editor, or (*file*) of a file it reads through ``Include``, named as
+        ``SshConfigText.files`` listed it."""
 
         self._assert_command_thread()
         self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        if type(file) is not str:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST, "An SSH config file name must be text"
+            )
         try:
-            return self._repository.get_ssh_config_text()
+            # Passed only when asked for: the root needs no name.
+            return self._repository.get_ssh_config_text(*([file] if file else []))
         except CoreError as error:
             raise _map_core_error(error) from error
 
@@ -2047,6 +2247,7 @@ class ConnectionApplicationService:
         return data
 
     def _apply_config_patch(self, data: Dict[str, Any], patch: Dict[str, Any]) -> None:
+        legacy_auth_before = (data.get("auth_method"), data.get("pubkey_auth_no"))
         for key, value in patch.items():
             if key in ("proxy_jump", "identity_files", "certificate_files"):
                 if isinstance(value, str):
@@ -2074,6 +2275,55 @@ class ConnectionApplicationService:
                     ) from error
             else:
                 data[key] = value
+        # ``keyfile`` and ``certificate`` are the first entry of their list,
+        # kept for older readers, and the writer falls back to them when a
+        # list is empty. A client that sends only the list (the editor sends
+        # only what changed) must not leave the old first entry behind:
+        # emptying the certificates would otherwise keep the line.
+        for plural, single in (
+            ("identity_files", "keyfile"), ("certificate_files", "certificate"),
+        ):
+            if plural in patch and single not in patch:
+                data[single] = data[plural][0] if data[plural] else ""
+        self._apply_legacy_auth_choice(data, patch, legacy_auth_before)
+
+    @staticmethod
+    def _apply_legacy_auth_choice(
+        data: Dict[str, Any],
+        patch: Mapping[str, Any],
+        before: Tuple[Any, Any] = (None, None),
+    ) -> None:
+        """Write the editor's Key/Password choice as Host-block lines.
+
+        The login order and per-method switches are ordinary lines in
+        ``extra_ssh_config``; the older choice only edits them, and only when
+        the patch changes it. *before* is ``(auth_method, pubkey_auth_no)``
+        as read from the Host block (nothing for a new connection, which
+        starts from key login with public keys allowed). A client that sends
+        back what it read, or creates a connection with those defaults,
+        leaves the authored lines alone.
+        """
+
+        def method(value: Any) -> int:
+            try:
+                return 1 if int(value or 0) == 1 else 0
+            except (TypeError, ValueError):
+                return 0
+
+        auth_method = pubkey_auth_no = None
+        if "auth_method" in patch and method(patch["auth_method"]) != method(before[0]):
+            auth_method = method(patch["auth_method"])
+        if "pubkey_auth_no" in patch and bool(patch["pubkey_auth_no"]) != bool(before[1]):
+            pubkey_auth_no = bool(patch["pubkey_auth_no"])
+        if auth_method is None and pubkey_auth_no is None:
+            return
+        from .connections.auth_preferences import apply_legacy_auth_choice
+
+        data["extra_ssh_config"] = apply_legacy_auth_choice(
+            str(data.get("extra_ssh_config") or ""),
+            auth_method=auth_method,
+            pubkey_auth_no=pubkey_auth_no,
+        )
 
     def duplicate_connection(
         self, connection_id: ConnectionId
@@ -2196,10 +2446,14 @@ class ConnectionApplicationService:
         if request.plugin_data:
             data.update(dict(request.plugin_data))
         try:
+            # Passed only when asked for: a block other hosts share is
+            # edited on the caller's word alone.
+            shared = {"shared_block": True} if request.shared_block else {}
             updated = self._repository.update_connection(
                 connection_id,
                 data,
                 expected_generation=request.expected_generation,
+                **shared,
             )
         except SshPilotError:
             raise
@@ -2612,6 +2866,7 @@ class ConnectionApplicationService:
             source=record.source or str(data.get("source") or ""),
             generation=record.generation,
             authored_directives=tuple(sorted(record.authored_directives)),
+            shared_host_tokens=tuple(record.shared_host_tokens),
         )
 
     @staticmethod
@@ -2646,9 +2901,16 @@ def _map_core_error(error: Any) -> SshPilotError:
             "The connection has been modified since it was last read",
         )
     if code is CoreErrorCode.VALIDATION_ERROR:
+        # A rule the core named is passed on as a code the frontend words.
+        reason = (getattr(error, "details", None) or {}).get("reason")
+        try:
+            reason = ValidationReason(reason).value
+        except ValueError:
+            reason = None
         return SshPilotError(
             ErrorCode.VALIDATION_FAILED,
             "The requested connection-store change is invalid",
+            **({"details": {"reason": reason}} if reason is not None else {}),
         )
     if code is CoreErrorCode.CONFIG_PARSE_ERROR:
         return SshPilotError(
@@ -2656,6 +2918,20 @@ def _map_core_error(error: Any) -> SshPilotError:
             error.message or "The SSH configuration is invalid",
         )
     if code is CoreErrorCode.MUTATION_AMBIGUOUS:
+        # A refusal the core named was made before anything was written:
+        # the frontend is told which, as a code, and words it. Without one
+        # the outcome of a write is what is not known.
+        refusal = (getattr(error, "details", None) or {}).get("refusal")
+        try:
+            refusal = MutationRefusal(refusal).value
+        except ValueError:
+            refusal = None
+        if refusal is not None:
+            return SshPilotError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "The connection-store change was refused",
+                details={"refusal": refusal},
+            )
         return SshPilotError(
             ErrorCode.MUTATION_AMBIGUOUS,
             "The connection-store change may have completed",

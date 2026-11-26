@@ -190,6 +190,13 @@ SECRET_INTERACTIVE_COMMAND_KEY = "secret-backend-interactive"
 # read-only, and ``ConnectionApplicationService.get_effective_config`` discards
 # any result whose repository generation changed while it ran.
 EFFECTIVE_CONFIG_COMMAND_KEY = "effective-ssh-config"
+
+# Advanced Configuration asks about its draft after every edit, and each
+# answer is several ``ssh -G`` runs. On the effective-config lane a slow one
+# would hold up the connection editor's own lookups, so drafts get a lane of
+# their own. Within it only the newest question of a client matters: an
+# older one is abandoned (its ``ssh`` killed) as soon as a newer arrives.
+SSH_CONFIG_DRAFT_COMMAND_KEY = "ssh-config-draft"
 from sshpilot.daemon.forward_runtime import ForwardRuntime
 from sshpilot.daemon.interaction_broker import InteractionBroker
 from sshpilot.daemon.key_service import DaemonKeyService
@@ -224,6 +231,10 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
+    # Registers a target that can be launched, as connections.open_transient.
+    "connections.open_draft_test": Capability.SESSIONS_WRITE,
     "connections.list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "connections.list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "connections.check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -352,6 +363,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "ssh_overrides.reset": Capability.SSH_OVERRIDES_WRITE,
     "login_profiles.get": Capability.LOGIN_PROFILES_READ,
     "login_profiles.preview_assignment": Capability.LOGIN_PROFILES_READ,
+    "login_profiles.preview_update": Capability.LOGIN_PROFILES_READ,
     "login_profiles.create": Capability.LOGIN_PROFILES_WRITE,
     "login_profiles.update": Capability.LOGIN_PROFILES_WRITE,
     "login_profiles.delete": Capability.LOGIN_PROFILES_WRITE,
@@ -506,6 +518,9 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.get_editor",
         "connections.get_effective_config",
         "connections.get_earlier_directives",
+        "connections.get_inherited_auth",
+        "connections.evaluate_ssh_config_draft",
+        "connections.open_draft_test",
         "connections.list_config_conflicts",
         "connections.list_config_syntax_errors",
         "connections.check_unsaved_host",
@@ -580,6 +595,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "known_hosts.remove",
         "login_profiles.get",
         "login_profiles.preview_assignment",
+        "login_profiles.preview_update",
         "login_profiles.create",
         "login_profiles.update",
         "login_profiles.delete",
@@ -791,6 +807,11 @@ class RequestDispatcher:
             "connections.get_editor": self._handle_get_connection_editor,
             "connections.get_effective_config": self._handle_get_effective_config,
             "connections.get_earlier_directives": self._handle_get_earlier_directives,
+            "connections.get_inherited_auth": self._handle_get_inherited_auth,
+            "connections.evaluate_ssh_config_draft": (
+                self._handle_evaluate_ssh_config_draft
+            ),
+            "connections.open_draft_test": self._handle_open_draft_test_connection,
             "connections.list_config_conflicts": self._handle_list_config_conflicts,
             "connections.list_config_syntax_errors": (
                 self._handle_list_config_syntax_errors
@@ -924,6 +945,7 @@ class RequestDispatcher:
             "ssh_overrides.reset": self._handle_reset_ssh_overrides,
             "login_profiles.get": self._handle_get_login_profiles,
             "login_profiles.preview_assignment": self._handle_preview_login_profile_assignment,
+            "login_profiles.preview_update": self._handle_preview_login_profile_update,
             "login_profiles.create": self._handle_create_login_profile,
             "login_profiles.update": self._handle_update_login_profile,
             "login_profiles.delete": self._handle_delete_login_profile,
@@ -1450,6 +1472,81 @@ class RequestDispatcher:
             on_rejected=lambda: None,
         )
 
+    def _handle_get_inherited_auth(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"host"}:
+            raise ValueError("connections.get_inherited_auth requires host")
+        host = request.params["host"]
+        if type(host) is not str or not host.strip():
+            raise ValueError("host must be a non-empty string")
+        return DeferredResult(
+            operation=lambda: earlier_directives_to_wire(
+                self._connections.get_inherited_auth(host)
+            ),
+            command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_evaluate_ssh_config_draft(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.config_draft_codec import (
+            evaluate_ssh_config_draft_request_from_wire,
+            ssh_config_draft_evaluation_to_wire,
+        )
+
+        draft = evaluate_ssh_config_draft_request_from_wire(request.params)
+        # Each client's newest draft supersedes its earlier ones, whether
+        # they are still queued or already in OpenSSH.
+        generations = self.__dict__.setdefault("_draft_generations", {})
+        owner = _state.client_id
+        generation = generations[owner] = generations.get(owner, 0) + 1
+
+        def superseded() -> bool:
+            return generations.get(owner) != generation
+
+        def operation():
+            if superseded():
+                raise SshPilotError(
+                    ErrorCode.OPERATION_CANCELLED,
+                    "The SSH config draft evaluation was superseded",
+                )
+            return ssh_config_draft_evaluation_to_wire(
+                self._connections.evaluate_ssh_config_draft(draft, superseded)
+            )
+
+        return DeferredResult(
+            operation=operation,
+            command_key=(SSH_CONFIG_DRAFT_COMMAND_KEY, owner),
+            on_rejected=lambda: None,
+        )
+
+    def _handle_open_draft_test_connection(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.config_draft_codec import (
+            evaluate_ssh_config_draft_request_from_wire,
+        )
+
+        draft = evaluate_ssh_config_draft_request_from_wire(request.params)
+        # Reads the configuration (the draft is read as a launch reads it),
+        # and registers a launchable target (sessions.write, from the table).
+        self._require_capability(state, Capability.CONNECTIONS_CONFIG_READ)
+        return DeferredResult(
+            operation=lambda: connection_details_to_wire(
+                self._connections.open_draft_test_connection(draft)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
     def _handle_list_config_conflicts(
         self,
         request: RequestEnvelope,
@@ -1538,10 +1635,17 @@ class RequestDispatcher:
         request: RequestEnvelope,
         _state: ClientProtocolState,
     ) -> DeferredResult:
-        if request.params:
-            raise ValueError("connections.get_ssh_config_text takes no parameters")
+        params = request.params or {}
+        if type(params) is not dict or set(params) - {"file"}:
+            raise ValueError("connections.get_ssh_config_text takes only a file name")
+        file = params.get("file", "")
+        if type(file) is not str:
+            raise ValueError("connections.get_ssh_config_text file must be text")
         return DeferredResult(
-            operation=lambda: ssh_config_text_to_wire(self._connections.get_ssh_config_text()),
+            operation=lambda: ssh_config_text_to_wire(
+                self._connections.get_ssh_config_text(file)
+                if file else self._connections.get_ssh_config_text()
+            ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
         )
@@ -3718,6 +3822,7 @@ class RequestDispatcher:
                     Capability.TERMINAL_INPUT,
                     Capability.TERMINAL_RESIZE,
                     Capability.TERMINAL_REPLAY,
+                    Capability.TERMINAL_FLOW_CONTROL,
                     Capability.SESSIONS_COMMAND,
                 }
             )
@@ -4017,6 +4122,19 @@ class RequestDispatcher:
         return self._login_profile_deferred(
             lambda: codec.login_profile_assignment_previews_to_wire(
                 service.preview_assignment(typed)
+            )
+        )
+
+    def _handle_preview_login_profile_update(
+        self, request: RequestEnvelope, _state: ClientProtocolState
+    ) -> DeferredResult:
+        from sshpilot.api.transport import login_profile_codec as codec
+
+        typed = codec.preview_login_profile_update_request_from_wire(request.params)
+        service = self._required_login_profiles()
+        return self._login_profile_deferred(
+            lambda: codec.login_profile_update_preview_to_wire(
+                service.preview_update(typed)
             )
         )
 

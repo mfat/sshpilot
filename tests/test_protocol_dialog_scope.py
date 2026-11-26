@@ -156,14 +156,96 @@ def test_plugin_fields_join_the_first_group_without_ssh_rows():
     assert _visible_row_titles(dlg._host_group) == [
         "Protocol", "Name (optional)",
         "Host", "Port", "Username", "Domain", "Password",
-        "Tags (comma-separated)",
     ]
     _select(dlg, "ssh")
     assert dlg._host_group.get_title() == "Host"
+    # Host, port, user: the order the plugin fields above take too.
     assert _visible_row_titles(dlg._host_group) == [
         "Protocol", "Name (optional)", "SSH Alias (no whitespace allowed)",
-        "Hostname / IP address", "Username", "Port", "Tags (comma-separated)",
+        "Hostname / IP address", "Port", "Username",
     ]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("protocol_id", ["ssh", "rdp"])
+def test_tags_and_group_close_the_page_for_every_protocol(protocol_id):
+    _require_gtk()
+    dlg = _dialog()
+    _select(dlg, protocol_id)
+    assert dlg._organize_group.get_title() == "Organize"
+    assert _visible_row_titles(dlg._organize_group)[0] == "Tags (comma-separated)"
+    # The protocol's own groups come before it, not after.
+    page = dlg._organize_group.get_parent()
+    assert dlg._plugin_fields_box.get_next_sibling() is dlg._organize_group
+    assert page.get_last_child() is dlg._organize_group
+
+
+def _visible_sidebar_entries(dlg):
+    return [name for name, row in dlg._sidebar_rows.items() if row.get_visible()]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("protocol_id,pages", [
+    ("ssh", ["connection", "authentication", "forwarding", "commands",
+             "advanced", "wol"]),
+    ("docker", ["connection", "commands"]),
+])
+def test_the_sidebar_lists_only_the_pages_shown(protocol_id, pages):
+    _require_gtk()
+    dlg = _dialog()
+    _select(dlg, protocol_id)
+    assert _visible_sidebar_entries(dlg) == pages
+    assert not dlg.split_view.get_collapsed()
+    assert dlg.config_buttons_box.get_visible() == (protocol_id == "ssh")
+
+
+@pytest.mark.integration
+def test_a_lone_page_shows_without_a_sidebar():
+    _require_gtk()
+    dlg = _dialog()
+    _select(dlg, "serial")
+    assert dlg.split_view.get_collapsed()
+    assert dlg.split_view.get_show_content()
+    assert not dlg.content_page.get_can_pop()
+    _select(dlg, "ssh")
+    assert not dlg.split_view.get_collapsed()
+    assert dlg.content_page.get_can_pop()
+
+
+@pytest.mark.integration
+def test_hiding_the_shown_page_moves_to_a_shown_one():
+    _require_gtk()
+    dlg = _dialog()
+    assert dlg.select_page("advanced")
+    _select(dlg, "docker")
+    assert dlg.content_stack.get_visible_child_name() == "connection"
+    assert not dlg.select_page("advanced")
+
+
+@pytest.mark.integration
+def test_a_refused_save_shows_the_page_of_the_field_to_fix():
+    _require_gtk()
+    dlg = _dialog()
+    dlg.nickname_row.set_text("web")
+    dlg.hostname_row.set_text("not a host!!")
+    dlg.select_page("commands")
+    saved, _errors = _save(dlg)
+    assert not saved
+    assert dlg.content_stack.get_visible_child_name() == "connection"
+
+
+@pytest.mark.integration
+def test_the_header_names_the_page_and_the_target():
+    _require_gtk()
+    dlg = _dialog()
+    dlg.hostname_row.set_text("box.example.com")
+    dlg.username_row.set_text("alice")
+    assert dlg.content_title.get_title() == "Connection"
+    assert dlg.content_title.get_subtitle() == "alice@box.example.com"
+    dlg.port_row.set_text("2222")
+    assert dlg.content_title.get_subtitle() == "alice@box.example.com:2222"
+    dlg.select_page("forwarding")
+    assert dlg.content_title.get_title() == "Port Forwarding"
 
 
 @pytest.mark.integration
@@ -385,3 +467,118 @@ def test_a_chosen_file_can_be_cleared():
     assert clear is not None and clear.get_visible()
     clear.emit("clicked")
     assert getter() == "" and not clear.get_visible()
+
+
+# -- the alias read as a Host line --------------------------------------------
+
+def _pump_events(count=30):
+    from gi.repository import GLib
+    context = GLib.MainContext.default()
+    for _ in range(count):
+        while context.iteration(False):
+            pass
+
+
+@pytest.mark.integration
+def test_several_names_are_handed_to_advanced_configuration_as_one_host_line():
+    _require_gtk()
+    dlg = _dialog()
+    opened = []
+    dlg.parent_window.open_advanced_config = lambda **kw: opened.append(kw) or object()
+    closed = []
+    dlg.close = lambda: closed.append(True)
+    row = dlg.host_line_offer_row
+    assert not row.get_visible()
+    dlg.nickname_row.set_text("web1 web2 web3")
+    dlg.hostname_row.set_text("10.0.0.5")
+    _pump_events()
+    assert row.get_visible() and dlg.host_line_offer_button.get_visible()
+    assert row.get_title() == "An alias can't contain spaces"
+    assert dlg._validate_all_required_for_save() is dlg.nickname_row   # not saved here
+    assert dlg.display_name_row.get_sensitive()
+    dlg.host_line_offer_button.emit("clicked")
+    assert opened and opened[0]["new_block"] == (
+        "web1 web2 web3", [("HostName", "10.0.0.5")],
+    )
+    assert closed
+    dlg.nickname_row.set_text("web1")
+    _pump_events()
+    assert not row.get_visible()
+
+
+@pytest.mark.integration
+def test_a_pattern_is_handed_to_advanced_configuration_and_the_new_dialog_closes():
+    _require_gtk()
+    dlg = _dialog()
+    opened = []
+    dlg.parent_window.open_advanced_config = lambda **kw: opened.append(kw) or object()
+    # A window never shown has nothing to close: watch the call.
+    closed = []
+    dlg.close = lambda: closed.append(True)
+    dlg.nickname_row.set_text("*.prod")
+    dlg.hostname_row.set_text("%h.example.com")
+    dlg.username_row.set_text("deploy")
+    _pump_events()
+    assert dlg.host_line_offer_row.get_visible()
+    assert dlg.host_line_offer_button.get_visible()
+    assert dlg._validate_all_required_for_save() is dlg.nickname_row
+    dlg.host_line_offer_button.emit("clicked")
+    assert opened and opened[0]["new_block"] == (
+        "*.prod", [("HostName", "%h.example.com"), ("User", "deploy")],
+    )
+    assert closed
+
+
+@pytest.mark.integration
+def test_a_saved_connection_keeps_one_name_and_is_sent_to_its_block():
+    _require_gtk()
+    connection = SimpleNamespace(
+        nickname="web1", hostname="10.0.0.1", username="", port=22, protocol="ssh",
+        source="", data={},
+    )
+    dlg = _dialog(connection=connection)
+    opened = []
+    dlg.parent_window.open_advanced_config = lambda **kw: opened.append(kw) or object()
+    _pump_events()          # the saved values arrive in an idle; type after
+    dlg.nickname_row.set_text("web1 web2")
+    _pump_events()
+    assert dlg.host_line_offer_row.get_visible()
+    assert dlg.host_line_offer_button.get_visible()
+    dlg.host_line_offer_button.emit("clicked")
+    assert opened and opened[0]["host"] == "web1" and "new_block" not in opened[0]
+
+
+@pytest.mark.integration
+def test_the_host_line_row_is_about_ssh_only():
+    _require_gtk()
+    dlg = _dialog()
+    dlg.nickname_row.set_text("*.prod")
+    _pump_events()
+    assert dlg.host_line_offer_row.get_visible()
+    _select(dlg, "telnet")
+    _pump_events()
+    assert not dlg.host_line_offer_row.get_visible()
+
+
+@pytest.mark.integration
+def test_the_search_button_opens_the_sidebar_search_and_finds_a_field():
+    _require_gtk()
+    dlg = _dialog()
+    _pump_events()
+    assert not dlg.search_bar.get_search_mode()
+    dlg.search_button.set_active(True)
+    _pump_events()
+    assert dlg.search_bar.get_search_mode()
+    dlg.search_entry.set_text("port")
+    # The entry reports what was typed after a short pause.
+    import time
+    deadline = time.time() + 3
+    while (dlg.sidebar_stack.get_visible_child_name() != "results"
+           and time.time() < deadline):
+        _pump_events()
+        time.sleep(0.02)
+    assert dlg.sidebar_stack.get_visible_child_name() == "results"
+    assert dlg.search_results.get_row_at_index(0) is not None
+    dlg.search_button.set_active(False)
+    _pump_events()
+    assert dlg.sidebar_stack.get_visible_child_name() == "pages"

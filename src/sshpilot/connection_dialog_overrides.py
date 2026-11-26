@@ -60,14 +60,28 @@ OVERRIDABLE_ROWS = (
     ("remote_command_row", "RemoteCommand"),
     ("forward_agent_row", "ForwardAgent"),
     ("x11_row", "ForwardX11"),
-    ("pubkey_auth_row", "PubkeyAuthentication"),
     ("key_only_row", "IdentitiesOnly"),
     ("add_keys_to_agent_row", "AddKeysToAgent"),
     ("identity_agent_row", "IdentityAgent"),
     ("exit_on_forward_failure_row", "ExitOnForwardFailure"),
     ("port_forwarding_only_row", "SessionType"),
-    ("auth_method_row", "PreferredAuthentications"),
+    # The authentication section: the order, and each method's switch.
+    ("auth_order_row", "PreferredAuthentications"),
+    ("auth_gssapi_row", "GSSAPIAuthentication"),
+    ("auth_hostbased_row", "HostbasedAuthentication"),
+    ("auth_publickey_row", "PubkeyAuthentication"),
+    ("auth_kbdinteractive_row", "KbdInteractiveAuthentication"),
+    ("auth_password_row", "PasswordAuthentication"),
 )
+
+#: Rows of the authentication section. Each reports this host's own value
+#: through ``row._sshpilot_own_value()`` and, when the block sets nothing,
+#: already shows the value OpenSSH resolves -- so, like a text row, it needs
+#: no mark of its own when an earlier block supplies that value.
+AUTH_ROWS = frozenset({
+    "auth_order_row", "auth_gssapi_row", "auth_hostbased_row",
+    "auth_publickey_row", "auth_kbdinteractive_row", "auth_password_row",
+})
 
 #: Rows that are a text field. Left empty, such a row shows the value OpenSSH
 #: resolves, dimmed (see ``_load_inherited_values_async``), so it needs no
@@ -83,8 +97,6 @@ TEXT_ROWS = frozenset({
 #: be pointed out even though the connection sets nothing itself.
 SWITCH_OFF_VALUE = {
     "x11_row": "no",
-    "key_only_row": "no",
-    "pubkey_auth_row": "yes",
     "exit_on_forward_failure_row": "no",
     "port_forwarding_only_row": "default",
 }
@@ -93,11 +105,7 @@ SWITCH_OFF_VALUE = {
 #: (``ForwardX11 no``): the directive and the value the block then holds.
 SWITCH_OFF_AUTHORED = {
     "x11_row": ("forwardx11", "no"),
-    "key_only_row": ("identitiesonly", "no"),
-    "pubkey_auth_row": ("pubkeyauthentication", "yes"),
 }
-
-_PASSWORD_METHODS = frozenset({"password", "keyboard-interactive"})
 
 
 def inherited_note_text() -> str:
@@ -241,13 +249,13 @@ def earlier_note(keyword: str, own: Optional[str], earlier: Dict[str, object]) -
     block = str(getattr(entry, "block", "") or "").strip()
     if block:
         template = _(
-            "Not used: “{block}” in {file} (line {line}) already sets "
+            "No effect: “{block}” in {file} (line {line}) already sets "
             "{keyword} to “{value}”, and OpenSSH keeps the first value it "
             "finds. The value here is saved, but connections use “{value}”."
         )
     else:
         template = _(
-            "Not used: line {line} of {file}, above every Host block, already "
+            "No effect: line {line} of {file}, above every Host block, already "
             "sets {keyword} to “{value}”, and OpenSSH keeps the first value "
             "it finds. The value here is saved, but connections use “{value}”."
         )
@@ -282,19 +290,11 @@ def earlier_decides_note(keyword: str, entry) -> str:
     )
 
 
-def _auth_methods(value: str) -> frozenset:
-    return frozenset(
-        part.strip().lower() for part in str(value or "").split(",") if part.strip()
-    )
-
-
 def earlier_row_state(
     row_name: str,
     keyword: str,
     own: Optional[str],
     earlier: Dict[str, object],
-    *,
-    password_auth: bool = False,
 ) -> Tuple[Optional[str], Optional[str]]:
     """``(state, note)`` for one dialog row against the earlier blocks.
 
@@ -304,20 +304,6 @@ def earlier_row_state(
     what it displays; ``(None, None)`` otherwise.
     """
     entry = earlier.get(keyword.lower())
-    if row_name == "auth_method_row":
-        # The row chooses a kind of login, not a list: it loses only when
-        # the earlier list leaves that kind out.
-        if entry is None:
-            return None, None
-        methods = _auth_methods(getattr(entry, "value", ""))
-        tried = bool(methods & _PASSWORD_METHODS) if password_auth else (
-            "publickey" in methods
-        )
-        if tried:
-            return None, None
-        if password_auth:
-            return OVERRIDDEN, earlier_note(keyword, own or "password", earlier)
-        return GLOBAL, earlier_decides_note(keyword, entry)
     if own is not None and str(own).strip():
         note = earlier_note(keyword, own, earlier)
         if note:
@@ -328,7 +314,7 @@ def earlier_row_state(
             if note:
                 return OVERRIDDEN, note
         return None, None
-    if entry is None or row_name in TEXT_ROWS:
+    if entry is None or row_name in TEXT_ROWS or row_name in AUTH_ROWS:
         return None, None
     shown = SWITCH_OFF_VALUE.get(row_name)
     value = str(getattr(entry, "value", "") or "")
@@ -428,38 +414,84 @@ class ConnectionDialogOverridesMixin:
         """
         parent = getattr(self, "parent_window", None)
         client = getattr(parent, "client", None)
+        fallback_hook = getattr(self, "_auth_policy_set_fallback", None)
+        # The same moments call for OpenSSH's answer about the pending block.
+        refresh = getattr(self, "_schedule_effective_refresh", None)
+        if callable(refresh):
+            refresh()
+
+        def builtin_fallback() -> None:
+            # Nothing can say what the host inherits (yet): the
+            # authentication section starts from OpenSSH's built-in order,
+            # so it stays editable. A later answer replaces it.
+            if callable(fallback_hook):
+                fallback_hook({})
+
         if not (
             callable(getattr(parent, "_daemon_ready", None))
             and parent._daemon_ready()
         ):
+            builtin_fallback()
             return
         connection = getattr(self, "connection", None)
         editing = connection is not None and getattr(self, "is_editing", False)
         alias = ""
         if editing:
             if not callable(getattr(client, "get_effective_config", None)):
+                builtin_fallback()
                 return
         else:
             if not callable(getattr(client, "get_earlier_directives", None)):
+                builtin_fallback()
                 return
             self._watch_alias_for_earlier_directives()
-            row = getattr(self, "nickname_row", None)
-            alias = row.get_text().strip() if row is not None else ""
+            # One host is asked about: the first of several names typed.
+            typed = getattr(self, "_typed_primary_alias", None)
+            if callable(typed):
+                alias = typed()
+            else:
+                row = getattr(self, "nickname_row", None)
+                alias = row.get_text().strip() if row is not None else ""
         self._earlier_fetch_serial = serial = (
             getattr(self, "_earlier_fetch_serial", 0) + 1
         )
         if not editing and not alias:
+            # No alias yet, so no block can be matched.
+            builtin_fallback()
             self._set_earlier_directives({})
             return
 
-        def apply(earlier):
-            if earlier is None or serial != getattr(self, "_earlier_fetch_serial", 0):
+        auth_host = (
+            str(getattr(connection, "nickname", "") or "") if editing else alias
+        )
+
+        def apply(earlier, inherited_auth):
+            if serial != getattr(self, "_earlier_fetch_serial", 0):
                 return False
-            self._set_earlier_directives(earlier)
+            if callable(fallback_hook):
+                # None: the lookup failed. Shown as unknown, not as a default.
+                fallback_hook(inherited_auth)
+            if earlier is not None:
+                self._set_earlier_directives(earlier)
             return False
 
         def worker():
             earlier = None
+            # A daemon without the lookup: nothing known to be inherited.
+            inherited_auth = None if (
+                auth_host and callable(getattr(client, "get_inherited_auth", None))
+            ) else {}
+            # What the authentication section shows for a value reset after
+            # loading, or for a host not saved yet: the lines it would
+            # inherit without its own.
+            if auth_host and callable(getattr(client, "get_inherited_auth", None)):
+                try:
+                    inherited_auth = {
+                        str(d.key).lower(): str(d.value)
+                        for d in client.get_inherited_auth(auth_host)
+                    }
+                except Exception:
+                    logger.debug("Inherited authentication unavailable", exc_info=True)
             try:
                 if editing:
                     from .api.connection_identity import connection_id_for
@@ -480,7 +512,7 @@ class ConnectionDialogOverridesMixin:
                     )
             except Exception:
                 logger.debug("Earlier SSH directives unavailable", exc_info=True)
-            GLib.idle_add(apply, earlier)
+            GLib.idle_add(apply, earlier, inherited_auth)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -516,10 +548,16 @@ class ConnectionDialogOverridesMixin:
 
     def _set_forced_options(self, forced: Dict[str, str]) -> None:
         self._forced_options = dict(forced or {})
+        hook = getattr(self, "_auth_policy_set_forced", None)
+        if callable(hook):
+            hook(self._forced_options)
         self._apply_override_notes()
 
     def _set_earlier_directives(self, earlier: Dict[str, object]) -> None:
         self._earlier_directives = dict(earlier or {})
+        hook = getattr(self, "_auth_policy_set_earlier", None)
+        if callable(hook):
+            hook(self._earlier_directives)
         self._apply_override_notes()
 
     def _apply_override_notes(self, *_args) -> None:
@@ -538,13 +576,11 @@ class ConnectionDialogOverridesMixin:
                 if state is None:
                     # Settings come first on the command line; only when they
                     # leave the option alone does the file's order decide.
-                    state, note = earlier_row_state(
-                        row_name, keyword, own, earlier,
-                        password_auth=self._password_auth_selected(),
-                    )
+                    state, note = earlier_row_state(row_name, keyword, own, earlier)
                 self._mark_row_override(row_name, row, state, note)
             except Exception:
                 logger.debug("Could not mark %s as overridden", row_name, exc_info=True)
+        self._note_auth_preview()
         option_list = getattr(getattr(self, "advanced_tab", None), "option_list", None)
         refresh = getattr(option_list, "refresh_notes", None)
         if callable(refresh):
@@ -554,19 +590,42 @@ class ConnectionDialogOverridesMixin:
                 logger.debug("Could not refresh option notes", exc_info=True)
         self._sync_override_banner()
 
+    def _note_auth_preview(self) -> None:
+        """Give the "OpenSSH will try" line the reasons it differs.
+
+        The method rows carry their marks inside a folded list; the line
+        below it is what shows while the list is closed, so it repeats the
+        notes of the authentication rows that are set here and not used.
+        """
+        section = getattr(self, "auth_policy", None)
+        set_notes = getattr(section, "set_preview_notes", None)
+        if not callable(set_notes):
+            return
+        notes = []
+        for row_name, _keyword in OVERRIDABLE_ROWS:
+            if row_name not in AUTH_ROWS:
+                continue
+            row = getattr(self, row_name, None)
+            if getattr(row, "_sshpilot_override_state", None) != OVERRIDDEN:
+                continue
+            note = getattr(row, "_sshpilot_override_note", "") or ""
+            if note:
+                # Each note is about its own row ("No effect: ..."): away
+                # from the row it needs the row's name to say what is not.
+                notes.append((row.get_title(), note))
+        try:
+            set_notes(notes)
+        except Exception:
+            logger.debug("Could not note the authentication preview", exc_info=True)
+
     def _watch_rows_for_overrides(self) -> None:
         """Re-mark as the user edits: the state depends on what a row holds."""
         if getattr(self, "_override_watchers_connected", False):
             return
         self._override_watchers_connected = True
-        toggle = getattr(self, "auth_toggle", None)
-        if toggle is not None:
-            try:
-                toggle.connect("notify::active", self._apply_override_notes)
-            except Exception:
-                logger.debug("Cannot watch the authentication method", exc_info=True)
+        # The authentication section re-marks through its own change callback.
         names = [
-            name for name, _keyword in OVERRIDABLE_ROWS if name != "auth_method_row"
+            name for name, _keyword in OVERRIDABLE_ROWS if name not in AUTH_ROWS
         ]
         names += ["forward_agent_value_row", "identity_agent_value_row"]
         for name in names:
@@ -595,26 +654,21 @@ class ConnectionDialogOverridesMixin:
         """
         if row_name in (getattr(self, "_inherited_row_handlers", None) or {}):
             return None
-        if row_name == "auth_method_row":
-            # Password login writes its list of methods; key login need not.
-            return (
-                "keyboard-interactive,password"
-                if self._password_auth_selected() else None
-            )
+        own_value = getattr(row, "_sshpilot_own_value", None)
+        if callable(own_value):
+            return own_value()
         if row_name == "port_forwarding_only_row":
             return "none" if row.get_active() else None
         if row_name in SWITCH_OFF_AUTHORED:
-            on_value = {"x11_row": "yes", "key_only_row": "yes", "pubkey_auth_row": "no"}
-            usable = row_name != "key_only_row" or row.get_sensitive()
-            if row.get_active() and usable:
-                return on_value[row_name]
+            if row.get_active():
+                return "yes"
             # Off, but the saved block spells the option out: that line is
             # kept on save, and an earlier block can beat it like any other.
             directive, off_value = SWITCH_OFF_AUTHORED[row_name]
             authored = getattr(
                 getattr(self, "connection", None), "authored_directives", None
             ) or ()
-            if usable and getattr(self, "is_editing", False) and directive in authored:
+            if getattr(self, "is_editing", False) and directive in authored:
                 return off_value
             return None
         if row_name == "exit_on_forward_failure_row":
@@ -637,12 +691,6 @@ class ConnectionDialogOverridesMixin:
             if "port" not in (authored or ()) and "port" not in adopted:
                 return None
         return text or None
-
-    def _password_auth_selected(self) -> bool:
-        try:
-            return int(self.auth_toggle.get_active()) == 1
-        except Exception:
-            return False
 
     def _mark_row_override(
         self, row_name: str, row, state: Optional[str], note: Optional[str]
@@ -733,115 +781,48 @@ class ConnectionDialogOverridesMixin:
     def _overridden_field_count(self) -> int:
         return sum(self._overridden_field_counts())
 
-    # -- the SSH configuration buttons -----------------------------------
+    # -- the SSH configuration button -------------------------------------
+    #
+    # One way from this dialog into the configuration as a whole: Advanced
+    # Configuration, at this host's block. It shows what the two buttons
+    # that stood here did (what SSH uses for the host, and the file's
+    # text), and the blocks that decide it besides.
 
     def _setup_config_buttons(self) -> None:
-        """Wire "Effective Config" and "Edit SSH Config" at the dialog's foot."""
-        effective = getattr(self, "effective_config_button", None)
-        if effective is not None:
-            effective.connect("clicked", self._on_effective_config_clicked)
-        editor = getattr(self, "edit_ssh_config_button", None)
-        if editor is not None:
-            editor.connect("clicked", self._on_edit_ssh_config_clicked)
+        """Wire "Advanced Configuration" at the dialog's foot."""
+        advanced = getattr(self, "advanced_config_button", None)
+        if advanced is not None:
+            # A sidebar row (connection_dialog.blp), not a button.
+            advanced.connect("activated", self._on_advanced_config_clicked)
         self._sync_config_buttons()
 
     def _sync_config_buttons(self) -> None:
-        """Both buttons are about SSH; the viewer also needs a saved host."""
+        """The button is about SSH: a plugin protocol has no SSH configuration."""
         try:
             ssh = self._selected_protocol_id() == "ssh"
         except Exception:
             ssh = True
-        editor = getattr(self, "edit_ssh_config_button", None)
-        if editor is not None:
-            editor.set_visible(ssh)
-        effective = getattr(self, "effective_config_button", None)
-        if effective is None:
-            return
-        effective.set_visible(ssh)
-        saved = bool(getattr(self, "is_editing", False)) and getattr(
-            self, "connection", None
-        ) is not None
-        effective.set_sensitive(saved)
-        effective.set_tooltip_text(
-            _("Show what SSH uses for this host, as saved")
-            if saved
-            else _("Save the connection to see what SSH uses for it")
-        )
+        advanced = getattr(self, "advanced_config_button", None)
+        if advanced is not None:
+            advanced.set_visible(ssh)
 
-    def _on_effective_config_clicked(self, _button) -> None:
-        """Open the effective-config viewer over this dialog.
-
-        It shows the saved host, as ``ssh <alias>`` resolves it; changes not
-        saved yet are not in it.
-        """
+    def _on_advanced_config_clicked(self, _button) -> None:
+        """Open Advanced Configuration above this dialog, at the host's own
+        block when there is one, and re-mark the fields after each save
+        there: what was typed here stays, and this dialog still saves only
+        what it changed."""
         parent = getattr(self, "parent_window", None)
-        client = getattr(parent, "client", None)
-        connection = getattr(self, "connection", None)
-        if connection is None or not (
-            callable(getattr(parent, "_daemon_ready", None))
-            and parent._daemon_ready()
-            and callable(getattr(client, "get_effective_config", None))
-        ):
-            self._show_effective_config_unavailable()
-            return
-        host = str(getattr(connection, "nickname", "") or "")
-
-        def present(result):
-            if result is None or not getattr(result, "available", False):
-                self._show_effective_config_unavailable()
-                return False
-            try:
-                from .effective_config_dialog import EffectiveConfigDialog
-
-                EffectiveConfigDialog.for_result(
-                    self,
-                    host,
-                    {
-                        "has_diff": result.has_diff,
-                        "changes": list(result.changes),
-                        "own": list(result.own),
-                        "full": list(result.full),
-                    },
-                    on_edit=self._open_ssh_config_editor_over,
-                )
-            except Exception:
-                logger.debug("Could not open the effective-config viewer", exc_info=True)
-            return False
-
-        def worker():
-            result = None
-            try:
-                from .api.connection_identity import connection_id_for
-
-                result = client.get_effective_config(connection_id_for(connection))
-            except Exception:
-                logger.debug("Effective config unavailable", exc_info=True)
-            GLib.idle_add(present, result)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _show_effective_config_unavailable(self) -> None:
-        dialog = Adw.AlertDialog.new(
-            _("Effective configuration unavailable"),
-            _(
-                "The background service could not resolve this connection's "
-                "effective SSH configuration."
-            ),
-        )
-        dialog.add_response("close", _("_Close"))
-        dialog.present(self)
-
-    def _on_edit_ssh_config_clicked(self, _button) -> None:
-        self._open_ssh_config_editor_over(self)
-
-    def _open_ssh_config_editor_over(self, window) -> None:
-        """Open the SSH config editor modal over *window* (this dialog, or
-        the viewer opened from it), and re-mark the fields after each save."""
-        parent = getattr(self, "parent_window", None)
-        opener = getattr(parent, "_open_ssh_config_editor", None)
+        opener = getattr(parent, "open_advanced_config", None)
         if not callable(opener):
             return
-        opener(parent=window, on_saved=self._on_ssh_config_saved)
+        connection = getattr(self, "connection", None)
+        editing = bool(getattr(self, "is_editing", False)) and connection is not None
+        opener(
+            host=(getattr(connection, "nickname", "") or "") if editing else "",
+            file=(getattr(connection, "source", "") or "") if editing else "",
+            over=self,
+            on_saved=self._on_ssh_config_saved,
+        )
 
     def _on_ssh_config_saved(self) -> None:
         """The file changed under this dialog: ask again what decides each field.
@@ -909,3 +890,7 @@ class ConnectionDialogOverridesMixin:
                 )
             banner.set_title(title)
         banner.set_revealed(show)
+        # The marked fields may be on pages other than the one shown.
+        sync_marks = getattr(self, "_sync_sidebar_override_marks", None)
+        if callable(sync_marks):
+            sync_marks()

@@ -890,3 +890,305 @@ def test_output_slice_size_reaches_the_bridge(mock_client, mock_bridge, connecti
         assert "max_pending_bytes" not in kwargs
     else:
         assert kwargs["max_pending_bytes"] == slice_bytes
+
+
+# ---- Flow control (#1426): ack displayed output only ----------------------
+
+
+class _ManualBridge:
+    """Bridge double whose submitted operations complete on demand."""
+
+    def __init__(self):
+        self.pending = []
+
+    def submit(self, operation, *, on_success, on_error):
+        self.pending.append((operation, on_success, on_error))
+
+    def bind_terminal(self, *args, **kwargs):
+        return Mock()
+
+    def complete_all(self):
+        while self.pending:
+            operation, on_success, on_error = self.pending.pop(0)
+            try:
+                result = operation()
+            except Exception as error:  # noqa: BLE001
+                on_error(error)
+            else:
+                on_success(result)
+
+
+def _flow_controller(mock_client, *, barrier=True, capable=True):
+    from sshpilot.api.capabilities import Capability
+
+    supported = set(required_daemon_terminal_capabilities())
+    if capable:
+        supported.add(Capability.TERMINAL_FLOW_CONTROL)
+    mock_client.get_capabilities.return_value.supported = frozenset(supported)
+    waiters = []
+    bridge = _ManualBridge()
+    controller = DaemonTerminalSessionController(
+        client=mock_client,
+        bridge=bridge,
+        connection_id=ConnectionId("test-connection"),
+        view_id="test-view",
+        on_output=lambda _data: None,
+        display_barrier=waiters.append if barrier else None,
+    )
+    return controller, bridge, waiters
+
+
+def _active(controller):
+    controller._tab_state.session_id = SessionId("test-session")
+    controller._tab_state.attachment_id = AttachmentId("test-attachment")
+    controller._tab_state.state = TerminalSessionState.ACTIVE
+
+
+def _live(sequence, size):
+    return TerminalOutput(
+        session_id=SessionId("test-session"), sequence=sequence, data=b"x" * size
+    )
+
+
+def _acked(mock_client):
+    return [
+        call.args[0].sequence
+        for call in mock_client.acknowledge_terminal_output.call_args_list
+    ]
+
+
+@pytest.mark.parametrize(
+    "barrier, capable, expected",
+    [(True, True, True), (False, True, False), (True, False, False)],
+)
+def test_attach_asks_for_flow_control_only_with_a_barrier_and_capability(
+    mock_client, barrier, capable, expected
+):
+    controller, bridge, _waiters = _flow_controller(
+        mock_client, barrier=barrier, capable=capable
+    )
+    controller._tab_state.session_id = SessionId("test-session")
+    controller._tab_state.state = TerminalSessionState.OPENING
+    controller.attach(request_input=True, want_output=True)
+    operation, _ok, _err = bridge.pending[-1]
+    operation()
+    request = mock_client.attach_session.call_args.args[0]
+    assert request.flow_control is expected
+
+
+def test_output_is_acknowledged_only_after_the_display_caught_up(mock_client):
+    controller, bridge, waiters = _flow_controller(mock_client)
+    _active(controller)
+
+    controller._handle_output(_live(0, 100))
+    bridge.complete_all()
+    assert _acked(mock_client) == []  # fed, not yet displayed
+    assert len(waiters) == 1
+
+    waiters.pop()()
+    bridge.complete_all()
+    assert _acked(mock_client) == [100]
+    request = mock_client.acknowledge_terminal_output.call_args.args[0]
+    assert request.attachment_id == AttachmentId("test-attachment")
+
+
+def test_one_barrier_at_a_time_and_it_rearms_for_later_output(mock_client):
+    controller, bridge, waiters = _flow_controller(mock_client)
+    _active(controller)
+
+    controller._handle_output(_live(0, 100))
+    controller._handle_output(_live(100, 50))
+    assert len(waiters) == 1  # the second output waits for the first barrier
+
+    waiters.pop()()
+    bridge.complete_all()
+    # The first barrier vouches only for what was fed when it was armed.
+    assert _acked(mock_client) == [100]
+    assert len(waiters) == 1
+
+    waiters.pop()()
+    bridge.complete_all()
+    assert _acked(mock_client) == [100, 150]
+
+
+def test_acks_coalesce_while_one_is_in_flight(mock_client):
+    controller, bridge, waiters = _flow_controller(mock_client)
+    _active(controller)
+
+    controller._handle_output(_live(0, 10))
+    waiters.pop()()
+    for sequence in (10, 20, 30):
+        controller._handle_output(_live(sequence, 10))
+        waiters.pop()()
+    assert len(bridge.pending) == 1  # only the first ack is in flight
+
+    bridge.complete_all()
+    assert _acked(mock_client) == [10, 40]
+
+
+def test_output_before_the_attachment_is_acknowledged_once_attached(mock_client):
+    controller, bridge, waiters = _flow_controller(mock_client)
+    controller._tab_state.session_id = SessionId("test-session")
+    controller._tab_state.state = TerminalSessionState.ATTACHING
+    # A reattach whose replay frames are displayed before the attach reply.
+    controller._attach_from_sequence = 64
+
+    controller._handle_output(_live(0, 64))
+    assert waiters == []  # no attachment to acknowledge for yet
+
+    result = Mock()
+    result.attachment = AttachmentInfo(
+        id=AttachmentId("test-attachment"),
+        session_id=SessionId("test-session"),
+        client_id="client",
+        input_owner=True,
+    )
+    result.live_sequence = 64
+    controller._on_session_attached(result)
+    assert len(waiters) == 1
+    waiters.pop()()
+    bridge.complete_all()
+    assert _acked(mock_client) == [64]
+
+
+def test_no_acks_without_a_display_barrier(mock_client):
+    controller, bridge, _waiters = _flow_controller(mock_client, barrier=False)
+    _active(controller)
+    controller._handle_output(_live(0, 100))
+    bridge.complete_all()
+    assert _acked(mock_client) == []
+
+
+# ---- Recovery that cannot be completed continues past the gap (#1426) ----
+
+
+def _recovering_controller(mock_client):
+    from sshpilot.api.capabilities import Capability  # noqa: F401
+
+    losses = []
+    bridge = _ManualBridge()
+    controller = DaemonTerminalSessionController(
+        client=mock_client,
+        bridge=bridge,
+        connection_id=ConnectionId("test-connection"),
+        view_id="test-view",
+        on_output=lambda _data: None,
+        on_continuity_lost=lambda: losses.append(True),
+    )
+    _active(controller)
+    controller._tab_state.expected_sequence = 100
+    return controller, bridge, losses
+
+
+def _replay_result(first, next_sequence, *, truncated, earliest=None, latest=None):
+    from sshpilot.api.models.terminal import ReplayBounds, ReplayResult
+
+    return ReplayResult(
+        session_id=SessionId("test-session"),
+        first_sequence=first,
+        next_sequence=next_sequence,
+        bounds=ReplayBounds(
+            earliest_sequence=first if earliest is None else earliest,
+            latest_sequence=next_sequence if latest is None else latest,
+            retained_bytes=next_sequence - first,
+        ),
+        truncated=truncated,
+    )
+
+
+def test_replay_past_evicted_output_marks_the_gap_and_continues(mock_client):
+    controller, bridge, losses = _recovering_controller(mock_client)
+    mock_client.replay_terminal.side_effect = [
+        _replay_result(500, 1000, truncated=True, latest=1000),  # 100..500 gone
+        _replay_result(500, 1000, truncated=False),
+    ]
+
+    controller._begin_output_recovery(reattach=False)
+    bridge.complete_all()
+
+    assert losses == [True]  # the marker and parser reset, once
+    assert controller.state is TerminalSessionState.RECOVERING
+    assert controller.tab_state.expected_sequence == 500
+    requests = [call.args[0] for call in mock_client.replay_terminal.call_args_list]
+    assert [request.after_sequence for request in requests] == [100, 500]
+
+
+def test_reattach_past_evicted_output_continues_instead_of_failing(mock_client):
+    errors = []
+    controller, bridge, losses = _recovering_controller(mock_client)
+    controller._on_error = errors.append
+    result = Mock()
+    result.attachment = AttachmentInfo(
+        id=AttachmentId("new-attachment"),
+        session_id=SessionId("test-session"),
+        client_id="client",
+        input_owner=True,
+    )
+    result.replay_truncated = True
+    result.available_start = 700
+    result.live_sequence = 900
+    mock_client.attach_session.return_value = result
+    mock_client.replay_terminal.return_value = _replay_result(700, 900, truncated=False)
+
+    controller._begin_output_recovery(reattach=True)
+    bridge.complete_all()
+
+    assert errors == []
+    assert losses == [True]
+    assert controller.tab_state.attachment_id == AttachmentId("new-attachment")
+    assert controller.tab_state.expected_sequence == 700
+    request = mock_client.replay_terminal.call_args.args[0]
+    assert request.after_sequence == 700
+    assert request.attachment_id == AttachmentId("new-attachment")
+
+
+def test_reattach_past_evicted_output_sends_input_typed_meanwhile(mock_client):
+    """Keys typed while the attachment was missing are not left queued."""
+
+    controller, bridge, _losses = _recovering_controller(mock_client)
+    controller._tab_state.input_owner = True
+    result = Mock()
+    result.attachment = AttachmentInfo(
+        id=AttachmentId("new-attachment"),
+        session_id=SessionId("test-session"),
+        client_id="client",
+        input_owner=True,
+    )
+    result.replay_truncated = True
+    result.available_start = 700
+    result.live_sequence = 900
+    mock_client.attach_session.return_value = result
+    mock_client.replay_terminal.return_value = _replay_result(700, 900, truncated=False)
+
+    controller._begin_output_recovery(reattach=True)
+    controller.send_input(b"ls\r")  # no attachment yet: held
+    assert list(controller._recovery_input) == [b"ls\r"]
+    bridge.complete_all()
+
+    assert not controller._recovery_input
+    sent = [call.args[0] for call in mock_client.send_terminal_input.call_args_list]
+    assert [(item.attachment_id, item.data) for item in sent] == [
+        (AttachmentId("new-attachment"), b"ls\r")
+    ]
+
+
+def test_acks_use_the_bridge_ack_lane_when_it_has_one(mock_client):
+    controller, bridge, waiters = _flow_controller(mock_client)
+    _active(controller)
+    lanes = []
+    shared = bridge.submit
+
+    def submit_terminal_ack(operation, *, on_success, on_error):
+        lanes.append("ack")
+        return shared(operation, on_success=on_success, on_error=on_error)
+
+    bridge.submit_terminal_ack = submit_terminal_ack
+    bridge.submit = lambda *args, **kwargs: lanes.append("api")
+
+    controller._handle_output(_live(0, 10))
+    waiters.pop()()
+    bridge.submit = shared
+    bridge.complete_all()
+
+    assert lanes == ["ack"]
+    assert _acked(mock_client) == [10]

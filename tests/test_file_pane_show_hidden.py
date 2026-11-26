@@ -1,16 +1,26 @@
-class DummyToolbar:
-    def __init__(self):
-        self.states = []
+import types
 
-    def set_show_hidden_state(self, state):
-        self.states.append(state)
+
+class _StatefulAction:
+    """Stands in for the view menu's Gio.SimpleAction (pane.show-hidden)."""
+
+    def __init__(self, state=False):
+        self.state = state
+        self.set_calls = []
+
+    def get_state(self):
+        return types.SimpleNamespace(get_boolean=lambda: self.state)
+
+    def set_state(self, variant):
+        self.state = variant.get_boolean()
+        self.set_calls.append(self.state)
 
 
 def _make_minimal_pane(module):
     FilePane = module.FilePane
     pane = FilePane.__new__(FilePane)
-    pane.toolbar = DummyToolbar()
     pane._show_hidden = False
+    pane._menu_actions = {"show-hidden": _StatefulAction()}
     pane._filter_calls = []
 
     def _apply_entry_filter(*, preserve_selection=True):
@@ -20,20 +30,23 @@ def _make_minimal_pane(module):
     return pane
 
 
-def test_show_hidden_toggle_affects_only_current_pane(load_file_manager_window):
+def test_show_hidden_toggle_affects_only_current_pane(load_file_manager_window, monkeypatch):
     module = load_file_manager_window()
+    monkeypatch.setattr(
+        module.GLib, "Variant",
+        types.SimpleNamespace(new_boolean=lambda v: types.SimpleNamespace(get_boolean=lambda: v)),
+        raising=False,
+    )
     left = _make_minimal_pane(module)
     right = _make_minimal_pane(module)
 
-    assert left._show_hidden is False
-    assert right._show_hidden is False
-
-    left._on_toolbar_show_hidden_toggled(left.toolbar, True)
+    left.set_show_hidden(True)
 
     assert left._show_hidden is True
     assert right._show_hidden is False
-    assert left.toolbar.states == [True]
-    assert right.toolbar.states == []
+    # The view menu's check item follows (Ctrl+H and the menu both land here).
+    assert left._menu_actions["show-hidden"].set_calls == [True]
+    assert right._menu_actions["show-hidden"].set_calls == []
     assert left._filter_calls == [True]
     assert right._filter_calls == []
 

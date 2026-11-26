@@ -32,6 +32,7 @@ class Capability(str, Enum):
     TERMINAL_INPUT = "terminal.input"
     TERMINAL_RESIZE = "terminal.resize"
     TERMINAL_REPLAY = "terminal.replay"
+    TERMINAL_FLOW_CONTROL = "terminal.flow_control"
     EXTERNAL_TERMINAL_LAUNCH = "terminal.external_launch"
     INTERACTIONS = "interactions"
     INTERACTIONS_READ = "interactions.read"

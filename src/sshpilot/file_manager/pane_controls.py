@@ -59,7 +59,6 @@ class PaneControls(Gtk.Box):
 class PaneToolbar(Gtk.Box):
     __gsignals__ = {
         "view-changed": (GObject.SignalFlags.RUN_LAST, None, (str,)),
-        "show-hidden-toggled": (GObject.SignalFlags.RUN_LAST, None, (bool,)),
         "zoom-changed": (GObject.SignalFlags.RUN_LAST, None, (int,)),
     }
 
@@ -95,19 +94,7 @@ class PaneToolbar(Gtk.Box):
         right.append(self.controls.refresh_button)
         right.append(self.controls.new_folder_button)
         self._current_view = "list"
-
-        # Toggle for showing hidden files within this pane
-        self._show_hidden_button = Gtk.ToggleButton()
-        self._show_hidden_button.set_valign(Gtk.Align.CENTER)
-        self._show_hidden_button.add_css_class("flat")
-        from sshpilot import icon_utils
-        self._show_hidden_image = icon_utils.new_image_from_icon_name("view-conceal-symbolic")
-        self._show_hidden_button.set_child(self._show_hidden_image)
-        self._show_hidden_handler_id = self._show_hidden_button.connect(
-            "toggled", self._on_show_hidden_toggled
-        )
-        self._update_show_hidden_icon(False)
-        right.append(self._show_hidden_button)
+        # Show Hidden Files lives in the view menu below (pane.show-hidden).
 
         self.sort_split_button = self._create_sort_split_button()
         right.append(self.sort_split_button)
@@ -115,17 +102,9 @@ class PaneToolbar(Gtk.Box):
 
         # Don't wrap in ToolbarView to avoid nested ToolbarView theme issues
         # Instead, add toolbar styling via CSS class and append handle directly.
-        # `card` frames the toolbar as a rounded panel matching the browser
-        # card below it (margins align with FilePane's content card).
+        # The toolbar is the top row of the pane's card (FilePane frames the
+        # toolbar and the file list together), so it draws no card of its own.
         handle.add_css_class('toolbar')
-        # Same surface styling as the browser panes: card radius/shadow,
-        # view content colors, 1px frame border.
-        handle.add_css_class('card')
-        handle.add_css_class('view')
-        handle.add_css_class('frame')
-        handle.set_margin_top(8)
-        handle.set_margin_start(8)
-        handle.set_margin_end(8)
         self.append(handle)
 
     # Keep your factory
@@ -140,6 +119,18 @@ class PaneToolbar(Gtk.Box):
         zoom_item.set_attribute_value("custom", GLib.Variant.new_string("zoom_slider"))
         size_section.append_item(zoom_item)
         menu_model.append_section(None, size_section)
+
+        # Ctrl+H (Shift+Cmd+. on macOS) toggles it too; the accel attribute
+        # only labels the item.
+        from ..platform_utils import is_macos
+        hidden_section = Gio.Menu()
+        hidden_item = Gio.MenuItem.new(_("Show Hidden Files"), "pane.show-hidden")
+        hidden_item.set_attribute_value(
+            "accel",
+            GLib.Variant.new_string("<Shift><Primary>period" if is_macos() else "<Primary>h"),
+        )
+        hidden_section.append_item(hidden_item)
+        menu_model.append_section(None, hidden_section)
 
         sort_section = Gio.Menu()
         sort_section.append(_("Name"), "pane.sort-by-name")
@@ -161,7 +152,7 @@ class PaneToolbar(Gtk.Box):
         split_button.set_popover(popover)
         # Tooltip text is parsed as Pango markup; escape the ampersand or
         # use a plain word to avoid "entity did not end with a semicolon".
-        split_button.set_dropdown_tooltip(_("Adjust icon size and sort order"))
+        split_button.set_dropdown_tooltip(_("View options"))
         # Icon/tooltip show the destination layout (Nautilus), not the current one.
         icon_name, tooltip = self.view_toggle_appearance(self._current_view)
         split_button.set_icon_name(icon_name)
@@ -256,34 +247,6 @@ class PaneToolbar(Gtk.Box):
         self._current_view = "grid" if self._current_view == "list" else "list"
         self._sync_view_toggle_appearance()
         self.emit("view-changed", self._current_view)
-
-    def _on_show_hidden_toggled(self, button: Gtk.ToggleButton) -> None:
-        state = button.get_active()
-        self._update_show_hidden_icon(state)
-        self.emit("show-hidden-toggled", state)
-
-    def set_show_hidden_state(self, show_hidden: bool) -> None:
-        if not hasattr(self, "_show_hidden_button"):
-            return
-        current = self._show_hidden_button.get_active()
-        if current == show_hidden:
-            self._update_show_hidden_icon(show_hidden)
-            return
-        if self._show_hidden_handler_id is not None:
-            self._show_hidden_button.handler_block(self._show_hidden_handler_id)
-        try:
-            self._show_hidden_button.set_active(show_hidden)
-        finally:
-            if self._show_hidden_handler_id is not None:
-                self._show_hidden_button.handler_unblock(self._show_hidden_handler_id)
-        self._update_show_hidden_icon(show_hidden)
-
-    def _update_show_hidden_icon(self, show_hidden: bool) -> None:
-        from sshpilot import icon_utils
-        icon_name = "view-reveal-symbolic" if show_hidden else "view-conceal-symbolic"
-        tooltip = _("Hide Hidden Files") if show_hidden else _("Show Hidden Files")
-        icon_utils.set_icon_from_name(self._show_hidden_image, icon_name)
-        self._show_hidden_button.set_tooltip_text(tooltip)
 
     def get_header_bar(self):
         """Get the actual header bar for toolbar view."""

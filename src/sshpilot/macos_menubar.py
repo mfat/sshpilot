@@ -92,6 +92,7 @@ def build_macos_menubar(
 
     tools_ssh_section = menu_cls()
     tools_ssh_section.append(_("SSH Config Editor"), "app.edit-ssh-config")
+    tools_ssh_section.append(_("Advanced Configuration"), "app.advanced-ssh-config")
     tools_ssh_section.append(_("Known Hosts Editor"), "win.edit-known-hosts")
     tools_ssh_section.append(_("Login Profiles"), "win.manage-login-profiles")
     tools_ssh_section.append(

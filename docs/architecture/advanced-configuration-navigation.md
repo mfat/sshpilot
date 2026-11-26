@@ -1,0 +1,127 @@
+# Opening Advanced Configuration at a place
+
+Advanced Configuration shows the SSH configuration as blocks, one at a time
+(Structured, Effective and Raw views), with what OpenSSH resolves for a host. Any part of the app can open it at a block, an
+option or a line, in the root file or in a file the root reads through
+`Include`. There is one way in; do not construct `AdvancedConfigWindow`
+yourself and do not reach into its selection.
+
+## The call
+
+```python
+window.open_advanced_config(
+    host="edge",                  # the block that declares this host
+    line=0,                       # or: a line of the file, as saved
+    option="user",                # within the block: the option to show
+    file=connection.source,       # the file it is in (a connection's source)
+    pin=False,                    # make `host` the host OpenSSH is asked about
+    over=None,                    # the modal dialog calling, if any
+    on_saved=None,                # called after each save made there
+    new_block=None,               # or: (Host line, [(keyword, value), ...])
+)
+```
+
+`new_block` begins a block instead of showing a place: a new `Host` block with
+that line and those options is added to the draft, selected and left unsaved
+(`AdvancedConfigWindow.start_block`). The connection editor passes a pattern,
+or several names, typed where a connection's name goes, with the host, user
+and port typed beside it: a rule for several hosts and a Host line of several
+names are authored here, not saved from the connection editor.
+
+`MainWindow.open_advanced_config` returns the window, or `None` when it could
+not be opened (no daemon, or one without draft evaluation: a toast says so).
+With no target it opens as from the menu.
+
+Code that holds no window uses the app action, with the same fields as a JSON
+object (unknown fields and wrong types are dropped):
+
+```python
+app.activate_action(
+    "advanced-ssh-config-at",
+    GLib.Variant("s", json.dumps({"host": "edge", "file": source})),
+)
+```
+
+`app.advanced-ssh-config` (no parameter) is the menu and shortcut action.
+
+## What each field means
+
+| Field | Meaning |
+| --- | --- |
+| `host` | The block whose `Host` line declares the host (`ssh_config_document.declared_hosts`: a plain name no wildcard on the same line already matches). Used when no `line` is given or the line finds nothing. Not found: a toast, nothing moves. |
+| `line` | A 1-based line of `file` **as saved**. The block or option it belongs to is shown wherever unsaved edits have moved it (the window keeps the line map of the text it loaded). A line no block owns (a comment, a blank line) is shown selected in the Raw view. |
+| `option` | A keyword. The first option of the block with that keyword is shown instead of the block's header. |
+| `file` | A path as a connection reports its source. Empty, the root's own path, or a path the configuration does not read all mean the root. |
+| `pin` | `host` is kept as the host being checked while the window moves the selection, until the user picks a block in the sidebar (the picked block's own host is checked then). |
+
+The call may be made before the window has loaded, and for a file other than
+the one on screen: the window loads what it needs and goes there. If the file
+on screen has unsaved changes, the user is asked before another file replaces
+it; keeping them cancels the navigation.
+
+## Rules
+
+- **Included files.** The window shows one file at a time. The sidebar lists
+  every file of the configuration as a heading: the file on screen lists its
+  blocks under it, and another file is a row that opens it; the Raw view has
+  a tab per file. A file is named to the daemon by the name the
+  daemon gave out (`SshConfigText.files`), never by a path the frontend
+  chose: `file=` above is looked up among those names and falls back to the
+  root.
+- **From a modal dialog.** A modal dialog (the connection editor) stops
+  input to the other windows of its window group. Advanced Configuration is
+  therefore an ordinary window in a group of its own: it stays usable while
+  the dialog is up, there is still only one of it, and it can be maximized
+  (a modal child of the dialog could not be). `over=` names the dialog the
+  call comes from and changes nothing else.
+- **Another editor on the same file.** A save in Advanced Configuration does
+  not make an open connection editor stale (connection generations are not
+  touched by a raw save). Pass `on_saved` to refresh what the caller shows;
+  the connection editor passes the hook that re-marks its fields, and still
+  saves only the fields changed in it.
+- **A configuration OpenSSH rejects** opens like any other: the rejected line
+  is marked "Rejected" beside its field in the Structured view, and `line=`
+  reaches it.
+
+## Callers
+
+- Sidebar, connection context menu: **Advanced Configuration** (`host`,
+  `file`).
+- Connection editor, foot of the dialog: **Advanced Configuration** (`host`,
+  `file`, `over`, `on_saved`). It is the dialog's one way into the
+  configuration: the "Saved Effective Config" and "Edit SSH Config" buttons
+  that stood beside it are gone, since it shows both, and with them the
+  effective-config viewer, which only the first of them opened.
+
+## In the main window: Configuration
+
+The dropdown at the top of the main sidebar switches the window between
+Connections and Configuration (`sidebar_views`). Configuration is
+Advanced Configuration in the main window: `AdvancedConfigView`, the same
+controller and widgets as the window (`AdvancedConfigBase`) with `embedded`
+set. Its list of blocks is shown in the main sidebar and its three views in
+the content area, in the tabs' place; the tabs are hidden, not closed, and
+selecting or opening one brings Connections back.
+
+`MainWindow.open_advanced_config` shows this view. It opens the window
+instead only when the call comes from a dialog that stays up over the main
+window (*over* without *new_block*: the connection editor), or when the view
+cannot be shown.
+
+The draft lives as long as the view: leaving it keeps unsaved changes, the
+dropdown entry carries a dot while there are some, and closing the main
+window asks about them first (`sidebar_views.confirm_quit`). The view reads
+the file again when the connection list is rebuilt and after a save in the
+window, but never over unsaved changes: a file changed under a draft is said
+at the save, as in the window.
+
+## Back and forward
+
+Links inside the window (a **No effect** label, a source in Effective, a host
+chip under **Applies To**, the **Problems** tile) go through `reveal_line`,
+`reveal_source`, `follow_host` and `reveal_option`. Each records the place it
+leaves (file, block, view, host in question, scroll) before jumping and shows
+a toast, "Showing …", whose **Back** returns there. `go_back` / `go_forward`
+(Alt+Left / Alt+Right, taken in the CAPTURE phase so the Raw view's text view
+does not take them) walk that history. `go_to` from outside the window (the
+connection editor, the `app.advanced-ssh-config-at` action) is not recorded.

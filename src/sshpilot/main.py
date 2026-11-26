@@ -341,6 +341,8 @@ class SshPilotApplication(Adw.Application):
             self.create_action('terminal-search', self.on_terminal_search, ['<Meta><Shift>f'])
             self.create_action('new-key', self.on_new_key, ['<Meta><Shift>k'])
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<Meta><Shift>e'])
+            self.create_action('advanced-ssh-config', self.on_advanced_ssh_config, [])
+            self._create_advanced_config_at_action()
             self.create_action('manage-files', self.on_manage_files, ['<Meta><Shift>o'])
             logger.debug("Using macOS-specific shortcuts (Meta key = Command key)")
         else:
@@ -361,6 +363,8 @@ class SshPilotApplication(Adw.Application):
             self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
             # Not a terminal-standard combo → disabled by default.
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, [])
+            self.create_action('advanced-ssh-config', self.on_advanced_ssh_config, [])
+            self._create_advanced_config_at_action()
             self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
             logger.debug("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
 
@@ -1503,6 +1507,11 @@ class SshPilotApplication(Adw.Application):
                 self.window._is_quitting = True
         except Exception:
             logger.debug("Failed to mark windows quitting on shutdown", exc_info=True)
+        try:
+            from . import file_manager_window as fmw
+            fmw.set_quit_confirmed(True)
+        except Exception:
+            logger.debug("Could not mark the quit for file managers", exc_info=True)
 
         # Notify plugins first (before any teardown), then best-effort
         # deactivate them.
@@ -2006,6 +2015,47 @@ class SshPilotApplication(Adw.Application):
         win = self._action_window()
         if win and hasattr(win, '_open_ssh_config_editor'):
             win._open_ssh_config_editor()
+
+    def _create_advanced_config_at_action(self):
+        """``app.advanced-ssh-config-at``: Advanced Configuration at a place,
+        for menus, notices and plugins that hold no window. It takes a
+        parameter, so it has no shortcut and is not in the shortcut editor."""
+        if self.lookup_action('advanced-ssh-config-at') is not None:
+            return
+        action = Gio.SimpleAction.new('advanced-ssh-config-at', GLib.VariantType.new('s'))
+        action.connect('activate', self.on_advanced_ssh_config_at)
+        self.add_action(action)
+
+    def on_advanced_ssh_config(self, action=None, param=None):
+        """Open Advanced Configuration (the SSH configuration as blocks)."""
+        win = self._action_window()
+        if win and hasattr(win, 'open_advanced_config'):
+            win.open_advanced_config()
+
+    def on_advanced_ssh_config_at(self, action=None, param=None):
+        """Open Advanced Configuration at a place: ``app.advanced-ssh-config-at``.
+
+        The parameter is a JSON object with any of ``host``, ``line``,
+        ``option``, ``file`` and ``pin``, as ``MainWindow.open_advanced_config``
+        takes them. See docs/architecture/advanced-configuration-navigation.md.
+        """
+        import json
+
+        win = self._action_window()
+        if not win or not hasattr(win, 'open_advanced_config'):
+            return
+        try:
+            raw = json.loads(param.get_string()) if param is not None else {}
+        except (TypeError, ValueError):
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        target = {}
+        for key, kind in (('host', str), ('option', str), ('file', str),
+                          ('line', int), ('pin', bool)):
+            if type(raw.get(key)) is kind:
+                target[key] = raw[key]
+        win.open_advanced_config(**target)
 
     def _collect_garbage(self) -> bool:
         """Periodic trigger: queue a low-priority idle that runs the cyclic GC on

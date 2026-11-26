@@ -88,6 +88,7 @@ from .sidebar import (
     build_sidebar,
     install_sidebar_css,
     reset_connection_list_drag_session,
+    sync_grip_color,
 )
 from .sidebar_paned import DEFAULT_MAX_WIDTH as DEFAULT_SIDEBAR_MAX_WIDTH, SidebarPaned
 
@@ -1037,7 +1038,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 app.install_api_event_subscription(self.client)
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(self.client, bridge=self.client_bridge)
-        schedule = getattr(self, '_schedule_config_precedence_check', None)
+        schedule = getattr(self, '_schedule_config_syntax_check', None)
         if callable(schedule):
             schedule()
         self._run_client_ready_callbacks(True)
@@ -2132,28 +2133,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         container.set_visible(True)
         banner.set_revealed(True)
 
-    def _schedule_config_precedence_check(self) -> None:
-        """Look for unused host settings shortly after the store settles.
+    def _schedule_config_syntax_check(self) -> None:
+        """Ask whether OpenSSH accepts the config shortly after the store settles.
 
         Store refreshes come in bursts; one check follows the last of them.
         """
-        notice = getattr(self, '_config_precedence_notice', None)
+        notice = getattr(self, '_config_syntax_notice', None)
         if notice is None:
             return
-        if getattr(self, '_config_precedence_check_timer', 0):
-            GLib.source_remove(self._config_precedence_check_timer)
+        if getattr(self, '_config_syntax_check_timer', 0):
+            GLib.source_remove(self._config_syntax_check_timer)
 
         def fire():
-            self._config_precedence_check_timer = 0
+            self._config_syntax_check_timer = 0
             if self._daemon_ready():
                 notice.check()
-                # Same moment, same files: whether OpenSSH accepts them.
-                syntax_notice = getattr(self, '_config_syntax_notice', None)
-                if syntax_notice is not None:
-                    syntax_notice.check()
             return False
 
-        self._config_precedence_check_timer = GLib.timeout_add(1000, fire)
+        self._config_syntax_check_timer = GLib.timeout_add(1000, fire)
 
     def _on_active_for_config_syntax(self, *_args) -> None:
         """Ask again whether OpenSSH accepts the config on return to the window.
@@ -2281,17 +2278,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             orientation=Gtk.Orientation.VERTICAL
         )
         self.ssh_config_banner_container.set_visible(False)
-        # Saved hosts whose own settings an earlier block beats; shown until
-        # dismissed, and again for a conflict not dismissed before.
-        self.config_precedence_banner_container = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL
-        )
-        self.config_precedence_banner_container.set_visible(False)
-        from .gtk.config_precedence_notice import ConfigPrecedenceNotice
-        self._config_precedence_notice = ConfigPrecedenceNotice(
-            self, self.config_precedence_banner_container
-        )
-        self._config_precedence_check_timer = 0
+        self._config_syntax_check_timer = 0
         # A line OpenSSH rejects: no SSH connection starts until it is fixed.
         self.config_syntax_banner_container = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL
@@ -2498,10 +2485,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # The first start with the sidebar hidden explains the hover above.
         from . import sidebar_peek_hint
         sidebar_peek_hint.schedule(self)
+        # Upgraders still on Dots are offered the Colored Grips style.
+        from . import sidebar_grip_hint
+        sidebar_grip_hint.schedule(self)
         if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
             self._toggle_command_blocks_panel(True)
 
-        root_widget = self._content_overlay
+        # The rail that picks the window's view stays beside the sidebar,
+        # not in it: hiding the sidebar leaves it, and the sidebar popup
+        # floats beside it rather than over it.
+        from .sidebar_views import build_view_rail
+        root_widget = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        root_widget.append(build_view_rail(self))
+        root_widget.append(self._content_overlay)
 
         # The omni-search floats above the whole work UI.
         self._global_overlay = Gtk.Overlay()
@@ -2797,6 +2793,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
 
             row = row.get_next_sibling()
+        # Drag grips (Display Drag Handles, compact layout) and the colour
+        # they may carry.
+        self._apply_sidebar_row_actions(force=True)
 
     def _sidebar_forwarding_rules_enabled(self) -> bool:
         try:
@@ -3175,13 +3174,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return GLib.SOURCE_REMOVE
 
     def _move_title_to_content_header(self) -> None:
-        """Select the tab bar or the empty drag region in the content title."""
+        """Select the tab bar, the Configuration view's controls, or the
+        empty drag region in the content title."""
         stack = getattr(self, '_content_title_stack', None)
         if stack is None:
             return
         tab_bar = getattr(self, 'tab_bar', None)
         try:
-            if tab_bar is not None and self.has_user_tabs():
+            from .sidebar_views import SECTIONS, current_view
+            if current_view(self) == SECTIONS and stack.get_child_by_name('config'):
+                stack.set_visible_child_name('config')
+            elif tab_bar is not None and tab_bar.get_visible():
                 stack.set_visible_child(tab_bar)
             else:
                 stack.set_visible_child(self._content_empty_title)
@@ -3209,8 +3212,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not force and reserved == getattr(self, '_sidebar_row_actions_reserved', None):
             return
         self._sidebar_row_actions_reserved = reserved
+        # The drag grips go with the row actions (sidebar.py's
+        # _set_child_with_grip): only while the sidebar is wide enough, not
+        # in the compact layout, where every pixel is the point, and not
+        # when turned off in Settings ▸ Sidebar.
+        try:
+            wanted = bool(self.config.get_setting('ui.sidebar_show_drag_handles', True))
+        except Exception:
+            wanted = True
+        grips = reserved and wanted and not lb.has_css_class('sidebar-compact')
         row = lb.get_first_child()
         while row is not None:
+            grip = getattr(row, 'drag_grip', None)
+            if grip is not None:
+                grip.set_visible(grips)
+                # 'Colored Grips': the colour moves to the dot while hidden.
+                sync_grip_color(row)
             setter = getattr(row, 'set_actions_reserved', None)
             if setter is not None:
                 try:
@@ -3799,6 +3816,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._build_tab_context_menus()
         self.tab_view.set_menu_model(self._tab_menu_model)
         self.tab_view.connect('setup-menu', self._on_tab_setup_menu)
+        self.install_file_manager_pane_shortcut(self, self.tab_view)
 
         # Whenever the window layout changes, propagate toolbar height to
         # any TerminalWidget so the reconnect banner exactly matches.
@@ -4089,7 +4107,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.ssh_config_banner_container)
             content_wrapper.append(self.config_syntax_banner_container)
-            content_wrapper.append(self.config_precedence_banner_container)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
@@ -4108,7 +4125,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(self.ssh_config_banner_container)
             main_box.append(self.config_syntax_banner_container)
-            main_box.append(self.config_precedence_banner_container)
             main_box.append(self.update_banner_container)
             main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
@@ -4264,6 +4280,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         new_section = Gio.Menu()
         new_section.append(_('New Connection'), 'app.new-connection')
         new_section.append(_('New Group'), 'win.create-group')
+        new_section.append(_('New Host Rule…'), 'win.new-host-rule')
         new_section.append(_('New Local Terminal'), 'app.local-terminal')
         new_section.append(_('New Split View'), 'win.new-split-view')
         menu.append_section(None, new_section)
@@ -4276,6 +4293,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         ssh_section = Gio.Menu()
         ssh_section.append(_('SSH Config Editor'), 'app.edit-ssh-config')
+        ssh_section.append(_('Advanced Configuration'), 'app.advanced-ssh-config')
         ssh_section.append(_('Known Hosts Editor'), 'win.edit-known-hosts')
         ssh_section.append(_('Login Profiles'), 'win.manage-login-profiles')
         ssh_section.append(_('Manage Local authorized_keys…'), 'win.manage-local-authorized-keys')
@@ -4411,6 +4429,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """
         self._cancel_pending_connection_rows()
         self._connection_rows_split = False
+        # The configuration may have changed: the Configuration view, if
+        # it is the one shown, reads it again.
+        try:
+            from .sidebar_views import refresh_sections
+            refresh_sections(self)
+        except Exception:
+            logger.debug("Could not refresh the sidebar rules", exc_info=True)
         steps = self._rebuild_connection_list_steps()
         if first_rows is None:
             for _visible in steps:
@@ -4930,6 +4955,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         hide_hosts = getattr(self, '_hide_hosts', False)
         if hide_hosts and hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(hide_hosts)
+
+        popup = getattr(self, "_search_popup", None)
+        searching = bool(self.search_entry.get_text().strip())
+        if searching or (popup is not None and popup.visible and not popup.show_groups):
+            from .search_groups import make_group_context_label
+            context = make_group_context_label(self.group_manager, connection)
+            if context is not None:
+                row._info_box.append(context)
 
         return row
 
@@ -5646,6 +5679,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def focus_search_entry(self):
         """Toggle search on/off and show appropriate toast notification."""
+        # In the Configuration view the search is of its blocks.
+        try:
+            from .sidebar_views import focus_sections_search
+            if focus_sections_search(self):
+                return
+        except Exception:
+            logger.debug("Could not focus the configuration search", exc_info=True)
         try:
             if hasattr(self, 'search_entry') and self.search_entry:
                 sidebar_hidden = self._sidebar_hidden_by_toggle()
@@ -5730,21 +5770,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     connection = refreshed
             except Exception:
                 pass
-
-        if connection is not None and not as_new and not skip_group_warning:
-            block_info = None
-            inspect_host_block = getattr(
-                self.connection_manager, 'get_host_block_details', None
-            )
-            if callable(inspect_host_block):
-                try:
-                    source_path = split_group_source or getattr(connection, 'source', None)
-                    block_info = inspect_host_block(connection.nickname, source_path)
-                except Exception as e:
-                    logger.debug(f"Failed to inspect host block for {connection.nickname}: {e}")
-            if block_info and len(block_info.get('hosts') or []) > 1:
-                self._prompt_group_edit_options(connection, block_info)
-                return
 
         split_source_for_dialog = split_group_source or (getattr(connection, 'source', None) if connection else None)
         original_token = split_original_nickname or (connection.nickname if connection else None)
@@ -6208,49 +6233,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return False
         return True
 
-    def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):
-        """Present options when editing a grouped host"""
-        try:
-            host_label = getattr(connection, 'nickname', '')
-            other_hosts = max(0, len(block_info.get('hosts') or []) - 1)
-            message = ngettext(
-                '"{host}" is part of a configuration block with [{count}] other host. '
-                "How would you like to apply your changes?",
-                '"{host}" is part of a configuration block with [{count}] other hosts. '
-                "How would you like to apply your changes?",
-                other_hosts,
-            ).format(host=host_label, count=other_hosts)
-
-            dialog = Adw.MessageDialog.new(self, _("Warning"), message)
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('manual', _('Manually Edit SSH Configuration'))
-            dialog.add_response('split', _('Edit as Separate Connection'))
-            dialog.set_response_appearance('manual', Adw.ResponseAppearance.SUGGESTED)
-            dialog.set_default_response('manual')
-            dialog.set_close_response('cancel')
-
-            source_path = block_info.get('source') or getattr(connection, 'source', None)
-            original_name = getattr(connection, 'nickname', None)
-
-            def on_response(dlg, response):
-                dlg.destroy()
-                if response == 'manual':
-                    self._open_ssh_config_editor()
-                elif response == 'split':
-                    self.show_connection_dialog(
-                        connection,
-                        skip_group_warning=True,
-                        force_split_from_group=True,
-                        split_group_source=source_path,
-                        split_original_nickname=original_name,
-                    )
-
-            dialog.connect('response', on_response)
-            dialog.present()
-        except Exception as e:
-            logger.error(f"Failed to present group edit options: {e}")
-            self.show_connection_dialog(connection, skip_group_warning=True)
-
     def _open_ssh_config_editor(self, parent=None, on_saved=None):
         """Open the SSH config text editor backed by the daemon.
 
@@ -6285,7 +6267,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             def saved():
                 # A corrected line or a moved block changes no connection, so
                 # no store refresh follows: look at the notices again here.
-                schedule = getattr(self, '_schedule_config_precedence_check', None)
+                schedule = getattr(self, '_schedule_config_syntax_check', None)
                 if callable(schedule):
                     schedule()
                 if callable(on_saved):
@@ -6318,6 +6300,135 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to open SSH config editor: {e}")
             self.show_toast(_("Could not open the SSH config editor."))
             return None
+
+    def open_advanced_config(self, *, host='', line=0, option='', file='',
+                             pin=False, over=None, on_saved=None,
+                             new_block=None):
+        """Open Advanced Configuration at a place of the SSH configuration.
+
+        The one way in for the rest of the app (and, through the
+        ``app.advanced-ssh-config-at`` action, for whoever holds no window):
+        see docs/architecture/advanced-configuration-navigation.md.
+
+        *host*, *line*, *option*, *file* and *pin* say where, as
+        ``AdvancedConfigWindow.go_to`` takes them; with none of them the
+        window opens as from the menu. *on_saved* runs after each save made
+        there. *over* is the modal window the call comes from, if any (the
+        connection editor): the window is its own, in a window group of its
+        own, so it can be used while that dialog is up, and is not a child
+        of it (a modal child cannot be maximized).
+
+        *new_block* is ``(Host line, [(keyword, value), ...])``: a block to
+        begin there, unsaved (``AdvancedConfigWindow.start_block``). The
+        connection editor passes a pattern, or several names, typed where a
+        connection's name goes.
+
+        It is shown in the main window, as the Configuration view
+        (``sidebar_views``), unless the call comes from a dialog that stays
+        up over it (*over* without *new_block*: the connection editor's
+        dialog closes once it has handed a new block over).
+
+        Returns the window or the view, or None when it could not be opened.
+        """
+        window = None
+        if over is None or new_block:
+            try:
+                from .sidebar_views import open_sections
+                view = open_sections(
+                    self, host=host, line=line, option=option, file=file,
+                    pin=pin, new_block=new_block,
+                )
+            except Exception:
+                logger.debug("Could not show the Configuration view", exc_info=True)
+                view = None
+            if view is not None:
+                if callable(on_saved):
+                    view.add_saved_listener(on_saved)
+                return view
+        window = self._open_advanced_config()
+        if window is None:
+            return None
+        if callable(on_saved):
+            window.add_saved_listener(on_saved)
+        if host or line or file:
+            window.go_to(host=host, line=line, option=option, file=file, pin=pin)
+        if new_block:
+            window.start_block(new_block[0], new_block[1])
+        return window
+
+    def _open_advanced_config(self):
+        """Open Advanced Configuration: the SSH configuration as blocks,
+        with what OpenSSH resolves for a target host.
+
+        Like the SSH Config Editor it works on the daemon-selected file and
+        never touches it from GTK. One window at a time: opening again
+        presents the one that is open. It is an ordinary window (it can be
+        maximized) in a window group of its own: a modal dialog of the main
+        window, the connection editor above all, stops input to the windows
+        of its own group and no others, so this one stays usable while the
+        dialog that opened it is up. Returns the window, or None.
+        """
+        existing = getattr(self, '_advanced_config_window', None)
+        if existing is not None:
+            existing.present()
+            return existing
+        try:
+            from .advanced_config_window import AdvancedConfigWindow
+
+            client = getattr(self, 'client', None)
+            try:
+                supported = client is not None and client.get_capabilities().supports(
+                    ApiCapability.CONNECTIONS_CONFIG_READ
+                ) and callable(getattr(client, 'evaluate_ssh_config_draft', None))
+            except Exception:
+                supported = False
+            if not supported:
+                self.show_toast(_(
+                    "SSH config editing requires the background service. "
+                    "Start it and try again."
+                ))
+                return None
+
+            def saved():
+                schedule = getattr(self, '_schedule_config_syntax_check', None)
+                if callable(schedule):
+                    schedule()
+                # The read-only sections of the main window show the file.
+                from .sidebar_views import refresh_sections
+                refresh_sections(self)
+
+            # Of the main window, as when opened from the menu (which is the
+            # case known to maximize): not of the dialog that asked for it.
+            window = AdvancedConfigWindow(self, client, on_saved=saved)
+            # Kept on the window: a group lives as long as someone holds it.
+            window._window_group = Gtk.WindowGroup()
+            window._window_group.add_window(window)
+            self._advanced_config_window = window
+            # Forgotten when it closes, so that the next opening makes a
+            # new one. Told by the window itself: "destroy" does not come
+            # while this very attribute still holds the window.
+            window.add_closed_listener(
+                lambda: setattr(self, '_advanced_config_window', None)
+            )
+            window.present()
+            return window
+        except Exception as e:
+            logger.error(f"Failed to open Advanced Configuration: {e}", exc_info=True)
+            self.show_toast(_("Could not open Advanced Configuration."))
+            return None
+
+    def on_advanced_config_for_connection_action(self, *_args):
+        """Context menu: show the connection's block in Advanced Configuration."""
+        connection = getattr(self, '_context_menu_connection', None)
+        if connection is None:
+            row = self.connection_list.get_selected_row()
+            connection = getattr(row, 'connection', None) if row else None
+        if connection is None:
+            return
+        self.open_advanced_config(
+            host=getattr(connection, 'nickname', '') or '',
+            file=getattr(connection, 'source', '') or '',
+        )
 
     def show_connection_selection_for_ssh_copy(self):
         """Open the ssh-copy-id dialog with no server preselected; its
@@ -7379,7 +7490,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """
         self.group_manager.bind_connections(manager.connections)
         self._sync_ssh_config_link_notice(manager)
-        schedule = getattr(self, '_schedule_config_precedence_check', None)
+        schedule = getattr(self, '_schedule_config_syntax_check', None)
         if callable(schedule):
             schedule()
         # A rebuild that runs after this reset, before the idle one, already
@@ -7818,6 +7929,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_close_request(self, window):
         """Handle window close request - MAIN ENTRY POINT"""
+        if not self._is_quitting:
+            # Unsaved changes of the SSH configuration (the Configuration
+            # view) are asked about first; discarding closes again.
+            try:
+                from .sidebar_views import confirm_quit
+                if confirm_quit(self, self.close):
+                    return True
+            except Exception:
+                logger.debug("Could not ask about unsaved configuration", exc_info=True)
         if self._is_quitting:
             self._teardown_ssh_config_monitor()
             self._invalidate_api_window_callbacks()
@@ -7828,6 +7948,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     controller.shutdown()
             except Exception:
                 logger.debug('Fullscreen controller shutdown failed', exc_info=True)
+            self._mark_transfers_quit_committed()
             return False  # Already quitting, allow close
 
         # Capture the currently-open tabs so they can be restored next launch
@@ -7838,6 +7959,30 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 session_manager.save_previous(self.capture_session())
         except Exception as e:
             logger.debug(f"Failed to capture previous session on close: {e}")
+
+        # File transfers still running in any file manager (tab or window):
+        # quitting cancels them, so ask first.
+        # The answer covers the one quit it was given for. That quit may
+        # still be called off (the question about open terminals), and the
+        # transfers are then as worth asking about as before.
+        transfers_answered = bool(getattr(self, '_transfers_quit_answered', False))
+        self._transfers_quit_answered = False
+        if not transfers_answered:
+            from . import file_manager_window as fmw
+            count = fmw.running_transfer_count_everywhere()
+            if count:
+                def _quit_anyway():
+                    self._transfers_quit_answered = True
+                    app = self.get_application()
+                    if app is not None:
+                        app.quit()
+                    else:
+                        self.close()
+
+                fmw.confirm_cancel_transfers(
+                    self, count, quitting=True, on_confirm=_quit_anyway,
+                )
+                return True
 
         # Check for active connections across all tabs
         actually_connected = {}
@@ -7884,7 +8029,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         self._teardown_ssh_config_monitor()
         self._invalidate_api_window_callbacks()
+        self._mark_transfers_quit_committed()
         return False  # Allow close
+
+    @staticmethod
+    def _mark_transfers_quit_committed() -> None:
+        """The quit goes ahead: file managers close without asking again."""
+        try:
+            from . import file_manager_window as fmw
+            fmw.set_quit_confirmed(True)
+        except Exception:
+            logger.debug("Could not mark the quit for file managers", exc_info=True)
 
     def _proceed_with_confirmed_quit(self) -> None:
         """Quit through the verified-teardown path whenever a daemon exists.
@@ -8623,30 +8778,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 _("The daemon could not prepare this SSH launch."),
             )
 
-    def _on_effective_config_error(self, error) -> None:
-        """Handle effective-config failures without using terminal-launch UI."""
-        from .api import ErrorCode, SshPilotError
-
-        code = getattr(error, "code", None)
-        if code is ErrorCode.CONNECTION_NOT_FOUND:
-            heading = _("Connection unavailable")
-            body = _("The selected connection no longer exists in the daemon.")
-        elif code is ErrorCode.UNSUPPORTED_CAPABILITY:
-            heading = _("Effective configuration unavailable")
-            body = _("This daemon does not provide effective SSH configuration comparison.")
-        elif isinstance(error, SshPilotError) and code in {
-            ErrorCode.DAEMON_UNAVAILABLE,
-            ErrorCode.TRANSPORT_CLOSED,
-            ErrorCode.TRANSPORT_TIMEOUT,
-        }:
-            self._show_daemon_unavailable_dialog(error)
-            return
-        else:
-            heading = _("Effective configuration unavailable")
-            body = _("SSH Pilot could not resolve or compare the effective SSH configuration.")
-        logger.warning("Effective-config comparison unavailable code=%s", getattr(code, "value", code))
-        self._error_dialog(heading, body)
-
     def _show_terminal_error_dialog(self):
         """Show error dialog when no terminal is found"""
         try:
@@ -9124,6 +9255,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     split_from_group = connection_data.pop('__split_from_group', None)
                     split_source = connection_data.pop('__split_source', None)
                     split_original = connection_data.pop('__split_original_nickname', None)
+                    # The editor's word that this save is for every host of a
+                    # Host line the connection shares.
+                    shared_block = bool(connection_data.pop('__shared_block', False))
 
                     if split_from_group:
                         from .api.models.connections import SplitConnectionRequest
@@ -9158,6 +9292,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                                           else UNSET),
                             config_patch=config_patch,
                             expected_generation=current_generation,
+                            shared_block=shared_block,
                         )
                         operation = lambda: self.client.update_connection(
                             connection_id,
@@ -9371,6 +9506,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         bool(getattr(self, '_ssh_config_unavailable', None))
                     ),
                 )
+                return
+            # A refusal the daemon named: say which, not "could not be saved".
+            from .gtk.connection_save_messages import save_failure_text
+            reason = save_failure_text(error)
+            if reason:
+                complete_save(False, None, meta_error=reason)
                 return
             complete_save(False)
 
@@ -9609,44 +9750,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # A resumed save completes again; move only once.
         dialog._initial_group_id = target
         self.move_connection_to_group(nickname, target or None)
-
-    def show_effective_config_for_connection(self, connection) -> None:
-        """Open the effective-config viewer from a daemon comparison result."""
-        if not self._daemon_ready():
-            self._show_daemon_unavailable_dialog()
-            return
-        host = getattr(connection, "nickname", "") or ""
-        try:
-            self.client_bridge.submit(
-                lambda: self.client.get_effective_config(connection_id_for(connection)),
-                on_success=lambda result: self._present_effective_config_dialog(host, result),
-                on_error=self._on_effective_config_error,
-            )
-        except Exception as error:
-            self._on_effective_config_error(error)
-
-    def _present_effective_config_dialog(self, host, result) -> None:
-        if not result.available:
-            logger.info("Effective-config comparison unavailable for %s", host)
-            self._error_dialog(
-                _("Effective configuration unavailable"),
-                _("The daemon could not resolve or compare this connection's effective SSH configuration."),
-            )
-            return
-        try:
-            from .effective_config_dialog import EffectiveConfigDialog
-            EffectiveConfigDialog.for_result(
-                self,
-                host,
-                {
-                    "has_diff": result.has_diff,
-                    "changes": list(result.changes),
-                    "own": list(result.own),
-                    "full": list(result.full),
-                },
-            )
-        except Exception:
-            logger.debug("Failed to open effective-config diff", exc_info=True)
 
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""

@@ -87,76 +87,68 @@ class ConnectionDialogPortForwardingMixin:
         if self.placeholder.get_parent():
             self.placeholder.unparent()
 
-        # Process each forwarding rule
+        # One card for all rules, a separator between rows. The size group
+        # gives every row the same left side, so the arrows
+        # line up down the list.
+        from sshpilot.forward_rule_row import build_forward_rule_row, describe_forward
+
+        server_name = self._forwarding_server_name()
+        side_group = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.add_css_class("card")
+        shown = 0
         for rule in self.forwarding_rules:
             if not rule.get('enabled', True):
                 continue
-
-            rule_type = rule.get('type', '')
-
-            # Create a row for the rule
-            row = Adw.ActionRow()
-            row.set_selectable(False)
-
-            # Set appropriate icon and title based on rule type
-            from sshpilot import icon_utils
-            if rule_type == 'local':
-                row.set_title(_("Local Port Forwarding"))
-                row.add_prefix(icon_utils.new_image_from_icon_name("network-transmit-receive-symbolic"))
-                description = _("Local {local_port} → {remote_host}:{remote_port}").format(
-                    local_port=rule.get('listen_port', ''),
-                    remote_host=rule.get('remote_host', ''),
-                    remote_port=rule.get('remote_port', '')
-                )
-            elif rule_type == 'remote':
-                row.set_title(_("Remote Port Forwarding"))
-                row.add_prefix(icon_utils.new_image_from_icon_name("network-receive-symbolic"))
-                listen_addr = rule.get('listen_addr') or ''
-                listen_port = rule.get('listen_port', '')
-                remote_src = f"{listen_addr}:{listen_port}" if listen_addr else f"{listen_port}"
-                dest_host = rule.get('local_host') or rule.get('remote_host') or ''
-                dest_port = rule.get('local_port') or rule.get('remote_port') or ''
-                if rule.get('socks') or not (dest_host or dest_port):
-                    description = _("Remote {src} → SOCKS").format(src=remote_src)
-                else:
-                    description = _("Remote {src} → {dest_host}:{dest_port}").format(
-                        src=remote_src, dest_host=dest_host, dest_port=dest_port
-                    )
-            elif rule_type == 'dynamic':
-                row.set_title(_("Dynamic Port Forwarding (SOCKS)"))
-                row.add_prefix(icon_utils.new_image_from_icon_name("network-workgroup-symbolic"))
-                description = _("SOCKS proxy on port {port}").format(
-                    port=rule.get('listen_port', '')
-                )
-            else:
+            view = describe_forward(rule)
+            if view is None:
                 continue
-
-            # Add description
-            row.set_subtitle(description)
-
-            # Add delete button
-            delete_button = Gtk.Button(
-                icon_name="user-trash-symbolic",
-                valign=Gtk.Align.CENTER,
-                css_classes=["flat", "error"]
-            )
-            delete_button.connect("clicked", self.on_delete_forwarding_rule_clicked, rule)
-            row.add_suffix(delete_button)
-
-            # Add edit button
-            edit_button = Gtk.Button(
-                icon_name="document-edit-symbolic",
-                valign=Gtk.Align.CENTER,
-                css_classes=["flat"]
-            )
-            edit_button.connect("clicked", self.on_edit_forwarding_rule_clicked, rule)
-            row.add_suffix(edit_button)
-
-            # Add the row to the list
-            self.rules_list.append(row)
+            if shown:
+                card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            card.append(build_forward_rule_row(
+                view,
+                server_name,
+                on_edit=lambda r=rule: self.on_edit_forwarding_rule_clicked(None, r),
+                on_delete=lambda r=rule: self.on_delete_forwarding_rule_clicked(None, r),
+                side_group=side_group,
+            ))
+            shown += 1
+        if shown:
+            self.rules_list.append(card)
+        else:
+            # Every rule is disabled or of a kind the list cannot draw.
+            self.rules_list.append(self.placeholder)
 
         # Show the rules list
         self.rules_list.show()
+
+    def _watch_forwarding_server_name(self):
+        """Redraw the rules when the alias or host they name changes."""
+        for attr in ('nickname_row', 'hostname_row'):
+            row = getattr(self, attr, None)
+            if row is None:
+                continue
+            try:
+                row.connect('changed', self._on_forwarding_server_name_changed)
+            except Exception:
+                logger.debug("Cannot watch %s for the forward rules", attr, exc_info=True)
+
+    def _on_forwarding_server_name_changed(self, *_args):
+        if getattr(self, 'forwarding_rules', None):
+            self.load_port_forwarding_rules()
+
+    def _forwarding_server_name(self):
+        """The name the rule list gives the server: the connection's alias,
+        else its host, else a plain word while both fields are empty."""
+        for attr in ('nickname_row', 'hostname_row'):
+            row = getattr(self, attr, None)
+            try:
+                text = (row.get_text() or '').strip() if row is not None else ''
+            except Exception:
+                text = ''
+            if text:
+                return text
+        return _("Server")
 
     def on_delete_forwarding_rule_clicked(self, button, rule):
         """Handle delete port forwarding rule button click"""

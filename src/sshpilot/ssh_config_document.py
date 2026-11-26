@@ -179,6 +179,50 @@ def is_concrete_host_block(block: HostBlock) -> bool:
     )
 
 
+def is_literal_host_token(token: str) -> bool:
+    """A ``Host`` token that names one host: no wildcard, no negation."""
+    return bool(token) and "*" not in token and "?" not in token and not token.startswith("!")
+
+
+def _wildcard_covers(pattern: str, name: str) -> bool:
+    """ssh_config(5) pattern matching: ``*`` any run, ``?`` one character."""
+    expression = "".join(
+        ".*" if char == "*" else "." if char == "?" else re.escape(char)
+        for char in pattern
+    )
+    return re.fullmatch(expression, name) is not None
+
+
+def declared_hosts(tokens) -> List[str]:
+    """The hosts a ``Host`` line declares, whatever else is on the line.
+
+    ``Host *.prod edge`` is a matching rule *and* declares ``edge``:
+    ``ssh edge`` uses the block, and would not without the name there. In
+    ``Host old *`` the name adds nothing, the wildcard beside it already
+    matches it: the line is a rule and no more, and ``old`` is declared
+    where it stands without one.
+    """
+    wildcards = [
+        token for token in tokens
+        if not token.startswith("!") and ("*" in token or "?" in token)
+    ]
+    return [
+        token for token in tokens
+        if is_literal_host_token(token)
+        and not any(_wildcard_covers(pattern, token) for pattern in wildcards)
+    ]
+
+
+def literal_host_tokens(block: HostBlock) -> List[str]:
+    """The hosts *block*'s ``Host`` line declares: see :func:`declared_hosts`."""
+    return declared_hosts(block.tokens)
+
+
+def declares_host(block: HostBlock, alias: str) -> bool:
+    """Whether *block*'s ``Host`` line declares *alias*."""
+    return alias in declared_hosts(block.tokens)
+
+
 @dataclass
 class MatchBlock:
     """One ``Match`` stanza, lines verbatim. Never edited; the loader keeps

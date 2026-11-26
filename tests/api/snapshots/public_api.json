@@ -7,13 +7,15 @@
     "DaemonClient",
     "ErrorCode",
     "EventType",
+    "MutationRefusal",
     "PROTOCOL_VERSION",
     "SshPilotClient",
     "SshPilotError",
     "Subscription",
-    "TerminalSubscription"
+    "TerminalSubscription",
+    "ValidationReason"
   ],
-  "api_implementation_version": "0.102",
+  "api_implementation_version": "0.119",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -84,6 +86,7 @@
     "terminal",
     "terminal.attach",
     "terminal.external_launch",
+    "terminal.flow_control",
     "terminal.input",
     "terminal.output",
     "terminal.replay",
@@ -97,6 +100,10 @@
     "transfers.write"
   ],
   "client_method_contract": {
+    "acknowledge_terminal_output": {
+      "capability": "terminal.flow_control",
+      "status": "daemon-only"
+    },
     "add_agent_key": {
       "capability": "identity.operate",
       "status": "daemon-only"
@@ -257,6 +264,10 @@
       "capability": "connections.write",
       "status": "implemented"
     },
+    "evaluate_ssh_config_draft": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
     "export_secret_backup": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
@@ -320,6 +331,10 @@
     "get_identity_state": {
       "capability": "identity.read",
       "status": "daemon-only"
+    },
+    "get_inherited_auth": {
+      "capability": "connections.config.read",
+      "status": "implemented"
     },
     "get_interaction": {
       "capability": "interactions.read",
@@ -471,6 +486,10 @@
     },
     "move_connections": {
       "capability": "connections.groups",
+      "status": "daemon-only"
+    },
+    "open_draft_test_connection": {
+      "capability": "sessions.write",
       "status": "daemon-only"
     },
     "open_forward": {
@@ -775,6 +794,7 @@
     }
   },
   "client_methods": [
+    "acknowledge_terminal_output",
     "add_agent_key",
     "add_tag_to_connections",
     "assign_connection_to_group",
@@ -820,6 +840,7 @@
     "detach_session",
     "detach_sftp",
     "duplicate_connection",
+    "evaluate_ssh_config_draft",
     "export_secret_backup",
     "fetch_public_keys",
     "forget_master_password",
@@ -838,6 +859,7 @@
     "get_host_info",
     "get_identity_providers",
     "get_identity_state",
+    "get_inherited_auth",
     "get_interaction",
     "get_launch_command",
     "get_login_profiles",
@@ -879,6 +901,7 @@
     "list_transfers",
     "lock_secrets",
     "move_connections",
+    "open_draft_test_connection",
     "open_forward",
     "open_session",
     "open_sftp",
@@ -889,6 +912,7 @@
     "preview_backup",
     "preview_bitwarden_backup",
     "preview_login_profile_assignment",
+    "preview_login_profile_update",
     "preview_ssh_backup",
     "rbw_configure",
     "rbw_lock",
@@ -967,6 +991,16 @@
     "verify_key_passphrase"
   ],
   "client_signatures": {
+    "acknowledge_terminal_output": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "TerminalOutputAck"
+        }
+      ],
+      "return": "None"
+    },
     "add_agent_key": {
       "parameters": [
         {
@@ -1407,6 +1441,16 @@
       ],
       "return": "ConnectionMutationResult"
     },
+    "evaluate_ssh_config_draft": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "EvaluateSshConfigDraftRequest"
+        }
+      ],
+      "return": "SshConfigDraftEvaluation"
+    },
     "export_secret_backup": {
       "parameters": [
         {
@@ -1554,6 +1598,16 @@
       "parameters": [],
       "return": "IdentityState"
     },
+    "get_inherited_auth": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "host",
+          "type": "str"
+        }
+      ],
+      "return": "tuple[EarlierDirective, ...]"
+    },
     "get_interaction": {
       "parameters": [
         {
@@ -1660,7 +1714,13 @@
       "return": "SftpServiceSummary"
     },
     "get_ssh_config_text": {
-      "parameters": [],
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "file",
+          "type": "str"
+        }
+      ],
       "return": "SshConfigText"
     },
     "get_terminal_input_status": {
@@ -1894,6 +1954,16 @@
       ],
       "return": "bool"
     },
+    "open_draft_test_connection": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "EvaluateSshConfigDraftRequest"
+        }
+      ],
+      "return": "ConnectionDetails"
+    },
     "open_forward": {
       "parameters": [
         {
@@ -1993,6 +2063,16 @@
         }
       ],
       "return": "tuple[LoginProfileAssignmentPreview, ...]"
+    },
+    "preview_login_profile_update": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "PreviewLoginProfileUpdateRequest"
+        }
+      ],
+      "return": "LoginProfileUpdatePreview"
     },
     "preview_ssh_backup": {
       "parameters": [
@@ -2899,6 +2979,9 @@
     "connections.duplicate": {
       "capability": "connections.write"
     },
+    "connections.evaluate_ssh_config_draft": {
+      "capability": "connections.config.read"
+    },
     "connections.get": {
       "capability": "connections.read"
     },
@@ -2909,6 +2992,9 @@
       "capability": "connections.config.read"
     },
     "connections.get_effective_config": {
+      "capability": "connections.config.read"
+    },
+    "connections.get_inherited_auth": {
       "capability": "connections.config.read"
     },
     "connections.get_launch_command": {
@@ -2949,6 +3035,9 @@
     },
     "connections.move": {
       "capability": "connections.groups"
+    },
+    "connections.open_draft_test": {
+      "capability": "sessions.write"
     },
     "connections.open_transient": {
       "capability": "sessions.write"
@@ -3155,6 +3244,9 @@
       "capability": "login_profiles.read"
     },
     "login_profiles.preview_assignment": {
+      "capability": "login_profiles.read"
+    },
+    "login_profiles.preview_update": {
       "capability": "login_profiles.read"
     },
     "login_profiles.set_group": {
@@ -3660,6 +3752,7 @@
     "EDITABLE_FIELDS",
     "EarlierDirective",
     "EffectiveConfigComparison",
+    "EvaluateSshConfigDraftRequest",
     "ExecutionInteractionMode",
     "ExternalTerminalLaunchSpec",
     "FORBIDDEN_IN_PATCH",
@@ -3745,6 +3838,7 @@
     "LoginProfileSnapshot",
     "LoginProfileSource",
     "LoginProfileSummary",
+    "LoginProfileUpdatePreview",
     "LoginProfilesChangedEvent",
     "LoginSession",
     "LookupKeyPassphraseRequest",
@@ -3781,6 +3875,7 @@
     "PresencePrompt",
     "PressureStall",
     "PreviewLoginProfileAssignmentRequest",
+    "PreviewLoginProfileUpdateRequest",
     "ProcessCounts",
     "ProcessUsage",
     "PublicKeyResult",
@@ -3863,6 +3958,14 @@
     "SocketConnection",
     "SocketDirection",
     "SplitConnectionRequest",
+    "SshConfigDraftError",
+    "SshConfigDraftEvaluation",
+    "SshConfigDraftInclude",
+    "SshConfigDraftLine",
+    "SshConfigDraftLineState",
+    "SshConfigDraftSource",
+    "SshConfigDraftValue",
+    "SshConfigFileRef",
     "SshConfigText",
     "SshConfigUnavailableReason",
     "StartScpTransferRequest",
@@ -3878,6 +3981,7 @@
     "TerminalInputStatus",
     "TerminalInputStatusRequest",
     "TerminalOutput",
+    "TerminalOutputAck",
     "TransferBackend",
     "TransferConflictPolicy",
     "TransferDirection",
@@ -3958,7 +4062,8 @@
       "session_id",
       "request_input",
       "want_terminal_output",
-      "from_sequence"
+      "from_sequence",
+      "flow_control"
     ],
     "AttachSessionResult": [
       "session",
@@ -4123,7 +4228,8 @@
       "preferred_authentications",
       "source",
       "generation",
-      "authored_directives"
+      "authored_directives",
+      "shared_host_tokens"
     ],
     "ConnectionMetadataSummary": [
       "connection_id",
@@ -4386,6 +4492,14 @@
       "protocol_version",
       "request_id",
       "error"
+    ],
+    "EvaluateSshConfigDraftRequest": [
+      "text",
+      "host",
+      "user",
+      "port",
+      "allowed_exec",
+      "file"
     ],
     "EventEnvelope": [
       "protocol_version",
@@ -4724,7 +4838,8 @@
       "forward_agent",
       "forward_agent_target",
       "proxy_command",
-      "extra_ssh_config"
+      "extra_ssh_config",
+      "identities_only"
     ],
     "LoginProfileSnapshot": [
       "available",
@@ -4740,6 +4855,10 @@
       "has_sudo_password",
       "connection_count",
       "group_count"
+    ],
+    "LoginProfileUpdatePreview": [
+      "linked_count",
+      "replaced"
     ],
     "LoginProfilesChangedEvent": [
       "detached"
@@ -4912,6 +5031,10 @@
       "mode",
       "profile_id"
     ],
+    "PreviewLoginProfileUpdateRequest": [
+      "profile_id",
+      "settings"
+    ],
     "ProcessCounts": [
       "total",
       "running",
@@ -5019,7 +5142,8 @@
     ],
     "SaveSshConfigTextRequest": [
       "text",
-      "expected_revision"
+      "expected_revision",
+      "file"
     ],
     "ScpFailure": [
       "code",
@@ -5110,7 +5234,8 @@
       "destination_path",
       "recursive",
       "move",
-      "as_operation"
+      "as_operation",
+      "destination_service_id"
     ],
     "SftpCreateFileRequest": [
       "service_id",
@@ -5245,11 +5370,57 @@
       "config_patch",
       "expected_generation"
     ],
+    "SshConfigDraftError": [
+      "file",
+      "line",
+      "diagnostic"
+    ],
+    "SshConfigDraftEvaluation": [
+      "values",
+      "defaults",
+      "matched_blocks",
+      "lines",
+      "sources",
+      "includes",
+      "forced",
+      "errors",
+      "pending_exec",
+      "system_config",
+      "isolated"
+    ],
+    "SshConfigDraftInclude": [
+      "line",
+      "files"
+    ],
+    "SshConfigDraftLine": [
+      "line",
+      "state",
+      "decided_file",
+      "decided_line",
+      "decided_block"
+    ],
+    "SshConfigDraftSource": [
+      "key",
+      "file",
+      "line",
+      "block"
+    ],
+    "SshConfigDraftValue": [
+      "key",
+      "value"
+    ],
+    "SshConfigFileRef": [
+      "file",
+      "display_name",
+      "writable"
+    ],
     "SshConfigText": [
       "text",
       "revision",
       "display_name",
-      "writable"
+      "writable",
+      "file",
+      "files"
     ],
     "StartScpTransferRequest": [
       "connection_id",
@@ -5330,6 +5501,11 @@
       "replay",
       "eof"
     ],
+    "TerminalOutputAck": [
+      "session_id",
+      "attachment_id",
+      "sequence"
+    ],
     "TransferItem": [
       "local_path",
       "remote_path",
@@ -5388,7 +5564,8 @@
       "display_name",
       "config_patch",
       "plugin_data",
-      "expected_generation"
+      "expected_generation",
+      "shared_block"
     ],
     "UpdateLoginProfileRequest": [
       "profile_id",
@@ -5463,6 +5640,7 @@
       "terminal.input",
       "terminal.resize",
       "terminal.replay",
+      "terminal.flow_control",
       "terminal.external_launch",
       "interactions",
       "interactions.read",
@@ -5812,6 +5990,7 @@
       "username",
       "auth_method",
       "key_select_mode",
+      "identities_only",
       "identity_files",
       "certificate_files",
       "identity_agent",
@@ -5976,6 +6155,7 @@
       "ended_before_output",
       "ssh_exited",
       "ssh_diagnostic",
+      "auth_methods_not_tried",
       "process_exited",
       "process_failed"
     ],
@@ -6046,6 +6226,14 @@
     "SocketDirection": [
       "incoming",
       "outgoing"
+    ],
+    "SshConfigDraftLineState": [
+      "applied",
+      "shadowed",
+      "accumulated",
+      "inactive",
+      "forced",
+      "include"
     ],
     "SshConfigUnavailableReason": [
       "dangling_link",

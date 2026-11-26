@@ -13,6 +13,8 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 <!-- api-method: run_pre_connect -->
 <!-- api-method: get_effective_config -->
 <!-- api-method: get_earlier_directives -->
+<!-- api-method: get_inherited_auth -->
+<!-- api-method: evaluate_ssh_config_draft -->
 <!-- api-method: list_config_conflicts -->
 <!-- api-method: list_config_syntax_errors -->
 <!-- api-method: check_unsaved_host -->
@@ -68,6 +70,8 @@ direct core service compositions are test-only and are not client choices.
 | `set_operation_mode` | Daemon only | `operation.mode` |
 | `get_operation_mode` | Daemon only | `operation.mode` |
 | `get_earlier_directives` | Implemented | `connections.config.read` |
+| `get_inherited_auth` | Implemented | `connections.config.read` |
+| `evaluate_ssh_config_draft` | Implemented | `connections.config.read` |
 | `list_config_conflicts` | Implemented | `connections.config.read` |
 | `list_config_syntax_errors` | Implemented | `connections.config.read` |
 | `check_unsaved_host` | Implemented | `connections.read` |
@@ -98,6 +102,7 @@ direct core service compositions are test-only and are not client choices.
 | `detach_session` | Daemon only | `sessions.write` |
 | `close_session` | Daemon only | `sessions.write` |
 | `send_terminal_input` | Daemon only | `terminal.input` |
+| `acknowledge_terminal_output` | Daemon only | `terminal.flow_control` |
 | `get_terminal_input_status` | Daemon only | `terminal.input` |
 | `broadcast_terminal_input` | Daemon only | `terminal.input` |
 | `resize_terminal` | Daemon only | `terminal.resize` |
@@ -194,6 +199,8 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: run_pre_connect status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: get_effective_config status=implemented capability=connections.config.read -->
 <!-- api-method-contract: get_earlier_directives status=implemented capability=connections.config.read -->
+<!-- api-method-contract: get_inherited_auth status=implemented capability=connections.config.read -->
+<!-- api-method-contract: evaluate_ssh_config_draft status=implemented capability=connections.config.read -->
 <!-- api-method-contract: list_config_conflicts status=implemented capability=connections.config.read -->
 <!-- api-method-contract: list_config_syntax_errors status=implemented capability=connections.config.read -->
 <!-- api-method-contract: check_unsaved_host status=implemented capability=connections.read -->
@@ -218,6 +225,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: open_forward status=daemon-only capability=forwards.write -->
 <!-- api-method-contract: open_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: open_transient_connection status=daemon-only capability=sessions.write -->
+<!-- api-method-contract: open_draft_test_connection status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: open_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: replay_terminal status=daemon-only capability=terminal.replay -->
 <!-- api-method-contract: release_interaction status=daemon-only capability=interactions.respond -->
@@ -225,6 +233,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: respond_to_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_interaction_secret status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_terminal_input status=daemon-only capability=terminal.input -->
+<!-- api-method-contract: acknowledge_terminal_output status=daemon-only capability=terminal.flow_control -->
 <!-- api-method-contract: get_terminal_input_status status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: set_plugin_setting status=daemon-only capability=plugins.settings.write -->
 <!-- api-method-contract: sftp_chmod status=daemon-only capability=sftp.mutate -->
@@ -408,6 +417,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `sessions.get` | `sessions.read` | Implemented |
 | `sessions.open` | `sessions.write` | Implemented |
 | `connections.open_transient` | `sessions.write` | Implemented; registers an unsaved target for `sessions.open` |
+| `connections.open_draft_test` | `sessions.write` | Implemented; registers a target that reads an SSH configuration draft |
 | `sessions.attach` | `sessions.write` | Implemented |
 | `sessions.detach` | `sessions.write` | Implemented |
 | `sessions.close` | `sessions.write` | Implemented |
@@ -498,6 +508,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.run_pre_connect capability=sessions.write -->
 <!-- api-daemon-method: connections.get_effective_config capability=connections.config.read -->
 <!-- api-daemon-method: connections.get_earlier_directives capability=connections.config.read -->
+<!-- api-daemon-method: connections.get_inherited_auth capability=connections.config.read -->
+<!-- api-daemon-method: connections.evaluate_ssh_config_draft capability=connections.config.read -->
 <!-- api-daemon-method: connections.list_config_conflicts capability=connections.config.read -->
 <!-- api-daemon-method: connections.list_config_syntax_errors capability=connections.config.read -->
 <!-- api-daemon-method: connections.check_unsaved_host capability=connections.read -->
@@ -552,6 +564,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: sessions.list capability=sessions.read -->
 <!-- api-daemon-method: sessions.open capability=sessions.write -->
 <!-- api-daemon-method: connections.open_transient capability=sessions.write -->
+<!-- api-daemon-method: connections.open_draft_test capability=sessions.write -->
 <!-- api-daemon-method: sftp.attach capability=sftp.write -->
 <!-- api-daemon-method: sftp.chmod capability=sftp.mutate -->
 <!-- api-daemon-method: sftp.close capability=sftp.write -->
@@ -592,6 +605,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: ssh_overrides.reset capability=ssh_overrides.write -->
 <!-- api-daemon-method: login_profiles.get capability=login_profiles.read -->
 <!-- api-daemon-method: login_profiles.preview_assignment capability=login_profiles.read -->
+<!-- api-daemon-method: login_profiles.preview_update capability=login_profiles.read -->
 <!-- api-daemon-method: login_profiles.create capability=login_profiles.write -->
 <!-- api-daemon-method: login_profiles.update capability=login_profiles.write -->
 <!-- api-daemon-method: login_profiles.delete capability=login_profiles.write -->
@@ -1654,6 +1668,29 @@ details = client.open_transient_connection(
 client.open_session(OpenSessionRequest(connection_id=details.id))
 ```
 
+<!-- api-method: open_draft_test_connection -->
+## `open_draft_test_connection`
+
+Daemon-only. Registers a target that reaches `request.host` as an SSH
+configuration draft would, were it saved, and returns its
+`ConnectionDetails`: Advanced Configuration's Test Connection runs a
+one-shot command on the returned `id` (`start_broadcast_command`), so the
+test goes through the ordinary launch path, prompts included. It takes the
+`EvaluateSshConfigDraftRequest` of `evaluate_ssh_config_draft` and reads the
+draft the same way, as a launch reads the saved file (for `file`, through
+the root, with the draft in that file's place). Needs `sessions.write` and
+`connections.config.read`. A `Match exec` command the saved file lacks must
+be in `allowed_exec`, or the request is refused (`INVALID_REQUEST`). Nothing
+is written to the configuration; like `open_transient_connection`, the
+target is never listed and the oldest are dropped beyond 64.
+
+```python
+details = client.open_draft_test_connection(
+    EvaluateSshConfigDraftRequest(text=draft_text, host="web1")
+)
+client.start_broadcast_command(BroadcastCommandRequest((details.id,), "true"))
+```
+
 <!-- api-method: open_session -->
 ## `open_session`
 
@@ -1738,6 +1775,36 @@ assert session.state is SessionState.STARTING
 - **Threading:** Terminate, wait, and kill never run on the selector. A close
   queued behind startup for the same session cannot overtake it; unrelated
   session lanes can progress concurrently.
+
+<!-- api-method: acknowledge_terminal_output -->
+## `acknowledge_terminal_output`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.118.
+- **Capability / purpose:** `terminal.flow_control`; tell the daemon an
+  attachment opened with `AttachSessionRequest(flow_control=True)` has
+  displayed the session's output up to `sequence` (the next byte it has not
+  displayed). While the input owner's flow-controlled attachment is more than
+  1 MiB behind, the daemon stops reading the session's PTY, so a fast producer
+  slows down instead of output being dropped; reads resume within 256 KiB.
+- **Parameters / return:** `TerminalOutputAck`; returns after the binary
+  `ACK` frame is sent.
+- **Errors:** Local capability/lifecycle validation is synchronous. The daemon
+  never answers: acknowledgements for unknown, foreign, view-only or
+  non-flow-controlled attachments, and ones that do not move forward, are
+  ignored.
+- **Ordering / threading:** Shares the client send lock with terminal input.
+  Acknowledge only bytes the display has actually processed; acknowledging
+  bytes merely received moves the backlog into the frontend instead.
+- **Side effects / security:** Pausing stops reads only; input and resize
+  still reach the PTY. Detach, disconnect, input-ownership change, child
+  exit and close resume reads, so a stalled frontend never holds a session
+  past its own lifetime.
+
+```python
+client.acknowledge_terminal_output(
+    TerminalOutputAck(session_id, attachment_id, displayed_sequence)
+)
+```
 
 <!-- api-method: send_terminal_input -->
 ## `send_terminal_input`
@@ -2355,6 +2422,24 @@ link = snapshot.link_for("web1")
   mode, profile_id)`; returns a tuple of `LoginProfileAssignmentPreview`.
 - **Errors / events:** `CONNECTION_NOT_FOUND`; `VALIDATION_FAILED` for
   non-SSH connections or an unknown profile. No side effects.
+
+<!-- api-method: preview_login_profile_update -->
+## `preview_login_profile_update`
+
+- **Status / introduced:** Implemented through `DaemonClient` when the login
+  profile service is installed / Protocol v1, API 0.107
+- **Capability / purpose:** `login_profiles.read`; before saving an edit, the
+  values of their own that linked connections would lose. A profile applies
+  only what it sets, so an edit that starts setting a field replaces the
+  value each linked connection held there; a frontend confirms first. Values
+  the profile already set, and fields a connection leaves empty, are not
+  reported.
+- **Parameters / return:** `PreviewLoginProfileUpdateRequest(profile_id,
+  settings)` with the complete new settings; returns
+  `LoginProfileUpdatePreview(linked_count, replaced)`, where `replaced` holds
+  one `LoginProfileAssignmentPreview` per affected connection.
+- **Errors / events:** `VALIDATION_FAILED` for an unknown profile or invalid
+  settings. No side effects.
 
 <!-- api-method: assign_login_profile -->
 ## `assign_login_profile`

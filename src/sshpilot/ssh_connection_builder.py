@@ -216,7 +216,6 @@ class NativeAuth:
     use_sshpass: bool = False      # Deprecated: always False (askpass replaced sshpass)
     password: Optional[str] = field(default=None, repr=False) # Stored password (askpass context / UI messaging)
     use_askpass: bool = False      # SSH_ASKPASS is wired up
-    password_mode: bool = False    # Password auth method selected (auth_method == 1)
 
 
 def resolve_native_auth(
@@ -234,13 +233,14 @@ def resolve_native_auth(
     * **Askpass** (when enabled) autofills **key passphrases and login
       passwords** from the secret backend. REQUIRE=prefer so interactive MFA
       (OTP/PIN) is declined by the helper and answered on the real TTY.
-    * Password method + stored password → askpass with password host/user
-      context (and a one-shot session file for in-memory secrets).
-    * Key-based + saved passphrase → askpass passphrase autofill; if a
-      password is also saved and the key loads into the agent, askpass also
-      carries password context (combined auth).
-    * Key-based + saved password only → askpass password context (key tried
-      first by ssh, then password prompt autofilled).
+    * Which methods ssh tries, and in what order, is the Host block's own
+      business (PreferredAuthentications, PubkeyAuthentication, ...): nothing
+      here depends on it, so every connection takes the same path.
+    * Saved passphrase → askpass passphrase autofill; if a password is also
+      saved and the key loads into the agent, askpass also carries password
+      context (combined auth).
+    * Saved password only → askpass password context (and a one-shot session
+      file for in-memory secrets).
     * Askpass disabled / nothing saved → no askpass; SSH prompts on the TTY.
     * ``use_sshpass`` is never set (sshpass removed from the native path).
     """
@@ -268,14 +268,6 @@ def resolve_native_auth(
         env["COLORTERM"] = "truecolor"
         return NativeAuth(env=env, extra_opts=[], use_askpass=False)
 
-    raw_auth_method = getattr(connection, 'auth_method', None)
-    if raw_auth_method is None:
-        raw_auth_method = getattr(connection, 'authentication_method', 0)
-        raw_auth_method = getattr(raw_auth_method, 'value', raw_auth_method)
-        raw_auth_method = 1 if raw_auth_method == 'password' else 0
-    auth_method = int(raw_auth_method or 0)
-    password_mode = (auth_method == 1)
-
     askpass_enabled = True
     try:
         if app_config is not None and hasattr(app_config, 'get_setting'):
@@ -283,41 +275,18 @@ def resolve_native_auth(
     except Exception:
         askpass_enabled = True
 
-    def _tty_only(*, password=None, mode=False) -> NativeAuth:
+    def _tty_only() -> NativeAuth:
         env = os.environ.copy()
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
         return NativeAuth(
             env=env, extra_opts=[], use_sshpass=False,
-            password=password, use_askpass=False, password_mode=mode,
+            password=None, use_askpass=False,
         )
 
     if not askpass_enabled:
-        stored = _get_stored_password(connection, connection_manager) if password_mode else None
         logger.debug("resolve_native_auth: askpass disabled by setting")
-        return _tty_only(password=stored if password_mode else None, mode=password_mode)
-
-    if password_mode:
-        stored_password = _get_stored_password(connection, connection_manager)
-        if stored_password:
-            # In-memory password may not be in the backend yet — stage a one-shot
-            # file; keyring-backed passwords are looked up by host/user in askpass.
-            env = _askpass_env_for_connection(
-                connection,
-                session_password=stored_password,
-                secret_lookup_authoritative=bool(
-                    getattr(connection_manager, "secret_lookup_authoritative", False)
-                ),
-            )
-            logger.debug("resolve_native_auth: password method -> askpass")
-            return NativeAuth(
-                env=env, extra_opts=[], use_sshpass=False,
-                password=stored_password, use_askpass=True, password_mode=True,
-            )
-        logger.debug("resolve_native_auth: password method, no stored password -> TTY")
-        return _tty_only(mode=True)
-
-    # From here: key-based (auth_method == 0, auto or specific key).
+        return _tty_only()
 
     # Discover the identity candidates once (the same set used by the
     # passphrase probe and the agent preload). Probe is best-effort: on any
@@ -371,7 +340,7 @@ def resolve_native_auth(
             )
             return NativeAuth(
                 env=env, extra_opts=[], use_sshpass=False,
-                password=stored_password, use_askpass=True, password_mode=False,
+                password=stored_password, use_askpass=True,
             )
         if stored_password:
             env = _askpass_env_for_connection(
@@ -391,10 +360,10 @@ def resolve_native_auth(
                     else session_passphrase
                 ),
             )
-        logger.debug("resolve_native_auth: key auth, askpass autofill (saved passphrase)")
+        logger.debug("resolve_native_auth: askpass autofill (saved passphrase)")
         return NativeAuth(
             env=env, extra_opts=[], use_sshpass=False,
-            password=stored_password, use_askpass=True, password_mode=False,
+            password=stored_password, use_askpass=True,
         )
 
     if stored_password:
@@ -406,16 +375,16 @@ def resolve_native_auth(
             ),
         )
         logger.debug(
-            "resolve_native_auth: key auth, saved password -> askpass "
+            "resolve_native_auth: saved password -> askpass "
             "(password autofill; MFA on TTY)"
         )
         return NativeAuth(
             env=env, extra_opts=[], use_sshpass=False,
-            password=stored_password, use_askpass=True, password_mode=False,
+            password=stored_password, use_askpass=True,
         )
 
     # Nothing saved -> let SSH prompt naturally on the TTY.
-    logger.debug("resolve_native_auth: key auth, nothing saved -> native TTY prompts")
+    logger.debug("resolve_native_auth: nothing saved -> native TTY prompts")
     return _tty_only()
 
 
@@ -1155,7 +1124,6 @@ def build_ssh_connection(
         # Resolve auth first — env + extra_opts are runtime concerns owned by
         # this adapter; argv composition is delegated to core.ssh.
         from .core.ssh import (
-            AuthMethod,
             HostKeyMode,
             LaunchMode,
             SSHLaunchRequest,
@@ -1293,9 +1261,6 @@ def build_ssh_connection(
             remote_command=ctx.remote_command,
             askpass_required=bool(auth.use_askpass),
             env=dict(auth.env or {}),
-            auth_method=(
-                AuthMethod.PASSWORD if auth.password_mode else AuthMethod.PUBLIC_KEY
-            ),
             launch_mode=launch_mode,
             force_tty=bool(getattr(ctx, "force_tty", False)),
         )

@@ -24,6 +24,8 @@ class TerminalFrameKind(IntEnum):
     INPUT = 2
     CONTINUITY_LOST = 3
     INPUT_ERROR = 4
+    # Client -> daemon: output displayed up to ``sequence`` (flow control).
+    ACK = 5
 
 
 class TerminalFrameFlags(IntFlag):
@@ -42,6 +44,7 @@ _FLAGS_BY_KIND = {
     TerminalFrameKind.INPUT: TerminalFrameFlags.NONE,
     TerminalFrameKind.CONTINUITY_LOST: TerminalFrameFlags.TRUNCATED,
     TerminalFrameKind.INPUT_ERROR: TerminalFrameFlags.NONE,
+    TerminalFrameKind.ACK: TerminalFrameFlags.NONE,
 }
 
 
@@ -65,8 +68,11 @@ class TerminalFrame:
         if self.kind in {
             TerminalFrameKind.INPUT,
             TerminalFrameKind.INPUT_ERROR,
+            TerminalFrameKind.ACK,
         }:
             _validate_attachment_id(self.attachment_id)
+            if self.kind is TerminalFrameKind.ACK and self.data:
+                raise ValueError("terminal acknowledgements carry no data")
         elif self.attachment_id is not None:
             raise ValueError("only terminal input/status frames carry an attachment")
         if not isinstance(self.kind, TerminalFrameKind):

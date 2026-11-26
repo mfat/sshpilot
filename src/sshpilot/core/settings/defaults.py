@@ -21,7 +21,7 @@ TERMINAL_PANE_CHOICES = ('none', 'remote', 'local', 'both')
 
 # Sidebar group-colour treatments ('ui.group_color_display'), in the order the
 # Preferences combo lists them.
-GROUP_COLOR_DISPLAY_MODES = ('fill', 'badge', 'bar', 'dot', 'text')
+GROUP_COLOR_DISPLAY_MODES = ('fill', 'badge', 'bar', 'dot', 'text', 'grip')
 
 
 def get_default_config() -> Dict[str, Any]:
@@ -112,7 +112,10 @@ def get_default_config() -> Dict[str, Any]:
             # Connection-list presentation: 'full' (chrome + prefs) or
             # 'compact' (title-only flat rows; other sidebar toggles ignored).
             'sidebar_mode': 'full',
-            'group_color_display': 'dot',
+            # New installs: the drag grips carry the group colour. Existing
+            # configs keep the mode they have (migration fills a missing key
+            # with 'dot', the long-standing default).
+            'group_color_display': 'grip',
             'group_color_child_rows': True,
             'use_group_color_in_tab': False,
             'use_group_color_in_terminal': False,
@@ -122,15 +125,13 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_show_port_forwarding': True,
             'sidebar_show_connection_icon': True,
             'sidebar_show_group_icon': False,
+            # Drag grips at the start of sidebar rows (Settings ▸ Sidebar).
+            'sidebar_show_drag_handles': True,
             # Hover action buttons on sidebar rows (Settings ▸ Interface ▸ Sidebar)
             'sidebar_show_file_manager_button': True,
             # On for new installs only: existing configs lack the key, and the
             # call sites fall back to False, so upgraders keep their rows as-is.
             'sidebar_show_dashboard_button': True,
-            # Saved-host settings an earlier SSH config block beats that the
-            # user dismissed from the main-window notice: fingerprints per
-            # SSH config scope ('default' / 'isolated').
-            'config_conflicts_dismissed': {},
             'sidebar_show_split_view_button': False,
             # Pinned Local Terminal row at the top of the connection list
             'sidebar_show_local_terminal': False,
@@ -145,6 +146,11 @@ def get_default_config() -> Dict[str, Any]:
             # Set by "Don't Show Again" on the start-up hover-reveal hint
             # (sidebar_peek_hint.py).
             'sidebar_peek_hint_dismissed': False,
+            # Set by "Don't Show Again" on the Advanced Configuration
+            # editor's caution banner (advanced_config_window.py).
+            'advanced_config_caution_dismissed': False,
+            # Set once the Colored Grips hint is answered (sidebar_grip_hint.py).
+            'colored_grips_hint_dismissed': False,
             # What happens to the sidebar when a session opens:
             # 'none' | 'hide'. ('minimize' / icon strip is retired; migration
             # rewrites any persisted 'minimize' to 'none'.)
@@ -215,6 +221,9 @@ def get_default_config() -> Dict[str, Any]:
             'terminal_panes': 'none',
             # cd the terminal panes into the folder each file pane browses to.
             'terminal_follows_navigation': False,
+            # A new file manager starts with the left pane hidden. The toolbar
+            # toggle, F3 and the tab menu change only that file manager.
+            'single_pane': False,
         },
         'security': {
             'store_passwords': True,

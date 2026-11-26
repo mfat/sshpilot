@@ -29,6 +29,11 @@ _SESSION_FAILURE_TEMPLATES = {
         "The SSH session exited with status {status}"
     ),
     SessionFailureCode.SSH_DIAGNOSTIC: N_("The SSH session failed."),
+    SessionFailureCode.AUTH_METHODS_NOT_TRIED: N_(
+        "The server accepts none of the authentication methods this "
+        "connection is set to try. Check the Authentication section of the "
+        "connection."
+    ),
     SessionFailureCode.PROCESS_EXITED: N_(
         "The session exited with status {status}"
     ),

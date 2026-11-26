@@ -30,6 +30,7 @@ from .api.models.terminal import (
     ResizeTerminalRequest,
     TerminalDimensions,
     TerminalInput,
+    TerminalOutputAck,
 )
 from .api.terminal_input import send_paced_terminal_input
 from .api.transport.terminal_frames import MAX_TERMINAL_PAYLOAD_SIZE
@@ -197,6 +198,9 @@ class DaemonTerminalSessionController:
         on_error: Optional[Callable[[Exception], None]] = None,
         on_state_changed: Optional[Callable[[], None]] = None,
         output_slice_bytes: Optional[int] = None,
+        display_barrier: Optional[
+            Callable[[Callable[[], None]], None]
+        ] = None,
     ) -> None:
         self._client = client
         self._bridge = bridge
@@ -210,6 +214,14 @@ class DaemonTerminalSessionController:
         self._on_continuity_lost = on_continuity_lost
         self._on_error = on_error or self._default_error_handler
         self._on_state_changed = on_state_changed
+        #: Calls its argument once the display has processed every byte fed
+        #: so far. Present -> attachments use daemon flow control and output
+        #: is acknowledged only after that (see _schedule_display_ack).
+        self._display_barrier = display_barrier
+        self._ack_barrier_pending = False
+        self._ack_in_flight = False
+        self._ack_wanted: Optional[tuple] = None
+        self._ack_sent: Optional[tuple] = None
 
         # Validate required capabilities
         missing = daemon_terminal_capabilities_missing(client)
@@ -393,6 +405,7 @@ class DaemonTerminalSessionController:
                     request_input=request_input,
                     want_terminal_output=want_output,
                     from_sequence=from_sequence,
+                    flow_control=want_output and self._flow_control_available(),
                 )
             ),
             on_success=self._on_session_attached,
@@ -900,6 +913,109 @@ class DaemonTerminalSessionController:
             self._replay_catchup_target = None
             self._tab_state.state = TerminalSessionState.ACTIVE
         self._notify_state_changed()
+        # Output may have reached the display before the attachment id did.
+        self._schedule_display_ack()
+
+    def _flow_control_available(self) -> bool:
+        if self._display_barrier is None:
+            return False
+        try:
+            supported = self._client.get_capabilities().supported
+        except Exception:
+            return False
+        return Capability.TERMINAL_FLOW_CONTROL in supported
+
+    def _schedule_display_ack(self) -> None:
+        """Acknowledge output once the display has processed it.
+
+        The daemon pauses the PTY while the input owner is too far behind, so
+        acking bytes that only sit queued in the emulator would let the
+        backlog grow there instead. One barrier is outstanding at a time; it
+        acks the sequence fed when it was scheduled, then re-arms if more
+        arrived meanwhile.
+        """
+        if (
+            self._closed
+            or self._ack_barrier_pending
+            or self._display_barrier is None
+        ):
+            return
+        attachment_id = self._tab_state.attachment_id
+        if attachment_id is None:
+            return
+        sequence = self._tab_state.expected_sequence
+        sent = self._ack_sent
+        if sent is not None and sent[0] == attachment_id and sent[1] >= sequence:
+            return
+        self._ack_barrier_pending = True
+
+        def caught_up() -> None:
+            self._ack_barrier_pending = False
+            if self._closed:
+                return
+            self._queue_display_ack(attachment_id, sequence)
+            if (
+                self._tab_state.attachment_id != attachment_id
+                or self._tab_state.expected_sequence > sequence
+            ):
+                self._schedule_display_ack()
+
+        try:
+            self._display_barrier(caught_up)
+        except Exception:
+            self._ack_barrier_pending = False
+            logger.debug("Display barrier failed", exc_info=True)
+
+    def _queue_display_ack(self, attachment_id, sequence: int) -> None:
+        sent = self._ack_sent
+        if sent is not None and sent[0] == attachment_id and sent[1] >= sequence:
+            return
+        self._ack_wanted = (attachment_id, sequence)
+        if not self._ack_in_flight:
+            self._submit_display_ack()
+
+    def _submit_display_ack(self) -> None:
+        wanted, self._ack_wanted = self._ack_wanted, None
+        session_id = self._tab_state.session_id
+        if wanted is None or session_id is None or self._closed:
+            return
+        client = self._client
+        try:
+            request = TerminalOutputAck(
+                session_id=session_id,
+                attachment_id=wanted[0],
+                sequence=wanted[1],
+            )
+        except (TypeError, ValueError):
+            return
+
+        def finished(error=None) -> None:
+            self._ack_in_flight = False
+            if error is None:
+                self._ack_sent = wanted
+            else:
+                logger.debug(
+                    "Terminal output acknowledgement failed: %s",
+                    getattr(getattr(error, "code", None), "value", error),
+                )
+            if self._ack_wanted is not None:
+                self._submit_display_ack()
+
+        self._ack_in_flight = True
+        # Not the shared API worker: a slow request there would hold the
+        # acknowledgement and, with it, the paused session's output.
+        submit = getattr(self._bridge, "submit_terminal_ack", None)
+        if not callable(submit):
+            submit = self._bridge.submit
+        try:
+            submit(
+                lambda: client.acknowledge_terminal_output(request),
+                on_success=lambda _result: finished(),
+                on_error=finished,
+            )
+        except Exception:
+            self._ack_in_flight = False
+            logger.debug("Submitting terminal output acknowledgement failed", exc_info=True)
 
     def _notify_state_changed(self) -> None:
         callback = self._on_state_changed
@@ -998,6 +1114,7 @@ class DaemonTerminalSessionController:
                         request_input=True,
                         want_terminal_output=True,
                         from_sequence=safe_sequence,
+                        flow_control=self._flow_control_available(),
                     )
                 )
 
@@ -1082,6 +1199,12 @@ class DaemonTerminalSessionController:
     ) -> None:
         if not self._recovery_is_current(generation, binding):
             return
+        if result.first_sequence > safe_sequence:
+            # The bytes after safe_sequence are no longer retained. Continue
+            # from the oldest retained byte with a visible marker instead of
+            # failing the view (#1426).
+            self._skip_lost_output(result.first_sequence)
+            return
         if (
             result.first_sequence != safe_sequence
             or result.next_sequence < safe_sequence
@@ -1152,11 +1275,7 @@ class DaemonTerminalSessionController:
         if not self._recovery_is_current(generation, binding):
             self._discard_recovery_attachment(recovery_client, result)
             return
-        if (
-            result.replay_truncated
-            or result.available_start > safe_sequence
-            or result.live_sequence < safe_sequence
-        ):
+        if result.live_sequence < safe_sequence:
             self._fail_output_recovery(
                 generation,
                 "The retained terminal output cannot restore this view",
@@ -1164,8 +1283,37 @@ class DaemonTerminalSessionController:
             return
         self._tab_state.attachment_id = result.attachment.id
         self._tab_state.input_owner = result.attachment.input_owner
+        if result.replay_truncated or result.available_start > safe_sequence:
+            # This binding expects safe_sequence; continue from the oldest
+            # retained byte on a fresh one, through the new attachment.
+            self._flush_recovery_input()
+            self._skip_lost_output(result.available_start)
+            return
         self._validate_and_resume_recovery(binding, result.live_sequence)
         self._flush_recovery_input()
+        self._schedule_display_ack()
+
+    def _skip_lost_output(self, resume_sequence: int) -> None:
+        """Accept a gap: mark it on screen and recover from resume_sequence.
+
+        The display shows "[Earlier terminal output is no longer available]"
+        and resets its parser (the known-good prefix may end mid escape
+        sequence), then a new recovery replays from the oldest retained byte.
+        Each skip moves forward, so this cannot loop in place.
+        """
+
+        if resume_sequence <= self._tab_state.expected_sequence:
+            return
+        logger.info(
+            "Terminal output skipped bytes=%s; continuing from retained output",
+            resume_sequence - self._tab_state.expected_sequence,
+        )
+        if self._on_continuity_lost is not None:
+            self._on_continuity_lost()
+        self._tab_state.expected_sequence = resume_sequence
+        self._recovery_replay_pending = None
+        self._recovery_catchup_target = None
+        self._begin_output_recovery(reattach=False)
 
     def _discard_recovery_attachment(self, client, result) -> None:
         """Release an attachment created by a superseded reconnect."""
@@ -1323,6 +1471,7 @@ class DaemonTerminalSessionController:
         if self._tab_state.state is TerminalSessionState.RECOVERING:
             self._continue_replay_if_chunk_delivered()
             self._finish_output_recovery_if_caught_up()
+        self._schedule_display_ack()
 
     def _handle_continuity_lost(self, session_id, expected, available) -> None:
         """Handle terminal continuity loss."""

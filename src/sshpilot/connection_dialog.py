@@ -46,6 +46,24 @@ from .ssh_key_fingerprint import (
     _fingerprint_for_path,
 )
 from .ssh_config_formatter import MANAGED_HOST_OPTIONS
+from .core.connections.auth_preferences import AUTH_POLICY_KEYWORDS
+from .connection_dialog_auth import (
+    METHODS as AUTH_METHODS,
+    AuthPolicy,
+    AuthPolicyGroup,
+    join_extra,
+    split_policy_lines,
+)
+
+# Dialog attribute of each authentication method row (override marking and
+# the contract tests reach the rows through these).
+AUTH_METHOD_ROWS = {
+    "gssapi-with-mic": "auth_gssapi_row",
+    "hostbased": "auth_hostbased_row",
+    "publickey": "auth_publickey_row",
+    "keyboard-interactive": "auth_kbdinteractive_row",
+    "password": "auth_password_row",
+}
 from .ssh_option_list import OPENSSH_KEYWORDS, SshOptionList, check_ssh_option
 from .ssh_connection_validator import (  # SSHConnectionValidator also re-exported for tests/back-compat
     SSHConnectionValidator,
@@ -54,11 +72,14 @@ from .ssh_connection_validator import (  # SSHConnectionValidator also re-export
 from .path_list import PathList
 from .connection_dialog_login_profile import (
     ConnectionDialogLoginProfileMixin,
-    login_profile_locked_widgets,
 )
 from .connection_dialog_validation import ConnectionDialogValidationMixin
 from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
+from .connection_dialog_effective import ConnectionDialogEffectiveMixin
+from .connection_dialog_route import ConnectionDialogRouteMixin
+from .connection_dialog_search import ConnectionDialogSearchMixin
+from .connection_dialog_host_names import ConnectionDialogHostNamesMixin
 from .connection_dialog_overrides import (
     ConnectionDialogOverridesMixin,
     inherited_note_text,
@@ -239,6 +260,10 @@ def _editor_details_to_connection(details):
         security_key_provider=getattr(details, 'security_key_provider', '') or '',
         add_keys_to_agent=getattr(details, 'add_keys_to_agent', '') or '',
         key_select_mode=int(getattr(details, 'key_select_mode', 0) or 0),
+        identities_only_explicit_no=bool(
+            getattr(details, 'identities_only_explicit_no', False)
+        ),
+        identity_file_none=bool(getattr(details, 'identity_file_none', False)),
         x11_forwarding=bool(getattr(details, 'x11_forwarding', False)),
         extra_ssh_config=getattr(details, 'extra_ssh_config', '') or '',
         pre_command=getattr(details, 'pre_command', '') or '',
@@ -246,6 +271,7 @@ def _editor_details_to_connection(details):
         remote_command=getattr(details, 'remote_command', '') or '',
         forwarding_rules=forwarding_rules,
         aliases=getattr(details, 'aliases', None) or (),
+        shared_host_tokens=tuple(getattr(details, 'shared_host_tokens', None) or ()),
         source=getattr(details, 'source', '') or '',
         generation=getattr(details, 'generation', 0) or 0,
         data=data,
@@ -565,6 +591,7 @@ def _set_action_row_child(row, widget):
 ADVANCED_TAB_SSH_OPTIONS = tuple(
     name for name in OPENSSH_KEYWORDS
     if name.lower() not in MANAGED_HOST_OPTIONS
+    and name.lower() not in AUTH_POLICY_KEYWORDS
 )
 
 
@@ -595,8 +622,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
 
         # Header
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        title = Gtk.Label(label=_("Advanced SSH Configuration"))
-        title.set_markup(_("<b>Advanced SSH Configuration</b>"))
+        # The page is "Extra Options" in the sidebar; "Advanced Configuration"
+        # is the window that shows the whole SSH configuration.
+        title = Gtk.Label(label=_("Extra SSH options"))
+        title.add_css_class("heading")
         title.set_halign(Gtk.Align.START)
 
         subtitle = Gtk.Label(label=_("Add custom SSH configuration options"))
@@ -612,7 +641,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
             keywords=self.ssh_options,
             validate=lambda keyword, value: check_ssh_option(
                 keyword, value,
-                reserved=MANAGED_HOST_OPTIONS,
+                reserved=MANAGED_HOST_OPTIONS | AUTH_POLICY_KEYWORDS,
                 reserved_message=own_field,
             ),
             note=self._override_note,
@@ -637,9 +666,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.option_list.add_empty_row()
 
     def on_entry_changed(self, widget, pspec=None):
-        """Mirror the rows into the connection being edited."""
+        """Refresh the preview and the switches that mirror Advanced rows."""
         self.update_config_preview()
-        self._update_parent_connection()
         self._notify_parent_session_type_changed()
         sync_banner = getattr(self.parent_dialog, '_sync_override_banner', None)
         if callable(sync_banner):
@@ -743,21 +771,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
         """Get extra SSH config as a string for saving"""
         return "\n".join(f"{key} {value}" for key, value in self.get_config_entries())
 
-    def _update_parent_connection(self):
-        """Update the parent connection object with current advanced tab data"""
-        try:
-            parent_dialog = self.get_ancestor(Adw.Window)
-            if parent_dialog and hasattr(parent_dialog, 'connection') and parent_dialog.connection:
-                extra_config = self.get_extra_ssh_config()
-                parent_dialog.connection.extra_ssh_config = extra_config
-                if hasattr(parent_dialog.connection, 'data'):
-                    parent_dialog.connection.data['extra_ssh_config'] = extra_config
-                logger.debug(
-                    f"Updated parent connection with extra SSH config: {extra_config}"
-                )
-        except Exception as e:
-            logger.error(f"Error updating parent connection: {e}")
-
     def set_extra_ssh_config(self, config_string):
         """Set extra SSH config from a string"""
         logger.debug(f"set_extra_ssh_config called with: '{config_string}'")
@@ -781,8 +794,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.set_config_entries(entries)
         # Update preview after loading data
         self.update_config_preview()
-        # Update the parent connection object if we're editing
-        self._update_parent_connection()
         # set_options trusts loaded rows and emits nothing, so the ssh -N and
         # ExitOnForwardFailure switches would otherwise stay at their empty-list
         # state (#1389).
@@ -1133,6 +1144,11 @@ class FileListEditor(Adw.PreferencesGroup):
                 self._remove_row_widget(btn)
         for btn in self._add_rows:
             self._add_row_widget(btn)
+
+    def set_empty_placeholder(self, text):
+        """Change what the empty list says (``empty_placeholder`` set it)."""
+        if self._empty_row is not None:
+            self._empty_row.set_title(text)
 
     def _sync_empty_placeholder(self):
         """Show or hide the empty-state row above the add button."""
@@ -1607,6 +1623,10 @@ class ConnectionDialog(
     ConnectionDialogFieldHelpersMixin,
     ConnectionDialogPortForwardingMixin,
     ConnectionDialogOverridesMixin,
+    ConnectionDialogEffectiveMixin,
+    ConnectionDialogSearchMixin,
+    ConnectionDialogHostNamesMixin,
+    ConnectionDialogRouteMixin,
 ):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
 
@@ -1654,9 +1674,21 @@ class ConnectionDialog(
     content_mount = Gtk.Template.Child()
     cancel_button = Gtk.Template.Child()
     save_button = Gtk.Template.Child()
-    effective_config_button = Gtk.Template.Child()
-    edit_ssh_config_button = Gtk.Template.Child()
-    
+    advanced_config_button = Gtk.Template.Child()
+    config_buttons_box = Gtk.Template.Child()
+    split_view = Gtk.Template.Child()
+    sidebar_page = Gtk.Template.Child()
+    sidebar_list = Gtk.Template.Child()
+    sidebar_stack = Gtk.Template.Child()
+    search_button = Gtk.Template.Child()
+    search_bar = Gtk.Template.Child()
+    search_entry = Gtk.Template.Child()
+    search_results = Gtk.Template.Child()
+    content_page = Gtk.Template.Child()
+    content_title = Gtk.Template.Child()
+    content_stack = Gtk.Template.Child()
+    narrow_breakpoint = Gtk.Template.Child()
+
     def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None, as_new=False):
         super().__init__()
         
@@ -1701,14 +1733,19 @@ class ConnectionDialog(
         # Gtk.Application.get_windows().
         from .window_dialogs import associate_window_with_parent_application
         associate_window_with_parent_application(self, parent)
-        # Set default size for better UX
-        self.set_default_size(600, 700)
+        # Room for the section sidebar beside a full-width page.
+        self.set_default_size(880, 680)
+        try:
+            self.sidebar_page.set_title(self.get_title())
+        except Exception:
+            pass
         
         self.validator = SSHConnectionValidator()
         self.validation_results: Dict[str, ValidationResult] = {}
         self._save_buttons = []
         self._active_save_request = None
         self.connect('close-request', self._cancel_active_save_request)
+        self.connect('close-request', lambda *_a: self._cancel_effective_refresh())
         
         self.setup_ui()
         GLib.idle_add(self.load_connection_data)
@@ -1722,12 +1759,10 @@ class ConnectionDialog(
     
     def setup_ui(self):
         """Wire the dynamic content + buttons into the template skeleton."""
-        # The container skeleton (header bar, separator, Cancel/Save button box)
-        # lives in connection_dialog.blp; here we mount the tabbed preferences
-        # content and wire the pinned buttons.
+        # The skeleton (split view, header bars with Cancel/Save, the SSH
+        # configuration buttons) lives in connection_dialog.blp; here the
+        # pages go into content_stack and their rows into the sidebar.
         self.preferences_content = self.create_preferences_content()
-        self.preferences_content.set_vexpand(True)
-        self.content_mount.append(self.preferences_content)
 
         self.cancel_button.connect("clicked", self.on_cancel_clicked)
         self.save_button.connect("clicked", self.on_save_clicked)
@@ -1764,7 +1799,8 @@ class ConnectionDialog(
             self.start_login_profile_load()
         except Exception:
             logger.debug("Login profile picker unavailable", exc_info=True)
-    
+        self._wire_content_title()
+
     def _build_connection_tab_pages(self):
         """Build the connection editor tab pages as (name, title, widget) tuples."""
 
@@ -1777,24 +1813,23 @@ class ConnectionDialog(
             return box
 
         general_page = _page_box()
-        for group in self.build_connection_groups():
-            general_page.append(group)
         # Container for declarative FieldSpec rows rendered when a plugin
-        # protocol is selected; empty and hidden for SSH.
+        # protocol is selected; empty and hidden for SSH. It goes before
+        # Organize, which stays the page's last word for every protocol.
         self._plugin_fields_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._plugin_fields_box.set_visible(False)
-        general_page.append(self._plugin_fields_box)
+        for group in self.build_connection_groups():
+            if group is getattr(self, '_organize_group', None):
+                general_page.append(self._plugin_fields_box)
+            general_page.append(group)
+
+        routing_page = _page_box()
+        routing_page.append(self._build_route_group())
+        routing_page.append(self._routing_group)
 
         authentication_page = _page_box()
         for group in self.build_authentication_groups():
             authentication_page.append(group)
-        # A linked login profile locks these (agent forwarding lives on
-        # Advanced; the Username row is greyed out via _sync_username_row).
-        self._register_login_profile_locked_widgets(
-            login_profile_locked_widgets(self, self._auth_groups_for_login_profile)
-            + [getattr(self, 'forward_agent_row', None),
-               getattr(self, 'forward_agent_value_row', None)]
-        )
 
         forwarding_page = _page_box()
         for group in self.build_port_forwarding_groups():
@@ -1819,11 +1854,24 @@ class ConnectionDialog(
         return [
             ("connection", _("Connection"), general_page),
             ("authentication", _("Authentication"), authentication_page),
+            ("routing", _("Routing"), routing_page),
             ("forwarding", _("Port Forwarding"), forwarding_page),
             ("commands", _("Commands"), commands_page),
-            ("advanced", _("Advanced"), advanced_page),
+            ("advanced", _("Extra Options"), advanced_page),
             ("wol", _("Wake on LAN"), wol_page),
         ]
+
+    #: Sidebar icon of each page, bundled where the app ships one
+    #: (icon_utils falls back to the icon theme).
+    _PAGE_ICONS = {
+        "connection": "network-server-symbolic",
+        "routing": "connector-symbolic",
+        "authentication": "dialog-password-symbolic",
+        "forwarding": "mail-forward-symbolic",
+        "commands": "utilities-terminal-symbolic",
+        "advanced": "preferences-system-symbolic",
+        "wol": "system-shutdown-symbolic",
+    }
 
     def _wire_session_type_toggle(self):
         """Connect the forwarding-only switch to Advanced SessionType."""
@@ -1927,13 +1975,13 @@ class ConnectionDialog(
         finally:
             self._end_port_forwarding_ssh_option_sync()
 
-    # Wider than Adw.PreferencesPage's 600 so the dialog doesn't feel empty;
+    # Wider than Adw.PreferencesPage's 600 so the page doesn't feel empty;
     # only reins in content on very wide windows.
     _CLAMP_ARGS = {"maximum_size": 900, "tightening_threshold": 700}
 
     @classmethod
     def _wrap_page_scrolled(cls, widget):
-        """Give a tab page its own scroller so scroll position doesn't carry over between tabs."""
+        """Give a page its own scroller so scroll position doesn't carry over between pages."""
         clamp = Adw.Clamp(**cls._CLAMP_ARGS)
         clamp.set_child(widget)
         scrolled = Gtk.ScrolledWindow()
@@ -1942,89 +1990,238 @@ class ConnectionDialog(
         scrolled.set_child(clamp)
         return scrolled
 
-    def _create_preferences_viewstack_content(self, pages):
-        """Card-style tabs via Adw.ViewStack + Adw.InlineViewSwitcher (libadwaita 1.7+)."""
-        stack = Adw.ViewStack()
-        stack.set_vexpand(True)
+    def _sidebar_page_icon(self, name):
+        """A new image of the page's sidebar icon."""
+        try:
+            from . import icon_utils
+            return icon_utils.new_image_from_icon_name(self._PAGE_ICONS.get(name, ""))
+        except Exception:
+            return Gtk.Image.new_from_icon_name(self._PAGE_ICONS.get(name, ""))
+
+    def _build_sidebar_row(self, name, title):
+        """One sidebar entry, built like a Settings sidebar row.
+
+        The suffix icon marks a page holding a setting that something else
+        overrides (_sync_sidebar_override_marks): the banner says those
+        fields are marked, and on another page they would not be seen.
+        """
+        row = Adw.ActionRow()
+        try:
+            row.set_use_markup(False)
+        except Exception:
+            pass
+        row.set_title(title)
+        row.set_name(name)
+        row.add_prefix(self._sidebar_page_icon(name))
+        mark = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        mark.add_css_class("warning")
+        mark.set_tooltip_text(_("A setting on this page is overridden"))
+        mark.set_visible(False)
+        row.add_suffix(mark)
+        row._sshpilot_override_mark = mark
+        return row
+
+    def _build_sidebar_navigation(self, pages):
+        """Pages in content_stack, one sidebar row each (Settings-window layout).
+
+        Works on every supported libadwaita (NavigationSplitView is 1.4+), so
+        there is no separate fallback layout to keep in step.
+        """
+        stack = self.content_stack
         self._stack_pages = {}
+        self._sidebar_rows = {}
+        self._page_titles = {}
+        self._page_widgets = {}
         for name, title, widget in pages:
             scrolled = self._wrap_page_scrolled(widget)
-            stack.add_titled(scrolled, name, title)
-            try:
-                self._stack_pages[name] = stack.get_page(scrolled)
-            except Exception:
-                pass
+            self._stack_pages[name] = stack.add_named(scrolled, name)
+            self._page_widgets[name] = scrolled
+            self._page_titles[name] = title
+            row = self._build_sidebar_row(name, title)
+            self.sidebar_list.append(row)
+            self._sidebar_rows[name] = row
 
-        switcher = Adw.InlineViewSwitcher()
-        switcher.set_stack(stack)
-        switcher.set_hexpand(True)
-        switcher.set_halign(Gtk.Align.FILL)
-        _ensure_toggle_suggested_css()
-        switcher.add_css_class("toggle-suggested")
+        self._selected_page_name = None
+        self._narrow_layout = False
+        self._single_page_layout = False
+        self.sidebar_list.connect("row-selected", self._on_sidebar_row_selected)
         try:
-            switcher.set_display_mode(Adw.InlineViewSwitcherDisplayMode.LABELS)
+            if hasattr(Adw, 'LengthUnit'):
+                self.split_view.set_sidebar_width_unit(Adw.LengthUnit.SP)
         except Exception:
             pass
         try:
-            switcher.set_can_shrink(False)
+            self.narrow_breakpoint.connect("apply", self._on_narrow_breakpoint, True)
+            self.narrow_breakpoint.connect("unapply", self._on_narrow_breakpoint, False)
         except Exception:
-            pass
-        try:
-            switcher.set_homogeneous(False)
-        except Exception:
-            pass
-
-        switcher_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        switcher_card.add_css_class("card")
-        switcher_card.set_hexpand(True)
-        switcher_card.set_margin_start(24)
-        switcher_card.set_margin_end(24)
-        switcher_card.set_margin_top(12)
-        switcher_card.append(switcher)
-        self._switcher_card = switcher_card
-
-        # Same clamp as the pages so the switcher stays aligned with the
-        # content edges when the dialog is resized.
-        switcher_clamp = Adw.Clamp(**self._CLAMP_ARGS)
-        switcher_clamp.set_child(switcher_card)
-
-        def _relayout_switcher(*_args):
-            try:
-                switcher.queue_resize()
-            except Exception:
-                pass
-            return False
-
-        switcher.connect("map", lambda *_a: GLib.idle_add(_relayout_switcher))
-
-        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        container.set_vexpand(True)
-        container.append(switcher_clamp)
-        container.append(stack)
-        return container
-
-    def _create_preferences_notebook_content(self, pages):
-        """Fallback tabbed layout for libadwaita < 1.7 (no InlineViewSwitcher)."""
-        notebook = Gtk.Notebook()
-        notebook.set_show_tabs(True)
-        notebook.set_show_border(False)
-        notebook.set_vexpand(True)
-        self._notebook_pages = {}
-        self._notebook_order = []
-        for name, title, widget in pages:
-            scrolled = self._wrap_page_scrolled(widget)
-            notebook.append_page(scrolled, Gtk.Label(label=title))
-            self._notebook_pages[name] = scrolled
-            self._notebook_order.append((name, scrolled, title))
-        self._notebook = notebook
-        return notebook
+            logger.debug("Could not watch the narrow-layout breakpoint", exc_info=True)
+        self._setup_sidebar_search()
+        if pages:
+            self.select_page(pages[0][0])
+        return stack
 
     def create_preferences_content(self):
-        """Create tabbed preferences content."""
-        pages = self._build_connection_tab_pages()
-        if hasattr(Adw, "InlineViewSwitcher"):
-            return self._create_preferences_viewstack_content(pages)
-        return self._create_preferences_notebook_content(pages)
+        """Build the pages and the sidebar that selects them."""
+        return self._build_sidebar_navigation(self._build_connection_tab_pages())
+
+    # -- sidebar navigation ------------------------------------------------
+
+    def _on_sidebar_row_selected(self, _listbox, row):
+        if row is None:
+            return
+        name = row.get_name()
+        changed = name != getattr(self, '_selected_page_name', None)
+        self._selected_page_name = name
+        try:
+            self.content_stack.set_visible_child_name(name)
+        except Exception:
+            logger.debug("Could not show page %s", name, exc_info=True)
+        self._update_content_title()
+        # Collapsed: go to the page. Only on a real change, so returning to
+        # the list (which reselects the current row) doesn't bounce back.
+        if changed:
+            try:
+                if self.split_view.get_collapsed():
+                    self.split_view.set_show_content(True)
+            except Exception:
+                pass
+
+    def select_page(self, name) -> bool:
+        """Show page *name* (e.g. ``"authentication"``); False if hidden or unknown."""
+        row = (getattr(self, '_sidebar_rows', None) or {}).get(name)
+        if row is None or not row.get_visible():
+            return False
+        if self.sidebar_list.get_selected_row() is not row:
+            self.sidebar_list.select_row(row)
+        try:
+            if self.split_view.get_collapsed():
+                self.split_view.set_show_content(True)
+        except Exception:
+            pass
+        return True
+
+    def _page_containing(self, widget):
+        """Name of the page *widget* is on, or None."""
+        pages = {id(w): name for name, w in (getattr(self, '_page_widgets', None) or {}).items()}
+        while widget is not None:
+            name = pages.get(id(widget))
+            if name is not None:
+                return name
+            try:
+                widget = widget.get_parent()
+            except Exception:
+                return None
+        return None
+
+    def _focus_row(self, row):
+        """Bring the row's page forward before focusing it.
+
+        A row on a page that isn't shown cannot take focus, so a Save
+        refused over, say, the hostname used to do nothing visible while
+        another page was open.
+        """
+        name = self._page_containing(row)
+        if name is not None:
+            self.select_page(name)
+        super()._focus_row(row)
+
+    def _on_narrow_breakpoint(self, _breakpoint, narrow):
+        self._narrow_layout = bool(narrow)
+        self._sync_split_layout()
+
+    def _sync_split_layout(self):
+        """Collapse to list -> page when narrow, or when one page is left.
+
+        A lone page (e.g. Serial) shows without a sidebar, and without a
+        back button to a list of one.
+        """
+        single = bool(getattr(self, '_single_page_layout', False))
+        collapsed = single or bool(getattr(self, '_narrow_layout', False))
+        try:
+            was_collapsed = self.split_view.get_collapsed()
+            self.split_view.set_collapsed(collapsed)
+            self.content_page.set_can_pop(not single)
+            # Open on the page rather than the list: a new connection starts
+            # with typing the host.
+            if collapsed and (single or not was_collapsed):
+                self.split_view.set_show_content(True)
+        except Exception:
+            logger.debug("Could not update the split layout", exc_info=True)
+
+    def _wire_content_title(self):
+        """Keep the header subtitle on what the connection reaches."""
+        for name in ('hostname_row', 'username_row', 'port_row'):
+            row = getattr(self, name, None)
+            if row is not None:
+                try:
+                    row.connect('changed', lambda *_a: self._update_content_title())
+                except Exception:
+                    pass
+        self._update_content_title()
+
+    def _connection_target_text(self) -> str:
+        """``user@host:port`` as typed; the port only when not the default."""
+        try:
+            host, user, port = self._connection_target()
+        except Exception:
+            return ""
+        if not host:
+            return ""
+        text = f"{user}@{host}" if user else host
+        if self._selected_protocol_id() == 'ssh':
+            default_port = 22
+        else:
+            default_port = getattr(self._selected_protocol_backend(), 'default_port', 0) or 0
+        if port and port != default_port:
+            text = f"{text}:{port}"
+        return text
+
+    def _update_content_title(self):
+        name = getattr(self, '_selected_page_name', None)
+        title = (getattr(self, '_page_titles', None) or {}).get(name) or _("Connection")
+        try:
+            self.content_page.set_title(title)
+            self.content_title.set_title(title)
+            self.content_title.set_subtitle(self._connection_target_text())
+        except Exception:
+            pass
+
+    def _sync_sidebar_override_marks(self):
+        """Mark each sidebar entry whose page holds an overridden setting."""
+        rows = getattr(self, '_sidebar_rows', None) or {}
+        if not rows:
+            return
+        from .connection_dialog_overrides import OVERRIDDEN
+
+        marked = set()
+        try:
+            ssh = self._selected_protocol_id() == 'ssh'
+        except Exception:
+            ssh = True
+        if ssh:
+            row_count = 0
+            for name, page in (getattr(self, '_page_widgets', None) or {}).items():
+                pending = [page]
+                while pending:
+                    widget = pending.pop()
+                    if getattr(widget, '_sshpilot_override_state', None) == OVERRIDDEN:
+                        marked.add(name)
+                        row_count += 1
+                    child = widget.get_first_child()
+                    while child is not None:
+                        pending.append(child)
+                        child = child.get_next_sibling()
+            # The rest of the count is Advanced's free-form options, which
+            # mark their own entries rather than a field row.
+            try:
+                if self._overridden_field_count() > row_count:
+                    marked.add('advanced')
+            except Exception:
+                pass
+        for name, row in rows.items():
+            mark = getattr(row, '_sshpilot_override_mark', None)
+            if mark is not None:
+                mark.set_visible(name in marked)
     
     def setup_keyboard_shortcuts(self):
         """Setup keyboard shortcuts for common actions"""
@@ -2048,36 +2245,104 @@ class ConnectionDialog(
             lambda widget, args: self.on_cancel_clicked(None)
         ))
         shortcut_controller.add_shortcut(cancel_shortcut)
-        
+
+        # Ctrl/Command+F to search the fields
+        search_shortcut = Gtk.Shortcut()
+        search_shortcut.set_trigger(Gtk.ShortcutTrigger.parse_string(
+            "<Meta>f" if is_macos() else "<Primary>f"
+        ))
+        search_shortcut.set_action(Gtk.CallbackAction.new(
+            lambda widget, args: self.start_search()
+        ))
+        shortcut_controller.add_shortcut(search_shortcut)
+
         self.add_controller(shortcut_controller)
     
-    def _auth_is_key_based(self) -> bool:
-        try:
-            return self.auth_toggle.get_active() == 0
-        except Exception:
-            return True
+    def _combined_extra_ssh_config(self) -> str:
+        """The Advanced tab's options plus the authentication section's lines.
 
-    def _selected_auth_method(self) -> int:
-        """0 = key-based, 1 = password."""
+        Both are plain lines of the Host block (``extra_ssh_config``); the
+        authentication section only presents its own keywords separately.
+        """
+        other = ''
+        if hasattr(self, 'advanced_tab'):
+            try:
+                other = self.advanced_tab.get_extra_ssh_config()
+            except Exception as e:
+                logger.error(f"Error getting extra SSH config from advanced tab: {e}")
+        section = getattr(self, 'auth_policy', None)
+        policy_lines = section.policy.to_lines() if section is not None else []
+        return join_extra(other, policy_lines)
+
+    def _on_auth_policy_changed(self) -> None:
+        apply_notes = getattr(self, '_apply_override_notes', None)
+        if callable(apply_notes):
+            apply_notes()
+        # The lines changed: ask OpenSSH what the host uses with them.
+        self._schedule_effective_refresh()
+
+    def _auth_policy_set_fallback(self, inherited) -> None:
+        """What the host inherits without its own authentication lines.
+
+        ``None``: the lookup failed, which is shown as unknown. Once OpenSSH
+        itself has answered for the pending block (the draft evaluation,
+        see ``connection_dialog_effective``), that answer stands: this one
+        comes from a walk of the files that cannot judge ``Match`` blocks.
+        """
+        section = getattr(self, 'auth_policy', None)
+        if section is None or getattr(self, '_effective_draft_answered', False):
+            return
+        if inherited is None:
+            section.policy.set_lookup_failed()
+        else:
+            section.policy.set_fallback(inherited)
+        section.sync()
+
+    def _auth_policy_set_forced(self, forced) -> None:
+        """Settings ▸ SSH Options force some lines on the command line."""
+        section = getattr(self, 'auth_policy', None)
+        if section is None:
+            return
+        section.policy.forced = {
+            str(keyword).lower(): str(value) for keyword, value in (forced or {}).items()
+        }
+        section.sync()
+
+    def _auth_policy_set_earlier(self, earlier) -> None:
+        """Earlier blocks decide some authentication lines; show what wins."""
+        section = getattr(self, 'auth_policy', None)
+        if section is None:
+            return
+        section.policy.earlier = {
+            str(keyword).lower(): str(getattr(entry, 'value', entry) or '')
+            for keyword, entry in (earlier or {}).items()
+        }
+        section.sync()
+
+    #: "Only offer listed identities" choices -> IdentitiesOnly value.
+    _IDENTITIES_ONLY_VALUES = ("", "yes", "no")
+
+    def _selected_identities_only(self) -> str:
+        """IdentitiesOnly this block sets: ``""`` (not set), ``yes`` or ``no``."""
         try:
-            return int(self.auth_toggle.get_active())
+            index = self.key_only_row.get_selected()
         except Exception:
-            return 0
+            return ""
+        values = self._IDENTITIES_ONLY_VALUES
+        return values[index] if 0 <= index < len(values) else ""
 
     def _selected_key_mode(self) -> int:
-        """0 = automatic, 1 = specific + IdentitiesOnly, 2 = specific."""
-        try:
-            specific = bool(getattr(self, 'key_select_row', None)
-                            and self.key_select_row.get_selected() == 1)
-        except Exception:
-            specific = False
-        if not specific:
-            return 0
-        try:
-            only = self.key_only_row.get_active()
-        except Exception:
-            only = True
-        return 1 if only else 2
+        """The stored key mode, derived from what the block sets.
+
+        There is no mode in the dialog: the identity file list and
+        IdentitiesOnly are edited directly. The stored encoding stays
+        (0 = no IdentityFile lines, 1 = IdentitiesOnly yes, 2 = IdentityFile
+        lines without it) so the writer, the daemon and login profiles read
+        it unchanged.
+        """
+        if self._selected_identities_only() == "yes":
+            return 1
+        return 2 if self._collect_identity_files() else 0
 
     def _collect_identity_files(self):
         try:
@@ -2205,55 +2470,24 @@ class ConnectionDialog(
         except Exception:
             pass
 
-    def on_auth_method_changed(self, *args):
-        """Reveal key-based vs password controls based on the auth ToggleGroup."""
-        is_key_based = self._auth_is_key_based()
-        for name in ('key_selection_group', 'key_select_row',
-                     'idonly_group', 'add_keys_to_agent_row'):
-            row = getattr(self, name, None)
-            if row is not None:
-                row.set_visible(is_key_based)
-        if hasattr(self, 'password_row'):
-            try:
-                title = _("Password (optional)") if is_key_based else _("Password")
-                self.password_row.set_title(title)
-            except Exception:
-                pass
-            self.password_row.set_visible(True)  # optional for keys, primary for password
-        if hasattr(self, 'pubkey_auth_row'):
-            self.pubkey_auth_row.set_visible(not is_key_based)
-        # Agent/hardware key sources apply to BOTH Automatic and specific-key
-        # modes (that's what Automatic relies on); hide only for password auth.
-        if hasattr(self, 'hw_group'):
-            self.hw_group.set_visible(is_key_based)
-        # Update key/cert editor visibility for the current selection mode.
-        self.on_key_select_changed()
+    #: Key rows a linked login profile can lock, and the field that does.
+    _PROFILE_KEY_ROWS = (
+        ('key_editor', 'identity_files'),
+        ('key_only_row', 'identities_only'),
+    )
 
     def on_key_select_changed(self, *args):
-        """Show key rows for key auth, but only enable editing in specific-key mode."""
-        is_key_based = self._auth_is_key_based()
-        try:
-            use_specific = bool(is_key_based and getattr(self, 'key_select_row', None)
-                                and self.key_select_row.get_selected() == 1)
-        except Exception:
-            use_specific = False
+        """Apply the profile locks to the key rows.
 
-        # In Automatic mode keep the specific-key rows visible but inactive, so
-        # users can see what would apply without being able to edit it.
-        key_editor = getattr(self, 'key_editor', None)
-        if key_editor is not None:
-            key_editor.set_visible(is_key_based)
-            key_editor.set_sensitive(use_specific)
-
-        key_only_row = getattr(self, 'key_only_row', None)
-        if key_only_row is not None:
-            key_only_row.set_visible(is_key_based)
-            key_only_row.set_sensitive(use_specific)
-
-        cert_editor = getattr(self, 'cert_editor', None)
-        if cert_editor is not None:
-            cert_editor.set_visible(is_key_based)
-            cert_editor.set_sensitive(use_specific)
+        The identity file list and "Only offer listed identities" are always
+        editable, like any other field of the Host block; only a linked
+        login profile that sets one of them locks its row.
+        """
+        locked = getattr(self, '_profile_locked_fields', None) or set()
+        for name, field in self._PROFILE_KEY_ROWS:
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.set_sensitive(field not in locked)
 
     def _generate_ssh_config_from_settings(self):
         """Generate SSH config block from current connection settings"""
@@ -2269,10 +2503,6 @@ class ConnectionDialog(
             host_val = host.get_text().strip() if host else "example.com"
             username_val = username.get_text().strip() if username else "user"
             port_val = port.get_text().strip() if port else "22"
-
-            # Get authentication settings from the new auth widgets
-            auth_method_val = self._selected_auth_method()
-            key_select_mode_val = self._selected_key_mode()
 
             # Full lists of identity files / certificates from the editors
             identity_files = self._collect_identity_files()
@@ -2309,31 +2539,20 @@ class ConnectionDialog(
                 if fa_text:
                     config_lines.append(f"    ForwardAgent {fa_text}")
 
-            # Add authentication settings
-            password_val = self.password_row.get_text().strip() if hasattr(self, 'password_row') else ''
-
-            if auth_method_val == 0:  # Key-based auth (password optional)
-                if key_select_mode_val in (1, 2) and identity_files:  # Specific key(s)
-                    for kf in identity_files:
-                        config_lines.append(f"    IdentityFile {kf}")
-                    if key_select_mode_val == 1:
-                        config_lines.append("    IdentitiesOnly yes")
-
-                    # Add certificate(s) if specified
-                    for cert in certificate_files:
-                        config_lines.append(f"    CertificateFile {cert}")
-                # Add combined authentication if a password is provided
-                if password_val:
-                    config_lines.append(
-                        "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
-                    )
-                # For automatic key selection, don't add IdentityFile
-            else:  # Password auth only
-                config_lines.append(
-                    "    PreferredAuthentications keyboard-interactive,password"
-                )
-                if self.pubkey_auth_row.get_active():
-                    config_lines.append("    PubkeyAuthentication no")
+            # Identity files, IdentitiesOnly and certificates, each on its own
+            # (as ssh_config_formatter writes them).
+            for kf in identity_files:
+                config_lines.append(f"    IdentityFile {kf}")
+            identities_only = self._selected_identities_only()
+            if identities_only:
+                config_lines.append(f"    IdentitiesOnly {identities_only}")
+            for cert in certificate_files:
+                config_lines.append(f"    CertificateFile {cert}")
+            # The authentication order and switches, as written
+            section = getattr(self, 'auth_policy', None)
+            if section is not None:
+                for line in section.policy.to_lines():
+                    config_lines.append(f"    {line}")
             
             # Add X11 forwarding if enabled
             if hasattr(self, 'x11_row') and self.x11_row.get_active():
@@ -2574,7 +2793,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pending.append((row_name, ssh_key, row.get_text()))
             except Exception:
                 continue
-        if not pending:
+        # The authentication section shows inherited values for whatever the
+        # block does not set, so it always wants the resolution.
+        if not pending and getattr(self, 'auth_policy', None) is None:
             return
 
         parent = getattr(self, 'parent_window', None)
@@ -2592,6 +2813,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         }
 
         def _apply(resolved):
+            # The Routing page's picture: which of ProxyJump and
+            # ProxyCommand OpenSSH uses when a block sets both.
+            self._effective_resolved = resolved or {}
+            redraw = getattr(self, '_schedule_route_update', None)
+            if callable(redraw):
+                redraw()
+            section = getattr(self, 'auth_policy', None)
+            if section is not None:
+                # None: OpenSSH could not be asked; the section says so.
+                section.policy.set_inherited(resolved)
+                section.sync()
             if not resolved:
                 return False
             for row_name, ssh_key, text_at_schedule in pending:
@@ -2630,13 +2862,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         def _start_worker():
             def worker():
-                resolved = {}
+                resolved = None
                 try:
                     from .api.connection_identity import connection_id_for
                     result = client.get_effective_config(
                         connection_id_for(self.connection)
                     )
                     if getattr(result, 'available', False):
+                        resolved = {}
                         for line in getattr(result, 'full', ()) or ():
                             key, _sep, value = str(line).partition(' ')
                             # ssh -G repeats accumulating keys; first wins, which
@@ -2791,8 +3024,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "username": text("username_row"),
             "port": (int(t) if (t := text("port_row")) else ""),
             "protocol": getattr(self.connection, "protocol", "ssh") or "ssh",
-            "auth_method": int(self.auth_toggle.get_active()) if hasattr(self, "auth_toggle") else 0,
             "key_select_mode": self._selected_key_mode(),
+            "identities_only_explicit_no": self._selected_identities_only() == "no",
             "add_keys_to_agent": self._selected_add_keys_to_agent(),
             "aliases": tuple(getattr(self.connection, "aliases", ()) or ()),
             "identity_files": tuple(self._collect_identity_files()),
@@ -2804,13 +3037,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "proxy_command": text("proxy_command_row"),
             **self._selected_forward_agent_fields(),
             "x11_forwarding": active("x11_row"),
-            "pubkey_auth_no": active("pubkey_auth_row"),
             "identity_agent": self._selected_identity_agent(),
             "pkcs11_provider": text("pkcs11_provider_row"),
             "security_key_provider": text("security_key_provider_row"),
             "local_command": text("local_command_row"),
             "remote_command": text("remote_command_row"),
-            "extra_ssh_config": getattr(self.advanced_tab, "get_extra_ssh_config", lambda: "")() if hasattr(self, "advanced_tab") else "",
+            "extra_ssh_config": self._combined_extra_ssh_config(),
+            # Saves always send '' (the pre-connect command is metadata now);
+            # that is a change only when the block still carries the old
+            # ``# sshpilot:PreCommand`` comment, which the save then removes.
+            "pre_command": str(getattr(self.connection, "pre_command", "") or ""),
             "forwarding_rules": tuple(
                 tuple(sorted(dict(rule).items()))
                 for rule in (getattr(self, "forwarding_rules", None) or [])
@@ -2869,8 +3105,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         required_attrs = [
             'display_name_row', 'nickname_row', 'hostname_row', 'username_row', 'port_row',
             'proxy_jump_row', 'forward_agent_row',
-            'auth_toggle', 'key_editor', 'cert_editor', 'password_row',
-            'key_select_row', 'key_only_row', 'pubkey_auth_row'
+            'auth_policy', 'key_editor', 'cert_editor', 'password_row',
+            'key_only_row'
         ]
         for attr in required_attrs:
             if not hasattr(self, attr):
@@ -3003,17 +3239,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Load Wake-on-LAN and tags metadata from connections_meta
             self._load_shared_meta_rows()
 
-            # Set authentication method (ToggleGroup: 0 key-based, 1 password)
-            auth_method = getattr(self.connection, 'auth_method', 0)
-            try:
-                self.auth_toggle.set_active(int(auth_method or 0))
-            except Exception:
-                pass
-            try:
-                self.pubkey_auth_row.set_active(bool(getattr(self.connection, 'pubkey_auth_no', False)))
-            except Exception:
-                self.pubkey_auth_row.set_active(False)
-
             # Populate the identity-file editor with the FULL list the parser
             # resolved (fall back to the single keyfile for older/partial data).
             def _clean(value, placeholder):
@@ -3028,7 +3253,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 )
                 if single:
                     identity_files = [single]
-            has_specific_key = bool(identity_files)
             self.key_editor.set_paths(identity_files)
 
             # Certificates: full list, with single-value fallback.
@@ -3070,8 +3294,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if hasattr(self, 'add_keys_to_agent_row'):
                 try:
                     val = str(getattr(self.connection, 'add_keys_to_agent', '') or '').strip().lower()
-                    idx = self._add_keys_values.index(val) if val in self._add_keys_values else 0
-                    self.add_keys_to_agent_row.set_selected(idx)
+                    if val not in self._add_keys_values:
+                        # A lifetime ("1h", "confirm 30m"): listed as
+                        # written, so the row says what is in force and
+                        # Default can clear it.
+                        self._add_keys_values.append(val)
+                        self.add_keys_to_agent_row.get_model().append(val)
+                    self.add_keys_to_agent_row.set_selected(
+                        self._add_keys_values.index(val)
+                    )
                 except Exception:
                     self.add_keys_to_agent_row.set_selected(0)
 
@@ -3090,30 +3321,36 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 self._orig_password = ""
 
-            # Key selection mode → Automatic/Specific radios + IdentitiesOnly switch.
+            # IdentitiesOnly as the block sets it: mode 1 is "yes", the
+            # explicit-no flag "no", anything else not set.
             # (Per-key passphrases are loaded on demand by the editor's key button.)
             try:
                 try:
                     mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
                 except Exception:
-                    try:
-                        mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
-                    except Exception:
-                        mode = 0
-                if (has_specific_key or bool(certificate_files)) and mode not in (1, 2):
-                    mode = 2
-                specific = mode in (1, 2)
-                self.key_select_row.set_selected(1 if specific else 0)
-                try:
-                    self.key_only_row.set_active(mode == 1)
-                except Exception:
-                    pass
+                    mode = 0
+                if mode == 1:
+                    choice = 1
+                elif getattr(self.connection, 'identities_only_explicit_no', False):
+                    choice = 2
+                else:
+                    choice = 0
+                self.key_only_row.set_selected(choice)
+            except Exception:
+                pass
+            # "IdentityFile none" is kept as written; the empty list says so.
+            try:
+                self.key_editor.set_empty_placeholder(
+                    _("Set to none: no identity files are offered.")
+                    if getattr(self.connection, 'identity_file_none', False)
+                    else _("No identity files set for this host.")
+                )
             except Exception:
                 pass
 
-            # Reveal the correct sections for the loaded method/mode.
+            # Apply any profile lock to the key rows.
             try:
-                self.on_auth_method_changed()
+                self.on_key_select_changed()
             except Exception:
                 pass
 
@@ -3129,6 +3366,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             try:
                 extra_config = getattr(self.connection, 'extra_ssh_config', '') or ''
                 logger.debug(f"Loading extra SSH config from connection: {extra_config}")
+                # The authentication lines have their own section; the rest
+                # goes to the Advanced tab.
+                policy_lines, extra_config = split_policy_lines(extra_config)
+                section = getattr(self, 'auth_policy', None)
+                if section is not None:
+                    section.load(AuthPolicy.from_lines(policy_lines))
                 if hasattr(self, 'advanced_tab'):
                     self.advanced_tab.set_extra_ssh_config(extra_config)
                     logger.debug(f"Set extra SSH config in advanced tab: {extra_config}")
@@ -3236,6 +3479,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.load_connection_data()
         finally:
             self._refresh_save_sensitivity()
+        self._sync_shared_block_ui()
+        # The lines as loaded: what differs from them later is unsaved.
+        try:
+            self._capture_effective_baseline()
+        except Exception:
+            logger.debug("Could not record the loaded lines", exc_info=True)
         # After the authored values are in place: fill unauthored rows with what
         # OpenSSH actually resolves, so the form never implies this block owns a
         # value it merely inherits.
@@ -3291,36 +3540,85 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pass
 
 
+    def _build_forward_agent_rows(self, group):
+        """Forward agent, on the Authentication page: it lends this
+        computer's agent (and so its keys) to the remote host."""
+        # ssh_config(5): yes, no, an agent socket path, or $VARIABLE.
+        # Default leaves the Host block unauthored so a broader block wins.
+        self._forward_agent_modes = _FORWARD_AGENT_MODES
+        fa_model = Gtk.StringList()
+        for label in (
+            _("Default"),
+            _("Yes"),
+            _("No"),
+            _("Socket path"),
+            _("Environment variable"),
+        ):
+            fa_model.append(label)
+        self.forward_agent_row = Adw.ComboRow(title=_("Forward agent"))
+        self.forward_agent_row.set_subtitle(
+            _("Allow the remote host to use your local ssh-agent")
+        )
+        self.forward_agent_row.set_model(fa_model)
+        self.forward_agent_row.set_selected(0)
+        self.forward_agent_row.connect(
+            "notify::selected", self._on_forward_agent_mode_changed
+        )
+        group.add(self.forward_agent_row)
+
+        self.forward_agent_value_row = Adw.EntryRow(title=_("Agent socket"))
+        try:
+            self.forward_agent_value_row.set_subtitle(
+                _("Path to an ssh-agent socket")
+            )
+        except Exception:
+            pass
+        self._forward_agent_browse_btn = Gtk.Button(icon_name='document-open-symbolic')
+        self._forward_agent_browse_btn.add_css_class('flat')
+        self._forward_agent_browse_btn.set_valign(Gtk.Align.CENTER)
+        self._forward_agent_browse_btn.set_tooltip_text(_("Browse for agent socket"))
+        self._forward_agent_browse_btn.connect(
+            'clicked',
+            lambda *_a: self._browse_file(
+                _("Select agent socket"),
+                lambda p: self.forward_agent_value_row.set_text(p),
+            ),
+        )
+        self.forward_agent_value_row.add_suffix(self._forward_agent_browse_btn)
+        self.forward_agent_value_row.set_visible(False)
+        self._forward_agent_browse_btn.set_visible(False)
+        group.add(self.forward_agent_value_row)
+
     def build_authentication_groups(self):
         """Build PreferencesGroups for authentication settings."""
         cm = getattr(self, 'connection_manager', None)
 
-        # --- Method: key-based vs password (AdwToggleGroup) ---
-        auth_group = Adw.PreferencesGroup(title=_("Authentication method"))
-        method_row = Adw.ActionRow()
-        method_row.set_activatable(False)
-        self.auth_toggle = _build_expanding_toggle_group([_("Key-based"), _("Password")])
-        self.auth_toggle.connect("notify::active", self.on_auth_method_changed)
-        _set_action_row_child(method_row, self.auth_toggle)
-        auth_group.add(method_row)
-        # Marked when the SSH configuration decides which methods are tried.
-        self.auth_method_row = method_row
+        # --- Authentication order and per-method switches ---
+        # Plain Host-block lines (PreferredAuthentications, PubkeyAuthentication,
+        # ...); see connection_dialog_auth.py.
+        self.auth_policy = AuthPolicyGroup.create(self._on_auth_policy_changed)
+        auth_group = self.auth_policy.group
+        # Marked when an earlier block decides the order.
+        self.auth_order_row = self.auth_policy.order_row
+        self.auth_order_row._sshpilot_own_value = lambda: (
+            ",".join(self.auth_policy.policy.order)
+            if self.auth_policy.policy.order is not None else None
+        )
+        for method in AUTH_METHODS:
+            row = self.auth_policy.rows[method]
+            row._sshpilot_own_value = (
+                lambda m=method: (
+                    ("yes" if self.auth_policy.policy.switches[m] else "no")
+                    if m in self.auth_policy.policy.switches else None
+                )
+            )
+            setattr(self, AUTH_METHOD_ROWS[method], row)
 
-        # --- Key selection mode: Automatic vs Use specific keys ---
-        self.key_selection_group = Adw.PreferencesGroup()
-        key_select_model = Gtk.StringList()
-        key_select_model.append(_("Automatic"))
-        key_select_model.append(_("Use Specific Keys"))
-        self.key_select_row = Adw.ComboRow(title=_("Key selection"))
-        self.key_select_row.set_subtitle(_("Use SSH defaults or pick specific keys below."))
-        self.key_select_row.set_model(key_select_model)
-        self.key_select_row.set_selected(0)
-        self.key_select_row.connect("notify::selected", self.on_key_select_changed)
-        self.key_selection_group.add(self.key_select_row)
-
-        # --- Identity files (private keys) ---
+        # --- Identity files: this block's IdentityFile lines, in order ---
         self.key_editor = FileListEditor(
-            title=_("Private Keys"),
+            title=_("Identity files set on this host"),
+            on_changed=lambda _editor: self._schedule_effective_refresh(),
+            empty_placeholder=_("No identity files set for this host."),
             with_passphrase=True,
             connection_manager=cm,
             parent_window=self.parent_window,
@@ -3335,6 +3633,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 os.path.expanduser(path), secret
             ),
         )
+        # Only this block's lines: what other blocks add is listed under
+        # "Identity files OpenSSH uses", next to IdentitiesOnly.
+        self.key_editor.set_description("IdentityFile")
 
         # --- Certificates ---
         self.cert_editor = FileListEditor(
@@ -3351,11 +3652,25 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # --- Key handling ---
         self.idonly_group = Adw.PreferencesGroup(title=_("Key handling"))
-        self.key_only_row = Adw.SwitchRow()
-        self.key_only_row.set_title(_("Only use the selected keys"))
-        self.key_only_row.set_subtitle(_("Write IdentitiesOnly yes for this connection."))
-        self.key_only_row.set_active(True)
+        # IdentitiesOnly on its own: a block may set it with no identity file
+        # (the identities then come from other blocks or the agent).
+        identities_only_model = Gtk.StringList()
+        for label in (_("Default"), _("Yes"), _("No")):
+            identities_only_model.append(label)
+        self.key_only_row = Adw.ComboRow(title=_("Only offer listed identities"))
+        self.key_only_row.set_subtitle("IdentitiesOnly")
+        self.key_only_row.set_model(identities_only_model)
+        self.key_only_row.set_selected(0)
+        self.key_only_row._sshpilot_own_value = lambda: (
+            self._selected_identities_only() or None
+        )
+        self.key_only_row.connect(
+            "notify::selected", lambda *_a: self._schedule_effective_refresh()
+        )
         self.idonly_group.add(self.key_only_row)
+        # Every identity file that applies, other blocks' included, in the
+        # order OpenSSH offers them.
+        self.idonly_group.add(self._build_effective_identity_row())
 
         self._add_keys_values = ['', 'yes', 'no', 'ask', 'confirm']
         akta_model = Gtk.StringList()
@@ -3368,6 +3683,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.add_keys_to_agent_row.set_model(akta_model)
         self.add_keys_to_agent_row.set_selected(0)
         self.idonly_group.add(self.add_keys_to_agent_row)
+        self._build_forward_agent_rows(self.idonly_group)
 
         # --- Password / password-only options ---
         password_group = Adw.PreferencesGroup(title=_("Password"))
@@ -3386,12 +3702,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception:
             pass
         password_group.add(self.password_row)
-
-        self.pubkey_auth_row = Adw.SwitchRow()
-        self.pubkey_auth_row.set_title(_("Disable public key authentication"))
-        self.pubkey_auth_row.set_subtitle(_("Force password authentication only (PubkeyAuthentication no)."))
-        self.pubkey_auth_row.set_active(False)
-        password_group.add(self.pubkey_auth_row)
 
         # --- Agent & hardware key sources -------------------------------------
         # A key (and any cert that pairs with it) may come from an ssh-agent, a
@@ -3476,22 +3786,23 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.security_key_provider_row.add_suffix(sk_btn)
         hw_group.add(self.security_key_provider_row)
 
-        # Initialize visibility for new connections.
+        # Initialize the specific-key rows for new connections.
         try:
-            self.on_auth_method_changed(self.auth_toggle, None)
+            self.on_key_select_changed()
         except Exception:
             pass
+        self.auth_policy.sync()
 
+        # The password sits right after the order that decides whether it is
+        # used (Password or keyboard-interactive), ahead of the key settings.
         auth_groups = [
             auth_group,
-            self.key_selection_group,
+            password_group,
             self.key_editor,
             self.cert_editor,
             self.idonly_group,
-            password_group,
             hw_group,
         ]
-        self._auth_groups_for_login_profile = auth_groups
         return [self._build_login_profile_group(), *auth_groups]
 
     def build_connection_groups(self):
@@ -3559,25 +3870,31 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         basic_group.add(self.display_name_row)
 
         # SSH alias / Host token
-        self.nickname_row = Adw.EntryRow(
-            title=_("SSH Alias (no whitespace allowed)")
-        )
+        self.nickname_row = Adw.EntryRow(title=self._alias_row_title())
         basic_group.add(self.nickname_row)
+        # Shown when what is typed there is a Host line this dialog does
+        # not save (connection_dialog_host_names.py).
+        basic_group.add(self._build_host_line_offer_row())
         
         # Hostname
         self.hostname_row = Adw.EntryRow(title=_("Hostname / IP address"))
         basic_group.add(self.hostname_row)
 
-        # Username
-        self.username_row = Adw.EntryRow(title=_("Username"))
-        self._add_username_profile_button(self.username_row)
-        basic_group.add(self.username_row)
-        
-        # Port (match style of fields above using EntryRow)
+        # Port next to the host it belongs to, then the user: the order the
+        # plugin protocols' fields take, and the familiar host/port/user one.
         self.port_row = Adw.EntryRow(title=_("Port"))
         _set_entry_row_hint(self.port_row, digits=True, max_length=5)
         self.port_row.set_text("22")
         basic_group.add(self.port_row)
+
+        # Username
+        self.username_row = Adw.EntryRow(title=_("Username"))
+        self._add_username_profile_button(self.username_row)
+        basic_group.add(self.username_row)
+
+        # Where the connection sits in the sidebar: app metadata, kept apart
+        # from what it connects to, and the same for every protocol.
+        organize_group = Adw.PreferencesGroup(title=_("Organize"))
 
         # Tags (app metadata, stored in connections_meta — not in ssh_config).
         # Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
@@ -3593,12 +3910,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Inline autocompletion from existing tags (GtkEntryCompletion is
         # deprecated and never supported Adw.EntryRow, so done by hand).
         self._setup_comma_autocomplete(self.tags_row, self._tag_candidates)
-        basic_group.add(self.tags_row)
+        organize_group.add(self.tags_row)
 
         # Group (sidebar folder, owned by the daemon's group store). Applied
         # by the window after the save succeeds, and only when changed.
         self.group_row = self._build_group_row()
-        basic_group.add(self.group_row)
+        organize_group.add(self.group_row)
 
         # Wake-on-LAN Group
         wol_group = Adw.PreferencesGroup(
@@ -3632,10 +3949,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         wol_detect_row.set_activatable(False)
         wol_group.add(wol_detect_row)
 
-        # Routing / jump hosts.
+        # Routing / jump hosts: on the Routing page, under the route they
+        # draw (see _build_route_group).
+        # No heading: the page is called Routing already.
         proxy_group = Adw.PreferencesGroup(
-            title=_("Routing"),
-            description=_("Optional SSH path settings used before authentication."),
+            description=_("Specify one or more jump proxies."),
         )
         # Adw.EntryRow has no subtitle/placeholder, so the hint lives in the title.
         self.proxy_jump_row = Adw.EntryRow(title=_("Jump hosts (comma-separated)"))
@@ -3669,61 +3987,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         proxy_group.add(self.proxy_command_row)
 
-        # ssh_config(5): yes, no, an agent socket path, or $VARIABLE.
-        # Default leaves the Host block unauthored so a broader block wins.
-        self._forward_agent_modes = _FORWARD_AGENT_MODES
-        fa_model = Gtk.StringList()
-        for label in (
-            _("Default"),
-            _("Yes"),
-            _("No"),
-            _("Socket path"),
-            _("Environment variable"),
-        ):
-            fa_model.append(label)
-        self.forward_agent_row = Adw.ComboRow(title=_("Forward agent"))
-        self.forward_agent_row.set_subtitle(
-            _("Allow the remote host to use your local ssh-agent")
-        )
-        self.forward_agent_row.set_model(fa_model)
-        self.forward_agent_row.set_selected(0)
-        self.forward_agent_row.connect(
-            "notify::selected", self._on_forward_agent_mode_changed
-        )
-        proxy_group.add(self.forward_agent_row)
-
-        self.forward_agent_value_row = Adw.EntryRow(title=_("Agent socket"))
-        try:
-            self.forward_agent_value_row.set_subtitle(
-                _("Path to an ssh-agent socket")
-            )
-        except Exception:
-            pass
-        self._forward_agent_browse_btn = Gtk.Button(icon_name='document-open-symbolic')
-        self._forward_agent_browse_btn.add_css_class('flat')
-        self._forward_agent_browse_btn.set_valign(Gtk.Align.CENTER)
-        self._forward_agent_browse_btn.set_tooltip_text(_("Browse for agent socket"))
-        self._forward_agent_browse_btn.connect(
-            'clicked',
-            lambda *_a: self._browse_file(
-                _("Select agent socket"),
-                lambda p: self.forward_agent_value_row.set_text(p),
-            ),
-        )
-        self.forward_agent_value_row.add_suffix(self._forward_agent_browse_btn)
-        self.forward_agent_value_row.set_visible(False)
-        self._forward_agent_browse_btn.set_visible(False)
-        proxy_group.add(self.forward_agent_value_row)
 
         # Kept as attributes so _on_protocol_changed can hide the SSH-specific
         # parts when a plugin protocol is selected.
         self._host_group = basic_group
         self._routing_group = proxy_group
+        self._organize_group = organize_group
         self._wol_group = wol_group
 
-        # Wake on LAN lives on its own tab — see _build_connection_tab_pages —
-        # shown only for protocols that target a host (_apply_protocol_to_ui).
-        return [basic_group, proxy_group]
+        # Wake on LAN and Routing live on pages of their own — see
+        # _build_connection_tab_pages. Wake on LAN is shown only for
+        # protocols that target a host, Routing only for SSH
+        # (_apply_protocol_to_ui).
+        return [basic_group, organize_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -3806,6 +4082,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         self.placeholder.add_css_class("dim-label")
         self.rules_list.append(self.placeholder)
+        # The rows name the server by the alias or host fields.
+        self._watch_forwarding_server_name()
 
         # Initialize empty rules list if it doesn't exist
         if not hasattr(self, 'forwarding_rules'):
@@ -4308,7 +4586,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     # _apply_protocol_to_ui. The pre-connection command applies to every
     # protocol that dials out (a VPN dial-up for a cluster, a port knock in
     # front of a Mosh host); the knock and Wake-on-LAN also need a host.
-    _SSH_ONLY_PAGES = ("authentication", "forwarding", "advanced")
+    _SSH_ONLY_PAGES = ("authentication", "routing", "forwarding", "advanced")
     #: Groups on the Commands page that are OpenSSH directives, so they mean
     #: nothing to a protocol sshPilot does not build an ssh command for.
     _SSH_ONLY_GROUPS = ("_ssh_commands_group",)
@@ -4342,53 +4620,38 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         return getattr(backend, 'protocol_id', 'ssh') or 'ssh'
 
     def _set_page_visible(self, name: str, visible: bool):
+        """Show or hide a page and its sidebar entry.
+
+        Hiding the page on show moves to the first page still shown.
+        """
         page = (getattr(self, '_stack_pages', None) or {}).get(name)
         if page is not None:
             try:
                 page.set_visible(visible)
             except Exception:
                 pass
+        row = (getattr(self, '_sidebar_rows', None) or {}).get(name)
+        if row is None:
             return
-        # Gtk.Notebook fallback (libadwaita < 1.7): remove/re-insert the page,
-        # keeping the original tab order.
-        notebook = getattr(self, '_notebook', None)
-        order = getattr(self, '_notebook_order', None)
-        if notebook is None or not order:
-            return
-        try:
-            for index, (page_name, scrolled, title) in enumerate(order):
-                if page_name != name:
-                    continue
-                current = notebook.page_num(scrolled)
-                if visible and current == -1:
-                    insert_at = sum(
-                        1 for n, s, _t in order[:index]
-                        if notebook.page_num(s) != -1
-                    )
-                    notebook.insert_page(scrolled, Gtk.Label(label=title), insert_at)
-                elif not visible and current != -1:
-                    notebook.remove_page(current)
-                return
-        except Exception as e:
-            logger.debug("Notebook page visibility failed: %s", e)
+        row.set_visible(visible)
+        if not visible and getattr(self, '_selected_page_name', None) == name:
+            for other, other_row in self._sidebar_rows.items():
+                if other_row.get_visible():
+                    self.select_page(other)
+                    break
 
     def _update_switcher_visibility(self):
-        """Hide the tab switcher when only one page is visible (e.g. a non-SSH
-        protocol leaves just 'Connection') so there's no orphan full-width tab."""
-        pages = getattr(self, '_stack_pages', None)
-        if pages:
+        """Drop the sidebar when only one page is left (e.g. a non-SSH
+        protocol with just 'Connection'), and the SSH configuration buttons
+        when the protocol isn't SSH."""
+        rows = getattr(self, '_sidebar_rows', None) or {}
+        visible = sum(1 for row in rows.values() if row.get_visible())
+        self._single_page_layout = bool(rows) and visible <= 1
+        self._sync_split_layout()
+        box = getattr(self, 'config_buttons_box', None)
+        if box is not None:
             try:
-                visible = sum(1 for p in pages.values() if p.get_visible())
-            except Exception:
-                visible = 2
-            card = getattr(self, '_switcher_card', None)
-            if card is not None:
-                card.set_visible(visible > 1)
-            return
-        notebook = getattr(self, '_notebook', None)
-        if notebook is not None:
-            try:
-                notebook.set_show_tabs(notebook.get_n_pages() > 1)
+                box.set_visible(self._selected_protocol_id() == 'ssh')
             except Exception:
                 pass
 
@@ -4396,6 +4659,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._apply_protocol_to_ui()
         self._sync_config_read_only_ui()
         self._sync_override_banner()
+        self._update_content_title()
 
     def set_config_read_only(self, read_only, unavailable=False):
         """Offer an SSH connection view-only: its config file is read-only.
@@ -4425,6 +4689,70 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 logger.debug("Could not mount the read-only banner", exc_info=True)
         self._sync_config_read_only_ui()
+
+    # -- a Host line that is more than this host's --------------------------
+
+    def _shared_host_tokens(self):
+        """The other tokens on the Host line of the connection being edited
+        (more names, patterns): its block is theirs too. Empty otherwise."""
+        if not self.is_editing:
+            return ()
+        return tuple(getattr(self.connection, 'shared_host_tokens', None) or ())
+
+    def _sync_shared_block_ui(self):
+        """Say that the block is shared, and which of the two edits this is:
+        of the block, for every host of its line (the line is kept, so the
+        name is too), or of this host alone, in a block of its own."""
+        tokens = self._shared_host_tokens()
+        banner = getattr(self, '_shared_block_banner', None)
+        if not tokens:
+            if banner is not None:
+                banner.set_revealed(False)
+            return
+        if banner is None:
+            banner = Adw.Banner()
+            try:
+                banner.set_use_markup(False)
+            except Exception:
+                pass
+            banner.connect('button-clicked', self._on_shared_block_mode_toggled)
+            self._shared_block_banner = banner
+            try:
+                self.content_mount.prepend(banner)
+            except Exception:
+                logger.debug("Could not mount the shared-block banner", exc_info=True)
+        name = getattr(self.connection, 'nickname', '') or ''
+        others = ' '.join(tokens)
+        separate = bool(getattr(self, 'force_split_from_group', False))
+        if separate:
+            banner.set_title(_(
+                "“{name}” will get a Host block of its own, at the end of the "
+                "file. The block it leaves stays for: {others}"
+            ).format(name=name, others=others))
+            banner.set_button_label(_("Edit for All"))
+        else:
+            banner.set_title(_(
+                "“{name}” shares its Host block with: {others}. Changes "
+                "apply to all of them."
+            ).format(name=name, others=others))
+            banner.set_button_label(_("Edit Separately"))
+        banner.set_revealed(True)
+        nickname_row = getattr(self, 'nickname_row', None)
+        if nickname_row is not None:
+            # The shared line is kept as written: a new name needs a block
+            # of its own.
+            nickname_row.set_sensitive(separate)
+            nickname_row.set_tooltip_text(
+                None if separate else _("To rename this host, edit it separately.")
+            )
+
+    def _on_shared_block_mode_toggled(self, *_args):
+        self.force_split_from_group = not getattr(self, 'force_split_from_group', False)
+        if not self.force_split_from_group:
+            nickname_row = getattr(self, 'nickname_row', None)
+            if nickname_row is not None:
+                nickname_row.set_text(getattr(self.connection, 'nickname', '') or '')
+        self._sync_shared_block_ui()
 
     def _config_read_only_active(self):
         if not getattr(self, '_config_read_only', False):
@@ -4522,25 +4850,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._restore_protocol_values(protocol_id, previous)
 
     def _add_header_rows(self, rows):
-        """Put a protocol's general fields in the first group, before Tags.
+        """Put a protocol's general fields in the first group.
 
-        PreferencesGroup only appends, so Tags is taken out and put back
-        after them: it is app metadata and reads as the group's last word.
+        Tags and Group have their own group (Organize), so the fields simply
+        follow the name.
         """
         host_group = getattr(self, '_host_group', None)
         if host_group is None or not rows:
             return
-        trailing = [
-            row for row in (getattr(self, 'tags_row', None),
-                            getattr(self, 'group_row', None))
-            if row is not None
-        ]
         try:
-            for row in trailing:
-                host_group.remove(row)
             for row in rows:
-                host_group.add(row)
-            for row in trailing:
                 host_group.add(row)
         except Exception:
             logger.debug("Could not place protocol fields", exc_info=True)
@@ -4574,6 +4893,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     _("Shown in the connection list. Leave empty to name it "
                       "after what it connects to.")
                 )
+            # The alias is a Host line for SSH only.
+            self._sync_host_line_ui()
         except Exception:
             logger.debug("Could not relabel the identity rows", exc_info=True)
 
@@ -5331,8 +5652,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         advanced_tab = getattr(self, 'advanced_tab', None)
         has_invalid = getattr(advanced_tab, 'has_invalid_options', None)
         if callable(has_invalid) and has_invalid():
+            self.select_page("advanced")
             self.show_error(
-                _("An SSH option on the Advanced tab is not valid. Fix or remove it, then save again.")
+                _("An SSH option on the Extra Options page is not valid. Fix or remove it, then save again.")
             )
             return
         # Block save and focus the first invalid field if any inline validation fails
@@ -5384,15 +5706,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             password_changed = False
 
 
-        # Get extra SSH config from advanced tab
-        extra_ssh_config = ''
-        if hasattr(self, 'advanced_tab'):
-            try:
-                extra_ssh_config = self.advanced_tab.get_extra_ssh_config()
-                logger.debug(f"Retrieved extra SSH config from advanced tab: {extra_ssh_config}")
-            except Exception as e:
-                logger.error(f"Error getting extra SSH config from advanced tab: {e}")
-                extra_ssh_config = ''
+        # Advanced-tab options plus the authentication section's lines
+        extra_ssh_config = self._combined_extra_ssh_config()
 
         key_select_mode_val = self._selected_key_mode()
 
@@ -5410,7 +5725,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             ).strip()
         connection_data = {
             'display_name': display_name,
-            'nickname': self.nickname_row.get_text().strip(),
+            'nickname': (
+                self._typed_primary_alias() or self.nickname_row.get_text().strip()
+            ),
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
             # "" means inherit: the block authors no Port and OpenSSH resolves
@@ -5421,12 +5738,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 if self.port_row.get_text().strip()
                 else ''
             ),
-            'auth_method': self._selected_auth_method(),
             'keyfile': keyfile_value,
             'identity_files': identity_files,
             'certificate': certificate_value,
             'certificate_files': certificate_files,
             'key_select_mode': key_select_mode_val,
+            'identities_only_explicit_no': self._selected_identities_only() == "no",
             'identity_agent': self._selected_identity_agent(),
             'add_keys_to_agent': self._selected_add_keys_to_agent(),
             'pkcs11_provider': (self.pkcs11_provider_row.get_text().strip()
@@ -5434,7 +5751,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'security_key_provider': (self.security_key_provider_row.get_text().strip()
                                       if hasattr(self, 'security_key_provider_row') else ''),
             'x11_forwarding': self.x11_row.get_active(),
-            'pubkey_auth_no': self.pubkey_auth_row.get_active(),
             'proxy_jump': [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()],
             'proxy_command': (self.proxy_command_row.get_text().strip()
                               if hasattr(self, 'proxy_command_row') else ''),
@@ -5497,6 +5813,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             orig_nick = orig_nick or getattr(self, 'split_original_nickname', None)
             if orig_nick:
                 connection_data['__split_original_nickname'] = orig_nick
+        elif self._shared_host_tokens():
+            # The banner said so: this save is for every host of the line.
+            connection_data['__shared_block'] = True
 
         # Wake-on-LAN and tags metadata ride the payload; the window persists
         # them only after the config write succeeds.

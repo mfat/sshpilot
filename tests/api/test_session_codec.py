@@ -90,6 +90,25 @@ def test_session_request_and_result_codecs_round_trip_strictly():
     ) == result
 
 
+def test_attach_request_sends_flow_control_only_when_requested():
+    """Daemons before API 0.118 reject unknown fields, so off means absent."""
+
+    plain = AttachSessionRequest(session_id=_summary().id, want_terminal_output=True)
+    assert "flow_control" not in attach_session_request_to_wire(plain)
+
+    controlled = AttachSessionRequest(
+        session_id=_summary().id,
+        want_terminal_output=True,
+        flow_control=True,
+    )
+    wire = attach_session_request_to_wire(controlled)
+    assert wire["flow_control"] is True
+    assert attach_session_request_from_wire(wire) == controlled
+
+    with pytest.raises(ValueError):
+        AttachSessionRequest(session_id=_summary().id, flow_control=True)
+
+
 def test_open_session_request_codec_round_trips_remote_command():
     request = OpenSessionRequest(
         connection_id=ConnectionId("test"),

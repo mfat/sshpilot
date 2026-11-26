@@ -563,6 +563,8 @@ def test_legacy_proxy_fingerprint_upgrade(env, representation, drift):
     link = _link(repo, 'web1').to_metadata()
     link['applied'] = old_hash
     with service._operation():  # simulate persisted metadata before reconciliation
+        # Older releases applied every field, blanking the username too.
+        repo.update_connection('web1', {'username': ''})
         repo.update_connection_metadata('web1', {'login_profile': link})
         if drift:
             repo.update_connection('web1', {'proxy_command': 'ssh changed'})
@@ -574,7 +576,220 @@ def test_legacy_proxy_fingerprint_upgrade(env, representation, drift):
         assert _link(repo, 'web1') is None
     else:
         assert detached == ()
-        assert _link(repo, 'web1').applied.startswith('v2:')
+        # Matched as recorded, then re-recorded for what the profile owns
+        # now; the block is untouched.
+        assert _link(repo, 'web1').applied.startswith('v4:')
+        assert root.read_text() == before
         assert service.reconcile() == ()
         service.update_profile(profile.id, {'proxy_command': 'ssh updated'})
         assert 'ProxyCommand ssh updated' in root.read_text()
+
+
+@pytest.mark.parametrize('drift', [False, True])
+def test_a_password_profile_link_recorded_before_auth_lines_keeps_matching(env, drift):
+    """Links recorded when profiles had a Key/Password choice do not detach.
+
+    Their fingerprint hashed the Key/Password view of the block; it is still
+    computed that way for them, until the profile is next applied.
+    """
+    import hashlib
+
+    from sshpilot.core.connections.auth_preferences import PASSWORD_MODE_PREFERRED_AUTH
+
+    repo, service, root, _secrets, _events = env
+    profile = service.create_profile({
+        'name': 'Ops',
+        'extra_ssh_config': f'PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}',
+    })
+    service.assign_connections(('web1',), LINK_EXPLICIT, profile.id)
+    # The projection format persisted before the change: no owned extra keys,
+    # the Key/Password view hashed.
+    historical = {
+        'username': '', 'auth_method': 1, 'key_select_mode': 0,
+        'identity_files': [], 'certificate_files': [], 'identity_agent': '',
+        'add_keys_to_agent': '', 'pkcs11_provider': '', 'security_key_provider': '',
+        'pubkey_auth_no': False, 'forward_agent': False, 'forward_agent_target': '',
+        'extra': [],
+    }
+    old_hash = hashlib.sha256(json.dumps(
+        historical, sort_keys=True, separators=(',', ':')
+    ).encode()).hexdigest()[:32]
+    link = _link(repo, 'web1').to_metadata()
+    link['applied'] = old_hash
+    link['extra_keys'] = []
+    link.pop('fields', None)
+    with service._operation():
+        # Older releases applied every field, blanking the username too.
+        repo.update_connection('web1', {'username': ''})
+        repo.update_connection_metadata('web1', {'login_profile': link})
+        if drift:
+            # Someone removes the password-first order from the block.
+            repo.update_connection('web1', {'extra_ssh_config': ''})
+    before = root.read_text()
+    detached = service.reconcile()
+    assert root.read_text() == before
+    if drift:
+        assert len(detached) == 1 and detached[0].reason == DETACH_DRIFT
+        return
+    assert detached == ()
+    assert root.read_text() == before
+    link = _link(repo, 'web1')
+    assert link.applied.startswith('v4:')
+    assert 'username' not in link.fields  # the profile sets no username
+    # A field the dialog leaves editable is no longer drift.
+    root.write_text(root.read_text().replace('Host web1\n', 'Host web1\n    User someone\n', 1))
+    repo.reload()
+    assert service.reconcile() == ()
+    assert _link(repo, 'web1') is not None
+    # The next edit applies the profile's lines and records a v4 fingerprint.
+    service.update_profile(profile.id, {'username': 'ops'})
+    assert _link(repo, 'web1').applied.startswith('v4:')
+    assert f'PreferredAuthentications {PASSWORD_MODE_PREFERRED_AUTH}' in _block(root, 'web1')
+
+
+# -- a profile applies only what it sets ------------------------------------
+
+def test_fields_a_profile_leaves_unset_stay_the_connections(env):
+    repo, service, root, *_ = env
+    repo.update_connection('web1', {
+        **repo.get_record('web1').data,
+        'key_select_mode': 2, 'identity_files': ['/keys/web1'],
+        'forward_agent': True,
+    })
+    profile = service.create_profile({
+        'name': 'Agent only', 'identity_agent': '/run/agent.sock',
+    })
+    service.assign_connections(['web1'], LINK_EXPLICIT, profile.id)
+    block = _block(root, 'web1')
+    assert 'User alice' in block                    # no username in the profile
+    assert 'IdentityFile /keys/web1' in block      # no key selection in it
+    assert 'ForwardAgent yes' in block             # forward agent not set
+    assert 'IdentityAgent /run/agent.sock' in block
+    link = _link(repo, 'web1')
+    assert link.applied.startswith('v4:') and link.fields == ('identity_agent',)
+
+
+def test_a_profile_can_set_forward_agent_off(env):
+    repo, service, root, *_ = env
+    repo.update_connection('web1', {**repo.get_record('web1').data, 'forward_agent': True})
+    profile = service.create_profile({'name': 'No agent', 'forward_agent': False})
+    service.assign_connections(['web1'], LINK_EXPLICIT, profile.id)
+    assert 'ForwardAgent no' in _block(root, 'web1')
+
+
+def test_editing_what_the_profile_does_not_set_never_detaches(env):
+    repo, service, root, *_ = env
+    profile = service.create_profile({'name': 'Agent', 'identity_agent': '/run/a.sock'})
+    service.assign_connections(['web1'], LINK_EXPLICIT, profile.id)
+    root.write_text(root.read_text().replace('User alice', 'User someone'))
+    repo.reload()
+    assert service.reconcile() == ()
+    assert _link(repo, 'web1') is not None
+    # Editing what it does set still detaches.
+    root.write_text(root.read_text().replace('/run/a.sock', '/run/other.sock'))
+    repo.reload()
+    service.reconcile()
+    assert _link(repo, 'web1') is None
+
+
+def test_stored_profiles_read_their_old_defaults_as_not_set():
+    from sshpilot.core.login_profiles.models import LoginProfile, profile_owned_fields
+
+    old = LoginProfile.from_dict({
+        'id': 'lp-0000000000000001', 'name': 'Old',
+        'key_select_mode': 0, 'forward_agent': False, 'username': '',
+    })
+    assert old.key_select_mode is None and old.forward_agent is None
+    assert old.identities_only is None
+    assert profile_owned_fields(old) == ()
+    # Saved again, an explicit IdentitiesOnly / ForwardAgent "No" is kept.
+    chosen = old.with_changes(identities_only=False, forward_agent=False)
+    again = LoginProfile.from_dict(chosen.to_dict())
+    assert again.identities_only is False and again.forward_agent is False
+    assert profile_owned_fields(again) == ('identities_only', 'forward_agent')
+
+
+def test_stored_key_selection_modes_become_identities_only():
+    from sshpilot.core.login_profiles.models import LoginProfile, profile_owned_fields
+
+    def load(mode, files=()):
+        return LoginProfile.from_dict({
+            'id': 'lp-0000000000000001', 'name': 'Old', 'unset_aware': True,
+            'key_select_mode': mode, 'identity_files': list(files),
+        })
+
+    only = load(1, ['/k/a'])           # "specific keys only"
+    assert (only.identities_only, only.identity_files) == (True, ('/k/a',))
+    assert profile_owned_fields(only) == ('identities_only', 'identity_files')
+    agent = load(2, ['/k/a'])          # "specific keys and agent"
+    assert (agent.identities_only, agent.identity_files) == (None, ('/k/a',))
+    # Automatic never wrote the keys it listed: they are not kept.
+    automatic = load(0, ['/k/stale'])
+    assert (automatic.identities_only, automatic.identity_files) == (None, ())
+    assert profile_owned_fields(automatic) == ()
+    # Written again, older versions still read a key selection mode.
+    assert only.to_dict()['key_select_mode'] == 1
+    assert agent.to_dict()['key_select_mode'] == 2
+    assert LoginProfile.from_dict(only.to_dict()).identities_only is True
+
+
+def test_preview_update_lists_only_user_set_values_a_profile_would_take_over(env):
+    repo, service, root, *_ = env
+    profile = service.create_profile({'name': 'P', 'identity_agent': '/run/a.sock'})
+    service.assign_connections(['web1', 'web2', 'db1'], LINK_EXPLICIT, profile.id)
+    # db1 sets no user of its own.
+    repo.update_connection('db1', {**repo.get_record('db1').data, 'username': ''})
+    linked, previews = service.preview_update(profile.id, {'username': 'deploy'})
+    assert linked == 3
+    replaced = {p.connection_id: [(c.field, c.before, c.after) for c in p.changes]
+                for p in previews}
+    assert replaced == {
+        'web1': [('username', 'alice', 'deploy')],
+        'web2': [('username', 'bob', 'deploy')],
+    }
+    # A value the profile already sets is its own: nothing to confirm.
+    assert service.preview_update(profile.id, {'identity_agent': '/run/b.sock'}) == (3, ())
+    # Nothing was written.
+    assert 'User alice' in _block(root, 'web1')
+
+
+@pytest.mark.parametrize('drift', [False, True])
+def test_a_link_owning_the_retired_key_select_mode_keeps_matching(env, drift):
+    """Links recorded while profiles had a key selection mode do not detach.
+
+    They list ``key_select_mode`` among their fields; the fingerprint is
+    validated with it, then the link records what the profile owns now
+    without rewriting the Host block.
+    """
+    from sshpilot.core.login_profiles.models import auth_fingerprint
+
+    repo, service, root, _secrets, _events = env
+    profile = service.create_profile({
+        'name': 'Keys', 'identity_files': ('~/.ssh/work',), 'identities_only': True,
+    })
+    service.assign_connections(('web1',), LINK_EXPLICIT, profile.id)
+    assert 'IdentitiesOnly yes' in root.read_text()
+    link = _link(repo, 'web1')
+    old_fields = ['key_select_mode', 'identity_files']
+    record = repo.get_record('web1')
+    stored = link.to_metadata()
+    stored['fields'] = old_fields
+    stored['applied'] = auth_fingerprint(
+        record.data, link.extra_keys, owned_fields=old_fields,
+    )
+    with service._operation():  # metadata as the previous release stored it
+        repo.update_connection_metadata('web1', {'login_profile': stored})
+        if drift:
+            repo.update_connection('web1', {'key_select_mode': 2})
+    assert parse_link({'login_profile': stored}).fields == tuple(old_fields)
+    before = root.read_text()
+    detached = service.reconcile()
+    if drift:
+        assert len(detached) == 1 and detached[0].reason == DETACH_DRIFT
+        return
+    assert detached == ()
+    assert root.read_text() == before
+    migrated = _link(repo, 'web1')
+    assert migrated.fields == ('identities_only', 'identity_files')
+    assert service.reconcile() == ()
+    assert _link(repo, 'web1') == migrated

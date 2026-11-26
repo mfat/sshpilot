@@ -57,6 +57,7 @@ ACTION_LABELS: Dict[str, str] = {
     'new-key': _('Copy Key to Server'),
     'manage-files': _('Manage Files'),
     'edit-ssh-config': _('SSH Config Editor'),
+    'advanced-ssh-config': _('Advanced Configuration'),
     'local-terminal': _('Local Terminal'),
     'preferences': _('Settings'),
     'tab-close': _('Close Tab'),
@@ -271,6 +272,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             'new-key',
             'manage-files',
             'edit-ssh-config',
+            'advanced-ssh-config',
         ]
         terminal_actions = ['local-terminal', 'terminal-search', 'broadcast-command', 'toggle-command-blocks']
         tab_actions = ['tab-next', 'tab-prev', 'tab-move-left', 'tab-move-right',

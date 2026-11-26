@@ -26,3 +26,17 @@ def connection_id_for(connection: Any) -> ConnectionId:
             "A stored connection has no durable identity",
         )
     return ConnectionId(nickname)
+
+
+def file_manager_connection_id(connection: Any) -> str:
+    """The daemon id the file manager opens SFTP under, or ``""``.
+
+    Same identity as :func:`connection_id_for` -- an unsaved target opened
+    from the search box is registered under its transient id, not its
+    nickname -- but a connection with no identity yields ``""`` instead of
+    raising, as the file manager callers always did.
+    """
+    try:
+        return str(connection_id_for(connection))
+    except SshPilotError:
+        return ""

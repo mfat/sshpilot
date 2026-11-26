@@ -35,20 +35,16 @@ from sshpilot.gtk.login_profile_controller import (
     settings_from_values,
 )
 from sshpilot.gtk.login_profile_messages import (
+    extra_option_has_own_setting,
     format_changes_inline,
     format_login_profile_error,
     format_preview,
+    format_update_replacement,
     profile_summary_line,
 )
 
 logger = logging.getLogger(__name__)
 
-_AUTH_OPTIONS = (_("Key-based"), _("Password"))
-_KEY_MODE_OPTIONS = (
-    _("Automatic"),
-    _("Specific keys only"),
-    _("Specific keys and agent"),
-)
 _ADD_KEYS_VALUES = ("", "yes", "no", "ask", "confirm")
 _ADD_KEYS_LABELS = (_("Default"), _("Yes"), _("No"), _("Ask"), _("Confirm"))
 
@@ -230,29 +226,22 @@ class LoginProfileEditor:
         general.add(self.username_row)
         page.add(general)
 
-        auth = Adw.PreferencesGroup(title=_("Authentication"))
-        self.auth_row = Adw.ComboRow(title=_("Method"), model=_string_list(_AUTH_OPTIONS))
-        self.auth_row.set_selected(settings.auth_method)
-        self.auth_row.connect("notify::selected", self._sync_visibility)
-        auth.add(self.auth_row)
-        self.key_mode_row = Adw.ComboRow(
-            title=_("Key selection"), model=_string_list(_KEY_MODE_OPTIONS)
-        )
-        self.key_mode_row.set_selected(settings.key_select_mode)
-        self.key_mode_row.connect("notify::selected", self._sync_visibility)
-        auth.add(self.key_mode_row)
-        self.pubkey_no_row = Adw.SwitchRow(
-            title=_("Disable public key authentication"),
-            subtitle="PubkeyAuthentication no",
-        )
-        self.pubkey_no_row.set_active(settings.pubkey_auth_no)
-        auth.add(self.pubkey_no_row)
-        page.add(auth)
+        # The authentication order and switches, as in the connection dialog;
+        # they are lines of the profile's options.
+        from .connection_dialog_auth import AuthPolicy, AuthPolicyGroup, split_policy_lines
+
+        policy_lines, other_extra = split_policy_lines(settings.extra_ssh_config)
+        self.auth_policy = AuthPolicyGroup.create(lambda: None, profile=True)
+        self.auth_policy.load(AuthPolicy.from_lines(policy_lines))
+        page.add(self.auth_policy.group)
 
         window = self.dialog
         key_manager = getattr(parent_window, "key_manager", None)
+        # As in the connection editor: the identity files, the certificates
+        # and IdentitiesOnly, each its own setting (no key selection mode).
         self.key_editor = FileListEditor(
-            title=_("Private Keys"),
+            title=_("Identity files"),
+            empty_placeholder=_("No identity files set by this profile."),
             with_passphrase=True,
             parent_window=parent_window,
             add_actions=[{
@@ -268,6 +257,7 @@ class LoginProfileEditor:
                 if key_manager is not None else None
             ),
         )
+        self.key_editor.set_description(_("Keys SSH offers (IdentityFile)"))
         self.key_editor.set_paths(list(settings.identity_files))
         page.add(self.key_editor)
         self.cert_editor = FileListEditor(
@@ -283,28 +273,52 @@ class LoginProfileEditor:
         self.cert_editor.set_paths(list(settings.certificate_files))
         page.add(self.cert_editor)
 
+        key_handling = Adw.PreferencesGroup(title=_("Key handling"))
+        # Not set / Yes / No: unset leaves each connection's IdentitiesOnly.
+        self.identities_only_row = Adw.ComboRow(
+            title=_("Only offer listed identities"),
+            model=_string_list((_("Not set"), _("Yes"), _("No"))),
+        )
+        self.identities_only_row.set_subtitle("IdentitiesOnly")
+        self.identities_only_row.set_selected(
+            0 if settings.identities_only is None
+            else (1 if settings.identities_only else 2)
+        )
+        key_handling.add(self.identities_only_row)
+        value = settings.add_keys_to_agent
+        # A lifetime ("1h", "confirm 30m") is listed as written, so the row
+        # says what the profile sets and Default can clear it.
+        self._add_keys_values = list(_ADD_KEYS_VALUES)
+        labels = list(_ADD_KEYS_LABELS)
+        if value not in self._add_keys_values:
+            self._add_keys_values.append(value)
+            labels.append(value)
+        self.add_keys_row = Adw.ComboRow(
+            title=_("Add keys to agent"), model=_string_list(labels)
+        )
+        self.add_keys_row.set_selected(self._add_keys_values.index(value))
+        key_handling.add(self.add_keys_row)
+        page.add(key_handling)
+
         agent = Adw.PreferencesGroup(title=_("Agent and hardware keys"))
         self.identity_agent_row = Adw.EntryRow(title="IdentityAgent")
         self.identity_agent_row.set_text(settings.identity_agent)
         agent.add(self.identity_agent_row)
-        self.add_keys_row = Adw.ComboRow(
-            title=_("Add keys to agent"), model=_string_list(_ADD_KEYS_LABELS)
-        )
-        value = settings.add_keys_to_agent
-        self._add_keys_custom = value if value not in _ADD_KEYS_VALUES else ""
-        self.add_keys_row.set_selected(
-            _ADD_KEYS_VALUES.index(value) if value in _ADD_KEYS_VALUES else 0
-        )
-        agent.add(self.add_keys_row)
         self.pkcs11_row = Adw.EntryRow(title=_("PKCS#11 provider"))
         self.pkcs11_row.set_text(settings.pkcs11_provider)
         agent.add(self.pkcs11_row)
         self.sk_row = Adw.EntryRow(title=_("FIDO security key provider"))
         self.sk_row.set_text(settings.security_key_provider)
         agent.add(self.sk_row)
-        self.forward_agent_row = Adw.SwitchRow(title=_("Forward agent"))
-        self.forward_agent_row.set_active(settings.forward_agent)
-        self.forward_agent_row.connect("notify::active", self._sync_visibility)
+        # Not set / Yes / No: unset leaves each connection's ForwardAgent.
+        self.forward_agent_row = Adw.ComboRow(
+            title=_("Forward agent"),
+            model=_string_list((_("Not set"), _("Yes"), _("No"))),
+        )
+        self.forward_agent_row.set_selected(
+            0 if settings.forward_agent is None else (1 if settings.forward_agent else 2)
+        )
+        self.forward_agent_row.connect("notify::selected", self._sync_visibility)
         agent.add(self.forward_agent_row)
         self.forward_target_row = Adw.EntryRow(title=_("Agent socket to forward (optional)"))
         self.forward_target_row.set_text(settings.forward_agent_target)
@@ -354,7 +368,7 @@ class LoginProfileEditor:
         self.extra_view.set_monospace(True)
         self.extra_view.set_wrap_mode(Gtk.WrapMode.NONE)
         self.extra_view.set_size_request(-1, 90)
-        self.extra_view.get_buffer().set_text(settings.extra_ssh_config)
+        self.extra_view.get_buffer().set_text(other_extra)
         frame = Gtk.Frame()
         frame.set_child(self.extra_view)
         extra.add(frame)
@@ -368,34 +382,37 @@ class LoginProfileEditor:
         self.dialog.present()
 
     def _sync_visibility(self, *_args) -> None:
-        key_auth = self.auth_row.get_selected() == 0
-        specific = self.key_mode_row.get_selected() in (1, 2)
-        self.key_mode_row.set_visible(key_auth)
-        self.key_editor.set_visible(key_auth and specific)
-        self.cert_editor.set_visible(key_auth)
-        self.pubkey_no_row.set_visible(not key_auth)
-        self.forward_target_row.set_visible(self.forward_agent_row.get_active())
+        self.forward_target_row.set_visible(self.forward_agent_row.get_selected() == 1)
 
     def values(self) -> Dict[str, object]:
+        from .connection_dialog_auth import join_extra
+
         buffer = self.extra_view.get_buffer()
-        extra = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+        extra = join_extra(
+            buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False),
+            self.auth_policy.policy.to_lines(),
+        )
         selected = self.add_keys_row.get_selected()
-        add_keys = _ADD_KEYS_VALUES[selected] if selected < len(_ADD_KEYS_VALUES) else ""
-        if selected == 0 and self._add_keys_custom:
-            add_keys = self._add_keys_custom
+        add_keys = (
+            self._add_keys_values[selected]
+            if selected < len(self._add_keys_values) else ""
+        )
         return {
             "name": self.name_row.get_text(),
             "username": self.username_row.get_text(),
-            "auth_method": self.auth_row.get_selected(),
-            "key_select_mode": self.key_mode_row.get_selected(),
+            "key_select_mode": None,
+            "identities_only": {0: None, 1: True, 2: False}.get(
+                self.identities_only_row.get_selected()
+            ),
             "identity_files": list(self.key_editor.get_paths()),
             "certificate_files": list(self.cert_editor.get_paths()),
             "identity_agent": self.identity_agent_row.get_text(),
             "add_keys_to_agent": add_keys,
             "pkcs11_provider": self.pkcs11_row.get_text(),
             "security_key_provider": self.sk_row.get_text(),
-            "pubkey_auth_no": self.pubkey_no_row.get_active(),
-            "forward_agent": self.forward_agent_row.get_active(),
+            "forward_agent": {0: None, 1: True, 2: False}.get(
+                self.forward_agent_row.get_selected()
+            ),
             "forward_agent_target": self.forward_target_row.get_text(),
             "proxy_command": self.proxy_command_row.get_text(),
             "extra_ssh_config": extra,
@@ -413,17 +430,24 @@ class LoginProfileEditor:
             self._banner.set_title(_("Enter a name for the login profile."))
             self._banner.set_revealed(True)
             return
+        buffer = self.extra_view.get_buffer()
+        refused = extra_option_has_own_setting(
+            buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+        )
+        if refused:
+            # As the connection editor's Advanced tab: one owner per option.
+            self._banner.set_title(refused)
+            self._banner.set_revealed(True)
+            return
         try:
             settings = settings_from_values(self.values())
         except (TypeError, ValueError) as error:
             _show_error(self._banner, error)
             return
-        passphrase_ops: list = []
-        if self.key_editor.get_visible():
-            passphrase_ops = self.key_editor.pending_passphrase_operations()
-            if passphrase_ops is None:
-                self.dialog.show_error(_("Please correct the invalid key passphrase."))
-                return
+        passphrase_ops = self.key_editor.pending_passphrase_operations()
+        if passphrase_ops is None:
+            self.dialog.show_error(_("Please correct the invalid key passphrase."))
+            return
         self._banner.set_revealed(False)
         self._save.set_sensitive(False)
 
@@ -523,7 +547,28 @@ def open_profile_editor(
                     on_saved(saved)
             done(error)
 
-        run_async(operation, _ok, _failed)
+        if current is None:
+            run_async(operation, _ok, _failed)
+            return
+
+        # An edit that starts setting a field replaces the value each linked
+        # connection held there: ask first, in one summary.
+        def _previewed(preview):
+            text = format_update_replacement(preview)
+            if not text:
+                run_async(operation, _ok, _failed)
+                return
+            confirm_update_replacement(
+                editor.dialog, text, format_preview(preview.replaced),
+                on_confirm=lambda: run_async(operation, _ok, _failed),
+                on_cancel=lambda: editor._save.set_sensitive(True),
+            )
+
+        run_async(
+            lambda: controller.preview_update(current.id, settings),
+            _previewed,
+            _failed,
+        )
 
     editor = LoginProfileEditor(
         profile=profile, initial=initial, on_submit=_submit, parent_window=parent_window
@@ -561,6 +606,38 @@ def confirm_preview(
     def _response(_dialog, response):
         if response == "apply":
             on_confirm()
+
+    alert.connect("response", _response)
+    alert.present(parent)
+
+
+def confirm_update_replacement(
+    parent: Gtk.Widget,
+    text: str,
+    details: str,
+    *,
+    on_confirm: Callable[[], None],
+    on_cancel: Callable[[], None],
+) -> None:
+    """Ask before a profile edit replaces linked connections' own values."""
+    alert = Adw.AlertDialog(heading=_("Replace user-set values?"), body=text)
+    if details:
+        expander = Gtk.Expander(label=_("Show connections"))
+        label = Gtk.Label(label=details, xalign=0, wrap=True, selectable=True)
+        label.add_css_class("dim-label")
+        expander.set_child(label)
+        alert.set_extra_child(expander)
+    alert.add_response("cancel", _("Cancel"))
+    alert.add_response("apply", _("Apply"))
+    alert.set_response_appearance("apply", Adw.ResponseAppearance.DESTRUCTIVE)
+    alert.set_default_response("cancel")
+    alert.set_close_response("cancel")
+
+    def _response(_dialog, response):
+        if response == "apply":
+            on_confirm()
+        else:
+            on_cancel()
 
     alert.connect("response", _response)
     alert.present(parent)

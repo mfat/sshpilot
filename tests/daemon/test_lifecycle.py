@@ -56,6 +56,7 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.TERMINAL_INPUT,
             Capability.TERMINAL_RESIZE,
             Capability.TERMINAL_REPLAY,
+            Capability.TERMINAL_FLOW_CONTROL,
             Capability.INTERACTIONS_READ,
             Capability.INTERACTIONS_RESPOND,
             Capability.INTERACTIONS_EVENTS,

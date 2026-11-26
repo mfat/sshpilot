@@ -33,7 +33,7 @@ import stat as stat_module
 import subprocess
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
@@ -672,6 +672,55 @@ def _server_side_copy(client: Any, source_file: Any, destination_file: Any) -> b
         logger.debug("Server-side copy failed; streaming instead: %s", exc)
         return False
     return True
+
+
+class _DestinationSideError(Exception):
+    """A failure on the receiving service of a copy between two services.
+
+    Carries the record it happened on, so the error is mapped (and a dead
+    connection failed) on the destination, not the source.
+    """
+
+    def __init__(self, error: BaseException, record: Any) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.record = record
+
+
+def _unwrap_destination_error(exc: BaseException) -> BaseException:
+    return exc.error if isinstance(exc, _DestinationSideError) else exc
+
+
+class _DestinationSide:
+    """Proxy for the destination client (and the files it opens) of a copy
+    between services: every failure is re-raised tagged with its record."""
+
+    def __init__(self, target: Any, record: Any) -> None:
+        self._target = target
+        self._record = record
+
+    def _call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except (_DestinationSideError, OperationCancelled):
+            raise
+        except Exception as exc:
+            raise _DestinationSideError(exc, self._record) from exc
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._target, name)
+        if not callable(attr):
+            return attr
+        if name == "open":
+            return lambda *a, **k: _DestinationSide(self._call(attr, *a, **k), self._record)
+        return lambda *a, **k: self._call(attr, *a, **k)
+
+    def __enter__(self) -> "_DestinationSide":
+        self._call(self._target.__enter__)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> Any:
+        return self._call(self._target.__exit__, exc_type, exc, tb)
 
 
 def _remote_path_is_descendant(source: str, destination: str) -> bool:
@@ -2039,7 +2088,13 @@ class SftpServiceRuntime:
         record = self._ready_record_for_mutation(request.service_id, client_id)
         source = _validate_path(request.source_path)
         destination = _validate_path(request.destination_path)
-        if request.recursive and _remote_path_is_descendant(source, destination):
+        destination_record = self._destination_record(request, record, client_id)
+        same_server = destination_record.connection_id == record.connection_id
+        if (
+            request.recursive
+            and same_server
+            and _remote_path_is_descendant(source, destination)
+        ):
             raise _SftpSummaryError(
                 ErrorCode.VALIDATION_FAILED,
                 "A directory cannot be copied into itself",
@@ -2052,6 +2107,15 @@ class SftpServiceRuntime:
                 },
             )
         client = record.handle.client
+        # Two sessions on one server see the same files: copy through the
+        # source session alone, so the server can still copy for us. Another
+        # server receives the bytes through its own session.
+        if same_server:
+            destination_client: Any = client
+        else:
+            destination_client = _DestinationSide(
+                destination_record.handle.client, destination_record
+            )
         copied = 0
         pending_files = 0
 
@@ -2067,10 +2131,13 @@ class SftpServiceRuntime:
             if cancel is not None and cancel():
                 raise OperationCancelled()
             try:
-                with client.open(source_path, "rb") as source_file, client.open(
+                with client.open(source_path, "rb") as source_file, destination_client.open(
                     destination_path, "wb"
                 ) as destination_file:
-                    if not _server_side_copy(client, source_file, destination_file):
+                    if not (
+                        same_server
+                        and _server_side_copy(client, source_file, destination_file)
+                    ):
                         done = 0
                         reported = 0.0
                         while True:
@@ -2090,18 +2157,93 @@ class SftpServiceRuntime:
                 # The destination did not exist before (checked above, or its
                 # directory was just created): never leave a partial file.
                 try:
-                    client.remove(destination_path)
+                    destination_client.remove(destination_path)
                 except Exception:
                     pass
                 raise
             copied += 1
             _report_copy_progress()
 
-        def _copy_directory(source_path: str, destination_path: str) -> None:
+        def _into_itself_error() -> _SftpSummaryError:
+            return _SftpSummaryError(
+                ErrorCode.VALIDATION_FAILED,
+                "A directory cannot be copied into itself",
+                SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF,
+                details={
+                    "service_id": record.service_id,
+                    SFTP_FAILURE_CODE_DETAIL: (
+                        SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF.value
+                    ),
+                },
+            )
+
+        def _resolves_into_source() -> bool:
+            """Whether the destination lies inside the source once links are
+            resolved (as text alone, ``/home/x`` hides ``/usr/home/x``).
+
+            When the server will not resolve the paths the answer is unknown,
+            and unknown counts as inside: a wrong "no" lets the walk copy the
+            new folder into itself until the disk is full, a wrong "yes"
+            only refuses one copy.
+            """
+            target = posixpath.normpath(destination)
+            try:
+                real_source = posixpath.normpath(client.realpath(source))
+                real_parent = client.realpath(posixpath.dirname(target) or "/")
+            except Exception:
+                logger.warning(
+                    "Could not resolve the paths of a folder copy; refusing it "
+                    "rather than risk copying the folder into itself",
+                    exc_info=True,
+                )
+                return True
+            real_target = posixpath.normpath(
+                posixpath.join(real_parent, posixpath.basename(target))
+            )
+            if real_source == "/":
+                return True
+            return real_target == real_source or real_target.startswith(real_source + "/")
+
+        def _make_root_unless_inside_source() -> None:
+            """Create the destination root of a copy between two connections.
+
+            Two saved connections can reach one machine. The destination
+            then may lie inside the tree being copied, and the walk would
+            copy the new folder into itself without end. Connection ids
+            cannot tell; the files can: a folder made through the destination
+            that shows up through the source is on the same filesystem.
+            """
+            try:
+                client.lstat(destination)
+            except Exception:
+                seen_before = False
+            else:
+                seen_before = True
+            destination_client.mkdir(destination)
+            if seen_before:
+                # The source had this path while the destination did not:
+                # they are different filesystems.
+                return
+            try:
+                client.lstat(destination)
+            except Exception:
+                return
+            if not _resolves_into_source():
+                return
+            try:
+                destination_client.rmdir(destination)
+            except Exception:
+                pass
+            raise _into_itself_error()
+
+        def _copy_directory(
+            source_path: str, destination_path: str, *, made: bool = False
+        ) -> None:
             nonlocal pending_files
             if cancel is not None and cancel():
                 raise OperationCancelled()
-            client.mkdir(destination_path)
+            if not made:
+                destination_client.mkdir(destination_path)
             entries = client.listdir_attr(source_path)
             pending_files += sum(
                 1 for entry in entries if not (entry.is_dir() and not entry.is_symlink())
@@ -2130,11 +2272,12 @@ class SftpServiceRuntime:
                     details={"service_id": record.service_id},
                 )
             try:
-                client.stat(destination)
+                destination_client.stat(destination)
             except Exception as exc:
+                missing = _unwrap_destination_error(exc)
                 if not (
-                    isinstance(exc, sftp_proto.SFTPError)
-                    and getattr(exc, "errno", None) == errno.ENOENT
+                    isinstance(missing, sftp_proto.SFTPError)
+                    and getattr(missing, "errno", None) == errno.ENOENT
                 ):
                     raise
             else:
@@ -2142,7 +2285,7 @@ class SftpServiceRuntime:
                     ErrorCode.REMOTE_PATH_EXISTS,
                     "The destination already exists",
                     SftpFailureCode.DESTINATION_ALREADY_EXISTS,
-                    details={"service_id": record.service_id},
+                    details={"service_id": destination_record.service_id},
                 )
             if source_attr.is_dir():
                 if not request.recursive:
@@ -2152,7 +2295,13 @@ class SftpServiceRuntime:
                         SftpFailureCode.RECURSIVE_COPY_REQUIRED,
                         details={"service_id": record.service_id},
                     )
-                _copy_directory(source, destination)
+                if same_server:
+                    if _resolves_into_source():
+                        raise _into_itself_error()
+                    _copy_directory(source, destination)
+                else:
+                    _make_root_unless_inside_source()
+                    _copy_directory(source, destination, made=True)
             else:
                 if request.recursive:
                     raise _SftpSummaryError(
@@ -2175,8 +2324,23 @@ class SftpServiceRuntime:
             raise
         except SshPilotError:
             raise
+        except _DestinationSideError as exc:
+            raise self._map_error(exc.error, exc.record) from exc.error
         except Exception as exc:
             raise self._map_error(exc, record) from exc
+
+    def _destination_record(
+        self,
+        request: SftpCopyRequest,
+        record: _SftpRecord,
+        client_id: ClientId,
+    ) -> _SftpRecord:
+        """The record a copy writes to: its own, or the named second service."""
+        if not request.crosses_services:
+            return record
+        return self._ready_record_for_mutation(
+            request.destination_service_id, client_id
+        )
 
     def start_copy(
         self,
@@ -2201,7 +2365,12 @@ class SftpServiceRuntime:
         source = _validate_path(request.source_path)
         destination = _validate_path(request.destination_path)
         record = self._ready_record_for_mutation(request.service_id, client_id)
-        if request.recursive and _remote_path_is_descendant(source, destination):
+        destination_record = self._destination_record(request, record, client_id)
+        if (
+            request.recursive
+            and destination_record.connection_id == record.connection_id
+            and _remote_path_is_descendant(source, destination)
+        ):
             raise _SftpSummaryError(
                 ErrorCode.VALIDATION_FAILED,
                 "A directory cannot be copied into itself",
@@ -2223,8 +2392,16 @@ class SftpServiceRuntime:
                 handle.raise_if_cancelled()
                 return False
 
-            with self._serialized_target((request.service_id, "sftp-operation")):
+            # Both services of a copy between two are held, in one order, so
+            # copies running the other way round cannot deadlock.
+            services = sorted({request.service_id, destination_record.service_id})
+            with ExitStack() as held:
+                for service_id in services:
+                    held.enter_context(
+                        self._serialized_target((service_id, "sftp-operation"))
+                    )
                 self._ready_record_for_mutation(request.service_id, client_id)
+                self._destination_record(request, record, client_id)
                 handle.raise_if_cancelled()
                 self.copy(
                     request,

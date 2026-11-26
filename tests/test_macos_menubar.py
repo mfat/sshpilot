@@ -135,6 +135,7 @@ def test_build_menubar_uses_existing_actions():
         "app.broadcast-command",
         "win.open-file-manager",
         "app.edit-ssh-config",
+        "app.advanced-ssh-config",
         "win.edit-known-hosts",
         "win.manage-login-profiles",
         "win.manage-local-authorized-keys",

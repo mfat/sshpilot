@@ -110,6 +110,53 @@ class TransientConnections:
             self._evict_locked(frozenset(in_use) | {connection_id})
             return record
 
+    def create_from_draft(
+        self,
+        write: Callable[[Path], Optional[str]],
+        host: str,
+        user: Optional[str] = None,
+        *,
+        in_use: Iterable[str] = (),
+    ) -> Optional[ConnectionRecord]:
+        """A target that resolves *host* through a configuration draft.
+
+        *write* writes the draft into the folder it is given and returns the
+        file a launch passes with ``-F`` (None: the draft cannot be read as
+        a launch would; nothing is registered). The record is the Host block
+        the draft gives *host* when it names it, else a bare destination;
+        either way the launch reads the draft for everything, as ``ssh -F
+        draft host`` would. Removed with its folder when discarded.
+        """
+        with self._lock:
+            connection_id = self._new_id_locked()
+            folder = self._directory_locked() / connection_id
+            makedirs_private(folder)
+            try:
+                path = write(folder)
+                if not path:
+                    shutil.rmtree(folder, ignore_errors=True)
+                    return None
+                loaded = load_ssh_configuration(Path(path), isolated=self._isolated)
+            except Exception:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+            record = next((item for item in loaded.connections if item.id == host), None)
+            if record is None:
+                data = {"nickname": host, "id": host, "hostname": host,
+                        "__host_tokens": [host]}
+                record = ConnectionRecord.from_dict(data, connection_id=host)
+                record.host = host
+            # The launch reads the whole draft (-F), whichever file of it
+            # declared the host.
+            record.source = str(path)
+            if user:
+                record.username = user
+            record.id = connection_id
+            record.nickname = connection_id
+            self._records[connection_id] = record
+            self._evict_locked(frozenset(in_use) | {connection_id})
+            return record
+
     def get(self, connection_id: str) -> Optional[ConnectionRecord]:
         with self._lock:
             return self._records.get(str(connection_id or ""))
@@ -212,9 +259,13 @@ class TransientConnections:
     def _remove_file(self, record: ConnectionRecord) -> None:
         directory = self._directory
         source = Path(record.source) if record.source else None
-        if directory is None or source is None or source.parent != directory:
+        if directory is None or source is None:
             return
-        source.unlink(missing_ok=True)
+        if source.parent.parent == directory and source.parent.name == record.id:
+            # A draft's folder (create_from_draft): the whole of it.
+            shutil.rmtree(source.parent, ignore_errors=True)
+        elif source.parent == directory:
+            source.unlink(missing_ok=True)
 
 
 def _quote(value: str) -> str:

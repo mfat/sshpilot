@@ -11,7 +11,8 @@ from gettext import gettext as _
 
 def show_host_picker(window, anchor, on_selected, *, toast=None,
                      connections=None, include_local_terminal=False,
-                     on_select_local=None):
+                     on_select_local=None, local_title=None,
+                     local_subtitle=None, local_icon='utilities-terminal-symbolic'):
     """Pop up a searchable list of the saved connections, anchored at *anchor*.
 
     Args:
@@ -27,6 +28,9 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
             that invokes *on_select_local* instead of *on_selected*.
         on_select_local: callable invoked when the local-terminal row is
             picked. Required when *include_local_terminal* is True.
+        local_title / local_subtitle / local_icon: wording and icon of that
+            row for callers that offer something other than a shell (the
+            file manager offers this computer's files).
 
     Returns the ``Gtk.Popover`` (already scheduled to pop up), or ``None``.
     """
@@ -37,6 +41,11 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
         connections = list(getattr(cm, 'connections', []))
     else:
         connections = list(connections)
+
+    if local_title is None:
+        local_title = _('Local terminal')
+    if local_subtitle is None:
+        local_subtitle = _('Open a local shell')
 
     if not connections and not include_local_terminal:
         if toast:
@@ -63,7 +72,10 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
 
     scrolled = Gtk.ScrolledWindow()
     scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-    scrolled.set_size_request(-1, min(300, len(connections) * 56 + 8))
+    # The local row is a row too: without it in the count the last host is
+    # scrolled out of sight.
+    rows = len(connections) + (1 if include_local_terminal else 0)
+    scrolled.set_size_request(-1, min(300, rows * 56 + 8))
 
     list_box = Gtk.ListBox()
     list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
@@ -76,16 +88,16 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
         local_box.set_margin_bottom(6)
         local_box.set_margin_start(8)
         local_box.set_margin_end(8)
-        local_icon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
-        local_icon.set_valign(Gtk.Align.CENTER)
-        local_box.append(local_icon)
+        local_image = Gtk.Image.new_from_icon_name(local_icon)
+        local_image.set_valign(Gtk.Align.CENTER)
+        local_box.append(local_image)
         local_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         local_info.set_hexpand(True)
-        local_lbl = Gtk.Label(label=_('Local terminal'))
+        local_lbl = Gtk.Label(label=local_title)
         local_lbl.set_halign(Gtk.Align.START)
         local_lbl.add_css_class('heading')
         local_info.append(local_lbl)
-        local_sub = Gtk.Label(label=_('Open a local shell'))
+        local_sub = Gtk.Label(label=local_subtitle)
         local_sub.set_halign(Gtk.Align.START)
         local_sub.add_css_class('caption')
         local_sub.add_css_class('dim-label')
@@ -139,7 +151,7 @@ def show_host_picker(window, anchor, on_selected, *, toast=None,
         if not q:
             return True
         if getattr(list_row, '_is_local_terminal_row', False):
-            return q in _('Local terminal').lower() or q in 'local'
+            return q in local_title.lower() or q in 'local'
         conn = getattr(list_row, '_connection', None)
         if conn is None:
             return False

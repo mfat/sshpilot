@@ -37,6 +37,8 @@ from sshpilot.api.models.login_profiles import (
     LoginProfileSource,
     LoginProfileSummary,
     PreviewLoginProfileAssignmentRequest,
+    PreviewLoginProfileUpdateRequest,
+    LoginProfileUpdatePreview,
     SetGroupLoginProfileRequest,
     SetLoginProfileSecretRequest,
     UpdateLoginProfileRequest,
@@ -99,6 +101,7 @@ def settings_from_profile(profile: LoginProfile) -> LoginProfileSettings:
         forward_agent_target=profile.forward_agent_target,
         proxy_command=profile.proxy_command,
         extra_ssh_config=profile.extra_ssh_config,
+        identities_only=profile.identities_only,
     )
 
 
@@ -119,6 +122,7 @@ def _settings_values(settings: LoginProfileSettings) -> dict:
         "forward_agent_target": settings.forward_agent_target,
         "proxy_command": settings.proxy_command,
         "extra_ssh_config": settings.extra_ssh_config,
+        "identities_only": settings.identities_only,
     }
 
 
@@ -272,6 +276,34 @@ class DaemonLoginProfileApi:
                     ),
                 )
                 for item in previews
+            )
+
+        return self._call(_preview)
+
+    def preview_update(
+        self, request: PreviewLoginProfileUpdateRequest
+    ) -> LoginProfileUpdatePreview:
+        def _preview():
+            linked, previews = self._service.preview_update(
+                request.profile_id, _settings_values(request.settings)
+            )
+            return LoginProfileUpdatePreview(
+                linked_count=linked,
+                replaced=tuple(
+                    LoginProfileAssignmentPreview(
+                        connection_id=ConnectionId(item.connection_id),
+                        profile_name=item.profile_name,
+                        changes=tuple(
+                            LoginProfileFieldChange(
+                                field=LoginProfileField(change.field),
+                                before=_raw_value(change.before),
+                                after=_raw_value(change.after),
+                            )
+                            for change in item.changes
+                        ),
+                    )
+                    for item in previews
+                ),
             )
 
         return self._call(_preview)

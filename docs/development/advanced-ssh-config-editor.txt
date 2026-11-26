@@ -1,0 +1,2878 @@
+Below is a complete, modular Python + GTK4 + Libadwaita package (ssh_workbench)
+designed according to GNOME HIG. Name to be changed. SSHWORKBENCH is the name of another app.
+
+  - Cross-platform Gtk.Widget (SshConfigWorkbench(Adw.Bin)): Packs directly into
+    any Gtk.Paned, Gtk.Box, Adw.NavigationSplitView, or Adw.TabView on Linux,
+    Windows, and macOS.
+  - Standalone Desktop App (Adw.Application): Wraps that exact widget in an
+    Adw.ApplicationWindow + Adw.HeaderBar with Adw.StyleManager
+    Light/Dark/System theme switching.
+  - GNOME HIG & Libadwaita Widgets: Uses Adw.Bin, Adw.ToolbarView,
+    Adw.HeaderBar, Adw.ViewStack + Adw.ViewSwitcher, Gtk.ListBox (.boxed-list),
+    Adw.ActionRow, Adw.ExpanderRow, Adw.Banner, Adw.ToastOverlay, Gtk.Paned,
+    Gtk.SearchEntry, Gtk.FileDialog, Adw.Dialog, and native Gtk.DragSource /
+    Gtk.DropTarget for drag-and-drop reordering.
+  - Pure Python OpenSSH Engine: Comment-safe parser (no leaking # lines or
+    inline comments into directive rows), real ~/.ssh/config & disk Include glob
+    loading, atomic save with .bak backup + 0600 permissions, and live
+    comparison against your system's ssh -G binary.
+
+Package Structure
+
+ssh-workbench/
+├── pyproject.toml
+└── ssh_workbench/
+    ├── __init__.py
+    ├── engine.py      # Pure Python parser, serializer & OpenSSH ssh -G resolver
+    ├── widget.py      # Embeddable SshConfigWorkbench(Adw.Bin) GTK4/Libadwaita widget
+    └── app.py         # Standalone Adw.Application desktop wrapper
+
+1. pyproject.toml
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ssh-workbench"
+version = "0.1.0"
+description = "Cross-platform GTK4 / Libadwaita OpenSSH config editor and ssh -G resolver"
+requires-python = ">=3.10"
+dependencies = [
+    "PyGObject>=3.46",
+]
+
+[project.scripts]
+ssh-workbench = "ssh_workbench.app:main"
+
+2. ssh_workbench/__init__.py
+
+from .engine import (
+    ConfigBlock,
+    Directive,
+    EffectiveOption,
+    ResolutionResult,
+    parse_config,
+    resolve_config,
+    run_system_ssh_g,
+    serialize_config,
+)
+from .widget import SshConfigWorkbench
+
+__all__ = [
+    "ConfigBlock",
+    "Directive",
+    "EffectiveOption",
+    "ResolutionResult",
+    "SshConfigWorkbench",
+    "parse_config",
+    "resolve_config",
+    "run_system_ssh_g",
+    "serialize_config",
+]
+
+3. ssh_workbench/engine.py
+
+Pure Python OpenSSH parser, serializer, resolver, and disk/ssh -G helper (zero
+GUI dependencies):
+
+from __future__ import annotations
+
+import copy
+import fnmatch
+import hashlib
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+ACCUMULATING_OPTIONS = {
+    "identityfile",
+    "certificatefile",
+    "localforward",
+    "remoteforward",
+    "dynamicforward",
+    "sendenv",
+    "setenv",
+}
+
+QUICK_DIRECTIVE_PRESETS: list[tuple[str, str]] = [
+    ("Hostname", "10.0.0.1"),
+    ("User", "deploy"),
+    ("Port", "22"),
+    ("IdentityFile", "~/.ssh/id_ed25519"),
+    ("ProxyJump", "bastion"),
+    ("ForwardAgent", "yes"),
+    ("IdentitiesOnly", "yes"),
+    ("ServerAliveInterval", "60"),
+]
+
+OPENSSH_DEFAULTS: list[tuple[str, str | list[str]]] = [
+    ("AddKeysToAgent", "no"),
+    ("AddressFamily", "any"),
+    ("BatchMode", "no"),
+    ("BindAddress", "none"),
+    ("BindInterface", "none"),
+    ("CanonicalDomains", "none"),
+    ("CanonicalizeFallbackLocal", "yes"),
+    ("CanonicalizeHostname", "no"),
+    ("CanonicalizeMaxDots", "1"),
+    ("CanonicalizePermittedCNAMEs", "none"),
+    ("CheckHostIP", "no"),
+    (
+        "Ciphers",
+        "chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr,"
+        "aes128-gcm@openssh.com,aes256-gcm@openssh.com",
+    ),
+    ("ClearAllForwardings", "no"),
+    ("Compression", "no"),
+    ("ConnectionAttempts", "1"),
+    ("ConnectTimeout", "none"),
+    ("ControlMaster", "no"),
+    ("ControlPath", "none"),
+    ("ControlPersist", "no"),
+    ("EnableEscapeCommandline", "no"),
+    ("EnableSSHKeysign", "no"),
+    ("EscapeChar", "~"),
+    ("ExitOnForwardFailure", "no"),
+    ("FingerprintHash", "sha256"),
+    ("ForkAfterAuthentication", "no"),
+    ("ForwardAgent", "no"),
+    ("ForwardX11", "no"),
+    ("ForwardX11Timeout", "20m"),
+    ("ForwardX11Trusted", "no"),
+    ("GatewayPorts", "no"),
+    ("GlobalKnownHostsFile", "/etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2"),
+    ("GSSAPIAuthentication", "no"),
+    ("GSSAPIDelegateCredentials", "no"),
+    ("HashKnownHosts", "no"),
+    ("HostbasedAuthentication", "no"),
+    ("HostKeyAlias", "none"),
+    ("Hostname", "%n"),
+    ("IdentitiesOnly", "no"),
+    ("IdentityAgent", "none"),
+    (
+        "IdentityFile",
+        [
+            "~/.ssh/id_rsa",
+            "~/.ssh/id_ecdsa",
+            "~/.ssh/id_ecdsa_sk",
+            "~/.ssh/id_ed25519",
+            "~/.ssh/id_ed25519_sk",
+        ],
+    ),
+    ("IgnoreUnknown", "none"),
+    ("IPQoS", "af21 cs1"),
+    ("KbdInteractiveAuthentication", "yes"),
+    ("KnownHostsCommand", "none"),
+    ("LocalCommand", "none"),
+    ("LogLevel", "INFO"),
+    ("NoHostAuthenticationForLocalhost", "no"),
+    ("NumberOfPasswordPrompts", "3"),
+    ("PasswordAuthentication", "yes"),
+    ("PermitLocalCommand", "no"),
+    ("PermitRemoteOpen", "any"),
+    ("PKCS11Provider", "none"),
+    ("Port", "22"),
+    (
+        "PreferredAuthentications",
+        "gssapi-with-mic,hostbased,publickey,keyboard-interactive,password",
+    ),
+    ("ProxyCommand", "none"),
+    ("ProxyJump", "none"),
+    ("ProxyUseFdpass", "no"),
+    ("PubkeyAuthentication", "yes"),
+    ("RekeyLimit", "default none"),
+    ("RemoteCommand", "none"),
+    ("RequestTTY", "auto"),
+    ("RevokedHostKeys", "none"),
+    ("ServerAliveCountMax", "3"),
+    ("ServerAliveInterval", "0"),
+    ("SessionType", "default"),
+    ("StdinNull", "no"),
+    ("StreamLocalBindMask", "0177"),
+    ("StreamLocalBindUnlink", "no"),
+    ("StrictHostKeyChecking", "ask"),
+    ("SyslogFacility", "USER"),
+    ("TCPKeepAlive", "yes"),
+    ("Tunnel", "no"),
+    ("TunnelDevice", "any:any"),
+    ("UpdateHostKeys", "yes"),
+    ("User", "%u"),
+    ("UserKnownHostsFile", "~/.ssh/known_hosts ~/.ssh/known_hosts2"),
+    ("VerifyHostKeyDNS", "no"),
+    ("VisualHostKey", "no"),
+    ("XAuthLocation", "/usr/bin/xauth"),
+]
+
+_EXTRA_KEYWORDS = [
+    "CertificateFile",
+    "LocalForward",
+    "RemoteForward",
+    "DynamicForward",
+    "SendEnv",
+    "SetEnv",
+    "Include",
+    "HostbasedAcceptedAlgorithms",
+    "HostKeyAlgorithms",
+    "KexAlgorithms",
+    "MACs",
+    "PubkeyAcceptedAlgorithms",
+    "SecurityKeyProvider",
+    "Tag",
+    "CASignatureAlgorithms",
+]
+
+CANONICAL_KEYWORD_MAP: dict[str, str] = {
+    k.lower(): k for k, _ in OPENSSH_DEFAULTS
+}
+for _kw in _EXTRA_KEYWORDS:
+    CANONICAL_KEYWORD_MAP[_kw.lower()] = _kw
+
+TOKEN_SUPPORTED_KEYS = {
+    "certificatefile",
+    "controlpath",
+    "hostname",
+    "identityagent",
+    "identityfile",
+    "include",
+    "knownhostscommand",
+    "localcommand",
+    "localforward",
+    "remotecommand",
+    "remoteforward",
+    "revokedhostkeys",
+    "userknownhostsfile",
+    "proxycommand",
+    "proxyjump",
+}
+
+SAMPLES: dict[str, str] = {
+    "Multi-Env Production + Bastion": """# Personal & Production SSH Configuration
+# Specific hosts MUST appear before broader wildcards (first-match-wins)
+
+Host bastion
+  Hostname 203.0.113.10
+  User ops
+  Port 2222
+  IdentityFile ~/.ssh/id_ed25519_bastion
+  ForwardAgent no
+
+Host db-primary.prod.internal
+  Hostname 10.20.4.15
+  User postgres
+  Port 5432
+  IdentityFile ~/.ssh/id_ed25519_db
+  LocalForward 15432 127.0.0.1:5432
+
+Host *.prod.internal !bastion.prod.internal
+  User deploy
+  ProxyJump bastion
+  IdentityFile ~/.ssh/id_ed25519_prod
+  IdentitiesOnly yes
+  StrictHostKeyChecking yes
+
+Host *.staging.internal
+  User ubuntu
+  ProxyJump bastion
+  IdentityFile ~/.ssh/id_ed25519_staging
+
+Host git.github.com github.com
+  User git
+  Hostname ssh.github.com
+  Port 443
+  IdentityFile ~/.ssh/id_ed25519_github
+  IdentitiesOnly yes
+
+Host *
+  ServerAliveInterval 60
+  ServerAliveCountMax 3
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%r@%h:%p
+  ControlPersist 10m
+  AddKeysToAgent yes
+  HashKnownHosts yes
+""",
+    "Ordering Pitfall (Host * at Top)": """# ORDERING PITFALL DEMO
+# Host * is placed at the top, locking in User, Port, and ForwardAgent
+# before specific rules below are reached. Drag "Host *" down to fix it.
+
+Host *
+  User guest
+  Port 22
+  ForwardAgent no
+  ProxyJump none
+  ServerAliveInterval 30
+
+Host web1.prod.internal
+  Hostname 10.0.10.21
+  User deploy
+  Port 2222
+  ForwardAgent yes
+  IdentityFile ~/.ssh/id_ed25519_prod
+
+Host *.prod.internal
+  User ops
+  ProxyJump bastion.corp.net
+""",
+    "Match Blocks & Canonicalization": """# Match Blocks & Two-Pass Canonicalization Demo
+CanonicalizeHostname yes
+CanonicalDomains prod.internal corp.net
+CanonicalizeMaxDots 1
+
+Host bastion
+  Hostname 198.51.100.42
+  User jumpuser
+
+Match originalhost web* user deploy
+  Port 2222
+  ForwardAgent yes
+
+Match canonical host *.prod.internal
+  User prod-admin
+  ProxyJump bastion
+  IdentityFile ~/.ssh/id_ed25519_prod
+
+Match exec "nc -z 10.0.0.1 22"
+  ConnectTimeout 5
+
+Host *
+  ServerAliveInterval 45
+  ControlMaster auto
+  ControlPath ~/.ssh/sockets/%C
+""",
+}
+
+
+def new_id(prefix: str = "id") -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:10]}"
+
+
+def canonicalize_key(key: str) -> str:
+    return CANONICAL_KEYWORD_MAP.get(key.lower(), key)
+
+
+@dataclass
+class Directive:
+    id: str = field(default_factory=lambda: new_id("dir"))
+    key: str = ""
+    value: str = ""
+    inline_comment: str = ""
+    raw_leading_comments: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ConfigBlock:
+    id: str = field(default_factory=lambda: new_id("blk"))
+    kind: Literal["global", "host", "match"] = "host"
+    patterns: str = "*"
+    note: str = ""
+    inline_comment: str = ""
+    raw_leading_comments: list[str] = field(default_factory=list)
+    disabled: bool = False
+    directives: list[Directive] = field(default_factory=list)
+
+
+@dataclass
+class ParsedConfig:
+    blocks: list[ConfigBlock]
+    trailing_comments: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SimContext:
+    raw_target: str = "web1.prod.internal"
+    cli_port: str = ""
+    cli_user: str = ""
+    local_user: str = field(default_factory=lambda: os.environ.get("USER") or os.environ.get("USERNAME") or "alice")
+    local_host: str = field(default_factory=lambda: os.uname().nodename.split(".")[0] if hasattr(os, "uname") else "workstation")
+    force_final: bool = False
+    exec_result: bool = True
+    base_dir: Path = field(default_factory=lambda: Path.home() / ".ssh")
+
+    @property
+    def target_parts(self) -> tuple[str, str]:
+        raw = self.raw_target.strip() or "localhost"
+        if "@" in raw:
+            user_part, host_part = raw.rsplit("@", 1)
+            return user_part, host_part or "localhost"
+        return "", raw
+
+    @property
+    def original_host(self) -> str:
+        return self.target_parts[1]
+
+    @property
+    def effective_cli_user(self) -> str:
+        return self.cli_user.strip() or self.target_parts[0]
+
+
+@dataclass
+class EffectiveOption:
+    key: str
+    value: str | list[str]
+    source: str
+    block_id: str | None = None
+    dir_id: str | None = None
+    is_default: bool = False
+    is_cli: bool = False
+    is_accumulated: bool = False
+    sources: list[dict[str, str]] = field(default_factory=list)
+    expanded_value: str | list[str] | None = None
+
+
+@dataclass
+class TraceEntry:
+    kind: Literal["pass", "match", "skip", "warn"]
+    title: str
+    detail: str
+
+
+@dataclass
+class ResolutionResult:
+    effective: list[EffectiveOption]
+    shadowed: dict[str, list[dict[str, str]]]
+    block_status: dict[str, tuple[bool, str, list[str]]]
+    dir_status: dict[str, tuple[str, str]]
+    trace: list[TraceEntry]
+    seen_includes: list[str]
+    resolved_include_files: list[str]
+    summary: dict[str, object]
+
+
+_LINE_KV_RE = re.compile(r"^([A-Za-z0-9_]+)(?:\s*=\s*|\s+)(.*)$")
+
+
+def strip_inline_comment(raw_val: str) -> tuple[str, str]:
+    in_quotes = False
+    for i, ch in enumerate(raw_val):
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif not in_quotes and ch == "#" and (i == 0 or raw_val[i - 1].isspace()):
+            return raw_val[:i].rstrip(), raw_val[i:].strip()
+    return raw_val.strip(), ""
+
+
+def parse_config(raw: str) -> ParsedConfig:
+    cleaned = raw.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    lines = cleaned.split("\n")
+    blocks: list[ConfigBlock] = []
+    current_block: ConfigBlock | None = None
+    pending_comments: list[str] = []
+
+    def ensure_global() -> ConfigBlock:
+        nonlocal current_block, pending_comments
+        if current_block is None:
+            current_block = ConfigBlock(
+                kind="global",
+                patterns="",
+                raw_leading_comments=pending_comments,
+            )
+            pending_comments = []
+            blocks.append(current_block)
+        return current_block
+
+    for raw_line in lines:
+        trimmed = raw_line.strip()
+        if not trimmed:
+            if pending_comments and pending_comments[-1] != "":
+                pending_comments.append("")
+            continue
+
+        if trimmed.startswith("# [disabled] "):
+            inner = trimmed[len("# [disabled] ") :].strip()
+            m_dis = _LINE_KV_RE.match(inner)
+            if m_dis:
+                d_key = m_dis.group(1).lower()
+                d_val, inline_c = strip_inline_comment(m_dis.group(2))
+                if d_key in ("host", "match"):
+                    current_block = ConfigBlock(
+                        kind=d_key,  # type: ignore[arg-type]
+                        patterns=d_val,
+                        inline_comment=inline_c,
+                        raw_leading_comments=pending_comments,
+                        disabled=True,
+                    )
+                    pending_comments = []
+                    blocks.append(current_block)
+                    continue
+                if current_block is not None and current_block.disabled:
+                    current_block.directives.append(
+                        Directive(
+                            key=canonicalize_key(m_dis.group(1)),
+                            value=d_val,
+                            inline_comment=inline_c,
+                            raw_leading_comments=pending_comments,
+                        )
+                    )
+                    pending_comments = []
+                    continue
+
+        if trimmed.startswith("#"):
+            pending_comments.append(trimmed)
+            continue
+
+        m = _LINE_KV_RE.match(trimmed)
+        if m:
+            key, raw_rest = m.group(1), m.group(2)
+        else:
+            key, raw_rest = trimmed, ""
+
+        val, inline_c = strip_inline_comment(raw_rest)
+        lower_key = key.lower()
+
+        if lower_key in ("host", "match"):
+            current_block = ConfigBlock(
+                kind=lower_key,  # type: ignore[arg-type]
+                patterns=val,
+                inline_comment=inline_c,
+                raw_leading_comments=pending_comments,
+            )
+            pending_comments = []
+            blocks.append(current_block)
+        else:
+            blk = ensure_global()
+            blk.directives.append(
+                Directive(
+                    key=canonicalize_key(key),
+                    value=val,
+                    inline_comment=inline_c,
+                    raw_leading_comments=pending_comments,
+                )
+            )
+            pending_comments = []
+
+    if pending_comments and pending_comments[-1] == "":
+        pending_comments.pop()
+
+    return ParsedConfig(blocks=blocks, trailing_comments=pending_comments)
+
+
+def serialize_config(blocks: list[ConfigBlock], trailing_comments: list[str] | None = None) -> str:
+    out: list[str] = []
+    for idx, blk in enumerate(blocks):
+        if idx > 0:
+            out.append("")
+        out.extend(blk.raw_leading_comments)
+        if blk.note.strip():
+            for line in blk.note.splitlines():
+                if line.strip():
+                    out.append(f"# {line.strip()}")
+
+        prefix = "# [disabled] " if blk.disabled else ""
+        tail = f" {blk.inline_comment}" if blk.inline_comment else ""
+        if blk.kind == "host":
+            out.append(f"{prefix}Host {blk.patterns.strip() or '*'}{tail}")
+        elif blk.kind == "match":
+            out.append(f"{prefix}Match {blk.patterns.strip() or 'all'}{tail}")
+        elif blk.disabled:
+            out.append("# [disabled global section]")
+
+        indent = "" if blk.kind == "global" else "  "
+        for d in blk.directives:
+            if not d.key.strip():
+                continue
+            for c in d.raw_leading_comments:
+                out.append("" if c == "" else f"{indent}{c}")
+            d_tail = f" {d.inline_comment}" if d.inline_comment else ""
+            out.append(f"{prefix}{indent}{d.key.strip()} {d.value}{d_tail}".rstrip())
+
+    if trailing_comments:
+        out.append("")
+        out.extend(trailing_comments)
+
+    text = "\n".join(out)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text + "\n"
+
+
+def tokenize_quoted(text: str) -> list[str]:
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return text.split()
+
+
+def match_pattern_list(target: str, patterns: list[str]) -> tuple[bool, str]:
+    got_positive = False
+    for raw_pat in patterns:
+        if not raw_pat:
+            continue
+        negated = raw_pat.startswith("!")
+        pat = raw_pat[1:] if negated else raw_pat
+        if not pat:
+            continue
+        matched = fnmatch.fnmatchcase(target, pat)
+        if negated:
+            if matched:
+                return False, f'Negated by "{raw_pat}"'
+        elif matched:
+            got_positive = True
+
+    if got_positive:
+        return True, "Matched positive pattern"
+    if patterns and all(p.startswith("!") for p in patterns):
+        return False, 'Only negated patterns present (OpenSSH requires a positive pattern like "*")'
+    return False, "No pattern matched"
+
+
+def evaluate_match_criteria(
+    criteria: str,
+    *,
+    original_host: str,
+    current_host: str,
+    current_user: str,
+    local_user: str,
+    is_canonical_pass: bool,
+    is_final_pass: bool,
+    exec_result: bool,
+) -> tuple[bool, str]:
+    tokens = tokenize_quoted(criteria.strip())
+    if not tokens:
+        return False, "Empty Match criteria"
+
+    reasons: list[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        negate = tok.startswith("!")
+        if negate:
+            tok = tok[1:]
+        kw = tok.lower()
+
+        if kw == "all":
+            cond_ok, detail, step = True, "all", 1
+        elif kw == "canonical":
+            cond_ok, detail, step = is_canonical_pass, f"canonical={is_canonical_pass}", 1
+        elif kw == "final":
+            cond_ok, detail, step = is_final_pass, f"final={is_final_pass}", 1
+        elif kw == "host":
+            arg = tokens[i + 1] if i + 1 < len(tokens) else ""
+            cond_ok, _ = match_pattern_list(current_host, [p for p in arg.split(",") if p])
+            detail, step = f"host({current_host})~{arg}", 2
+        elif kw == "originalhost":
+            arg = tokens[i + 1] if i + 1 < len(tokens) else ""
+            cond_ok, _ = match_pattern_list(original_host, [p for p in arg.split(",") if p])
+            detail, step = f"originalhost({original_host})~{arg}", 2
+        elif kw == "user":
+            arg = tokens[i + 1] if i + 1 < len(tokens) else ""
+            cond_ok, _ = match_pattern_list(current_user, [p for p in arg.split(",") if p])
+            detail, step = f"user({current_user})~{arg}", 2
+        elif kw == "localuser":
+            arg = tokens[i + 1] if i + 1 < len(tokens) else ""
+            cond_ok, _ = match_pattern_list(local_user, [p for p in arg.split(",") if p])
+            detail, step = f"localuser({local_user})~{arg}", 2
+        elif kw == "exec":
+            arg = tokens[i + 1] if i + 1 < len(tokens) else ""
+            cond_ok = exec_result
+            detail, step = f'exec("{arg}") -> {"exit 0" if exec_result else "exit 1"}', 2
+        else:
+            has_arg = i + 1 < len(tokens) and tokens[i + 1].lower() not in {"all", "canonical", "final"}
+            cond_ok = False
+            detail = f"{kw} (not evaluated)"
+            step = 2 if has_arg else 1
+
+        if negate:
+            cond_ok = not cond_ok
+            detail = f"!{detail}"
+        reasons.append(f"{detail}: {'yes' if cond_ok else 'no'}")
+        if not cond_ok:
+            return False, ", ".join(reasons)
+        i += step
+
+    return True, ", ".join(reasons)
+
+
+def expand_tokens(val: str, ctx: dict[str, str]) -> str:
+    if "%" not in val:
+        return val
+
+    def _sub(m: re.Match[str]) -> str:
+        c = m.group(1)
+        return ctx.get(c, m.group(0))
+
+    return re.sub(r"%([%CdhikLlnpru])", _sub, val)
+
+
+def _expand_include_paths(pattern: str, base_dir: Path) -> list[Path]:
+    paths: list[Path] = []
+    for raw_pat in tokenize_quoted(pattern):
+        p = Path(raw_pat).expanduser()
+        if not p.is_absolute():
+            p = base_dir / raw_pat
+        parent = p.parent
+        name_pat = p.name
+        if "*" in str(p) or "?" in str(p):
+            try:
+                if "*" in str(parent) or "?" in str(parent):
+                    matches = sorted(Path("/").glob(str(p).lstrip("/")) if p.is_absolute() else base_dir.glob(raw_pat))
+                elif parent.exists():
+                    matches = sorted(parent.glob(name_pat))
+                else:
+                    matches = []
+                paths.extend(m for m in matches if m.is_file())
+            except OSError:
+                pass
+        elif p.is_file():
+            paths.append(p)
+    return paths
+
+
+def resolve_config(
+    blocks: list[ConfigBlock],
+    sim: SimContext,
+    virtual_includes: dict[str, str] | None = None,
+    read_disk_includes: bool = True,
+) -> ResolutionResult:
+    virtual_includes = virtual_includes or {}
+    options: dict[str, EffectiveOption] = {}
+    shadowed: dict[str, list[dict[str, str]]] = {}
+    block_status: dict[str, tuple[bool, str, list[str]]] = {}
+    dir_status: dict[str, tuple[str, str]] = {}
+    trace: list[TraceEntry] = []
+    seen_includes: list[str] = []
+    resolved_include_files: list[str] = []
+
+    if sim.cli_port.strip():
+        options["port"] = EffectiveOption(
+            key="Port",
+            value=sim.cli_port.strip(),
+            source="CLI (-p flag)",
+            is_cli=True,
+        )
+        trace.append(TraceEntry("pass", f"CLI Override: Port = {sim.cli_port.strip()}", "Command-line port takes highest precedence."))
+
+    if sim.effective_cli_user:
+        options["user"] = EffectiveOption(
+            key="User",
+            value=sim.effective_cli_user,
+            source="CLI (-l / user@)",
+            is_cli=True,
+        )
+        trace.append(TraceEntry("pass", f"CLI Override: User = {sim.effective_cli_user}", "Command-line user takes highest precedence."))
+
+    def run_pass(
+        label: str,
+        host_for_host_block: str,
+        current_host: str,
+        is_canonical: bool,
+        is_final: bool,
+    ) -> None:
+        trace.append(
+            TraceEntry(
+                "pass",
+                label,
+                f'Host target "{host_for_host_block}", Match host "{current_host}"',
+            )
+        )
+
+        def walk_blocks(blk_list: list[ConfigBlock], prefix_label: str = "", depth: int = 0) -> None:
+            for idx, blk in enumerate(blk_list):
+                blk_num = prefix_label or f"#{idx + 1}"
+                warnings: list[str] = []
+
+                if blk.disabled:
+                    if not prefix_label:
+                        block_status[blk.id] = (False, "Disabled (commented out)", warnings)
+                    for d in blk.directives:
+                        dir_status[d.id] = ("inactive", "Block disabled")
+                    trace.append(TraceEntry("skip", f"Block {blk_num} ({blk.kind}) — Disabled", "Skipped because block is disabled."))
+                    continue
+
+                if blk.kind == "global":
+                    matched, reason = True, "Top-level global directive (always applies)"
+                elif blk.kind == "host":
+                    pats = tokenize_quoted(blk.patterns)
+                    if pats == ["*"] and not prefix_label:
+                        has_specific_after = any(
+                            not b.disabled and b.kind == "host" and b.patterns.strip() != "*"
+                            for b in blk_list[idx + 1 :]
+                        )
+                        if has_specific_after:
+                            warnings.append(
+                                'Wildcard "Host *" appears before more specific Host blocks — '
+                                "OpenSSH first-match-wins will shadow matching options below."
+                            )
+                    if pats and all(p.startswith("!") for p in pats):
+                        warnings.append('Negation-only pattern without a positive wildcard (e.g. "*") never matches in OpenSSH.')
+                    matched, reason = match_pattern_list(host_for_host_block, pats)
+                else:
+                    cur_h = current_host
+                    if "hostname" in options and isinstance(options["hostname"].value, str):
+                        cur_h = options["hostname"].value.replace("%h", sim.original_host).replace("%%", "%")
+                    cur_u = (
+                        str(options["user"].value)
+                        if "user" in options
+                        else sim.local_user
+                    )
+                    matched, reason = evaluate_match_criteria(
+                        blk.patterns,
+                        original_host=sim.original_host,
+                        current_host=cur_h,
+                        current_user=cur_u,
+                        local_user=sim.local_user,
+                        is_canonical_pass=is_canonical,
+                        is_final_pass=is_final,
+                        exec_result=sim.exec_result,
+                    )
+
+                if not prefix_label:
+                    prev = block_status.get(blk.id)
+                    if prev and prev[0]:
+                        block_status[blk.id] = (True, f"{prev[1]} (Pass 2: {reason})", warnings)
+                    else:
+                        block_status[blk.id] = (matched, reason, warnings)
+
+                blk_label = (
+                    f"{blk_num} Global"
+                    if blk.kind == "global"
+                    else f"{blk_num} {blk.kind.capitalize()} {blk.patterns}"
+                )
+
+                if not matched:
+                    for d in blk.directives:
+                        if d.id not in dir_status:
+                            dir_status[d.id] = ("inactive", reason)
+                    trace.append(TraceEntry("skip", f"{blk_label} — Skipped", reason))
+                    continue
+
+                trace.append(TraceEntry("match", f"{blk_label} — Matched", reason))
+
+                for d in blk.directives:
+                    if not d.key.strip():
+                        continue
+                    lk = d.key.lower()
+                    ck = canonicalize_key(d.key)
+
+                    if lk == "include":
+                        seen_includes.append(d.value)
+                        if depth >= 8:
+                            dir_status[d.id] = ("include", "Max Include recursion depth reached")
+                            continue
+
+                        inc_blocks_loaded: list[tuple[str, list[ConfigBlock]]] = []
+                        # Check virtual overrides first
+                        for vp, vtext in sorted(virtual_includes.items()):
+                            norm_pat = d.value.removeprefix("~/")
+                            norm_vp = vp.removeprefix("~/")
+                            if vp == d.value or fnmatch.fnmatchcase(norm_vp, norm_pat):
+                                inc_blocks_loaded.append((vp, parse_config(vtext).blocks))
+
+                        # Check real files on disk
+                        if read_disk_includes:
+                            for disk_p in _expand_include_paths(d.value, sim.base_dir):
+                                s_p = str(disk_p)
+                                if s_p not in virtual_includes:
+                                    try:
+                                        text = disk_p.read_text(encoding="utf-8", errors="replace")
+                                        inc_blocks_loaded.append((s_p, parse_config(text).blocks))
+                                    except OSError:
+                                        pass
+
+                        if inc_blocks_loaded:
+                            dir_status[d.id] = ("include", f"Included {len(inc_blocks_loaded)} file(s)")
+                            for inc_name, inc_blks in inc_blocks_loaded:
+                                if inc_name not in resolved_include_files:
+                                    resolved_include_files.append(inc_name)
+                                trace.append(TraceEntry("pass", f"Include {inc_name}", f'Matched by "{d.value}"'))
+                                walk_blocks(inc_blks, f"Include({Path(inc_name).name})", depth + 1)
+                        else:
+                            dir_status[d.id] = ("include", "No matching include files found")
+                            trace.append(TraceEntry("warn", f"Include {d.value}", "No matching files found on disk or virtual includes."))
+                        continue
+
+                    if lk in ACCUMULATING_OPTIONS:
+                        if lk not in options:
+                            options[lk] = EffectiveOption(
+                                key=ck,
+                                value=[],
+                                source=blk_label,
+                                block_id=blk.id,
+                                dir_id=d.id,
+                                is_accumulated=True,
+                            )
+                        entry = options[lk]
+                        assert isinstance(entry.value, list)
+                        if not any(s["dir_id"] == d.id for s in entry.sources):
+                            if lk == "sendenv" and d.value.startswith("-"):
+                                rm_pat = d.value[1:]
+                                entry.value = [v for v in entry.value if not fnmatch.fnmatchcase(v, rm_pat)]
+                            else:
+                                entry.value.append(d.value)
+                            entry.sources.append(
+                                {"label": blk_label, "block_id": blk.id, "dir_id": d.id, "value": d.value}
+                            )
+                        dir_status[d.id] = ("accumulated", f"Appended (#{len(entry.value)})")
+                        continue
+
+                    if lk not in options:
+                        options[lk] = EffectiveOption(
+                            key=ck,
+                            value=d.value,
+                            source=blk_label,
+                            block_id=blk.id,
+                            dir_id=d.id,
+                        )
+                        dir_status[d.id] = ("applied", "First match wins (active)")
+                    else:
+                        winner = options[lk]
+                        if winner.dir_id == d.id:
+                            continue
+                        if winner.is_cli:
+                            dir_status[d.id] = ("cli", f"Overridden by {winner.source}")
+                        else:
+                            dir_status[d.id] = ("shadowed", f"Shadowed by {winner.source}")
+                        shadowed.setdefault(lk, []).append(
+                            {"value": d.value, "source": blk_label, "block_id": blk.id, "dir_id": d.id}
+                        )
+
+        walk_blocks(blocks)
+
+    # Pass 1
+    run_pass("Pass 1: Initial Configuration Scan", sim.original_host, sim.original_host, False, False)
+
+    # Pass 2 (Canonical / Final)
+    canon_setting = str(options["canonicalizehostname"].value).lower() if "canonicalizehostname" in options else "no"
+    canon_domains = str(options["canonicaldomains"].value).split() if "canonicaldomains" in options else []
+    try:
+        max_dots = int(str(options["canonicalizemaxdots"].value)) if "canonicalizemaxdots" in options else 1
+    except ValueError:
+        max_dots = 1
+    dot_count = sim.original_host.count(".")
+    has_match_canon_or_final = any(
+        not b.disabled and b.kind == "match" and re.search(r"\b(canonical|final)\b", b.patterns, re.IGNORECASE)
+        for b in blocks
+    )
+
+    eff_host_p1 = sim.original_host
+    did_canonicalize = False
+    if canon_setting in ("yes", "always") and canon_domains and dot_count <= max_dots and "hostname" not in options:
+        eff_host_p1 = f"{sim.original_host}.{canon_domains[0]}"
+        did_canonicalize = True
+
+    if sim.force_final or did_canonicalize or has_match_canon_or_final:
+        p2_label = (
+            f"Pass 2: Canonicalized ({sim.original_host} -> {eff_host_p1})"
+            if did_canonicalize
+            else "Pass 2: Final / Canonical Re-evaluation"
+        )
+        cur_h_p2 = str(options["hostname"].value) if "hostname" in options else eff_host_p1
+        run_pass(p2_label, eff_host_p1, cur_h_p2, did_canonicalize or sim.force_final, True)
+
+    if "clearallforwardings" in options and str(options["clearallforwardings"].value).lower() == "yes":
+        for fk in ("localforward", "remoteforward", "dynamicforward"):
+            if fk in options:
+                del options[fk]
+                trace.append(TraceEntry("warn", "ClearAllForwardings yes", f"Cleared accumulated {canonicalize_key(fk)} rules."))
+
+    all_effective: list[EffectiveOption] = []
+    seen_keys: set[str] = set()
+    for def_key, def_val in OPENSSH_DEFAULTS:
+        lk = def_key.lower()
+        seen_keys.add(lk)
+        if lk in options:
+            all_effective.append(options[lk])
+        else:
+            fallback: str | list[str] = copy.deepcopy(def_val)
+            if lk == "hostname":
+                fallback = eff_host_p1 if did_canonicalize else sim.original_host
+            elif lk == "user":
+                fallback = sim.local_user
+            all_effective.append(
+                EffectiveOption(
+                    key=def_key,
+                    value=fallback,
+                    source="OpenSSH Default",
+                    is_default=True,
+                    is_accumulated=isinstance(fallback, list),
+                )
+            )
+
+    for lk, opt in options.items():
+        if lk not in seen_keys:
+            all_effective.append(opt)
+
+    raw_hostname = (
+        str(options["hostname"].value)
+        if "hostname" in options
+        else (eff_host_p1 if did_canonicalize else sim.original_host)
+    )
+    resolved_hostname = raw_hostname.replace("%h", sim.original_host).replace("%%", "%")
+    resolved_port = str(options["port"].value) if "port" in options else "22"
+    resolved_user = str(options["user"].value) if "user" in options else sim.local_user
+    resolved_hka = str(options["hostkeyalias"].value) if "hostkeyalias" in options else "none"
+    hash_c = hashlib.sha1(f"{sim.local_host}{raw_hostname}{resolved_port}{resolved_user}".encode()).hexdigest()
+
+    tok_ctx = {
+        "%": "%",
+        "h": resolved_hostname,
+        "n": sim.original_host,
+        "p": resolved_port,
+        "r": resolved_user,
+        "u": sim.local_user,
+        "d": str(Path.home()),
+        "L": sim.local_host,
+        "l": f"{sim.local_host}.local",
+        "i": str(os.getuid()) if hasattr(os, "getuid") else "1000",
+        "k": resolved_hka if resolved_hka != "none" else resolved_hostname,
+        "C": hash_c,
+    }
+
+    for item in all_effective:
+        if item.key.lower() in TOKEN_SUPPORTED_KEYS:
+            if isinstance(item.value, list):
+                exp_list = [expand_tokens(v, tok_ctx) for v in item.value]
+                if exp_list != item.value:
+                    item.expanded_value = exp_list
+            else:
+                exp = expand_tokens(item.value, tok_ctx)
+                if exp != item.value:
+                    item.expanded_value = exp
+
+    id_opt = options.get("identityfile")
+    id_files = (
+        (id_opt.expanded_value or id_opt.value)
+        if id_opt
+        else next(v for k, v in OPENSSH_DEFAULTS if k == "IdentityFile")
+    )
+
+    return ResolutionResult(
+        effective=all_effective,
+        shadowed=shadowed,
+        block_status=block_status,
+        dir_status=dir_status,
+        trace=trace,
+        seen_includes=seen_includes,
+        resolved_include_files=resolved_include_files,
+        summary={
+            "user": resolved_user,
+            "hostname": resolved_hostname,
+            "port": resolved_port,
+            "proxy_jump": str(options["proxyjump"].value) if "proxyjump" in options else "none",
+            "proxy_command": str(options["proxycommand"].value) if "proxycommand" in options else "none",
+            "identity_files": id_files,
+        },
+    )
+
+
+def save_config_safely(path: Path, text: str, create_backup: bool = True) -> Path | None:
+    path = path.expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path: Path | None = None
+    if create_backup and path.exists():
+        backup_path = path.with_name(f"{path.name}.bak")
+        shutil.copy2(path, backup_path)
+    tmp_path = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    tmp_path.write_text(text, encoding="utf-8")
+    try:
+        os.chmod(tmp_path, 0o600)
+    except OSError:
+        pass
+    tmp_path.replace(path)
+    return backup_path
+
+
+def run_system_ssh_g(
+    target: str,
+    *,
+    config_path: Path | None = None,
+    cli_port: str = "",
+    cli_user: str = "",
+) -> tuple[bool, str]:
+    ssh_bin = shutil.which("ssh")
+    if not ssh_bin:
+        return False, "`ssh` executable not found on PATH."
+    cmd = [ssh_bin, "-G"]
+    if config_path is not None:
+        cmd.extend(["-F", str(config_path)])
+    if cli_port.strip():
+        cmd.extend(["-p", cli_port.strip()])
+    if cli_user.strip():
+        cmd.extend(["-l", cli_user.strip()])
+    cmd.append(target.strip() or "localhost")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if proc.returncode != 0:
+            return False, proc.stderr.strip() or f"ssh -G exited with code {proc.returncode}"
+        return True, proc.stdout
+    except Exception as exc:
+        return False, str(exc)
+
+4. ssh_workbench/widget.py
+
+The embeddable SshConfigWorkbench(Adw.Bin) widget using GNOME HIG .boxed-list
+cards, Adw.ActionRow, Adw.ExpanderRow, Adw.Banner, Adw.ViewSwitcher,
+Adw.ToastOverlay, Gtk.Paned, Gtk.FileDialog, Adw.Dialog, and native GTK4
+Gtk.DragSource / Gtk.DropTarget:
+
+from __future__ import annotations
+
+import copy
+import tempfile
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
+
+from .engine import (  # noqa: E402
+    QUICK_DIRECTIVE_PRESETS,
+    SAMPLES,
+    ConfigBlock,
+    Directive,
+    ResolutionResult,
+    SimContext,
+    canonicalize_key,
+    new_id,
+    parse_config,
+    resolve_config,
+    run_system_ssh_g,
+    serialize_config,
+    save_config_safely,
+    tokenize_quoted,
+)
+
+_CSS_INSTALLED = False
+
+WORKBENCH_CSS = """
+.ssh-pill {
+    font-size: 0.82em;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+}
+.ssh-pill-success {
+    background-color: alpha(@success_color, 0.16);
+    color: @success_color;
+}
+.ssh-pill-warning {
+    background-color: alpha(@warning_color, 0.18);
+    color: @warning_color;
+}
+.ssh-pill-accent {
+    background-color: alpha(@accent_color, 0.15);
+    color: @accent_color;
+}
+.ssh-pill-purple {
+    background-color: alpha(#a855f7, 0.16);
+    color: #c084fc;
+}
+.ssh-pill-muted {
+    background-color: alpha(currentColor, 0.08);
+    color: alpha(currentColor, 0.65);
+}
+.ssh-block-matched {
+    box-shadow: inset 3px 0 0 0 @success_color;
+}
+.ssh-block-disabled {
+    opacity: 0.62;
+}
+.ssh-drop-before {
+    box-shadow: 0 -3px 0 0 @accent_color;
+}
+.ssh-drop-after {
+    box-shadow: 0 3px 0 0 @accent_color;
+}
+.ssh-shadowed-entry {
+    text-decoration: line-through;
+    opacity: 0.65;
+}
+.ssh-flash {
+    outline: 2px solid @accent_color;
+    outline-offset: 2px;
+}
+.ssh-trace-match {
+    box-shadow: inset 3px 0 0 0 @success_color;
+}
+.ssh-trace-warn {
+    box-shadow: inset 3px 0 0 0 @warning_color;
+}
+.ssh-trace-pass {
+    box-shadow: inset 3px 0 0 0 @accent_color;
+}
+"""
+
+
+def _ensure_css() -> None:
+    global _CSS_INSTALLED
+    if _CSS_INSTALLED:
+        return
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_string(WORKBENCH_CSS)
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _CSS_INSTALLED = True
+
+
+def _esc(text: str) -> str:
+    return GLib.markup_escape_text(text, -1)
+
+
+class SshConfigWorkbench(Adw.Bin):
+    """Embeddable GNOME HIG / Libadwaita widget for viewing, editing, and resolving ssh_config."""
+
+    __gsignals__ = {
+        "changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        "file-loaded": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        "file-saved": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        "history-changed": (GObject.SignalFlags.RUN_FIRST, None, (bool, bool)),
+    }
+
+    def __init__(self, *, initial_target: str = "web1.prod.internal", show_inline_actions: bool = True) -> None:
+        super().__init__()
+        _ensure_css()
+
+        self.blocks: list[ConfigBlock] = []
+        self.trailing_comments: list[str] = []
+        self.virtual_includes: dict[str, str] = {}
+        self.current_file: Path | None = None
+        self.editing_note_blocks: set[str] = set()
+
+        self._history: list[tuple[list[ConfigBlock], list[str]]] = []
+        self._history_idx: int = -1
+        self._sim = SimContext(raw_target=initial_target)
+
+        # Maps for live in-place updates without rebuilding entry widgets
+        self._block_widgets: dict[str, dict[str, object]] = {}
+        self._dir_widgets: dict[str, dict[str, object]] = {}
+
+        self._toast_overlay = Adw.ToastOverlay()
+        self.set_child(self._toast_overlay)
+
+        root_view = Adw.ToolbarView()
+        self._toast_overlay.set_child(root_view)
+
+        # Top Simulation Bar (following GNOME HIG toolbar style)
+        root_view.add_top_bar(self._build_sim_bar(show_inline_actions))
+
+        # Main Split Workspace
+        self._paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, wide_handle=True)
+        self._paned.set_shrink_start_child(False)
+        self._paned.set_shrink_end_child(False)
+        self._paned.set_position(620)
+        root_view.set_content(self._paned)
+
+        self._paned.set_start_child(self._build_left_pane())
+        self._paned.set_end_child(self._build_right_pane())
+
+        # Drop target on the whole widget for loading a config file from file manager
+        file_drop = Gtk.DropTarget.new(Gio.File, Gdk.DragAction.COPY)
+        file_drop.connect("drop", self._on_external_file_drop)
+        self.add_controller(file_drop)
+
+        self.load_text(SAMPLES["Multi-Env Production + Bastion"], label="Loaded sample configuration")
+
+    # ------------------------------------------------------------------
+    # Public API for Host GTK4 Apps
+    # ------------------------------------------------------------------
+    def get_config_text(self) -> str:
+        return serialize_config(self.blocks, self.trailing_comments)
+
+    def load_text(self, text: str, *, label: str = "Configuration loaded", file_path: Path | None = None) -> None:
+        parsed = parse_config(text)
+        self.blocks = parsed.blocks
+        self.trailing_comments = parsed.trailing_comments
+        self.current_file = file_path
+        self.editing_note_blocks.clear()
+        self._push_history()
+        self._render_all()
+        if file_path:
+            self.emit("file-loaded", str(file_path))
+        self.show_toast(label)
+
+    def load_file(self, path: str | Path) -> None:
+        p = Path(path).expanduser()
+        text = p.read_text(encoding="utf-8", errors="replace")
+        self._sim.base_dir = p.parent
+        self.load_text(text, label=f"Loaded {p}", file_path=p)
+
+    def save_to_file(self, path: str | Path | None = None, *, create_backup: bool = True) -> Path | None:
+        target = Path(path).expanduser() if path else self.current_file
+        if target is None:
+            return None
+        backup = save_config_safely(target, self.get_config_text(), create_backup=create_backup)
+        self.current_file = target
+        self.emit("file-saved", str(target))
+        msg = f"Saved {target}" + (f" (backup: {backup.name})" if backup else "")
+        self.show_toast(msg)
+        return target
+
+    def set_target(self, target: str) -> None:
+        self._target_entry.set_text(target)
+
+    def can_undo(self) -> bool:
+        return self._history_idx > 0
+
+    def can_redo(self) -> bool:
+        return self._history_idx < len(self._history) - 1
+
+    def undo(self) -> None:
+        if not self.can_undo():
+            return
+        self._history_idx -= 1
+        blks, trailing = self._history[self._history_idx]
+        self.blocks = copy.deepcopy(blks)
+        self.trailing_comments = list(trailing)
+        self._emit_history()
+        self._render_all()
+
+    def redo(self) -> None:
+        if not self.can_redo():
+            return
+        self._history_idx += 1
+        blks, trailing = self._history[self._history_idx]
+        self.blocks = copy.deepcopy(blks)
+        self.trailing_comments = list(trailing)
+        self._emit_history()
+        self._render_all()
+
+    def show_toast(self, message: str) -> None:
+        self._toast_overlay.add_toast(Adw.Toast.new(message))
+
+    # ------------------------------------------------------------------
+    # UI Builders
+    # ------------------------------------------------------------------
+    def _build_sim_bar(self, show_inline_actions: bool) -> Gtk.Widget:
+        wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        wrapper.set_margin_top(10)
+        wrapper.set_margin_bottom(10)
+        wrapper.set_margin_start(16)
+        wrapper.set_margin_end(16)
+
+        row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        wrapper.append(row1)
+
+        target_lbl = Gtk.Label(label="Target Host")
+        target_lbl.add_css_class("heading")
+        row1.append(target_lbl)
+
+        self._target_entry = Gtk.Entry(text=self._sim.raw_target)
+        self._target_entry.set_placeholder_text("[user@]hostname")
+        self._target_entry.add_css_class("monospace")
+        self._target_entry.set_width_chars(24)
+        self._target_entry.connect("changed", self._on_sim_changed)
+        row1.append(self._target_entry)
+
+        # Quick-host chips in a horizontal scroller
+        chips_scroll = Gtk.ScrolledWindow()
+        chips_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        chips_scroll.set_hexpand(True)
+        self._quick_hosts_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        chips_scroll.set_child(self._quick_hosts_box)
+        row1.append(chips_scroll)
+
+        self._adv_toggle = Gtk.ToggleButton(label="CLI & Context")
+        self._adv_toggle.set_icon_name("preferences-system-symbolic")
+        self._adv_toggle.connect("toggled", self._on_toggle_advanced)
+        row1.append(self._adv_toggle)
+
+        if show_inline_actions:
+            open_btn = Gtk.Button(icon_name="document-open-symbolic", tooltip_text="Open SSH config file")
+            open_btn.connect("clicked", lambda *_: self.prompt_open_file())
+            row1.append(open_btn)
+
+            save_btn = Gtk.Button(icon_name="document-save-symbolic", tooltip_text="Save / Export config")
+            save_btn.connect("clicked", lambda *_: self.prompt_save_file())
+            row1.append(save_btn)
+
+        # Collapsible CLI & Context row
+        self._adv_revealer = Gtk.Revealer()
+        self._adv_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        wrapper.append(self._adv_revealer)
+
+        adv_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        adv_box.set_margin_top(4)
+        self._adv_revealer.set_child(adv_box)
+
+        self._cli_port_entry = Gtk.Entry(placeholder_text="CLI -p")
+        self._cli_port_entry.add_css_class("monospace")
+        self._cli_port_entry.set_width_chars(8)
+        self._cli_port_entry.connect("changed", self._on_sim_changed)
+
+        self._cli_user_entry = Gtk.Entry(placeholder_text="CLI -l user")
+        self._cli_user_entry.add_css_class("monospace")
+        self._cli_user_entry.set_width_chars(12)
+        self._cli_user_entry.connect("changed", self._on_sim_changed)
+
+        self._local_user_entry = Gtk.Entry(text=self._sim.local_user, placeholder_text="%u")
+        self._local_user_entry.add_css_class("monospace")
+        self._local_user_entry.set_width_chars(11)
+        self._local_user_entry.connect("changed", self._on_sim_changed)
+
+        self._local_host_entry = Gtk.Entry(text=self._sim.local_host, placeholder_text="%L")
+        self._local_host_entry.add_css_class("monospace")
+        self._local_host_entry.set_width_chars(13)
+        self._local_host_entry.connect("changed", self._on_sim_changed)
+
+        for lbl_txt, entry in (
+            ("Port (-p):", self._cli_port_entry),
+            ("User (-l):", self._cli_user_entry),
+            ("Local User (%u):", self._local_user_entry),
+            ("Local Host (%L):", self._local_host_entry),
+        ):
+            lbl = Gtk.Label(label=lbl_txt)
+            lbl.add_css_class("dim-label")
+            adv_box.append(lbl)
+            adv_box.append(entry)
+
+        self._two_pass_chk = Gtk.CheckButton(label="2-Pass Final")
+        self._two_pass_chk.connect("toggled", self._on_sim_changed)
+        adv_box.append(self._two_pass_chk)
+
+        self._exec_chk = Gtk.CheckButton(label="Match exec passes")
+        self._exec_chk.set_active(True)
+        self._exec_chk.connect("toggled", self._on_sim_changed)
+        adv_box.append(self._exec_chk)
+
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        outer.append(wrapper)
+        outer.append(sep)
+        return outer
+
+    def _build_left_pane(self) -> Gtk.Widget:
+        pane = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        pane.set_size_request(360, -1)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header.set_margin_top(10)
+        header.set_margin_bottom(10)
+        header.set_margin_start(16)
+        header.set_margin_end(16)
+
+        title = Gtk.Label(label="Configuration Rules")
+        title.add_css_class("heading")
+        header.append(title)
+
+        self._block_count_pill = Gtk.Label(label="0 blocks")
+        self._block_count_pill.add_css_class("ssh-pill")
+        self._block_count_pill.add_css_class("ssh-pill-muted")
+        header.append(self._block_count_pill)
+
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        header.append(spacer)
+
+        for label, cb in (
+            ("+ Global", self._add_global_block),
+            ("+ Host", self._add_host_block),
+            ("+ Match", self._add_match_block),
+        ):
+            btn = Gtk.Button(label=label)
+            btn.connect("clicked", cb)
+            header.append(btn)
+
+        pane.append(header)
+        pane.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
+        self._left_scroll = Gtk.ScrolledWindow()
+        self._left_scroll.set_vexpand(True)
+        self._left_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
+        self._blocks_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        self._blocks_box.set_margin_top(16)
+        self._blocks_box.set_margin_bottom(24)
+        self._blocks_box.set_margin_start(16)
+        self._blocks_box.set_margin_end(16)
+        self._left_scroll.set_child(self._blocks_box)
+        pane.append(self._left_scroll)
+        return pane
+
+    def _build_right_pane(self) -> Gtk.Widget:
+        pane = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        pane.set_size_request(340, -1)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header.set_margin_top(8)
+        header.set_margin_bottom(8)
+        header.set_margin_start(16)
+        header.set_margin_end(16)
+
+        self._view_stack = Adw.ViewStack()
+        self._view_stack.set_vexpand(True)
+
+        switcher = Adw.ViewSwitcher()
+        switcher.set_stack(self._view_stack)
+        switcher.set_policy(Adw.ViewSwitcherPolicy.AUTO)
+        switcher.set_hexpand(True)
+        header.append(switcher)
+
+        self._match_count_pill = Gtk.Label(label="0 matched")
+        self._match_count_pill.add_css_class("ssh-pill")
+        self._match_count_pill.add_css_class("ssh-pill-success")
+        header.append(self._match_count_pill)
+
+        pane.append(header)
+        pane.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        pane.append(self._view_stack)
+
+        # Page 1: Effective (ssh -G)
+        eff_page = self._build_effective_page()
+        self._view_stack.add_titled_with_icon(eff_page, "effective", "Effective (ssh -G)", "preferences-other-symbolic")
+
+        # Page 2: Trace
+        trace_page = self._build_trace_page()
+        self._view_stack.add_titled_with_icon(trace_page, "trace", "Trace", "view-list-symbolic")
+
+        # Page 3: Raw Config
+        raw_page = self._build_raw_page()
+        self._view_stack.add_titled_with_icon(raw_page, "raw", "Raw Config", "text-x-generic-symbolic")
+
+        # Page 4: Includes
+        inc_page = self._build_includes_page()
+        self._view_stack.add_titled_with_icon(inc_page, "includes", "Includes", "folder-documents-symbolic")
+
+        return pane
+
+    def _build_effective_page(self) -> Gtk.Widget:
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        box.set_margin_top(16)
+        box.set_margin_bottom(24)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        scroll.set_child(box)
+
+        # Connection Summary Group (GNOME HIG PreferencesGroup)
+        self._summary_group = Adw.PreferencesGroup(title="Effective Connection")
+        box.append(self._summary_group)
+
+        self._summary_cmd_row = Adw.ActionRow(title="Simulated Command")
+        self._summary_cmd_row.add_css_class("monospace")
+        copy_cmd_btn = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Copy ssh command")
+        copy_cmd_btn.add_css_class("flat")
+        copy_cmd_btn.connect("clicked", self._on_copy_summary_cmd)
+        self._summary_cmd_row.add_suffix(copy_cmd_btn)
+        self._summary_group.add(self._summary_cmd_row)
+
+        self._summary_host_row = Adw.ActionRow(title="Hostname & Port")
+        self._summary_user_row = Adw.ActionRow(title="User & Proxy")
+        self._summary_keys_row = Adw.ActionRow(title="Identity Files")
+        for r in (self._summary_host_row, self._summary_user_row, self._summary_keys_row):
+            self._summary_group.add(r)
+
+        # Filter bar
+        filter_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._eff_search = Gtk.SearchEntry(placeholder_text="Filter options or values…")
+        self._eff_search.set_hexpand(True)
+        self._eff_search.connect("search-changed", lambda *_: self._refresh_effective_views())
+        filter_bar.append(self._eff_search)
+
+        self._only_configured_btn = Gtk.ToggleButton(label="Configured")
+        self._only_configured_btn.connect("toggled", lambda *_: self._refresh_effective_views())
+        filter_bar.append(self._only_configured_btn)
+
+        self._only_shadowed_btn = Gtk.ToggleButton(label="Shadowed")
+        self._only_shadowed_btn.connect("toggled", lambda *_: self._refresh_effective_views())
+        filter_bar.append(self._only_shadowed_btn)
+
+        verify_btn = Gtk.Button(label="Verify ssh -G", tooltip_text="Compare against your system's ssh -G binary")
+        verify_btn.connect("clicked", self._on_verify_system_ssh_g)
+        filter_bar.append(verify_btn)
+
+        box.append(filter_bar)
+
+        self._eff_list = Gtk.ListBox()
+        self._eff_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._eff_list.add_css_class("boxed-list")
+        box.append(self._eff_list)
+        return scroll
+
+    def _build_trace_page(self) -> Gtk.Widget:
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(16)
+        box.set_margin_bottom(24)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        scroll.set_child(box)
+
+        hint = Gtk.Label(
+            label="Top-to-bottom OpenSSH evaluation trace for the current target host.",
+            xalign=0,
+            wrap=True,
+        )
+        hint.add_css_class("dim-label")
+        box.append(hint)
+
+        self._trace_list = Gtk.ListBox()
+        self._trace_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._trace_list.add_css_class("boxed-list")
+        box.append(self._trace_list)
+        return scroll
+
+    def _build_raw_page(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        lbl = Gtk.Label(label="Generated ssh_config — edit text directly and apply to re-parse.", xalign=0, wrap=True)
+        lbl.add_css_class("dim-label")
+        lbl.set_hexpand(True)
+        top.append(lbl)
+
+        apply_btn = Gtk.Button(label="Apply Raw Edits")
+        apply_btn.add_css_class("suggested-action")
+        apply_btn.connect("clicked", self._on_apply_raw)
+        top.append(apply_btn)
+        box.append(top)
+
+        frame = Gtk.Frame()
+        frame.set_vexpand(True)
+        sw = Gtk.ScrolledWindow()
+        self._raw_view = Gtk.TextView(monospace=True)
+        self._raw_view.set_top_margin(12)
+        self._raw_view.set_bottom_margin(12)
+        self._raw_view.set_left_margin(12)
+        self._raw_view.set_right_margin(12)
+        sw.set_child(self._raw_view)
+        frame.set_child(sw)
+        box.append(frame)
+        return box
+
+    def _build_includes_page(self) -> Gtk.Widget:
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(16)
+        box.set_margin_bottom(24)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        scroll.set_child(box)
+
+        hint = Gtk.Label(
+            label="Real Include files on disk are resolved automatically when loading from a file. You can also register virtual Include overrides below.",
+            xalign=0,
+            wrap=True,
+        )
+        hint.add_css_class("dim-label")
+        box.append(hint)
+
+        add_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._inc_path_entry = Gtk.Entry(placeholder_text="~/.ssh/config.d/work.conf")
+        self._inc_path_entry.add_css_class("monospace")
+        self._inc_path_entry.set_hexpand(True)
+        add_row.append(self._inc_path_entry)
+
+        add_btn = Gtk.Button(label="Add Virtual File")
+        add_btn.add_css_class("suggested-action")
+        add_btn.connect("clicked", self._on_add_virtual_include)
+        add_row.append(add_btn)
+        box.append(add_row)
+
+        self._disk_inc_group = Adw.PreferencesGroup(title="Resolved On-Disk Includes")
+        box.append(self._disk_inc_group)
+
+        self._virt_inc_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.append(self._virt_inc_box)
+        return scroll
+
+    # ------------------------------------------------------------------
+    # Rendering Blocks (Left Pane)
+    # ------------------------------------------------------------------
+    def _render_blocks(self) -> None:
+        self._block_widgets.clear()
+        self._dir_widgets.clear()
+        while (child := self._blocks_box.get_first_child()) is not None:
+            self._blocks_box.remove(child)
+
+        if not self.blocks:
+            status = Adw.StatusPage(
+                icon_name="document-properties-symbolic",
+                title="No Configuration Rules",
+                description="Load ~/.ssh/config or add a Host, Match, or Global block.",
+            )
+            self._blocks_box.append(status)
+            self._block_count_pill.set_label("0 blocks")
+            return
+
+        for idx, blk in enumerate(self.blocks):
+            card_list = Gtk.ListBox()
+            card_list.set_selection_mode(Gtk.SelectionMode.NONE)
+            card_list.add_css_class("boxed-list")
+            if blk.disabled:
+                card_list.add_css_class("ssh-block-disabled")
+
+            # Block DropTarget for reordering blocks
+            blk_drop = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+            blk_drop.connect("motion", self._on_block_drag_motion, card_list)
+            blk_drop.connect("leave", lambda *_, cl=card_list: cl.remove_css_class("ssh-drop-before") or cl.remove_css_class("ssh-drop-after"))
+            blk_drop.connect("drop", self._on_block_drop, blk.id, card_list)
+            card_list.add_controller(blk_drop)
+
+            # Header Row
+            header_row = Gtk.ListBoxRow()
+            header_row.set_activatable(False)
+            header_row.set_selectable(False)
+
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            hbox.set_margin_top(10)
+            hbox.set_margin_bottom(10)
+            hbox.set_margin_start(12)
+            hbox.set_margin_end(12)
+            header_row.set_child(hbox)
+
+            # Drag Handle for block
+            drag_handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+            drag_handle.add_css_class("dim-label")
+            drag_handle.set_tooltip_text("Drag to reorder block")
+            drag_handle.set_cursor(Gdk.Cursor.new_from_name("grab"))
+            blk_drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+            blk_drag.connect("prepare", lambda src, x, y, bid=blk.id: Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_STRING, f"block:{bid}")))
+            drag_handle.add_controller(blk_drag)
+            hbox.append(drag_handle)
+
+            idx_lbl = Gtk.Label(label=f"#{idx + 1}")
+            idx_lbl.add_css_class("dim-label")
+            hbox.append(idx_lbl)
+
+            kind_lbl = Gtk.Label(label=blk.kind.capitalize())
+            kind_lbl.add_css_class("ssh-pill")
+            kind_lbl.add_css_class(
+                "ssh-pill-purple" if blk.kind == "global" else "ssh-pill-accent"
+            )
+            hbox.append(kind_lbl)
+
+            if blk.kind == "global":
+                g_lbl = Gtk.Label(label="Top-level defaults", xalign=0)
+                g_lbl.add_css_class("dim-label")
+                g_lbl.set_hexpand(True)
+                hbox.append(g_lbl)
+            else:
+                pat_entry = Gtk.Entry(text=blk.patterns)
+                pat_entry.set_placeholder_text("*.example.com !bastion" if blk.kind == "host" else "host *.prod user deploy")
+                pat_entry.add_css_class("monospace")
+                pat_entry.set_hexpand(True)
+                pat_entry.connect("changed", self._on_pattern_changed, blk)
+                hbox.append(pat_entry)
+
+            status_pill = Gtk.Label(label="…")
+            status_pill.add_css_class("ssh-pill")
+            hbox.append(status_pill)
+
+            # Block MenuButton (Move Up, Move Down, Disable/Enable, Add Note, Duplicate, Delete)
+            menu_btn = Gtk.MenuButton(icon_name="view-more-symbolic", tooltip_text="Block actions")
+            menu_btn.add_css_class("flat")
+            menu_btn.set_popover(self._build_block_popover(blk, idx))
+            hbox.append(menu_btn)
+
+            card_list.append(header_row)
+
+            # Warning Banner Row (hidden unless needed)
+            warn_banner = Adw.Banner()
+            warn_banner.set_revealed(False)
+            warn_row = Gtk.ListBoxRow(activatable=False, selectable=False, visible=False)
+            warn_row.set_child(warn_banner)
+            card_list.append(warn_row)
+
+            # Optional Note Row
+            if blk.note.strip() or blk.id in self.editing_note_blocks:
+                note_row = Adw.EntryRow(title="Note")
+                note_row.set_text(blk.note)
+                note_row.connect("changed", self._on_note_changed, blk)
+                card_list.append(note_row)
+
+            # Directive Rows
+            for d in blk.directives:
+                d_row = Gtk.ListBoxRow(activatable=False, selectable=False)
+                d_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                d_box.set_margin_top(6)
+                d_box.set_margin_bottom(6)
+                d_box.set_margin_start(12)
+                d_box.set_margin_end(12)
+                d_row.set_child(d_box)
+
+                d_handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+                d_handle.add_css_class("dim-label")
+                d_handle.set_cursor(Gdk.Cursor.new_from_name("grab"))
+                d_drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+                d_drag.connect(
+                    "prepare",
+                    lambda src, x, y, bid=blk.id, did=d.id: Gdk.ContentProvider.new_for_value(
+                        GObject.Value(GObject.TYPE_STRING, f"dir:{bid}:{did}")
+                    ),
+                )
+                d_handle.add_controller(d_drag)
+                d_box.append(d_handle)
+
+                key_entry = Gtk.Entry(text=d.key, placeholder_text="Option")
+                key_entry.add_css_class("monospace")
+                key_entry.set_width_chars(16)
+                key_entry.connect("changed", self._on_dir_key_changed, d)
+                d_box.append(key_entry)
+
+                val_entry = Gtk.Entry(text=d.value, placeholder_text="Value")
+                val_entry.add_css_class("monospace")
+                val_entry.set_hexpand(True)
+                val_entry.connect("changed", self._on_dir_val_changed, d)
+                d_box.append(val_entry)
+
+                d_status = Gtk.Label(label="")
+                d_status.add_css_class("ssh-pill")
+                d_box.append(d_status)
+
+                del_btn = Gtk.Button(icon_name="list-remove-symbolic", tooltip_text="Remove directive")
+                del_btn.add_css_class("flat")
+                del_btn.connect("clicked", self._on_delete_directive, blk, d)
+                d_box.append(del_btn)
+
+                # DropTarget on each directive row (reorders within or across blocks)
+                d_drop = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+                d_drop.connect("motion", self._on_dir_drag_motion, d_row)
+                d_drop.connect("leave", lambda *_, r=d_row: r.remove_css_class("ssh-drop-before") or r.remove_css_class("ssh-drop-after"))
+                d_drop.connect("drop", self._on_dir_drop, blk.id, d.id, d_row)
+                d_row.add_controller(d_drop)
+
+                self._dir_widgets[d.id] = {
+                    "row": d_row,
+                    "key": key_entry,
+                    "val": val_entry,
+                    "status": d_status,
+                }
+                card_list.append(d_row)
+
+            # Footer Row (+ Add Option & Common Option menu)
+            footer_row = Gtk.ListBoxRow(activatable=False, selectable=False)
+            f_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            f_box.set_margin_top(6)
+            f_box.set_margin_bottom(8)
+            f_box.set_margin_start(12)
+            f_box.set_margin_end(12)
+            footer_row.set_child(f_box)
+
+            add_opt_btn = Gtk.Button(label="+ Add Option")
+            add_opt_btn.connect("clicked", lambda *_, bid=blk.id: self._add_directive(bid, "", ""))
+            f_box.append(add_opt_btn)
+
+            preset_btn = Gtk.MenuButton(label="Common Option")
+            preset_btn.add_css_class("flat")
+            preset_btn.set_popover(self._build_preset_popover(blk.id))
+            f_box.append(preset_btn)
+
+            # DropTarget on footer to allow dropping a directive at the end of any block (even empty ones)
+            f_drop = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+            f_drop.connect("drop", self._on_dir_drop, blk.id, None, footer_row)
+            footer_row.add_controller(f_drop)
+
+            card_list.append(footer_row)
+
+            self._block_widgets[blk.id] = {
+                "card": card_list,
+                "status": status_pill,
+                "warn_banner": warn_banner,
+                "warn_row": warn_row,
+            }
+            self._blocks_box.append(card_list)
+
+        n = len(self.blocks)
+        self._block_count_pill.set_label(f"{n} block" if n == 1 else f"{n} blocks")
+
+    def _build_block_popover(self, blk: ConfigBlock, idx: int) -> Gtk.Popover:
+        pop = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_top(4)
+        box.set_margin_bottom(4)
+        box.set_margin_start(4)
+        box.set_margin_end(4)
+        pop.set_child(box)
+
+        def add_item(label: str, cb, *, enabled: bool = True, destructive: bool = False) -> None:
+            b = Gtk.Button(label=label)
+            b.add_css_class("flat")
+            if destructive:
+                b.add_css_class("destructive-action")
+            b.set_sensitive(enabled)
+            b.connect("clicked", lambda *_: (pop.popdown(), cb()))
+            box.append(b)
+
+        add_item("Move Up", lambda: self._move_block(idx, -1), enabled=idx > 0)
+        add_item("Move Down", lambda: self._move_block(idx, 1), enabled=idx < len(self.blocks) - 1)
+        box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        add_item("Enable Block" if blk.disabled else "Disable Block", lambda: self._toggle_block(blk))
+        add_item("Add / Edit Note", lambda: self._toggle_note(blk))
+        add_item("Duplicate Block", lambda: self._duplicate_block(idx))
+        box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        add_item("Delete Block", lambda: self._delete_block(idx), destructive=True)
+        return pop
+
+    def _build_preset_popover(self, block_id: str) -> Gtk.Popover:
+        pop = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_top(4)
+        box.set_margin_bottom(4)
+        box.set_margin_start(4)
+        box.set_margin_end(4)
+        pop.set_child(box)
+        for k, v in QUICK_DIRECTIVE_PRESETS:
+            b = Gtk.Button(label=k)
+            b.add_css_class("flat")
+            b.connect("clicked", lambda *_, key=k, val=v: (pop.popdown(), self._add_directive(block_id, key, val)))
+            box.append(b)
+        return pop
+
+    def _render_quick_hosts(self) -> None:
+        while (child := self._quick_hosts_box.get_first_child()) is not None:
+            self._quick_hosts_box.remove(child)
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for b in self.blocks:
+            if b.disabled or b.kind != "host":
+                continue
+            for pat in tokenize_quoted(b.patterns):
+                if pat.startswith("!"):
+                    continue
+                host = f"app.{pat[2:]}" if pat.startswith("*.") else (pat if "*" not in pat and "?" not in pat else "")
+                if host and host not in seen:
+                    seen.add(host)
+                    candidates.append(host)
+        if not candidates:
+            candidates = ["example.com"]
+
+        cur_host = self._sim.original_host
+        for host in candidates[:12]:
+            btn = Gtk.Button(label=host)
+            btn.add_css_class("pill")
+            btn.add_css_class("monospace")
+            if host == cur_host:
+                btn.add_css_class("suggested-action")
+            btn.connect("clicked", lambda *_, h=host: self._target_entry.set_text(h))
+            self._quick_hosts_box.append(btn)
+
+    # ------------------------------------------------------------------
+    # Resolution Sync (In-Place Status + Right Pane)
+    # ------------------------------------------------------------------
+    def _update_resolution(self) -> None:
+        res = resolve_config(self.blocks, self._sim, virtual_includes=self.virtual_includes)
+        self._last_result = res
+
+        matched_count = 0
+        for blk in self.blocks:
+            bw = self._block_widgets.get(blk.id)
+            if not bw:
+                continue
+            card: Gtk.ListBox = bw["card"]  # type: ignore[assignment]
+            pill: Gtk.Label = bw["status"]  # type: ignore[assignment]
+            warn_banner: Adw.Banner = bw["warn_banner"]  # type: ignore[assignment]
+            warn_row: Gtk.ListBoxRow = bw["warn_row"]  # type: ignore[assignment]
+
+            matched, reason, warnings = res.block_status.get(blk.id, (False, "", []))
+            for cls in ("ssh-pill-success", "ssh-pill-muted"):
+                pill.remove_css_class(cls)
+
+            if blk.disabled:
+                card.remove_css_class("ssh-block-matched")
+                pill.set_label("Disabled")
+                pill.add_css_class("ssh-pill-muted")
+            elif matched:
+                matched_count += 1
+                card.add_css_class("ssh-block-matched")
+                pill.set_label("Matched")
+                pill.add_css_class("ssh-pill-success")
+            else:
+                card.remove_css_class("ssh-block-matched")
+                pill.set_label("Skipped")
+                pill.add_css_class("ssh-pill-muted")
+            pill.set_tooltip_text(reason)
+
+            if warnings:
+                warn_banner.set_title(warnings[0])
+                warn_banner.set_revealed(True)
+                warn_row.set_visible(True)
+            else:
+                warn_banner.set_revealed(False)
+                warn_row.set_visible(False)
+
+            for d in blk.directives:
+                dw = self._dir_widgets.get(d.id)
+                if not dw:
+                    continue
+                st_label: Gtk.Label = dw["status"]  # type: ignore[assignment]
+                key_e: Gtk.Entry = dw["key"]  # type: ignore[assignment]
+                val_e: Gtk.Entry = dw["val"]  # type: ignore[assignment]
+                status, detail = res.dir_status.get(d.id, ("inactive", ""))
+
+                for cls in ("ssh-pill-success", "ssh-pill-warning", "ssh-pill-accent", "ssh-pill-purple", "ssh-pill-muted"):
+                    st_label.remove_css_class(cls)
+                for e in (key_e, val_e):
+                    e.remove_css_class("ssh-shadowed-entry")
+
+                if status == "applied":
+                    st_label.set_label("Applied")
+                    st_label.add_css_class("ssh-pill-success")
+                elif status == "accumulated":
+                    st_label.set_label("Accumulated")
+                    st_label.add_css_class("ssh-pill-accent")
+                elif status == "shadowed":
+                    st_label.set_label("Shadowed")
+                    st_label.add_css_class("ssh-pill-warning")
+                    key_e.add_css_class("ssh-shadowed-entry")
+                    val_e.add_css_class("ssh-shadowed-entry")
+                elif status == "cli":
+                    st_label.set_label("CLI Override")
+                    st_label.add_css_class("ssh-pill-purple")
+                    key_e.add_css_class("ssh-shadowed-entry")
+                    val_e.add_css_class("ssh-shadowed-entry")
+                elif status == "include":
+                    st_label.set_label("Include")
+                    st_label.add_css_class("ssh-pill-accent")
+                else:
+                    st_label.set_label("Inactive")
+                    st_label.add_css_class("ssh-pill-muted")
+                st_label.set_tooltip_text(detail)
+
+        self._match_count_pill.set_label(f"{matched_count} matched")
+        self._refresh_summary_and_right_tabs(res)
+
+    def _refresh_summary_and_right_tabs(self, res: ResolutionResult) -> None:
+        s = res.summary
+        jump = s["proxy_jump"]
+        cmd = f"ssh {s['user']}@{s['hostname']} -p {s['port']}" + (f" -J {jump}" if jump != "none" else "")
+        self._current_ssh_cmd = cmd
+        self._summary_cmd_row.set_subtitle(_esc(cmd))
+        self._summary_host_row.set_subtitle(_esc(f"{s['hostname']} : {s['port']}"))
+        proxy_val = jump if jump != "none" else s["proxy_command"]
+        self._summary_user_row.set_subtitle(_esc(f"User: {s['user']}  |  Proxy: {proxy_val}"))
+        id_files = s["identity_files"]
+        if isinstance(id_files, list):
+            id_txt = f"{id_files[0]} (+{len(id_files) - 1} more)" if len(id_files) > 1 else id_files[0]
+        else:
+            id_txt = str(id_files)
+        self._summary_keys_row.set_subtitle(_esc(id_txt))
+
+        self._refresh_effective_views()
+        self._refresh_trace_view(res)
+        self._refresh_raw_view()
+        self._refresh_includes_view(res)
+
+    def _refresh_effective_views(self) -> None:
+        res: ResolutionResult = self._last_result
+        while (child := self._eff_list.get_first_child()) is not None:
+            self._eff_list.remove(child)
+
+        query = self._eff_search.get_text().strip().lower()
+        only_cfg = self._only_configured_btn.get_active()
+        only_shad = self._only_shadowed_btn.get_active()
+
+        for opt in sorted(res.effective, key=lambda o: o.key.lower()):
+            lk = opt.key.lower()
+            shad = res.shadowed.get(lk, [])
+            if only_cfg and opt.is_default:
+                continue
+            if only_shad and not shad:
+                continue
+
+            val_str = ", ".join(opt.value) if isinstance(opt.value, list) else str(opt.value)
+            if query and query not in lk and query not in val_str.lower():
+                continue
+
+            exp_str = ""
+            if opt.expanded_value is not None:
+                exp_val = ", ".join(opt.expanded_value) if isinstance(opt.expanded_value, list) else str(opt.expanded_value)
+                exp_str = f"\n↳ expanded: {exp_val}"
+
+            row: Adw.PreferencesRow
+            if shad:
+                exp_row = Adw.ExpanderRow(
+                    title=_esc(opt.key),
+                    subtitle=_esc(f"{val_str}{exp_str}"),
+                )
+                for sh in shad:
+                    sh_row = Adw.ActionRow(
+                        title=_esc(sh["value"]),
+                        subtitle=_esc(f"Shadowed in {sh['source']}"),
+                    )
+                    jump_b = Gtk.Button(icon_name="go-jump-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Jump to directive")
+                    jump_b.add_css_class("flat")
+                    jump_b.connect("clicked", lambda *_, bid=sh["block_id"], did=sh["dir_id"]: self._jump_to(bid, did))
+                    sh_row.add_suffix(jump_b)
+                    exp_row.add_row(sh_row)
+                row = exp_row
+            else:
+                row = Adw.ActionRow(
+                    title=_esc(opt.key),
+                    subtitle=_esc(f"{val_str}{exp_str}"),
+                )
+
+            if opt.is_accumulated and opt.sources:
+                src_btn = Gtk.Button(label=f"{len(opt.sources)} rules", valign=Gtk.Align.CENTER)
+                src_btn.add_css_class("pill")
+                src_btn.connect("clicked", lambda *_, bid=opt.sources[0]["block_id"], did=opt.sources[0]["dir_id"]: self._jump_to(bid, did))
+                row.add_suffix(src_btn)
+            elif opt.block_id:
+                src_btn = Gtk.Button(label=opt.source, valign=Gtk.Align.CENTER)
+                src_btn.add_css_class("flat")
+                src_btn.connect("clicked", lambda *_, bid=opt.block_id, did=opt.dir_id: self._jump_to(bid, did))
+                row.add_suffix(src_btn)
+            else:
+                src_lbl = Gtk.Label(label=opt.source, valign=Gtk.Align.CENTER)
+                src_lbl.add_css_class("ssh-pill-purple" if opt.is_cli else "dim-label")
+                row.add_suffix(src_lbl)
+
+            if shad:
+                sh_lbl = Gtk.Label(label=f"{len(shad)} shadowed", valign=Gtk.Align.CENTER)
+                sh_lbl.add_css_class("ssh-pill")
+                sh_lbl.add_css_class("ssh-pill-warning")
+                row.add_suffix(sh_lbl)
+
+            self._eff_list.append(row)
+
+    def _refresh_trace_view(self, res: ResolutionResult) -> None:
+        while (child := self._trace_list.get_first_child()) is not None:
+            self._trace_list.remove(child)
+
+        icon_map = {
+            "match": "emblem-ok-symbolic",
+            "skip": "media-playback-pause-symbolic",
+            "warn": "dialog-warning-symbolic",
+            "pass": "go-next-symbolic",
+        }
+        css_map = {
+            "match": "ssh-trace-match",
+            "warn": "ssh-trace-warn",
+            "pass": "ssh-trace-pass",
+        }
+        for item in res.trace:
+            row = Adw.ActionRow(title=_esc(item.title), subtitle=_esc(item.detail))
+            row.add_prefix(Gtk.Image.new_from_icon_name(icon_map.get(item.kind, "go-next-symbolic")))
+            if item.kind in css_map:
+                row.add_css_class(css_map[item.kind])
+            self._trace_list.append(row)
+
+    def _refresh_raw_view(self) -> None:
+        if self._raw_view.has_focus():
+            return
+        buf = self._raw_view.get_buffer()
+        buf.set_text(serialize_config(self.blocks, self.trailing_comments))
+
+    def _refresh_includes_view(self, res: ResolutionResult) -> None:
+        # Clear dynamic rows on disk includes group
+        if hasattr(self, "_disk_inc_rows"):
+            for r in self._disk_inc_rows:
+                self._disk_inc_group.remove(r)
+        self._disk_inc_rows = []
+        if res.resolved_include_files:
+            for p in res.resolved_include_files:
+                r = Adw.ActionRow(title=_esc(p), subtitle="Loaded &amp; evaluated")
+                self._disk_inc_group.add(r)
+                self._disk_inc_rows.append(r)
+        else:
+            r = Adw.ActionRow(title="None", subtitle="No Include files resolved for current config")
+            self._disk_inc_group.add(r)
+            self._disk_inc_rows.append(r)
+
+        while (child := self._virt_inc_box.get_first_child()) is not None:
+            self._virt_inc_box.remove(child)
+
+        for vpath, vtext in self.virtual_includes.items():
+            grp = Adw.PreferencesGroup(title=_esc(vpath))
+            rm_btn = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Remove virtual include")
+            rm_btn.add_css_class("flat")
+            rm_btn.connect("clicked", lambda *_, p=vpath: self._remove_virtual_include(p))
+            grp.set_header_suffix(rm_btn)
+
+            frame = Gtk.Frame()
+            tv = Gtk.TextView(monospace=True)
+            tv.set_size_request(-1, 110)
+            tv.set_top_margin(8)
+            tv.set_bottom_margin(8)
+            tv.set_left_margin(8)
+            tv.set_right_margin(8)
+            tv.get_buffer().set_text(vtext)
+            tv.get_buffer().connect("changed", self._on_virtual_include_changed, vpath)
+            frame.set_child(tv)
+            grp.add(frame)
+            self._virt_inc_box.append(grp)
+
+    # ------------------------------------------------------------------
+    # Event Handlers & Drag-and-Drop Reordering
+    # ------------------------------------------------------------------
+    def _on_sim_changed(self, *_) -> None:
+        self._sim.raw_target = self._target_entry.get_text()
+        self._sim.cli_port = self._cli_port_entry.get_text()
+        self._sim.cli_user = self._cli_user_entry.get_text()
+        self._sim.local_user = self._local_user_entry.get_text() or "user"
+        self._sim.local_host = self._local_host_entry.get_text() or "localhost"
+        self._sim.force_final = self._two_pass_chk.get_active()
+        self._sim.exec_result = self._exec_chk.get_active()
+        self._render_quick_hosts()
+        self._update_resolution()
+
+    def _on_toggle_advanced(self, btn: Gtk.ToggleButton) -> None:
+        self._adv_revealer.set_reveal_child(btn.get_active())
+
+    def _on_pattern_changed(self, entry: Gtk.Entry, blk: ConfigBlock) -> None:
+        blk.patterns = entry.get_text()
+        self._push_history()
+        self._render_quick_hosts()
+        self._update_resolution()
+
+    def _on_note_changed(self, row: Adw.EntryRow, blk: ConfigBlock) -> None:
+        blk.note = row.get_text()
+        self._push_history()
+        self._refresh_raw_view()
+
+    def _on_dir_key_changed(self, entry: Gtk.Entry, d: Directive) -> None:
+        d.key = canonicalize_key(entry.get_text().strip()) if " " not in entry.get_text() else entry.get_text()
+        self._push_history()
+        self._update_resolution()
+
+    def _on_dir_val_changed(self, entry: Gtk.Entry, d: Directive) -> None:
+        d.value = entry.get_text()
+        self._push_history()
+        self._update_resolution()
+
+    def _on_delete_directive(self, _btn, blk: ConfigBlock, d: Directive) -> None:
+        blk.directives = [x for x in blk.directives if x.id != d.id]
+        self._push_history()
+        self._render_all()
+
+    def _add_global_block(self, *_) -> None:
+        if not any(b.kind == "global" for b in self.blocks):
+            self.blocks.insert(0, ConfigBlock(kind="global", patterns=""))
+        blk = next(b for b in self.blocks if b.kind == "global")
+        self._add_directive(blk.id, "", "")
+
+    def _add_host_block(self, *_) -> None:
+        blk = ConfigBlock(
+            kind="host",
+            patterns="new-host",
+            directives=[
+                Directive(key="Hostname", value="10.0.0.10"),
+                Directive(key="User", value="ubuntu"),
+            ],
+        )
+        self.blocks.append(blk)
+        self._push_history()
+        self._render_all()
+
+    def _add_match_block(self, *_) -> None:
+        blk = ConfigBlock(
+            kind="match",
+            patterns="host *.internal user deploy",
+            directives=[Directive(key="ForwardAgent", value="yes")],
+        )
+        self.blocks.append(blk)
+        self._push_history()
+        self._render_all()
+
+    def _add_directive(self, block_id: str, key: str, value: str) -> None:
+        blk = next((b for b in self.blocks if b.id == block_id), None)
+        if not blk:
+            return
+        d = Directive(key=key, value=value)
+        blk.directives.append(d)
+        self._push_history()
+        self._render_all()
+        dw = self._dir_widgets.get(d.id)
+        if dw:
+            target = dw["val"] if key else dw["key"]
+            target.grab_focus()  # type: ignore[attr-defined]
+
+    def _move_block(self, idx: int, delta: int) -> None:
+        nxt = idx + delta
+        if 0 <= nxt < len(self.blocks):
+            blk = self.blocks.pop(idx)
+            self.blocks.insert(nxt, blk)
+            self._push_history()
+            self._render_all()
+
+    def _toggle_block(self, blk: ConfigBlock) -> None:
+        blk.disabled = not blk.disabled
+        self._push_history()
+        self._render_all()
+
+    def _toggle_note(self, blk: ConfigBlock) -> None:
+        if blk.id in self.editing_note_blocks and not blk.note.strip():
+            self.editing_note_blocks.remove(blk.id)
+        else:
+            self.editing_note_blocks.add(blk.id)
+        self._render_all()
+
+    def _duplicate_block(self, idx: int) -> None:
+        dup = copy.deepcopy(self.blocks[idx])
+        dup.id = new_id("blk")
+        dup.raw_leading_comments = []
+        for d in dup.directives:
+            d.id = new_id("dir")
+            d.raw_leading_comments = []
+        self.blocks.insert(idx + 1, dup)
+        self._push_history()
+        self._render_all()
+
+    def _delete_block(self, idx: int) -> None:
+        self.blocks.pop(idx)
+        self._push_history()
+        self._render_all()
+
+    def _on_block_drag_motion(self, _target, _x: float, y: float, card: Gtk.ListBox) -> Gdk.DragAction:
+        h = card.get_height()
+        card.remove_css_class("ssh-drop-before")
+        card.remove_css_class("ssh-drop-after")
+        card.add_css_class("ssh-drop-before" if y < h / 2 else "ssh-drop-after")
+        return Gdk.DragAction.MOVE
+
+    def _on_block_drop(self, _target, value: str, _x: float, y: float, target_bid: str, card: Gtk.ListBox) -> bool:
+        card.remove_css_class("ssh-drop-before")
+        card.remove_css_class("ssh-drop-after")
+        if not isinstance(value, str) or not value.startswith("block:"):
+            return False
+        src_bid = value.split(":", 1)[1]
+        if src_bid == target_bid:
+            return False
+        src_idx = next((i for i, b in enumerate(self.blocks) if b.id == src_bid), -1)
+        if src_idx < 0:
+            return False
+        moved = self.blocks.pop(src_idx)
+        tgt_idx = next((i for i, b in enumerate(self.blocks) if b.id == target_bid), len(self.blocks))
+        before = y < card.get_height() / 2
+        self.blocks.insert(tgt_idx if before else tgt_idx + 1, moved)
+        self._push_history()
+        self._render_all()
+        return True
+
+    def _on_dir_drag_motion(self, _target, _x: float, y: float, row: Gtk.ListBoxRow) -> Gdk.DragAction:
+        h = row.get_height()
+        row.remove_css_class("ssh-drop-before")
+        row.remove_css_class("ssh-drop-after")
+        row.add_css_class("ssh-drop-before" if y < h / 2 else "ssh-drop-after")
+        return Gdk.DragAction.MOVE
+
+    def _on_dir_drop(
+        self, _target, value: str, _x: float, y: float, tgt_bid: str, tgt_did: str | None, row: Gtk.ListBoxRow
+    ) -> bool:
+        row.remove_css_class("ssh-drop-before")
+        row.remove_css_class("ssh-drop-after")
+        if not isinstance(value, str) or not value.startswith("dir:"):
+            return False
+        _, src_bid, src_did = value.split(":", 2)
+        if src_did == tgt_did:
+            return False
+        src_blk = next((b for b in self.blocks if b.id == src_bid), None)
+        tgt_blk = next((b for b in self.blocks if b.id == tgt_bid), None)
+        if not src_blk or not tgt_blk:
+            return False
+        s_idx = next((i for i, d in enumerate(src_blk.directives) if d.id == src_did), -1)
+        if s_idx < 0:
+            return False
+        moved = src_blk.directives.pop(s_idx)
+        if tgt_did is None:
+            tgt_blk.directives.append(moved)
+        else:
+            t_idx = next((i for i, d in enumerate(tgt_blk.directives) if d.id == tgt_did), len(tgt_blk.directives))
+            before = y < row.get_height() / 2
+            tgt_blk.directives.insert(t_idx if before else t_idx + 1, moved)
+        self._push_history()
+        self._render_all()
+        return True
+
+    def _jump_to(self, block_id: str | None, dir_id: str | None) -> None:
+        target_widget = (
+            self._dir_widgets.get(dir_id or "", {}).get("row")
+            or self._block_widgets.get(block_id or "", {}).get("card")
+        )
+        if not isinstance(target_widget, Gtk.Widget):
+            return
+        target_widget.grab_focus()
+        target_widget.add_css_class("ssh-flash")
+        GLib.timeout_add(1400, lambda: target_widget.remove_css_class("ssh-flash") and False)
+
+    def _on_apply_raw(self, *_) -> None:
+        buf = self._raw_view.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+        self.load_text(text, label="Applied raw config edits", file_path=self.current_file)
+
+    def _on_add_virtual_include(self, *_) -> None:
+        path = self._inc_path_entry.get_text().strip()
+        if not path:
+            return
+        self.virtual_includes.setdefault(path, f"# Virtual include: {path}\nHost *.corp\n  User corp-user\n")
+        self._inc_path_entry.set_text("")
+        self._update_resolution()
+
+    def _remove_virtual_include(self, path: str) -> None:
+        self.virtual_includes.pop(path, None)
+        self._update_resolution()
+
+    def _on_virtual_include_changed(self, buf: Gtk.TextBuffer, path: str) -> None:
+        self.virtual_includes[path] = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+        self._update_resolution()
+
+    def _on_copy_summary_cmd(self, *_) -> None:
+        display = Gdk.Display.get_default()
+        if display and hasattr(self, "_current_ssh_cmd"):
+            display.get_clipboard().set(self._current_ssh_cmd)
+            self.show_toast("Copied SSH command to clipboard")
+
+    def _on_verify_system_ssh_g(self, *_) -> None:
+        with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False, encoding="utf-8") as tmp:
+            tmp.write(self.get_config_text())
+            tmp_path = Path(tmp.name)
+        try:
+            ok, output = run_system_ssh_g(
+                self._sim.raw_target,
+                config_path=tmp_path,
+                cli_port=self._sim.cli_port,
+                cli_user=self._sim.cli_user,
+            )
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        self._show_text_dialog(
+            "System `ssh -G` Output" if ok else "System `ssh -G` Error",
+            output,
+        )
+
+    def _on_external_file_drop(self, _target, file_obj: Gio.File, _x: float, _y: float) -> bool:
+        path = file_obj.get_path()
+        if path:
+            self.load_file(path)
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # Dialogs (GTK 4.10+ Gtk.FileDialog & Libadwaita Adw.Dialog)
+    # ------------------------------------------------------------------
+    def prompt_open_file(self) -> None:
+        dialog = Gtk.FileDialog(title="Open SSH Configuration")
+        ssh_dir = Path.home() / ".ssh"
+        if ssh_dir.exists():
+            dialog.set_initial_folder(Gio.File.new_for_path(str(ssh_dir)))
+        root = self.get_root()
+        parent = root if isinstance(root, Gtk.Window) else None
+        dialog.open(parent, None, self._finish_open_file)
+
+    def _finish_open_file(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
+        try:
+            gfile = dialog.open_finish(result)
+            if gfile and (p := gfile.get_path()):
+                self.load_file(p)
+        except GLib.Error:
+            pass
+
+    def prompt_save_file(self) -> None:
+        dialog = Gtk.FileDialog(title="Save SSH Configuration", initial_name="config")
+        if self.current_file:
+            dialog.set_initial_file(Gio.File.new_for_path(str(self.current_file)))
+        else:
+            ssh_dir = Path.home() / ".ssh"
+            if ssh_dir.exists():
+                dialog.set_initial_folder(Gio.File.new_for_path(str(ssh_dir)))
+        root = self.get_root()
+        parent = root if isinstance(root, Gtk.Window) else None
+        dialog.save(parent, None, self._finish_save_file)
+
+    def _finish_save_file(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
+        try:
+            gfile = dialog.save_finish(result)
+            if gfile and (p := gfile.get_path()):
+                self.save_to_file(p)
+        except GLib.Error:
+            pass
+
+    def prompt_paste_config(self) -> None:
+        tv = Gtk.TextView(monospace=True)
+        tv.set_top_margin(12)
+        tv.set_bottom_margin(12)
+        tv.set_left_margin(12)
+        tv.set_right_margin(12)
+        tv.get_buffer().set_text(self.get_config_text())
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_min_content_height(320)
+        sw.set_min_content_width(540)
+        sw.set_child(tv)
+
+        def on_apply(dlg) -> None:
+            buf = tv.get_buffer()
+            txt = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+            self.load_text(txt, label="Parsed pasted configuration", file_path=self.current_file)
+            dlg.close()
+
+        self._present_modal("Paste Raw SSH Config", sw, action_label="Parse & Load", on_action=on_apply)
+
+    def _show_text_dialog(self, title: str, content: str) -> None:
+        tv = Gtk.TextView(monospace=True, editable=False)
+        tv.set_top_margin(12)
+        tv.set_bottom_margin(12)
+        tv.set_left_margin(12)
+        tv.set_right_margin(12)
+        tv.get_buffer().set_text(content)
+        sw = Gtk.ScrolledWindow()
+        sw.set_min_content_height(360)
+        sw.set_min_content_width(560)
+        sw.set_child(tv)
+        self._present_modal(title, sw)
+
+    def _present_modal(
+        self, title: str, body: Gtk.Widget, *, action_label: str | None = None, on_action=None
+    ) -> None:
+        if hasattr(Adw, "Dialog"):
+            dlg = Adw.Dialog(title=title, content_width=620, content_height=460)
+            tv_view = Adw.ToolbarView()
+            hb = Adw.HeaderBar()
+            if action_label and on_action:
+                btn = Gtk.Button(label=action_label)
+                btn.add_css_class("suggested-action")
+                btn.connect("clicked", lambda *_: on_action(dlg))
+                hb.pack_end(btn)
+            tv_view.add_top_bar(hb)
+            tv_view.set_content(body)
+            dlg.set_child(tv_view)
+            dlg.present(self)
+        else:
+            win = Adw.Window(title=title, default_width=620, default_height=460, modal=True)
+            root = self.get_root()
+            if isinstance(root, Gtk.Window):
+                win.set_transient_for(root)
+            tv_view = Adw.ToolbarView()
+            hb = Adw.HeaderBar()
+            if action_label and on_action:
+                btn = Gtk.Button(label=action_label)
+                btn.add_css_class("suggested-action")
+                btn.connect("clicked", lambda *_: on_action(win))
+                hb.pack_end(btn)
+            tv_view.add_top_bar(hb)
+            tv_view.set_content(body)
+            win.set_content(tv_view)
+            win.present()
+
+    # ------------------------------------------------------------------
+    # History & Refresh
+    # ------------------------------------------------------------------
+    def _push_history(self) -> None:
+        snap = (copy.deepcopy(self.blocks), list(self.trailing_comments))
+        self._history = self._history[: self._history_idx + 1]
+        self._history.append(snap)
+        if len(self._history) > 60:
+            self._history.pop(0)
+        self._history_idx = len(self._history) - 1
+        self._emit_history()
+        self.emit("changed")
+
+    def _emit_history(self) -> None:
+        self.emit("history-changed", self.can_undo(), self.can_redo())
+
+    def _render_all(self) -> None:
+        self._render_blocks()
+        self._render_quick_hosts()
+        self._update_resolution()
+
+5. ssh_workbench/app.py
+
+Standalone Adw.Application + Adw.ApplicationWindow wrapping SshConfigWorkbench
+with GNOME HIG Adw.HeaderBar, Undo/Redo, Sample presets, Load ~/.ssh/config, and
+System/Light/Dark theme switching:
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, Gtk  # noqa: E402
+
+from .engine import SAMPLES  # noqa: E402
+from .widget import SshConfigWorkbench  # noqa: E402
+
+
+class SshWorkbenchWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application, initial_file: Path | None = None) -> None:
+        super().__init__(application=app, title="SSH Config Workbench")
+        self.set_default_size(1240, 780)
+
+        self.workbench = SshConfigWorkbench(show_inline_actions=False)
+
+        toolbar_view = Adw.ToolbarView()
+        self.set_content(toolbar_view)
+
+        header = Adw.HeaderBar()
+        toolbar_view.add_top_bar(header)
+
+        # Left header actions: Open, Save, Paste, Samples
+        open_btn = Gtk.Button(label="Open", icon_name="document-open-symbolic", tooltip_text="Open SSH config file")
+        open_btn.connect("clicked", lambda *_: self.workbench.prompt_open_file())
+        header.pack_start(open_btn)
+
+        save_btn = Gtk.Button(icon_name="document-save-symbolic", tooltip_text="Save SSH config")
+        save_btn.connect("clicked", lambda *_: self.workbench.prompt_save_file())
+        header.pack_start(save_btn)
+
+        paste_btn = Gtk.Button(icon_name="edit-paste-symbolic", tooltip_text="Paste raw ssh_config")
+        paste_btn.connect("clicked", lambda *_: self.workbench.prompt_paste_config())
+        header.pack_start(paste_btn)
+
+        samples_btn = Gtk.MenuButton(label="Samples")
+        samples_btn.set_popover(self._build_samples_popover())
+        header.pack_start(samples_btn)
+
+        # Right header actions: Undo, Redo, Load ~/.ssh/config, Theme switcher
+        theme_btn = Gtk.MenuButton(icon_name="dark-mode-symbolic", tooltip_text="Appearance")
+        theme_btn.set_popover(self._build_theme_popover())
+        header.pack_end(theme_btn)
+
+        load_default_btn = Gtk.Button(label="~/.ssh/config", tooltip_text="Load user's ~/.ssh/config")
+        load_default_btn.connect("clicked", self._on_load_default_ssh)
+        header.pack_end(load_default_btn)
+
+        self._redo_btn = Gtk.Button(icon_name="edit-redo-symbolic", tooltip_text="Redo", sensitive=False)
+        self._redo_btn.connect("clicked", lambda *_: self.workbench.redo())
+        header.pack_end(self._redo_btn)
+
+        self._undo_btn = Gtk.Button(icon_name="edit-undo-symbolic", tooltip_text="Undo", sensitive=False)
+        self._undo_btn.connect("clicked", lambda *_: self.workbench.undo())
+        header.pack_end(self._undo_btn)
+
+        self.workbench.connect("history-changed", self._on_history_changed)
+        self.workbench.connect("file-loaded", lambda *_, p: self.set_title(f"SSH Config Workbench — {Path(p).name}"))
+
+        toolbar_view.set_content(self.workbench)
+
+        if initial_file and initial_file.is_file():
+            self.workbench.load_file(initial_file)
+
+    def _on_history_changed(self, _wb, can_undo: bool, can_redo: bool) -> None:
+        self._undo_btn.set_sensitive(can_undo)
+        self._redo_btn.set_sensitive(can_redo)
+
+    def _on_load_default_ssh(self, *_) -> None:
+        cfg = Path.home() / ".ssh" / "config"
+        if cfg.is_file():
+            self.workbench.load_file(cfg)
+        else:
+            self.workbench.show_toast(f"No file found at {cfg}")
+
+    def _build_samples_popover(self) -> Gtk.Popover:
+        pop = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_top(4)
+        box.set_margin_bottom(4)
+        box.set_margin_start(4)
+        box.set_margin_end(4)
+        pop.set_child(box)
+        for name, content in SAMPLES.items():
+            btn = Gtk.Button(label=name)
+            btn.add_css_class("flat")
+            btn.connect(
+                "clicked",
+                lambda *_, n=name, c=content: (pop.popdown(), self.workbench.load_text(c, label=f'Loaded "{n}"')),
+            )
+            box.append(btn)
+        return pop
+
+    def _build_theme_popover(self) -> Gtk.Popover:
+        pop = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_top(4)
+        box.set_margin_bottom(4)
+        box.set_margin_start(4)
+        box.set_margin_end(4)
+        pop.set_child(box)
+
+        style_mgr = Adw.StyleManager.get_default()
+        for label, scheme in (
+            ("Follow System", Adw.ColorScheme.DEFAULT),
+            ("Light", Adw.ColorScheme.FORCE_LIGHT),
+            ("Dark", Adw.ColorScheme.FORCE_DARK),
+        ):
+            btn = Gtk.Button(label=label)
+            btn.add_css_class("flat")
+            btn.connect("clicked", lambda *_, s=scheme: (pop.popdown(), style_mgr.set_color_scheme(s)))
+            box.append(btn)
+        return pop
+
+
+class SshWorkbenchApp(Adw.Application):
+    def __init__(self) -> None:
+        super().__init__(
+            application_id="dev.sshworkbench.App",
+            flags=Gio.ApplicationFlags.HANDLES_OPEN,
+        )
+        self._initial_file: Path | None = None
+
+    def do_activate(self) -> None:
+        win = self.get_active_window()
+        if win is None:
+            win = SshWorkbenchWindow(self, initial_file=self._initial_file)
+        win.present()
+
+    def do_open(self, files: list[Gio.File], _n_files: int, _hint: str) -> None:
+        if files and (p := files[0].get_path()):
+            self._initial_file = Path(p)
+        self.activate()
+
+
+def main(argv: list[str] | None = None) -> int:
+    app = SshWorkbenchApp()
+    return app.run(argv if argv is not None else sys.argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+How to Run & Embed
+
+Run as a standalone desktop app:
+
+pip install -e .
+ssh-workbench              # or: ssh-workbench ~/.ssh/config
+
+Embed into any cross-platform Python GTK4 / Libadwaita app:
+
+from gi.repository import Adw, Gtk
+from ssh_workbench import SshConfigWorkbench
+
+# Inside your Adw.ApplicationWindow / Gtk.Box / Gtk.Paned / Adw.TabView:
+workbench = SshConfigWorkbench(initial_target="web1.prod.internal")
+workbench.load_file("~/.ssh/config")
+workbench.connect("changed", lambda wb: print("Config modified"))
+
+my_paned.set_end_child(workbench)
+
+(Note on Undo/Redo shortcuts & theme: when embedded, SshConfigWorkbench
+automatically inherits your host app's Adw.StyleManager color scheme, and your
+host app can wire its own HeaderBar Undo/Redo buttons directly to
+workbench.undo(), workbench.redo(), and the "history-changed" signal.)
+
+
+review on above:
+
+I successfully accessed and reviewed both uploaded files: the HTML prototype (`ai_studio_code.html`) and the proposed Python/GTK4 implementation (`advanced-ssh-config-editor.txt`).
+
+## **Overall assessment**
+
+**The concept is strong, and I think it could become one of SSH Pilot's most valuable configuration features. However, I would not integrate the proposed implementation as-is.**
+
+The two-pane design addresses the central problem with advanced OpenSSH configurations: users need to understand not just *what rules exist*, but *which rules actually apply to a connection and why*.
+
+The most valuable aspects are:
+
+- **Ordered configuration blocks:** `Host`, `Match`, and global settings are visible in their actual order.
+- **Live effective configuration:** Users can select a host and see which options win.
+- **Precedence explanations:** Applied and shadowed directives are identified.
+- **Configuration trace:** Users can understand how rules interact.
+- **Raw configuration view:** Advanced users aren't forced to abandon standard OpenSSH syntax.
+- **GTK4/libadwaita implementation:** The proposed widget fits SSH Pilot's existing technology choices.
+
+The architecture has the right broad idea:
+
+**Editable OpenSSH configuration**
+
+Ordered Host / Match blocks, directives and Include files
+
+**Rule analysis**
+
+Matches, precedence, provenance
+
+**Effective SSH settings**
+
+OpenSSH-verified values
+
+The main problem is that the supplied Python engine attempts to reproduce OpenSSH's evaluation behavior. Its results are not reliably equivalent to OpenSSH, and some editor operations can change the meaning of the configuration.
+
+## **Problems I found in the implementation**
+
+| Severity | Finding                                                                        | Consequence                                                                             |
+| -------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Critical | Global blocks can be moved below `Host` blocks                                 | The simulator and saved configuration disagree about which hosts receive those settings |
+| Critical | Saving replaces symbolic links                                                 | Can break NixOS/Home Manager-managed SSH configurations                                 |
+| Critical | Custom resolution engine is not OpenSSH-equivalent                             | Incorrect effective settings, particularly for `Match`, canonicalization and defaults   |
+| High     | Generated SSH command uses the resolved hostname instead of the original alias | Can bypass the intended `Host` rules                                                    |
+| High     | Verification runs `ssh -G` using a temporary `-F` file                         | Does not establish parity with the actual launch environment                            |
+| High     | Repeated resolution and filesystem access run synchronously                    | Potential GTK main-thread stalls                                                        |
+| High     | Virtual Include editor rebuilds itself during text changes                     | Can disrupt editing and focus                                                           |
+| High     | Saving rewrites the entire configuration                                       | Formatting changes and possible conflicts with external edits                           |
+
+### **Two bugs I reproduced**
+
+**1. Global block semantics**
+
+The editor allows this block sequence:
+
+```
+Host zoo
+    User admin
+
+# Global block inserted here by the editor
+Port 2200
+
+Host bar
+    HostName example.com
+```
+
+Its Python resolver considers `Port 2200` global and applies it to `bar`.
+
+But in the serialized OpenSSH configuration, `Port 2200` belongs to `Host zoo`. OpenSSH does not have a special global-block delimiter.
+
+This makes the editor unsafe for arbitrary block reordering.
+
+**2. Symbolic-link destruction**
+
+I tested `save_config_safely()` with a symbolic link pointing to an SSH configuration file.
+
+After saving, the symbolic link had been replaced with a regular file, while the original target remained unchanged.
+
+For SSH Pilot, given its support for configurations managed externally, this is a release-blocking issue.
+
+I also tested:
+
+```
+Match exec "false"
+    User root
+```
+
+The proposed simulator reported `User root` as active because its default simulated `Match exec` result is true. That illustrates why its output cannot be presented as authoritative.
+
+## **How I would improve the design**
+
+I would preserve the two-pane concept, but make the interface less dense.
+
+The left pane should primarily show the ordered configuration structure, with compact, expandable rules. The right pane should show the selected rule's options and the actual resulting configuration for a chosen host.
+
+Most importantly, I would separate **configuration editing**, **OpenSSH resolution**, and **explanation** into independent components.
+
+OpenSSH should be authoritative for effective settings. A separate analyzer can explain which blocks probably contributed, trace precedence, and identify conflicts. Whenever that explanation is uncertain, the interface should say so rather than claiming a rule was definitively applied or shadowed.
+
+For SSH Pilot specifically, I would also reuse its existing configuration handling instead of introducing a second independent implementation that must remain compatible with every OpenSSH behavior and future SSH Pilot change.
+
+The Python package provides a reasonable starting UI structure, but I would replace the parser, resolver and save infrastructure before integration.
+
+## **Verdict**
+
+Product concept
+
+# **8/10**
+
+Worth developing
+
+Implementation readiness
+
+# **4/10**
+
+Needs substantial engineering
+
+My recommendation is to **keep the interaction model and redesign the underlying engine around strict OpenSSH parity**.
+
+I also think this could justify a standalone application, rather than being exclusively an SSH Pilot feature. A visual OpenSSH configuration editor with reliable precedence explanations, safe editing and live resolution could be useful independently.
+
+The Python engine imported successfully, and the GTK widget and app code passed Python syntax compilation. I did not execute the GTK interface or verify it against a live OpenSSH installation, so this is a source-level review with targeted engine tests, not a complete runtime audit.

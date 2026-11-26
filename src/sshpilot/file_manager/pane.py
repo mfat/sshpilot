@@ -435,7 +435,7 @@ class FilePane(Gtk.Box):
             _("Remote") if label.lower() == "remote" else
             _("Local") if label.lower() == "local" else label
         )
-        self.append(self.toolbar)
+        # The toolbar joins the file list in one card, built below.
 
         self._is_remote = label.lower() == "remote"
         self._window: Optional["FileManagerWindow"] = None
@@ -574,24 +574,32 @@ class FilePane(Gtk.Box):
         content_overlay = Gtk.Overlay()
         content_overlay.set_child(self._stack)
 
-        # Rounded-corner card framing the browser area: `card` supplies the
-        # radius/shadow, `view` the content-surface colors (its rule follows
-        # .card in the Adwaita stylesheet, so the view background wins).
-        # overflow=HIDDEN clips the scrolled content to the corners.
-        _ensure_browser_card_css()
-        content_overlay.add_css_class("card")
-        content_overlay.add_css_class("view")
-        # `frame` draws a 1px border following the card's rounded corners.
-        content_overlay.add_css_class("frame")
-        content_overlay.add_css_class("fm-browser-card")
-        content_overlay.set_overflow(Gtk.Overflow.HIDDEN)
-        content_overlay.set_margin_top(2)
-        content_overlay.set_margin_bottom(2)
-        content_overlay.set_margin_start(8)
-        content_overlay.set_margin_end(8)
-
+        content_overlay.set_vexpand(True)
         overlay.set_child(content_overlay)
-        self.append(overlay)
+        overlay.set_vexpand(True)
+
+        # One rounded card per pane: the toolbar on top, a hairline, then the
+        # file list. `card` supplies the radius/shadow, `view` the content-
+        # surface colors (its rule follows .card in the Adwaita stylesheet,
+        # so the view background wins), `frame` a 1px border following the
+        # corners; overflow=HIDDEN clips the scrolled content to them.
+        _ensure_browser_card_css()
+        pane_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        pane_card.add_css_class("card")
+        pane_card.add_css_class("view")
+        pane_card.add_css_class("frame")
+        pane_card.add_css_class("fm-browser-card")
+        pane_card.set_overflow(Gtk.Overflow.HIDDEN)
+        pane_card.set_vexpand(True)
+        pane_card.set_margin_top(8)
+        pane_card.set_margin_bottom(2)
+        pane_card.set_margin_start(8)
+        pane_card.set_margin_end(8)
+        pane_card.append(self.toolbar)
+        pane_card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        pane_card.append(overlay)
+        self._pane_card = pane_card
+        self.append(pane_card)
 
         # Add drop target for file operations - use string type for better compatibility
         drop_target = Gtk.DropTarget.new(type=GObject.TYPE_STRING, actions=Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
@@ -623,8 +631,8 @@ class FilePane(Gtk.Box):
             from sshpilot import icon_utils
             button = Gtk.Button()
             
-            # Only upload and download buttons get text labels
-            if name in ["upload", "download"]:
+            # Only the transfer buttons get text labels
+            if name in ["upload", "download", "copy_to_other"]:
                 # ButtonContent only supports set_icon_name, but we want bundled icons
                 # So we'll use an Image widget with a label
                 image = icon_utils.new_image_from_icon_name(icon_name)
@@ -697,6 +705,18 @@ class FilePane(Gtk.Box):
             _("Delete"),
             lambda _button: self._emit_entry_operation("delete"),
         )
+        # With a server in each pane, the transfer to the other side is a
+        # copy between servers: neither Upload nor Download (#1356).
+        copy_to_other_button = _create_action_button(
+            "copy_to_other",
+            "document-send-symbolic",
+            _("Copy to Other Pane"),
+            lambda _button: self._on_copy_to_other_clicked(),
+        )
+        self._download_button = download_button
+        self._upload_button = upload_button
+        self._copy_to_other_button = copy_to_other_button
+        copy_to_other_button.set_visible(False)
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
         edit_button.set_visible(False)  # Initially hidden, shown when text file is selected
@@ -726,6 +746,7 @@ class FilePane(Gtk.Box):
 
         action_bar.pack_start(upload_button)
         action_bar.pack_start(download_button)
+        action_bar.pack_start(copy_to_other_button)
         if request_access_button:
             action_bar.pack_start(request_access_button)
         # Shows or hides the terminal below this pane; hidden until the file
@@ -756,7 +777,6 @@ class FilePane(Gtk.Box):
 
         # Connect to view-changed signal from toolbar
         self.toolbar.connect("view-changed", self._on_view_toggle)
-        self.toolbar.connect("show-hidden-toggled", self._on_toolbar_show_hidden_toggled)
         self.toolbar.connect("zoom-changed", self._on_toolbar_zoom_changed)
         self.toolbar.path_entry.connect("activate", self._on_path_entry)
         # Wire navigation buttons
@@ -779,7 +799,6 @@ class FilePane(Gtk.Box):
         self._held_removals: Dict[str, Set[str]] = {}
         self._raw_entries: List[FileEntry] = []
         self._show_hidden = False
-        self.toolbar.set_show_hidden_state(self._show_hidden)
         self._sort_key = "name"  # Default sort by name
         self._sort_descending = False  # Default ascending order
 
@@ -1078,9 +1097,6 @@ class FilePane(Gtk.Box):
         self._update_view_button_icon()
         # Each view has its own zoom; show this one's on the slider.
         self._sync_zoom_slider()
-
-    def _on_toolbar_show_hidden_toggled(self, _toolbar, show_hidden: bool) -> None:
-        self.set_show_hidden(show_hidden)
 
     def _on_toolbar_zoom_changed(self, _toolbar, level: int) -> None:
         self.set_icon_level(self._zoom_view(), level)
@@ -1959,6 +1975,16 @@ class FilePane(Gtk.Box):
         self._menu_actions["sort-direction-asc"].connect("activate", lambda *_: self._on_sort_direction(False))
         self._menu_actions["sort-direction-desc"].connect("activate", lambda *_: self._on_sort_direction(True))
         
+        # View menu: Show Hidden Files, a check item (Ctrl+H toggles it too).
+        show_hidden = Gio.SimpleAction.new_stateful(
+            "show-hidden", None, GLib.Variant.new_boolean(bool(self._show_hidden))
+        )
+        show_hidden.connect(
+            "change-state",
+            lambda _action, value: self.set_show_hidden(bool(value.get_boolean())),
+        )
+        self._menu_actions["show-hidden"] = show_hidden
+
         # Add actions to action group
         for action in self._menu_actions.values():
             self._menu_action_group.add_action(action)
@@ -2061,6 +2087,7 @@ class FilePane(Gtk.Box):
         _add_action("select_all", self._on_menu_select_all)
         _add_action("download", self._on_menu_download)
         _add_action("upload", self._on_menu_upload)
+        _add_action("copy_to_other", self._on_copy_to_other_clicked)
         _add_action("edit", self._on_menu_edit)
         _add_action("copy", lambda: self._emit_entry_operation("copy"))
         _add_action("cut", lambda: self._emit_entry_operation("cut"))
@@ -2251,8 +2278,10 @@ class FilePane(Gtk.Box):
                 _item(_("Edit"), "edit")
                 if single is not None and not single.is_dir
                 and _is_editable_as_text(single.name) else None,
-                _item(_("Download"), "download") if self._is_remote
-                else _item(_("Upload…"), "upload"),
+                _item(_("Download"), "download") if self._download_available()
+                else _item(_("Upload…"), "upload") if not self._is_remote
+                else _item(_("Copy to Other Pane"), "copy_to_other")
+                if self._copy_to_other_available() else None,
             )
             _section(
                 _item(_("Cut"), "cut", "<Primary>x"),
@@ -2436,7 +2465,10 @@ class FilePane(Gtk.Box):
         # For context menu, actions are always enabled since menu items are shown/hidden dynamically
         can_paste = bool(getattr(self, "_can_paste", False))
 
-        _set_enabled("download", self._is_remote and has_selection)
+        can_download = self._download_available()
+        _set_enabled("download", can_download and has_selection)
+        can_copy_to_other = self._copy_to_other_available()
+        _set_enabled("copy_to_other", can_copy_to_other and has_selection)
         _set_enabled("upload", (not self._is_remote) and has_selection)
         _set_enabled("copy", has_selection)
         _set_enabled("cut", has_selection)
@@ -2457,7 +2489,8 @@ class FilePane(Gtk.Box):
         # new_folder is available in context menu only now
 
         # Action bar buttons still use the old logic
-        _set_button("download", self._is_remote and has_selection)
+        _set_button("download", can_download and has_selection)
+        _set_button("copy_to_other", can_copy_to_other and has_selection)
         _set_button("upload", (not self._is_remote) and has_selection)
         _set_button("copy", has_selection)
         _set_button("cut", has_selection)
@@ -2507,12 +2540,21 @@ class FilePane(Gtk.Box):
     def set_show_hidden(self, show_hidden: bool, *, preserve_selection: bool = True) -> None:
         """Update the hidden file visibility state and refresh entries."""
 
-        self.toolbar.set_show_hidden_state(show_hidden)
+        self._sync_show_hidden_action(show_hidden)
         if self._show_hidden == show_hidden:
             return
 
         self._show_hidden = show_hidden
         self._apply_entry_filter(preserve_selection=preserve_selection)
+
+    def _sync_show_hidden_action(self, show_hidden: bool) -> None:
+        """Keep the view menu's Show Hidden Files check in step."""
+        action = getattr(self, "_menu_actions", {}).get("show-hidden")
+        if action is None:
+            return
+        state = action.get_state()
+        if state is None or state.get_boolean() != bool(show_hidden):
+            action.set_state(GLib.Variant.new_boolean(bool(show_hidden)))
 
     def _on_menu_open(self) -> None:
         selected = self._get_selected_indices()
@@ -2579,8 +2621,96 @@ class FilePane(Gtk.Box):
     def _on_menu_select_all(self) -> None:
         self._selection_model.select_all()
 
-    def _on_menu_download(self) -> None:
+    def _download_available(self) -> bool:
+        """Download needs this computer in the other pane."""
         if not self._is_remote:
+            return False
+        try:
+            window = self._get_file_manager_window()
+        except Exception:
+            window = None
+        local_pane = getattr(window, "_local_pane", None)
+        if callable(local_pane):
+            return local_pane() is not None
+        return True
+
+    def _copy_to_other_available(self) -> bool:
+        """Copy to Other Pane: this pane and the other both show a server."""
+        if not self._is_remote:
+            return False
+        try:
+            window = self._get_file_manager_window()
+        except Exception:
+            window = None
+        local_pane = getattr(window, "_local_pane", None)
+        if not callable(local_pane) or local_pane() is not None:
+            return False
+        partner = getattr(self, "_partner_pane", None)
+        return partner is not None and bool(getattr(partner, "_is_remote", False))
+
+    def _on_copy_to_other_clicked(self) -> None:
+        """Copy the selection into the folder the other pane shows, from one
+        server to the other (or within one, when both panes show it)."""
+        entries = self.get_selected_entries()
+        if not entries:
+            self.show_toast(_("Select items to copy first"))
+            return
+        if not self._copy_to_other_available():
+            return
+        window = self._get_file_manager_window()
+        partner = self._partner_pane
+        destination = getattr(partner, "_current_path", "") or "/"
+        window._perform_pane_to_pane_remote_operation(
+            entries,
+            self._current_path or "/",
+            destination,
+            False,
+            source_pane=self,
+            destination_pane=partner,
+        )
+
+    def set_remote(self, is_remote: bool) -> None:
+        """Switch what this pane browses: a server, or this computer.
+
+        The file manager does this when the left pane's location changes; the
+        listing itself follows from the next load.
+        """
+        is_remote = bool(is_remote)
+        if is_remote == self._is_remote:
+            return
+        self._is_remote = is_remote
+        access = getattr(self, "_request_access_button", None)
+        if access is not None:
+            if is_remote:
+                self._request_access_was_visible = access.get_visible()
+                access.set_visible(False)
+            else:
+                access.set_visible(getattr(self, "_request_access_was_visible", True))
+        self._entries = []
+        self._current_path = "/"
+        self.refresh_transfer_actions()
+
+    def refresh_transfer_actions(self) -> None:
+        """Show Upload on this computer's pane, and Download on a server pane
+        whose partner is this computer."""
+        upload = getattr(self, "_upload_button", None)
+        if upload is not None:
+            upload.set_visible(not self._is_remote)
+        download = getattr(self, "_download_button", None)
+        if download is not None:
+            download.set_visible(self._download_available())
+        copy_to_other = getattr(self, "_copy_to_other_button", None)
+        if copy_to_other is not None:
+            copy_to_other.set_visible(self._copy_to_other_available())
+        update = getattr(self, "_update_menu_state", None)
+        if callable(update):
+            try:
+                update()
+            except Exception:
+                logger.debug("Could not refresh pane actions", exc_info=True)
+
+    def _on_menu_download(self) -> None:
+        if not self._download_available():
             return
         entries = self.get_selected_entries()
         if not entries:
@@ -2637,7 +2767,7 @@ class FilePane(Gtk.Box):
             self.show_toast(_("File manager is not available"))
             return
 
-        local_pane = getattr(window, "_left_pane", None)
+        local_pane = window._local_pane()
         if not isinstance(local_pane, FilePane):
             self.show_toast(_("Local pane is unavailable"))
             return
@@ -2689,7 +2819,7 @@ class FilePane(Gtk.Box):
             self.show_toast(_("File manager is not available"))
             return
 
-        local_pane = getattr(window, "_left_pane", None)
+        local_pane = window._local_pane()
         if local_pane is None:
             self.show_toast(_("Local pane is unavailable"))
             return
@@ -2878,7 +3008,11 @@ class FilePane(Gtk.Box):
         
         if self._is_remote:
             # Remote file editing
-            sftp_manager = getattr(window, '_manager', None)
+            manager_for = getattr(window, "_manager_for", None)
+            sftp_manager = (
+                manager_for(self) if callable(manager_for)
+                else getattr(window, '_manager', None)
+            )
             if sftp_manager is None:
                 self.show_toast(_("Cannot edit file - connection not available"))
                 return
@@ -3073,7 +3207,11 @@ class FilePane(Gtk.Box):
             if self._is_remote:
                 file_manager_window = self._get_file_manager_window()
                 if file_manager_window is not None:
-                    sftp_manager = getattr(file_manager_window, '_manager', None)
+                    manager_for = getattr(file_manager_window, "_manager_for", None)
+                    sftp_manager = (
+                        manager_for(self) if callable(manager_for)
+                        else getattr(file_manager_window, '_manager', None)
+                    )
                     logger.debug(f"FilePane: Getting SFTP manager for properties dialog: is_remote={self._is_remote}, file_manager_window={file_manager_window}, manager={sftp_manager}")
                 else:
                     logger.debug(f"FilePane: Could not find FileManagerWindow for remote pane")
@@ -3502,16 +3640,8 @@ class FilePane(Gtk.Box):
         The drag source advertises both COPY and MOVE; a drop within a single
         pane defaults to a move, and holding the primary modifier copies.
         """
-        if drop_target is None:
-            return False
-        try:
-            event = drop_target.get_current_event()
-            state = (
-                event.get_modifier_state()
-                if event is not None
-                else Gdk.ModifierType(0)
-            )
-        except Exception:
+        state = FilePane._drop_modifier_state(drop_target)
+        if state is None:
             return False
         primary_mask = getattr(Gdk.ModifierType, "CONTROL_MASK", 0)
         if is_macos():
@@ -3520,6 +3650,30 @@ class FilePane(Gtk.Box):
                 | getattr(Gdk.ModifierType, "SUPER_MASK", 0)
             )
         return bool(state & primary_mask)
+
+    @staticmethod
+    def _drop_modifier_state(drop_target: Optional[Gtk.DropTarget]):
+        """The modifier state of the drop event, or None when unknown."""
+        if drop_target is None:
+            return None
+        try:
+            event = drop_target.get_current_event()
+            return (
+                event.get_modifier_state()
+                if event is not None
+                else Gdk.ModifierType(0)
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _drag_move_modifier_pressed(drop_target: Optional[Gtk.DropTarget]) -> bool:
+        """True when the user held Shift during a drop: move where the
+        default is to copy (between two servers), as in Nautilus."""
+        state = FilePane._drop_modifier_state(drop_target)
+        if state is None:
+            return False
+        return bool(state & getattr(Gdk.ModifierType, "SHIFT_MASK", 0))
 
     def _on_drop_string(self, drop_target: Gtk.DropTarget, value: str, x: float, y: float) -> bool:
         """Handle dropped files from string data."""
@@ -3720,7 +3874,33 @@ class FilePane(Gtk.Box):
         elif not self._is_remote and source_pane._is_remote:
             # Remote to local - download
             logger.debug("Starting download operation")
-            self._handle_download_from_drag(resolved_items, target_folder)
+            self._handle_download_from_drag(resolved_items, target_folder, source_pane)
+        elif self._is_remote and source_pane._is_remote and source_pane is not self:
+            # Server to server (#1356): each pane browses a server of its own,
+            # or the same one in two places.
+            window = self._get_file_manager_window()
+            if not isinstance(window, _file_manager_window_cls()):
+                logger.debug("Drop rejected: file manager window unavailable")
+                return False
+            entries = [entry for _source_file_path, entry in resolved_items]
+            destination = self._current_path
+            if target_folder is not None:
+                destination = posixpath.join(self._current_path, target_folder.name)
+            # One server in two panes is one file system: move, Ctrl copies.
+            # Two servers: copy, Shift moves; a plain drag must not delete
+            # the originals on another machine. Nautilus does the same.
+            if window._same_server(source_pane, self):
+                move = not self._drag_copy_modifier_pressed(drop_target)
+            else:
+                move = self._drag_move_modifier_pressed(drop_target)
+            window._perform_pane_to_pane_remote_operation(
+                entries,
+                getattr(source_pane, "_current_path", "") or "/",
+                destination,
+                move,
+                source_pane=source_pane,
+                destination_pane=self,
+            )
         elif source_pane == self:
             if target_folder is None:
                 logger.debug("Drop rejected: no target folder within the same pane")
@@ -3737,7 +3917,8 @@ class FilePane(Gtk.Box):
                 # behave exactly like cut/paste within the remote pane.
                 destination = posixpath.join(self._current_path, target_folder.name)
                 window._perform_remote_clipboard_operation(
-                    entries, self._current_path, destination, move
+                    entries, self._current_path, destination, move,
+                    **({"pane": self} if self is getattr(window, "_left_pane", None) else {}),
                 )
             else:
                 # Local to local (same pane)
@@ -3792,6 +3973,7 @@ class FilePane(Gtk.Box):
                     window._start_transfer_batch(
                         "upload",
                         items,
+                        remote_pane=self,
                         refresh_remote=self,
                         highlight_name=(
                             None if target_folder is not None
@@ -3801,7 +3983,9 @@ class FilePane(Gtk.Box):
                 except Exception as e:
                     self.show_toast(_("Upload failed: {error}").format(error=e))
 
-            window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
+            window._check_file_conflicts(
+                files_to_transfer, "upload", _proceed_with_upload, remote_pane=self
+            )
 
         except Exception as e:
             self.show_toast(_("Upload failed: {error}").format(error=e))
@@ -3810,6 +3994,7 @@ class FilePane(Gtk.Box):
         self,
         items: List[Tuple[str, FileEntry]],
         target_folder: Optional[FileEntry] = None,
+        source_pane: Optional["FilePane"] = None,
     ) -> None:
         """Handle download operation from drag and drop.
 
@@ -3849,6 +4034,7 @@ class FilePane(Gtk.Box):
                     window._start_transfer_batch(
                         "download",
                         items,
+                        remote_pane=source_pane,
                         refresh_local_path=str(self._current_path),
                         highlight_name=(
                             None if target_folder is not None
@@ -3858,7 +4044,10 @@ class FilePane(Gtk.Box):
                 except Exception as e:
                     self.show_toast(_("Download failed: {error}").format(error=e))
 
-            window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
+            window._check_file_conflicts(
+                files_to_transfer, "download", _proceed_with_download,
+                remote_pane=source_pane,
+            )
 
         except Exception as e:
             self.show_toast(_("Download failed: {error}").format(error=e))

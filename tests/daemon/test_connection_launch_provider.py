@@ -1179,3 +1179,26 @@ def test_inherited_session_type_none_disables_preference_multiplex(
         assert tokens[tokens.index("ControlMaster=no") - 1] == "-o"
         if "ControlMaster=auto" in tokens:
             assert tokens.index("ControlMaster=no") < tokens.index("ControlMaster=auto")
+
+
+@pytest.mark.parametrize("data", [
+    {"auth_method": 0},
+    {"auth_method": 1},
+    {"auth_method": 1, "pubkey_auth_no": True},
+])
+def test_copy_id_adds_no_auth_options(provider, tmp_path, data):
+    """ssh-copy-id behaves as `ssh-copy-id <alias>` would: the login order
+    and switches are the Host block's, with or without a saved password."""
+
+    class _Secrets:
+        def lookup_connection_password(self, _connection_id):
+            return "saved-secret"
+
+    prov, records = provider
+    records["web"] = _record(data=dict(data))
+    prov._secret_provider = _Secrets()
+    public_key = tmp_path / "id_new.pub"
+    public_key.write_text("ssh-ed25519 AAAA test\n")
+    command, _environment = prov.prepare_copy_id_launch("web", str(public_key))
+    assert not any("PreferredAuthentications" in part for part in command)
+    assert not any("PubkeyAuthentication" in part for part in command)

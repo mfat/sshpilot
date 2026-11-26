@@ -97,6 +97,9 @@ class SessionFailureCode(str, Enum):
     ENDED_BEFORE_OUTPUT = "ended_before_output"
     SSH_EXITED = "ssh_exited"
     SSH_DIAGNOSTIC = "ssh_diagnostic"
+    # Permission denied, and OpenSSH attempted none of the methods the server
+    # accepts: the connection's configuration leaves all of them out.
+    AUTH_METHODS_NOT_TRIED = "auth_methods_not_tried"
     # The protocol-neutral pair for non-SSH sessions (telnet, serial, ...),
     # which neither authenticate through SSH Pilot nor are SSH sessions.
     PROCESS_EXITED = "process_exited"
@@ -333,6 +336,9 @@ class AttachSessionRequest:
     request_input: bool = True
     want_terminal_output: bool = False
     from_sequence: int = 0
+    # The frontend acknowledges displayed output (TerminalOutputAck). Needs
+    # the daemon's ``terminal.flow_control`` capability and terminal output.
+    flow_control: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.session_id, "session id")
@@ -342,6 +348,10 @@ class AttachSessionRequest:
             raise TypeError("terminal output preference must be a boolean")
         if type(self.from_sequence) is not int or self.from_sequence < 0:
             raise ValueError("terminal replay sequence must not be negative")
+        if type(self.flow_control) is not bool:
+            raise TypeError("terminal flow control must be a boolean")
+        if self.flow_control and not self.want_terminal_output:
+            raise ValueError("terminal flow control needs terminal output")
 
 
 @dataclass(frozen=True)

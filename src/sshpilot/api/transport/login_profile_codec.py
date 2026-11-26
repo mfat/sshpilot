@@ -32,6 +32,8 @@ from ..models.login_profiles import (
     LoginProfileSource,
     LoginProfileSummary,
     PreviewLoginProfileAssignmentRequest,
+    PreviewLoginProfileUpdateRequest,
+    LoginProfileUpdatePreview,
     SetGroupLoginProfileRequest,
     SetLoginProfileSecretRequest,
     UpdateLoginProfileRequest,
@@ -64,7 +66,20 @@ def _mode(value: Any) -> Optional[LoginProfileLinkMode]:
 
 # -- settings / summaries ------------------------------------------------------
 
-_SETTINGS_FIELDS = frozenset(LoginProfileSettings.__dataclass_fields__)  # type: ignore[attr-defined]
+# Added after older clients shipped; they omit it, so it reads as unset and
+# the profile model converts their ``key_select_mode`` instead.
+_OPTIONAL_SETTINGS_FIELDS = frozenset({"identities_only"})
+_SETTINGS_FIELDS = (
+    frozenset(LoginProfileSettings.__dataclass_fields__)  # type: ignore[attr-defined]
+    - _OPTIONAL_SETTINGS_FIELDS
+)
+# Key settings the older Key/Password choice hid in password mode.
+_KEY_SOURCE_FIELDS = (
+    "identity_agent",
+    "add_keys_to_agent",
+    "pkcs11_provider",
+    "security_key_provider",
+)
 
 
 def login_profile_settings_to_wire(settings: LoginProfileSettings) -> Dict[str, Any]:
@@ -85,11 +100,17 @@ def login_profile_settings_to_wire(settings: LoginProfileSettings) -> Dict[str, 
         "forward_agent_target": settings.forward_agent_target,
         "proxy_command": settings.proxy_command,
         "extra_ssh_config": settings.extra_ssh_config,
+        "identities_only": settings.identities_only,
     }
 
 
 def login_profile_settings_from_wire(value: Any) -> LoginProfileSettings:
-    data = _strict_fields(value, required=_SETTINGS_FIELDS, context="login profile settings")
+    data = _strict_fields(
+        value,
+        required=_SETTINGS_FIELDS,
+        optional=_OPTIONAL_SETTINGS_FIELDS,
+        context="login profile settings",
+    )
     text = {
         name: _text(data[name], name, allow_empty=True)
         for name in (
@@ -103,14 +124,43 @@ def login_profile_settings_from_wire(value: Any) -> LoginProfileSettings:
             "extra_ssh_config",
         )
     }
+    auth_method = _integer(data["auth_method"], "auth_method")
+    key_select_mode = (
+        None if data["key_select_mode"] is None
+        else _integer(data["key_select_mode"], "key_select_mode")
+    )
+    identity_files = _strings(data["identity_files"], "identity_files")
+    certificate_files = _strings(data["certificate_files"], "certificate_files")
+    forward_agent = (
+        None if data["forward_agent"] is None
+        else _boolean(data["forward_agent"], "forward_agent")
+    )
+    if "identities_only" not in data:
+        # A peer from before fields could be left unset. It has to send
+        # every field, so its form defaults say nothing: Automatic key
+        # selection and "don't forward the agent" read as not set, and so
+        # do the key settings its password mode hid and never applied.
+        if auth_method == 1:
+            key_select_mode = None
+            identity_files = certificate_files = ()
+            for name in _KEY_SOURCE_FIELDS:
+                text[name] = ""
+        elif key_select_mode == 0 and not identity_files:
+            key_select_mode = None
+        if forward_agent is False:
+            forward_agent = None
     return LoginProfileSettings(
         name=_text(data["name"], "name"),
-        auth_method=_integer(data["auth_method"], "auth_method"),
-        key_select_mode=_integer(data["key_select_mode"], "key_select_mode"),
-        identity_files=_strings(data["identity_files"], "identity_files"),
-        certificate_files=_strings(data["certificate_files"], "certificate_files"),
+        auth_method=auth_method,
+        key_select_mode=key_select_mode,
+        identity_files=identity_files,
+        certificate_files=certificate_files,
         pubkey_auth_no=_boolean(data["pubkey_auth_no"], "pubkey_auth_no"),
-        forward_agent=_boolean(data["forward_agent"], "forward_agent"),
+        forward_agent=forward_agent,
+        identities_only=(
+            None if data.get("identities_only") is None
+            else _boolean(data["identities_only"], "identities_only")
+        ),
         **text,
     )
 
@@ -474,4 +524,46 @@ def login_profiles_changed_event_from_wire(value: Any) -> LoginProfilesChangedEv
         detached=tuple(
             detached_connection_info_from_wire(d) for d in _array(data["detached"], "detached")
         )
+    )
+
+
+def preview_login_profile_update_request_to_wire(
+    request: PreviewLoginProfileUpdateRequest,
+) -> Dict[str, Any]:
+    _require(request, PreviewLoginProfileUpdateRequest, "preview update request")
+    return {
+        "profile_id": request.profile_id,
+        "settings": login_profile_settings_to_wire(request.settings),
+    }
+
+
+def preview_login_profile_update_request_from_wire(
+    value: Any,
+) -> PreviewLoginProfileUpdateRequest:
+    data = _strict_fields(
+        value, required={"profile_id", "settings"}, context="preview update request"
+    )
+    return PreviewLoginProfileUpdateRequest(
+        profile_id=LoginProfileId(_identifier(data["profile_id"], "login profile id")),
+        settings=login_profile_settings_from_wire(data["settings"]),
+    )
+
+
+def login_profile_update_preview_to_wire(preview: LoginProfileUpdatePreview) -> Dict[str, Any]:
+    _require(preview, LoginProfileUpdatePreview, "update preview")
+    return {
+        "linked_count": preview.linked_count,
+        "replaced": login_profile_assignment_previews_to_wire(preview.replaced)["previews"],
+    }
+
+
+def login_profile_update_preview_from_wire(value: Any) -> LoginProfileUpdatePreview:
+    data = _strict_fields(
+        value, required={"linked_count", "replaced"}, context="update preview"
+    )
+    return LoginProfileUpdatePreview(
+        linked_count=_integer(data["linked_count"], "linked_count"),
+        replaced=tuple(
+            login_profile_assignment_previews_from_wire({"previews": data["replaced"]})
+        ),
     )

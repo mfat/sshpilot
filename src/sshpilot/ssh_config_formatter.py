@@ -11,6 +11,7 @@ rendering here:
   blank lines, and unknown directives keep their authored form and position.
 """
 
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -34,7 +35,6 @@ MANAGED_HOST_OPTIONS = frozenset({
     'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
     'proxycommand', 'proxyjump', 'forwardagent', 'localcommand', 'remotecommand', 'requesttty',
     'identitiesonly', 'permitlocalcommand',
-    'preferredauthentications', 'pubkeyauthentication',
     'identityagent', 'addkeystoagent', 'pkcs11provider', 'securitykeyprovider',
 })
 
@@ -52,16 +52,6 @@ def _authored_directives(data: Dict[str, Any]) -> frozenset:
     return frozenset(
         str(name).strip().lower() for name in raw if str(name).strip()
     )
-
-
-def _preferred_auth_list(data: Dict[str, Any]) -> List[str]:
-    """``preferred_authentications`` as a list, from a list or a comma string."""
-    pref_raw = data.get('preferred_authentications')
-    if isinstance(pref_raw, (list, tuple)):
-        return [str(p).strip() for p in pref_raw if str(p).strip()]
-    if isinstance(pref_raw, str):
-        return [p.strip() for p in pref_raw.split(',') if p.strip()]
-    return []
 
 
 # Keys this formatter writes, each onto a single ssh_config line. A line break
@@ -161,9 +151,8 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     elif data.get('forward_agent_explicit_no'):
         lines.append("    ForwardAgent no")
 
-    # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
+    # IdentityFile/IdentitiesOnly per the key selection
     keyfile = data.get('keyfile') or data.get('private_key')
-    auth_method = int(data.get('auth_method', 0) or 0)
     key_select_mode = int(data.get('key_select_mode', 0) or 0)
     dedicated_key = key_select_mode in (1, 2)
 
@@ -184,95 +173,63 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
                 cleaned.append(stripped)
         return cleaned
 
-    if auth_method == 0:
-        # ssh_config(5) allows multiple IdentityFile/CertificateFile entries;
-        # write the full list when present, falling back to the primary key.
-        identity_files = _clean_list(
-            data.get('identity_files') or ([keyfile] if keyfile else []),
-            'select key file',
-        )
-        # Only write IdentityFile when using a dedicated key mode
-        if dedicated_key and identity_files:
-            for kf in identity_files:
-                lines.append(f"    IdentityFile {_quote_if_spaced(kf)}")
-
-            if key_select_mode == 1:
-                lines.append("    IdentitiesOnly yes")
-        elif data.get('identity_file_none'):
-            lines.append("    IdentityFile none")
-
-        if key_select_mode != 1 and data.get('identities_only_explicit_no'):
-            lines.append("    IdentitiesOnly no")
-
-        # Add certificate(s) if specified (exclude placeholder text)
-        certificate_files = _clean_list(
-            data.get('certificate_files') or ([data.get('certificate')] if data.get('certificate') else []),
-            'select certificate',
-        )
-        for cert in certificate_files:
-            lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
-
-        # Agent / hardware key sources — valid in both automatic and
-        # specific-key modes (the key may come from an agent socket, a
-        # PKCS#11 smartcard, or a FIDO security key rather than a file).
-        ident_agent = (data.get('identity_agent') or '').strip()
-        if ident_agent:
-            lines.append(f"    IdentityAgent {_quote_if_spaced(ident_agent)}")
-        add_keys = (data.get('add_keys_to_agent') or '').strip()
-        if add_keys:
-            lines.append(f"    AddKeysToAgent {add_keys}")
-        pkcs11 = (data.get('pkcs11_provider') or '').strip()
-        if pkcs11:
-            lines.append(f"    PKCS11Provider {_quote_if_spaced(pkcs11)}")
-        sk_provider = (data.get('security_key_provider') or '').strip()
-        if sk_provider:
-            lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
-        # Include password-based fallback only when a password is provided.
-        # A stale PreferredAuthentications (e.g. ``keyboard-interactive,password``
-        # left over from a previous password-auth save) must never keep ssh
-        # asking for a password after the switch to key-based auth, so login
-        # password methods are stripped here in key mode unless the payload
-        # still carries an explicit password fallback.
-        pref_list = _preferred_auth_list(data)
-        if pref_list:
-            if not data.get('password'):
-                pref_list = [
-                    method for method in pref_list
-                    if method.lower() not in ('password', 'keyboard-interactive')
-                ]
-            custom_pref = ",".join(pref_list)
-            if custom_pref:
-                lines.append(f"    PreferredAuthentications {custom_pref}")
-        elif data.get('password'):
-            lines.append(
-                "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
+    # Which keys, certificates and agents to use is independent of the login
+    # order: a password-first host can still need its own key or
+    # certificate, so these lines are written in both modes.
+    # ssh_config(5) allows multiple IdentityFile/CertificateFile entries;
+    # write the full list when present, falling back to the primary key.
+    identity_files = _clean_list(
+        data.get('identity_files') or ([keyfile] if keyfile else []),
+        'select key file',
+    )
+    # Only write IdentityFile when using a dedicated key mode
+    if dedicated_key and identity_files:
+        key_lines = [f"    IdentityFile {_quote_if_spaced(kf)}" for kf in identity_files]
+        # A block may write "none" beside real keys. OpenSSH skips it, but
+        # it is the user's line: it goes back where the block had it.
+        none_index = data.get('__identity_none_index')
+        if data.get('identity_file_none') and type(none_index) is int:
+            key_lines.insert(
+                max(0, min(none_index, len(key_lines))), "    IdentityFile none"
             )
-    else:
-        # Password-based authentication. Include keyboard-interactive so
-        # PAM/2FA hosts (which often disable the raw "password" method)
-        # still negotiate; order prefers kbd-int first.
-        # A preserved list is kept only if the loader would read it back as
-        # password auth: ``password`` present, ``publickey`` absent or after
-        # it. Anything else is stale — the ``gssapi-with-mic,hostbased,
-        # publickey`` left by a key-auth save never tries the password (and
-        # with ``PubkeyAuthentication no`` fails without prompting), and the
-        # key+password combined list reloads as key auth, reverting the switch.
-        pref_list = _preferred_auth_list(data)
-        lowered = [m.lower() for m in pref_list]
-        if 'password' not in lowered or (
-            'publickey' in lowered
-            and lowered.index('publickey') < lowered.index('password')
-        ):
-            pref_list = []
-        custom_pref = ",".join(pref_list)
-        if custom_pref:
-            lines.append(f"    PreferredAuthentications {custom_pref}")
-        else:
-            lines.append(
-                "    PreferredAuthentications keyboard-interactive,password"
-            )
-        if data.get('pubkey_auth_no'):
-            lines.append("    PubkeyAuthentication no")
+        lines.extend(key_lines)
+    elif data.get('identity_file_none'):
+        lines.append("    IdentityFile none")
+
+    # IdentitiesOnly is its own setting: a block may set it without naming a
+    # key (the identities then come from other blocks or the agent).
+    if key_select_mode == 1:
+        lines.append("    IdentitiesOnly yes")
+    elif data.get('identities_only_explicit_no'):
+        lines.append("    IdentitiesOnly no")
+
+    # Add certificate(s) if specified (exclude placeholder text)
+    certificate_files = _clean_list(
+        data.get('certificate_files') or ([data.get('certificate')] if data.get('certificate') else []),
+        'select certificate',
+    )
+    for cert in certificate_files:
+        lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
+
+    # Agent / hardware key sources (the key may come from an agent socket, a
+    # PKCS#11 smartcard, or a FIDO security key rather than a file).
+    ident_agent = (data.get('identity_agent') or '').strip()
+    if ident_agent:
+        lines.append(f"    IdentityAgent {_quote_if_spaced(ident_agent)}")
+    add_keys = (data.get('add_keys_to_agent') or '').strip()
+    if add_keys:
+        lines.append(f"    AddKeysToAgent {add_keys}")
+    pkcs11 = (data.get('pkcs11_provider') or '').strip()
+    if pkcs11:
+        lines.append(f"    PKCS11Provider {_quote_if_spaced(pkcs11)}")
+    sk_provider = (data.get('security_key_provider') or '').strip()
+    if sk_provider:
+        lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
+
+    # The login order and the per-method switches (PreferredAuthentications,
+    # PubkeyAuthentication, ...) are not generated here: they are ordinary
+    # lines of the block, carried in ``extra_ssh_config`` exactly as written
+    # (see core/connections/auth_preferences.py).
 
     # Add X11 forwarding if enabled
     if data.get('x11_forwarding', False):
@@ -358,26 +315,7 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
                     line = f"    {line}"
                 lines.append(line)
 
-    # Remove duplicate or unwanted auth lines
-    cleaned_lines: List[str] = []
-    seen_auth_lines = set()
-    auth_keys = {
-        "preferredauthentications password",
-        "pubkeyauthentication no",
-    }
-    for line in lines:
-        key = line.strip().lower()
-        if auth_method == 0 and key in auth_keys:
-            # Strip password-only directives when using key-based auth
-            continue
-        if auth_method != 0 and key in auth_keys:
-            if key in seen_auth_lines:
-                # Avoid duplicates for password auth
-                continue
-            seen_auth_lines.add(key)
-        cleaned_lines.append(line)
-
-    return '\n'.join(cleaned_lines)
+    return '\n'.join(lines)
 
 
 def _order_proxy_lines_like_block(managed_body: List[str], old_lines) -> None:
@@ -412,6 +350,48 @@ def _order_proxy_lines_like_block(managed_body: List[str], old_lines) -> None:
         )
 
 
+_PATH_SPELLING_KEYS = ('identityfile', 'certificatefile')
+
+
+def _keep_authored_path_spellings(managed_body: List[str], old_lines) -> None:
+    """Write key and certificate paths the way the block already spells them.
+
+    The loader expands ``~``, ``$VAR`` and ``%d`` so the app can open the
+    files, and that expanded path is what comes back on save. Re-emitting it
+    would turn ``IdentityFile ~/.ssh/id`` into ``/home/alice/.ssh/id`` on any
+    edit that touches the key directives, which breaks a config shared across
+    machines or users. A re-emitted path that names the same file as an
+    authored one keeps the authored text.
+    """
+    from .core.ssh_config_effective import expand_ssh_tokens
+
+    def expand(value):
+        # The loader's expansion: unquote, %-tokens, $VAR, then ~.
+        text = str(value)
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in '"\'':
+            text = text[1:-1]
+        return os.path.expanduser(os.path.expandvars(expand_ssh_tokens(text)))
+
+    authored: Dict[Tuple[str, str], str] = {}
+    for raw in (old_lines or [])[1:]:
+        stripped = raw.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        key, value = _split_config_option(stripped)
+        if key is None or key.lower() not in _PATH_SPELLING_KEYS or not value:
+            continue
+        authored.setdefault((key.lower(), expand(value)), value)
+
+    for index, raw in enumerate(managed_body):
+        key, value = _split_config_option(raw.strip())
+        if key is None or key.lower() not in _PATH_SPELLING_KEYS or not value:
+            continue
+        original = authored.get((key.lower(), expand(value)))
+        if original is not None and original != value:
+            indent = raw[:len(raw) - len(raw.lstrip())]
+            managed_body[index] = f"{indent}{key} {original}\n"
+
+
 def merged_block_lines(old_block: Optional[HostBlock],
                        new_data: Dict[str, Any]) -> List[str]:
     """Render the edited Host block surgically instead of wholesale.
@@ -442,6 +422,7 @@ def merged_block_lines(old_block: Optional[HostBlock],
     # reorder a Command-first block into Jump-first — that would silently
     # flip which route OpenSSH takes. Match the old block's proxy order.
     _order_proxy_lines_like_block(managed_body, old_block.lines)
+    _keep_authored_path_spellings(managed_body, old_block.lines)
 
     has_extra_key = 'extra_ssh_config' in new_data
     remaining_extras: List[Tuple[Tuple[str, str], str]] = []

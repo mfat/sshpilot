@@ -31,6 +31,13 @@ def cleanup_and_quit(window):
 
     logger.info("Starting cleanup before quit...")
     window._is_quitting = True
+    # The quit is decided: file managers close without asking about their
+    # transfers again.
+    try:
+        from . import file_manager_window as fmw
+        fmw.set_quit_confirmed(True)
+    except Exception:
+        logger.debug("Could not mark the quit for file managers", exc_info=True)
 
     connections_to_disconnect = []
     for conn, terms in getattr(window, "connection_to_terminals", {}).items():

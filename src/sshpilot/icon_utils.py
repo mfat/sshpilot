@@ -57,6 +57,7 @@ _ICON_RESOURCE_MAP = {
     'view-conceal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-conceal-symbolic.svg',
     'view-reveal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-reveal-symbolic.svg',
     'view-dual-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-dual-symbolic.svg',
+    'view-single-pane-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-single-pane-symbolic.svg',
     'split-pane-close-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/split-pane-close-symbolic.svg',
     'split-pane-unsplit-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/split-pane-unsplit-symbolic.svg',
     'view-fullscreen-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-fullscreen-symbolic.svg',
@@ -70,6 +71,8 @@ _ICON_RESOURCE_MAP = {
     'user-trash-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/user-trash-symbolic.svg',
     'document-edit-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/document-edit-symbolic.svg',
     'dot-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/dot-symbolic.svg',
+    'ear-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/ear-symbolic.svg',
+    'target-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/target-symbolic.svg',
     'big-dot-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/big-dot-symbolic.svg',
     'edit-copy-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/edit-copy-symbolic.svg',
     'edit-undo-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/edit-undo-symbolic.svg',
@@ -122,8 +125,14 @@ _ICON_RESOURCE_MAP = {
     'wired-lock-closed-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-closed-symbolic.svg',
     'wired-lock-dots-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-dots-symbolic.svg',
     'wired-lock-none-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/wired-lock-none-symbolic.svg',
-    # Port-forwarding indicator (sidebar connection rows).
+    # Port forwarding: the indicator on sidebar connection rows and the
+    # connection editor's Port Forwarding page.
     'mail-forward-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/mail-forward-symbolic.svg',
+    # Connection editor: the Routing page.
+    'connector-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/connector-symbolic.svg',
+    'connections-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/connections-symbolic.svg',
+    'connections-rail-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/connections-rail-symbolic.svg',
+    'document-config-rail-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/document-config-rail-symbolic.svg',
     'network-shield-dots-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-dots-symbolic.svg',
     'network-shield-crossed-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-crossed-symbolic.svg',
     'text-editor-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/text-editor-symbolic.svg',

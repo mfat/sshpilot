@@ -52,7 +52,6 @@ def _dialog(gtk):
     dialog._add_username_profile_button(dialog.username_row)
     dialog._build_login_profile_group()
     dialog.auth_group = Adw.PreferencesGroup()
-    dialog._register_login_profile_locked_widgets([dialog.auth_group])
     return dialog
 
 
@@ -92,7 +91,9 @@ def test_picking_a_profile_links_it_and_greys_out_the_username(gtk):
     assert _dimmed(dialog.username_row)
     assert dialog._username_profile_button.is_sensitive()
     assert not dialog._username_profile_button.has_css_class("dim-label")
-    assert not dialog.auth_group.get_sensitive()
+    # A profile applies only what it sets: this one sets a username, so the
+    # authentication rows stay the connection's own.
+    assert dialog.auth_group.get_sensitive()
     assert dialog.collect_login_profile_change()[1] == A
 
 
@@ -119,8 +120,14 @@ def test_switching_profiles_then_back_restores_the_own_username(gtk):
     dialog._on_login_profile_snapshot(SNAPSHOT)
 
     _pick(dialog, "Deploy")
+    assert dialog.username_row.get_text() == "deploy"
+    # A profile without a username leaves the connection's own in place,
+    # editable: it applies only what it sets.
     _pick(dialog, "Anon")
-    assert dialog.username_row.get_text() == ""
+    assert dialog.username_row.get_text() == "alice"
+    assert dialog.username_row.get_editable()
+    assert dialog.username_row.get_title() == "Username"
+    assert dialog.collect_login_profile_change()[1] == B
     _pick(dialog, "Don't use a profile")
 
     assert dialog.username_row.get_text() == "alice"

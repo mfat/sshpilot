@@ -1307,6 +1307,7 @@ class PreferencesWindow(Adw.Window):
         color_display_options.append(_("Accent Bars"))
         color_display_options.append(_("Color Dots"))
         color_display_options.append(_("Colored Text"))
+        color_display_options.append(_("Colored Grips"))
         self.group_color_display_row.set_model(color_display_options)
 
         current_mode = 'fill'
@@ -1901,6 +1902,20 @@ class PreferencesWindow(Adw.Window):
         )
         show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
         row_details_group.add(show_group_icon_switch)
+
+        # Drag handles toggle
+        show_drag_handles_switch = Adw.SwitchRow()
+        show_drag_handles_switch.set_title(_("Display Drag Handles"))
+        show_drag_handles_switch.set_subtitle(
+            _("Show grips for reordering at the start of rows; rows can be dragged either way")
+        )
+        show_drag_handles_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_drag_handles', True))
+        )
+        show_drag_handles_switch.connect('notify::active', self.on_sidebar_show_drag_handles_changed)
+        row_details_group.add(show_drag_handles_switch)
+        self.show_drag_handles_switch = show_drag_handles_switch
+        self._sidebar_mode_dependent_rows.append(show_drag_handles_switch)
         self._sidebar_mode_dependent_rows.append(show_group_icon_switch)
 
         # File manager hover button on connection rows
@@ -3140,6 +3155,19 @@ class PreferencesWindow(Adw.Window):
         )
 
         file_manager_group.add(self.open_file_manager_externally_row)
+
+        self.file_manager_single_pane_row = Adw.SwitchRow()
+        self.file_manager_single_pane_row.set_title(_("Start With One Pane"))
+        self.file_manager_single_pane_row.set_subtitle(
+            _("Hide the left pane when a file manager opens; F3 shows it")
+        )
+        self.file_manager_single_pane_row.set_active(
+            bool(self.config.get_setting('file_manager.single_pane', False))
+        )
+        self.file_manager_single_pane_row.connect(
+            'notify::active', self.on_file_manager_single_pane_changed
+        )
+        file_manager_group.add(self.file_manager_single_pane_row)
 
         file_manager_defaults = {}
         try:
@@ -4806,8 +4834,26 @@ class PreferencesWindow(Adw.Window):
             logger.error("Failed to update group color display preference: %s", exc)
             return
 
+        if mode == 'grip':
+            self._ensure_drag_handles_shown()
+
         if not getattr(self, '_config_signal_id', None):
             self._trigger_sidebar_refresh()
+
+    def _ensure_drag_handles_shown(self) -> None:
+        """Colored Grips colours the drag handles, so choosing it turns
+        Display Drag Handles back on (through the switch when it is built,
+        so it shows the change and refreshes the sidebar)."""
+        try:
+            if bool(self.config.get_setting('ui.sidebar_show_drag_handles', True)):
+                return
+            switch = getattr(self, 'show_drag_handles_switch', None)
+            if switch is not None:
+                switch.set_active(True)
+            else:
+                self.config.set_setting('ui.sidebar_show_drag_handles', True)
+        except Exception as exc:
+            logger.error("Failed to turn drag handles on for Colored Grips: %s", exc)
 
     def on_group_color_child_rows_toggled(self, switch_row, _param):
         if getattr(self, '_child_rows_color_sync', False):
@@ -6148,6 +6194,11 @@ class PreferencesWindow(Adw.Window):
                     'file_manager.open_externally',
                     bool(self.open_file_manager_externally_row.get_active()),
                 )
+            if getattr(self, 'file_manager_single_pane_row', None) is not None:
+                self.config.set_setting(
+                    'file_manager.single_pane',
+                    bool(self.file_manager_single_pane_row.get_active()),
+                )
             if getattr(self, 'max_concurrent_transfers_row', None) is not None:
                 concurrent_value = max(
                     1, min(10, int(self.max_concurrent_transfers_row.get_value()))
@@ -7216,6 +7267,16 @@ class PreferencesWindow(Adw.Window):
         except Exception as exc:
             logger.error("Failed to update sidebar show connection icon preference: %s", exc)
 
+    def on_sidebar_show_drag_handles_changed(self, switch, *args):
+        """Persist the preference for the sidebar rows' drag grips."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_drag_handles', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error("Failed to update sidebar drag handles preference: %s", exc)
+
     def on_sidebar_show_group_icon_changed(self, switch, *args):
         """Persist the preference for showing the group icon in sidebar."""
         try:
@@ -7269,6 +7330,13 @@ class PreferencesWindow(Adw.Window):
             self.config.set_setting('file_manager.open_externally', active)
         except Exception as exc:
             logger.error("Failed to update external file manager preference: %s", exc)
+
+    def on_file_manager_single_pane_changed(self, switch, *args):
+        """Persist whether new file managers start with the left pane hidden."""
+        try:
+            self.config.set_setting('file_manager.single_pane', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update file manager single pane preference: %s", exc)
 
     def on_terminal_panes_changed(self, row, *args):
         """Persist which terminals a new file manager tab opens."""

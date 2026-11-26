@@ -510,6 +510,130 @@ def forget_owned_process(pid: int) -> None:
         logger.debug("Could not forget an owned process", exc_info=True)
 
 
+def _parent_pid(pid: int) -> Optional[int]:
+    """The parent of *pid*, or ``None`` when it cannot be read."""
+
+    try:
+        import psutil
+
+        return int(psutil.Process(pid).ppid())
+    except Exception:
+        pass
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            data = handle.read()
+    except (OSError, ValueError):
+        return None
+    fields = data[data.rfind(b")") + 2 :].split()
+    try:
+        return int(fields[1])
+    except (IndexError, ValueError):
+        return None
+
+
+# How far up to look for the child we own. An askpass helper is at most a
+# launcher script, a jump-host ssh and a transfer tool away from it.
+_ANCESTOR_LIMIT = 8
+
+
+# The environment variable that carries a launch's askpass token: set by the
+# broker on every daemon-owned OpenSSH child, inherited by its helper.
+ASKPASS_TOKEN_VARIABLE = "SSHPILOT_DAEMON_ASKPASS_TOKEN"
+
+
+def terminate_owned_ancestor(pid: int, *, token: str) -> Optional[int]:
+    """End the owned child that *pid* descends from; returns its PID.
+
+    *pid* is a process started on behalf of one of our children (an askpass
+    helper), as the helper reported it. It is never trusted: the process
+    signalled must be recorded in the registry with a matching creation time
+    *and* have been launched with *token*, the askpass token of the prompt
+    being cancelled. Owning a process is not enough: a wrong, recycled or
+    forged *pid* could otherwise lead to another connection's child. When
+    the token cannot be read the process is left alone. ``None`` when no
+    such ancestor is found; the caller then leaves the child to end by itself.
+    """
+
+    registry = active_registry()
+    if registry is None or type(pid) is not int or pid <= 1:
+        return None
+    if type(token) is not str or not token:
+        return None
+    try:
+        owned = {entry.pid: entry for entry in registry.live_entries()}
+    except Exception:
+        return None
+    current: Optional[int] = pid
+    for _step in range(_ANCESTOR_LIMIT):
+        if current is None or current <= 1:
+            return None
+        entry = owned.get(current)
+        if entry is not None:
+            # The first owned ancestor is the only candidate: it is the child
+            # the helper's chain started from, or the chain is not ours.
+            if not _launched_with_token(current, token):
+                return None
+            return current if _terminate_registered(entry) else None
+        current = _parent_pid(current)
+    return None
+
+
+def _launched_with_token(pid: int, token: str) -> bool:
+    """True when *pid* was started with this askpass *token*.
+
+    False whenever its environment cannot be read: proving the process
+    belongs to the prompt is the condition for signalling it.
+    """
+    import hmac
+
+    value = _environment_value(pid, ASKPASS_TOKEN_VARIABLE)
+    if value is None:
+        # Not a mismatch: the proof itself is unavailable (a platform or a
+        # sandbox that hides a child's environment). Say so, or a Cancel
+        # that leaves the connection running has no trace of why.
+        logger.warning(
+            "Cannot read the askpass token of owned child %s; "
+            "leaving it to end by itself", pid,
+        )
+    return value is not None and hmac.compare_digest(
+        value.encode("utf-8", "surrogateescape"),
+        token.encode("utf-8", "surrogateescape"),
+    )
+
+
+def _environment_value(pid: int, name: str) -> Optional[str]:
+    """*name* in the environment *pid* started with, or ``None``."""
+    try:
+        import psutil
+
+        return psutil.Process(pid).environ().get(name)
+    except Exception:
+        pass
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    prefix = name.encode() + b"="
+    for item in data.split(b"\0"):
+        if item.startswith(prefix):
+            return item[len(prefix):].decode("utf-8", "surrogateescape")
+    return None
+
+
+def _terminate_registered(entry: RegisteredProcess) -> bool:
+    import signal
+
+    try:
+        if entry.process_group and hasattr(os, "killpg"):
+            os.killpg(entry.pid, signal.SIGTERM)
+        else:
+            os.kill(entry.pid, signal.SIGTERM)
+    except OSError:
+        return False
+    return True
+
+
 def record_owned_process_or_abandon(
     process, *, kind: str, label: str = "", process_group: bool = False
 ) -> None:

@@ -8,6 +8,8 @@ validation rules through a lightweight fake row — they never open an SSH
 connection and don't need real GTK (the suite stubs gi).
 """
 
+import pytest
+
 from sshpilot.connection_dialog import ConnectionDialog
 from sshpilot.connection_dialog_validation import ConnectionDialogValidationMixin
 from sshpilot.ssh_connection_validator import SSHConnectionValidator
@@ -95,8 +97,17 @@ class TestValidateFieldRow:
         assert result.is_valid is True
         assert d.validation_results["name"] is result
 
-    def test_invalid_name_marks_error(self):
-        d, row = _dialog(), FakeRow("bad name")  # whitespace not allowed
+    @pytest.mark.parametrize("editing", [False, True])
+    def test_several_names_mark_error(self, editing):
+        d, row = _dialog(), FakeRow("web1 web2")
+        d.is_editing = editing
+        result = d._validate_field_row("name", row)
+        assert result.is_valid is False
+        assert "error" in row.css
+
+    @pytest.mark.parametrize("text", ["*", "*.prod", "web?", "!bad", "*.prod edge"])
+    def test_a_pattern_marks_error(self, text):
+        d, row = _dialog(), FakeRow(text)
         result = d._validate_field_row("name", row)
         assert result.is_valid is False
         assert "error" in row.css

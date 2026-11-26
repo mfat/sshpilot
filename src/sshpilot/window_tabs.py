@@ -242,11 +242,12 @@ class WindowTabsMixin:
     # All tab-menu action names, in display order within their sections.
     _TAB_MENU_ACTIONS = (
         'tabmenu-duplicate', 'tabmenu-rename',
-        'tabmenu-reconnect', 'tabmenu-manage-files',
+        'tabmenu-reconnect', 'tabmenu-manage-files', 'tabmenu-reveal-sidebar',
         'tabmenu-show-files-panel', 'tabmenu-hide-files-panel',
         'tabmenu-show-terminal-panel', 'tabmenu-hide-terminal-panel',
         'tabmenu-open-system-terminal', 'tabmenu-new-local',
         'tabmenu-fm-new-window', 'tabmenu-rdp-detach',
+        'tabmenu-hide-left-pane', 'tabmenu-show-left-pane',
         'tabmenu-layout-horizontal', 'tabmenu-layout-vertical',
         'tabmenu-layout-default', 'tabmenu-layout-compact',
         'tabmenu-close', 'tabmenu-close-others', 'tabmenu-close-right',
@@ -267,6 +268,7 @@ class WindowTabsMixin:
             'tabmenu-rename': self._on_tabmenu_rename,
             'tabmenu-reconnect': self._on_tabmenu_reconnect,
             'tabmenu-manage-files': self._on_tabmenu_manage_files,
+            'tabmenu-reveal-sidebar': self._on_tabmenu_reveal_sidebar,
             'tabmenu-show-files-panel': self._on_tabmenu_show_files_panel,
             'tabmenu-hide-files-panel': self._on_tabmenu_hide_files_panel,
             'tabmenu-show-terminal-panel': self._on_tabmenu_show_terminal_panel,
@@ -275,6 +277,8 @@ class WindowTabsMixin:
             'tabmenu-new-local': self._on_tabmenu_new_local,
             'tabmenu-fm-new-window': self._on_tabmenu_fm_new_window,
             'tabmenu-rdp-detach': self._on_tabmenu_rdp_detach,
+            'tabmenu-hide-left-pane': self._on_tabmenu_hide_left_pane,
+            'tabmenu-show-left-pane': self._on_tabmenu_show_left_pane,
             'tabmenu-layout-horizontal': self._on_tabmenu_layout_horizontal,
             'tabmenu-layout-vertical': self._on_tabmenu_layout_vertical,
             'tabmenu-layout-default': self._on_tabmenu_layout_default,
@@ -307,12 +311,20 @@ class WindowTabsMixin:
         sec2 = Gio.Menu()
         sec2.append_item(_item(_('Reconnect'), 'tabmenu-reconnect'))
         sec2.append_item(_item(_('Manage Files'), 'tabmenu-manage-files'))
+        sec2.append_item(_item(_('Reveal in Sidebar'), 'tabmenu-reveal-sidebar'))
         sec2.append_item(_item(_('Show File Pane'), 'tabmenu-show-files-panel'))
         sec2.append_item(_item(_('Hide File Pane'), 'tabmenu-hide-files-panel'))
         sec2.append_item(_item(_('Show Terminal Pane'), 'tabmenu-show-terminal-panel'))
         sec2.append_item(_item(_('Hide Terminal Pane'), 'tabmenu-hide-terminal-panel'))
         sec2.append_item(_item(_('Open in System Terminal'), 'tabmenu-open-system-terminal'))
         sec2.append_item(_item(_('New Local Tab'), 'tabmenu-new-local'))
+        # F3 toggles the left pane (file manager and main window shortcuts);
+        # the accel attribute only labels it in the menu.
+        for label, name in ((_('Hide Left Pane'), 'tabmenu-hide-left-pane'),
+                            (_('Show Left Pane'), 'tabmenu-show-left-pane')):
+            pane_item = _item(label, name)
+            pane_item.set_attribute_value('accel', GLib.Variant('s', 'F3'))
+            sec2.append_item(pane_item)
         sec2.append_item(_item(_('Open in New Window'), 'tabmenu-fm-new-window'))
         sec2.append_item(_item(_('Move to New Window'), 'tabmenu-rdp-detach'))
         menu.append_section(None, sec2)
@@ -468,6 +480,16 @@ class WindowTabsMixin:
                      for i in range(self.tab_view.get_n_pages())]
         except Exception:
             return
+        # File managers moved into a window of their own live in that
+        # window's tab view, not in this one.
+        for window in list(self.__dict__.get('_file_manager_windows', [])):
+            try:
+                tab_view = window.tab_view
+                pages.extend(
+                    tab_view.get_nth_page(i) for i in range(tab_view.get_n_pages())
+                )
+            except Exception:
+                logger.debug('Could not list a detached file manager window', exc_info=True)
         for page in pages:
             try:
                 embeds = self._file_manager_embeds_for_child(page.get_child())
@@ -527,6 +549,8 @@ class WindowTabsMixin:
                 return enabled
             enabled.add('tabmenu-reconnect')
             conn = self.terminal_to_connection.get(child)
+            if conn is not None:
+                enabled.add('tabmenu-reveal-sidebar')
             caps = capabilities_for(conn) if conn else frozenset()
             if Capability.FILE_TRANSFER in caps:
                 enabled.add('tabmenu-manage-files')
@@ -541,13 +565,19 @@ class WindowTabsMixin:
 
         from .rdp_tab import RdpTab
         if isinstance(child, RdpTab):
-            return common | {'tabmenu-rdp-detach'}
+            return common | {'tabmenu-rdp-detach', 'tabmenu-reveal-sidebar'}
 
         embed = self._file_manager_embed_for_child(child)
         if embed is not None:
             enabled = set(common)
             enabled.add('tabmenu-fm-new-window')
             controller = getattr(embed, '_controller', None)
+            is_single_pane = getattr(controller, 'is_single_pane', None)
+            if callable(is_single_pane):
+                enabled.add(
+                    'tabmenu-show-left-pane' if is_single_pane()
+                    else 'tabmenu-hide-left-pane'
+                )
             conn = getattr(controller, '_connection', None) if controller else None
             if conn is not None and hasattr(embed, 'has_terminal_panel'):
                 enabled.add(
@@ -641,6 +671,51 @@ class WindowTabsMixin:
         except Exception as exc:
             logger.error("Tab reconnect failed: %s", exc)
 
+    def _on_tabmenu_reveal_sidebar(self, action, param=None):
+        _page, child = self._tab_menu_target()
+        connection = self.terminal_to_connection.get(child)
+        if connection is None:
+            from .rdp_tab import RdpTab
+            if isinstance(child, RdpTab):
+                connection = child.connection
+        if connection is None:
+            return
+        from .sidebar_views import CONNECTIONS, show_view
+        from .sidebar import GroupRow, SectionHeaderRow
+
+        popup = getattr(self, "_search_popup", None)
+        if popup is not None and popup.visible:
+            popup.hide(animate=False)
+        self._tag_filter = None
+        filter_action = self.lookup_action("filter-tag")
+        if filter_action is not None:
+            filter_action.set_state(GLib.Variant("s", ""))
+        self.search_entry.set_text("")
+        show_view(self, CONNECTIONS)
+        self._apply_sidebar_visible(True)
+        self.rebuild_connection_list()
+        self.complete_pending_connection_rows()
+        ancestors = set()
+        for group_id in self.group_manager.get_connection_groups(connection):
+            while group_id and group_id not in ancestors:
+                ancestors.add(group_id)
+                group_id = self.group_manager.groups.get(group_id, {}).get("parent_id")
+        for row in self.connection_list:
+            if isinstance(row, SectionHeaderRow) and not row._expanded:
+                row._toggle_expand()
+            elif (isinstance(row, GroupRow) and row.group_id in ancestors
+                  and not row.group_info.get("expanded", True)):
+                row._toggle_expand()
+        rows = self._rows_for_connection(connection)
+        if rows:
+            self._select_only_row(rows[0])
+            # Rebuild restores the old scroll position on idle. Focus after
+            # that restoration so GTK brings the revealed row into view.
+            def _focus():
+                rows[0].grab_focus()
+                return False
+            GLib.idle_add(_focus)
+
     def _on_tabmenu_manage_files(self, action, param=None):
         try:
             page, child = self._tab_menu_target()
@@ -729,6 +804,11 @@ class WindowTabsMixin:
                     controller, '_left_pane' if side == 'local' else '_right_pane', None
                 )
                 path = getattr(file_pane, '_current_path', None)
+                # The left pane may browse a server: its folder is not one
+                # on this computer.
+                is_local_pane = getattr(controller, '_is_local_pane', None)
+                if side == 'local' and callable(is_local_pane) and not is_local_pane(file_pane):
+                    path = None
             terminal, created = self._show_file_manager_terminal_panel(
                 embed, side, local_cwd=path,
             )
@@ -975,31 +1055,222 @@ class WindowTabsMixin:
         except Exception as exc:
             logger.error("Tab layout compact failed: %s", exc)
 
+    def install_file_manager_pane_shortcut(self, window, tab_view) -> None:
+        """F3 on *window* toggles the left pane of its selected file manager
+        tab, wherever the focus is (the tab bar, the sidebar), not only inside
+        the file manager.
+
+        BUBBLE phase on the window runs after the focused widget: a terminal
+        with focus consumes F3 for its program and it never gets here, so
+        mc, htop and the rest keep it. Only a file manager tab answers; F3
+        goes on unhandled anywhere else.
+        """
+        controller = Gtk.ShortcutController()
+        controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+        action = Gtk.CallbackAction.new(
+            lambda *_args: self._toggle_selected_file_manager_pane(tab_view)
+        )
+        controller.add_shortcut(Gtk.Shortcut.new(
+            Gtk.KeyvalTrigger.new(Gdk.KEY_F3, Gdk.ModifierType(0)), action))
+        window.add_controller(controller)
+
+    def _toggle_selected_file_manager_pane(self, tab_view) -> bool:
+        from .split_view import SplitViewTab
+
+        page = tab_view.get_selected_page() if tab_view is not None else None
+        child = page.get_child() if page is not None else None
+        # A terminal's files panel is not a file manager tab, and neither is
+        # anything off screen.
+        if child is None or isinstance(child, (TerminalWidget, SplitViewTab)):
+            return False
+        if not child.get_mapped():
+            return False
+        embed = self._file_manager_embed_for_child(child)
+        controller = getattr(embed, '_controller', None) if embed else None
+        is_single = getattr(controller, 'is_single_pane', None)
+        set_single = getattr(controller, 'set_single_pane', None)
+        if not (callable(is_single) and callable(set_single)):
+            return False
+        set_single(not is_single())
+        return True
+
+    def _file_manager_running_transfers(self, child) -> int:
+        # Terminal and split-view tabs count too: their files panels are
+        # torn down with the tab, which cancels what they transfer.
+        if child is None:
+            return 0
+        total = 0
+        for embed in self._file_manager_embeds_for_child(child):
+            controller = getattr(embed, '_controller', None)
+            count = getattr(controller, 'running_transfer_count', None)
+            if callable(count):
+                try:
+                    total += count()
+                except Exception:
+                    pass
+        return total
+
+    def _confirm_file_manager_tab_close(self, tab_view, page) -> bool:
+        """Ask before a file manager tab with running transfers closes.
+
+        Returns True when the question is up (the close waits for it).
+        """
+        from . import file_manager_window as fmw
+
+        if fmw._quit_confirmed:
+            return False
+        child = page.get_child() if hasattr(page, 'get_child') else None
+        count = self._file_manager_running_transfers(child)
+        if not count:
+            return False
+        fmw.confirm_cancel_transfers(
+            self, count,
+            on_confirm=lambda: self._close_tab_after_transfers_confirmed(tab_view, page),
+            on_keep=lambda: tab_view.close_page_finish(page, False),
+        )
+        return True
+
+    def _close_tab_after_transfers_confirmed(self, tab_view, page) -> None:
+        """Close a tab whose transfers question was answered with "close".
+
+        That answer stands for the close as a whole, so nothing more is
+        asked, but the tab ends as the ordinary close ends it: a terminal
+        is disconnected and a split view's panes are cleaned up before the
+        page goes (on_tab_detached does the bookkeeping and the start tab).
+        """
+        child = page.get_child() if hasattr(page, 'get_child') else None
+        try:
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.cleanup_all()
+            elif (
+                child is not None
+                and child in getattr(self, 'terminal_to_connection', {})
+                and hasattr(child, 'disconnect')
+            ):
+                child.disconnect()
+        except Exception:
+            logger.debug('Ending the tab before its close failed', exc_info=True)
+        tab_view.close_page_finish(page, True)
+
+    def _confirm_file_manager_window_close(self, window) -> bool:
+        """The detached file manager window's close: same question."""
+        from . import file_manager_window as fmw
+
+        if fmw._quit_confirmed or getattr(window, '_close_confirmed', False):
+            return False
+        page = window.tab_view.get_selected_page()
+        child = page.get_child() if page is not None else None
+        count = self._file_manager_running_transfers(child)
+        if not count:
+            return False
+
+        def _confirmed() -> None:
+            window._close_confirmed = True
+            window.close()
+
+        fmw.confirm_cancel_transfers(window, count, on_confirm=_confirmed)
+        return True
+
+    def _set_tab_file_manager_single_pane(self, single: bool) -> None:
+        """Hide or show the left pane of the right-clicked file manager tab."""
+        try:
+            _page, child = self._tab_menu_target()
+            embed = self._file_manager_embed_for_child(child)
+            controller = getattr(embed, '_controller', None) if embed else None
+            set_single_pane = getattr(controller, 'set_single_pane', None)
+            if callable(set_single_pane):
+                set_single_pane(single)
+        except Exception:
+            logger.debug("Could not change the file manager's panes", exc_info=True)
+
+    def _on_tabmenu_hide_left_pane(self, action, param=None):
+        self._set_tab_file_manager_single_pane(True)
+
+    def _on_tabmenu_show_left_pane(self, action, param=None):
+        self._set_tab_file_manager_single_pane(False)
+
     def _on_tabmenu_fm_new_window(self, action, param=None):
+        """Move the right-clicked file manager tab into a window of its own
+        (see move_file_manager_tab_to_window)."""
         try:
             page, child = self._tab_menu_target()
             embed = self._file_manager_embed_for_child(child)
-            if embed is None:
+            if embed is None or page is None:
                 return
-            controller = getattr(embed, '_controller', None)
-            conn = getattr(controller, '_connection', None) if controller else None
-            if conn is None:
-                logger.debug("File manager tab has no connection for new window")
-                return
-
-            def _launch():
-                self._launch_external_file_manager(conn)
-
-            # A locked session-backed vault has no stored credential for the
-            # daemon to hand off, so unlock it first the same way opening the
-            # file manager does (TerminalManager._maybe_unlock_secrets_then) -
-            # otherwise the daemon falls back to a raw host-password prompt.
-            terminal_manager = getattr(self, "terminal_manager", None)
-            if terminal_manager is not None and terminal_manager._maybe_unlock_secrets_then(_launch):
-                return
-            _launch()
+            self.move_file_manager_tab_to_window(page, embed)
         except Exception as exc:
-            logger.error("Tab file manager new window failed: %s", exc)
+            logger.error("Opening the file manager in a new window failed: %s", exc)
+
+    def move_file_manager_tab_to_window(self, page, embed) -> bool:
+        """Move a file manager tab into a window of its own.
+
+        The page moves between tab views, as a detached RDP tab does, so the
+        file manager carries on as it is: both panes, their connections,
+        running transfers and the terminals below it. "Move Back to Tab"
+        returns it.
+        """
+        from .detached_tab_window import DetachedTabWindow
+
+        if page is None or embed is None:
+            return False
+        window = DetachedTabWindow(
+            self, page.get_title() or _("Files"),
+            on_move_back=self._attach_file_manager_window,
+            on_close=self._close_file_manager_window,
+            confirm_close=self._confirm_file_manager_window_close,
+        )
+        width, height = embed.get_width(), embed.get_height()
+        window.set_default_size(max(width, 640), max(height + 47, 480))
+        # The page leaves this tab view alive: on_tab_detached must not tear
+        # the file manager down.
+        self._transferring_tab_out = True
+        try:
+            self.tab_view.transfer_page(page, window.tab_view, 0)
+        finally:
+            self._transferring_tab_out = False
+        self.install_file_manager_pane_shortcut(window, window.tab_view)
+        windows = self.__dict__.setdefault('_file_manager_windows', [])
+        windows.append(window)
+        if not getattr(self, '_file_manager_windows_close_hooked', False):
+            # Closing the main window takes its detached file managers with
+            # it: their terminals and "Move Back to Tab" need it.
+            self._file_manager_windows_close_hooked = True
+            self.connect('destroy', lambda *_a: self._close_all_file_manager_windows())
+        window.present()
+        return True
+
+    def _attach_file_manager_window(self, window) -> None:
+        page = window.tab_view.get_selected_page()
+        self._forget_file_manager_window(window)
+        if page is None:
+            return
+        if hasattr(self, 'show_tab_view'):
+            self.show_tab_view()
+        window.tab_view.transfer_page(page, self.tab_view, self.tab_view.get_n_pages())
+        self.tab_view.set_selected_page(page)
+        self.present()
+
+    def _close_file_manager_window(self, window) -> None:
+        """The detached window was closed: end the file manager like a tab
+        close does (its terminals first, then its connections)."""
+        self._forget_file_manager_window(window)
+        page = window.tab_view.get_selected_page()
+        child = page.get_child() if page is not None else None
+        for embed in self._file_manager_embeds_for_child(child):
+            clear_panel = getattr(embed, 'clear_terminal_panel', None)
+            if callable(clear_panel):
+                clear_panel()
+            self._teardown_file_manager_embed(embed)
+
+    def _forget_file_manager_window(self, window) -> None:
+        windows = self.__dict__.get('_file_manager_windows', [])
+        if window in windows:
+            windows.remove(window)
+
+    def _close_all_file_manager_windows(self) -> None:
+        for window in list(self.__dict__.get('_file_manager_windows', [])):
+            window.close()
 
     def _on_tabmenu_rdp_detach(self, action, param=None):
         try:
@@ -1329,6 +1600,12 @@ class WindowTabsMixin:
         # close behavior to proceed.
         if getattr(self, '_suppress_close_confirmation', False):
             return False
+
+        # A file manager with transfers running asks first; closing cancels
+        # them cleanly (the teardown waits for the daemon before it closes
+        # the connection, so no partial file is left on the server).
+        if self._confirm_file_manager_tab_close(tab_view, page):
+            return True
 
         # SplitViewTab: clean up all embedded terminals, then allow immediate close.
         # When confirm-disconnect is enabled and there are active terminals, ask first.
@@ -1719,9 +1996,11 @@ class WindowTabsMixin:
     # ── tab button visibility ─────────────────────────────────────────────────
 
     def _update_tab_button_visibility(self):
-        """Hide tab bar and overview button when only the Start tab is open."""
+        """Hide tab bar and overview button when only the Start tab is open,
+        or while the Configuration view is shown in place of the tabs."""
         try:
-            show_tabs = self.has_user_tabs()
+            from .sidebar_views import SECTIONS, current_view
+            show_tabs = self.has_user_tabs() and current_view(self) != SECTIONS
             if hasattr(self, 'tab_button'):
                 try:
                     show_button = bool(
@@ -1824,9 +2103,11 @@ class WindowTabsMixin:
             self._update_tab_button_visibility()
             return
         self._update_command_snippets_button_visibility()
-        # Skip dict cleanup when a terminal is being moved into a split pane
-        # (the terminal stays live; its tracking entries remain valid).
-        if getattr(self, '_moving_tab_to_pane', False):
+        # Skip dict cleanup when a terminal is being moved into a split pane,
+        # or a tab into a window of its own (it stays live; its tracking
+        # entries remain valid).
+        if getattr(self, '_moving_tab_to_pane', False) or getattr(
+                self, '_transferring_tab_out', False):
             self._update_tab_button_visibility()
             if not self.has_user_tabs():
                 self.show_start_tab()
@@ -2250,6 +2531,13 @@ class WindowTabsMixin:
 
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""
+        # A tab selected or opened is what the user is after: the Config
+        # Sections view, shown in the tabs' place, gives way.
+        try:
+            from .sidebar_views import leave_sections
+            leave_sections(self)
+        except Exception:
+            logger.debug("Could not leave the Configuration view", exc_info=True)
         self._update_content_theme_for_selected_tab()
         self._update_layout_toggle_state()
         self._update_command_snippets_button_visibility()
