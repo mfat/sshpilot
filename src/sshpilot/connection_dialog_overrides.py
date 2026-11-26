@@ -551,22 +551,16 @@ class ConnectionDialogOverridesMixin:
         if show:
             # No button: this dialog is modal, so a Settings window opened
             # from it could not be used until the dialog is closed.
-            if by_settings and by_earlier:
-                title = _(
-                    "Settings ▸ SSH Options and earlier lines of your SSH "
-                    "configuration override some settings of this "
-                    "connection. They are marked below."
-                )
-            elif by_earlier:
-                title = _(
-                    "Earlier lines of your SSH configuration override some "
-                    "settings of this connection. They are marked below."
-                )
-            else:
-                title = _(
-                    "Settings ▸ SSH Options override some settings of this "
-                    "connection. They are marked below."
-                )
+            # Advanced Configuration's own sentences, counts and all: the
+            # pages holding the marked fields are flagged in the sidebar.
+            from .gtk import advanced_config_messages as messages
+
+            parts = []
+            if by_earlier:
+                parts.append(messages.precedence_problem(by_earlier))
+            if by_settings:
+                parts.append(messages.settings_problem(by_settings))
+            title = " ".join(parts)
             banner.set_title(title)
         banner.set_revealed(show)
         # The marked fields may be on pages other than the one shown.

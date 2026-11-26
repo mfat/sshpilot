@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 21:37+0330\n"
+"POT-Creation-Date: 2026-11-26 21:44+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -2955,26 +2955,6 @@ msgstr "OpenSSH 不会为此主机尝试密码或键盘交互式登录，因此�
 #: src/sshpilot/ssh_config_answer.py:169
 msgid "No effect"
 msgstr "不起作用"
-
-#: src/sshpilot/connection_dialog_overrides.py:556
-msgid ""
-"Settings ▸ SSH Options and earlier lines of your SSH configuration override "
-"some settings of this connection. They are marked below."
-msgstr ""
-"“设置 ▸ SSH 选项”和您 SSH 配置中较早的行覆盖了此连接的部分设置。它们已在下方"
-"标出。"
-
-#: src/sshpilot/connection_dialog_overrides.py:562
-msgid ""
-"Earlier lines of your SSH configuration override some settings of this "
-"connection. They are marked below."
-msgstr "您 SSH 配置中较早的行覆盖了此连接的部分设置。它们已在下方标出。"
-
-#: src/sshpilot/connection_dialog_overrides.py:567
-msgid ""
-"Settings ▸ SSH Options override some settings of this connection. They are "
-"marked below."
-msgstr "“设置 ▸ SSH 选项”覆盖了此连接的部分设置。它们已在下方标出。"
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:42
 msgid "Listen port must be a number"
@@ -18276,6 +18256,23 @@ msgstr "{view}（未保存的更改）"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · 已关闭"
+
+#~ msgid ""
+#~ "Settings ▸ SSH Options and earlier lines of your SSH configuration "
+#~ "override some settings of this connection. They are marked below."
+#~ msgstr ""
+#~ "“设置 ▸ SSH 选项”和您 SSH 配置中较早的行覆盖了此连接的部分设置。它们已在下"
+#~ "方标出。"
+
+#~ msgid ""
+#~ "Earlier lines of your SSH configuration override some settings of this "
+#~ "connection. They are marked below."
+#~ msgstr "您 SSH 配置中较早的行覆盖了此连接的部分设置。它们已在下方标出。"
+
+#~ msgid ""
+#~ "Settings ▸ SSH Options override some settings of this connection. They "
+#~ "are marked below."
+#~ msgstr "“设置 ▸ SSH 选项”覆盖了此连接的部分设置。它们已在下方标出。"
 
 #, python-brace-format
 #~ msgid "Checked, but not tried: {reason}"

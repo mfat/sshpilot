@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 21:37+0330\n"
+"POT-Creation-Date: 2026-11-26 21:44+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -3062,30 +3062,6 @@ msgstr ""
 #: src/sshpilot/ssh_config_answer.py:169
 msgid "No effect"
 msgstr "بی‌اثر"
-
-#: src/sshpilot/connection_dialog_overrides.py:556
-msgid ""
-"Settings ▸ SSH Options and earlier lines of your SSH configuration override "
-"some settings of this connection. They are marked below."
-msgstr ""
-"تنظیمات ▸ گزینه‌های SSH و خط‌های قبلی پیکربندی SSH شما برخی تنظیمات این اتصال "
-"را لغو می‌کنند. در زیر علامت خورده‌اند."
-
-#: src/sshpilot/connection_dialog_overrides.py:562
-msgid ""
-"Earlier lines of your SSH configuration override some settings of this "
-"connection. They are marked below."
-msgstr ""
-"خط‌های قبلی پیکربندی SSH شما برخی تنظیمات این اتصال را لغو می‌کنند. در زیر "
-"علامت خورده‌اند."
-
-#: src/sshpilot/connection_dialog_overrides.py:567
-msgid ""
-"Settings ▸ SSH Options override some settings of this connection. They are "
-"marked below."
-msgstr ""
-"تنظیمات ▸ گزینه‌های SSH برخی تنظیمات این اتصال را نادیده می‌گیرد. آن‌ها در "
-"پایین علامت‌گذاری شده‌اند."
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:42
 msgid "Listen port must be a number"
@@ -18861,6 +18837,27 @@ msgstr "{view} (تغییرات ذخیره‌نشده)"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · خاموش"
+
+#~ msgid ""
+#~ "Settings ▸ SSH Options and earlier lines of your SSH configuration "
+#~ "override some settings of this connection. They are marked below."
+#~ msgstr ""
+#~ "تنظیمات ▸ گزینه‌های SSH و خط‌های قبلی پیکربندی SSH شما برخی تنظیمات این "
+#~ "اتصال را لغو می‌کنند. در زیر علامت خورده‌اند."
+
+#~ msgid ""
+#~ "Earlier lines of your SSH configuration override some settings of this "
+#~ "connection. They are marked below."
+#~ msgstr ""
+#~ "خط‌های قبلی پیکربندی SSH شما برخی تنظیمات این اتصال را لغو می‌کنند. در زیر "
+#~ "علامت خورده‌اند."
+
+#~ msgid ""
+#~ "Settings ▸ SSH Options override some settings of this connection. They "
+#~ "are marked below."
+#~ msgstr ""
+#~ "تنظیمات ▸ گزینه‌های SSH برخی تنظیمات این اتصال را نادیده می‌گیرد. آن‌ها در "
+#~ "پایین علامت‌گذاری شده‌اند."
 
 #, python-brace-format
 #~ msgid "Checked, but not tried: {reason}"

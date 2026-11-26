@@ -185,7 +185,10 @@ def test_dialog_marks_a_field_an_earlier_block_beats(gui):
         "OpenSSH uses deploy from line 2 (Host *)"
     )
     assert dialog._override_banner.get_revealed()
-    assert "earlier block" in dialog._override_banner.get_title()
+    # Advanced Configuration's own sentence for the same line.
+    assert dialog._override_banner.get_title() == (
+        "1 directive will not take effect due to configuration precedence."
+    )
     # Informing only: the value stays, and stays editable.
     assert dialog.username_row.get_text() == "admin"
     assert dialog.username_row.get_sensitive()

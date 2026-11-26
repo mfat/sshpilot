@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 21:37+0330\n"
+"POT-Creation-Date: 2026-11-26 21:44+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -3062,30 +3062,6 @@ msgstr ""
 #: src/sshpilot/ssh_config_answer.py:169
 msgid "No effect"
 msgstr "Sin efecto"
-
-#: src/sshpilot/connection_dialog_overrides.py:556
-msgid ""
-"Settings ▸ SSH Options and earlier lines of your SSH configuration override "
-"some settings of this connection. They are marked below."
-msgstr ""
-"Ajustes ▸ Opciones SSH y líneas anteriores de su configuración SSH anulan "
-"algunos ajustes de esta conexión. Están marcados abajo."
-
-#: src/sshpilot/connection_dialog_overrides.py:562
-msgid ""
-"Earlier lines of your SSH configuration override some settings of this "
-"connection. They are marked below."
-msgstr ""
-"Líneas anteriores de su configuración SSH anulan algunos ajustes de esta "
-"conexión. Están marcados abajo."
-
-#: src/sshpilot/connection_dialog_overrides.py:567
-msgid ""
-"Settings ▸ SSH Options override some settings of this connection. They are "
-"marked below."
-msgstr ""
-"Ajustes ▸ Opciones SSH reemplaza algunos ajustes de esta conexión. Están "
-"marcados más abajo."
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:42
 msgid "Listen port must be a number"
@@ -19115,6 +19091,27 @@ msgstr "{view} (cambios sin guardar)"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · desactivado"
+
+#~ msgid ""
+#~ "Settings ▸ SSH Options and earlier lines of your SSH configuration "
+#~ "override some settings of this connection. They are marked below."
+#~ msgstr ""
+#~ "Ajustes ▸ Opciones SSH y líneas anteriores de su configuración SSH anulan "
+#~ "algunos ajustes de esta conexión. Están marcados abajo."
+
+#~ msgid ""
+#~ "Earlier lines of your SSH configuration override some settings of this "
+#~ "connection. They are marked below."
+#~ msgstr ""
+#~ "Líneas anteriores de su configuración SSH anulan algunos ajustes de esta "
+#~ "conexión. Están marcados abajo."
+
+#~ msgid ""
+#~ "Settings ▸ SSH Options override some settings of this connection. They "
+#~ "are marked below."
+#~ msgstr ""
+#~ "Ajustes ▸ Opciones SSH reemplaza algunos ajustes de esta conexión. Están "
+#~ "marcados más abajo."
 
 #, python-brace-format
 #~ msgid "Checked, but not tried: {reason}"
