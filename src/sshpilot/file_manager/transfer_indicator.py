@@ -8,11 +8,17 @@ transfer's progress dialog, opened on demand).
 
 The list reads each transfer's :meth:`SFTPProgressDialog.snapshot` on a
 quarter-second tick while anything runs; it never touches the transfer.
+
+As in Nautilus (nautilus-progress-indicator.c): a transfer that will take
+less than two seconds in all never shows; finished ones leave the list three
+seconds later unless it is open (failed ones stay until removed); a transfer
+that showed and finished pulses the button and gets a toast.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from gettext import gettext as _, ngettext
 from typing import Callable, List, Optional
 
@@ -23,6 +29,40 @@ logger = logging.getLogger(__name__)
 # Finished transfers kept in the list until cleared; the oldest go first.
 _MAX_FINISHED = 20
 _TICK_MS = 250
+# Nautilus's numbers: an operation shows once elapsed + remaining time
+# passes OPERATION_MINIMUM_TIME, and finished ones go after
+# REMOVE_FINISHED_OPERATIONS_TIEMOUT while nobody has the list open.
+_MINIMUM_SECONDS = 2.0
+_REMOVE_FINISHED_SECONDS = 3
+_ATTENTION_MS = 2000
+
+_css_installed = False
+
+
+def _ensure_css() -> None:
+    global _css_installed
+    if _css_installed:
+        return
+    try:
+        from gi.repository import Gdk
+
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b"""
+@keyframes fm-transfer-attention {
+    from { background-color: transparent; }
+    to { background-color: alpha(currentColor, 0.25); }
+}
+.fm-transfer-attention {
+    animation: fm-transfer-attention 0.5s ease-in-out 4 alternate;
+}
+""")
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        _css_installed = True
+    except Exception:  # pragma: no cover - headless/test doubles
+        logger.debug("Transfer indicator CSS install failed", exc_info=True)
 
 
 class _TransferRow:
@@ -31,8 +71,13 @@ class _TransferRow:
     def __init__(self, transfer, indicator: "TransferIndicator") -> None:
         self.transfer = transfer
         self.last_state: Optional[str] = None
+        self.started = time.monotonic()
+        self.finished_at: Optional[float] = None
+        # Hidden until it is worth showing (see TransferIndicator._worth_showing).
+        self.shown = False
         self.row = Gtk.ListBoxRow()
         self.row.set_activatable(False)
+        self.row.set_visible(False)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         outer.set_margin_top(8)
@@ -141,12 +186,16 @@ class TransferIndicator(Gtk.MenuButton):
         *,
         on_details: Callable[[object], None],
         on_failed: Optional[Callable[[object], None]] = None,
+        on_finished: Optional[Callable[[object], None]] = None,
     ) -> None:
         super().__init__()
+        _ensure_css()
         self._on_details = on_details
         self._on_failed = on_failed
+        self._on_finished = on_finished
         self._rows: List[_TransferRow] = []
         self._tick_id: Optional[int] = None
+        self._attention_id: Optional[int] = None
 
         self.add_css_class("flat")
         self.set_valign(Gtk.Align.CENTER)
@@ -185,6 +234,7 @@ class TransferIndicator(Gtk.MenuButton):
         content.append(self._clear_button)
         popover.set_child(content)
         self.set_popover(popover)
+        popover.connect("notify::visible", lambda *_a: self._ensure_tick())
 
     # -- the list -----------------------------------------------------------
 
@@ -204,6 +254,21 @@ class TransferIndicator(Gtk.MenuButton):
 
     def running_count(self) -> int:
         return sum(1 for row in self._rows if row.last_state == "running")
+
+    def running_transfers(self) -> list:
+        """Transfers still running, shown or not (a quick one too)."""
+        running = []
+        for row in self._rows:
+            try:
+                if row.transfer.snapshot()["state"] == "running":
+                    running.append(row.transfer)
+            except Exception:
+                continue
+        return running
+
+    def _list_open(self) -> bool:
+        popover = self.get_popover()
+        return bool(popover is not None and popover.get_visible())
 
     def remove(self, row: _TransferRow) -> None:
         if row not in self._rows:
@@ -252,12 +317,51 @@ class TransferIndicator(Gtk.MenuButton):
 
     def _on_tick(self) -> bool:
         self._refresh()
-        if self.running_count() == 0:
+        if self.running_count() == 0 and not self._pending_removal():
             self._tick_id = None
             return False
         return True
 
+    def _pending_removal(self) -> bool:
+        return any(
+            row.finished_at is not None and row.last_state in ("done", "cancelled")
+            for row in self._rows
+        )
+
+    @staticmethod
+    def _worth_showing(row: "_TransferRow", snap: dict) -> bool:
+        """Nautilus shows an operation once elapsed + remaining > 2 s."""
+        if snap["state"] == "failed":
+            return True
+        elapsed = time.monotonic() - row.started
+        if elapsed >= _MINIMUM_SECONDS:
+            return True
+        remaining = getattr(row.transfer, "remaining_seconds", None)
+        try:
+            remaining = remaining() if callable(remaining) else None
+        except Exception:
+            remaining = None
+        return snap["state"] == "running" and remaining is not None and (
+            elapsed + remaining >= _MINIMUM_SECONDS
+        )
+
+    def _attention(self) -> None:
+        """Pulse the button: something worth a look just happened."""
+        self.remove_css_class("fm-transfer-attention")
+        self.add_css_class("fm-transfer-attention")
+        if self._attention_id is not None:
+            GLib.source_remove(self._attention_id)
+
+        def _done() -> bool:
+            self.remove_css_class("fm-transfer-attention")
+            self._attention_id = None
+            return False
+
+        self._attention_id = GLib.timeout_add(_ATTENTION_MS, _done)
+
     def _refresh(self) -> None:
+        now = time.monotonic()
+        list_open = self._list_open()
         for row in list(self._rows):
             try:
                 snap = row.transfer.snapshot()
@@ -266,16 +370,44 @@ class TransferIndicator(Gtk.MenuButton):
                 continue
             previous = row.last_state
             row.update(snap)
-            if previous == "running" and snap["state"] == "failed" and self._on_failed:
-                try:
-                    self._on_failed(row.transfer)
-                except Exception:
-                    logger.debug("Transfer failure notice failed", exc_info=True)
+            state = snap["state"]
+            if not row.shown and self._worth_showing(row, snap):
+                row.shown = True
+                row.row.set_visible(True)
+                if state == "running":
+                    self._attention()
+            if state != "running" and row.finished_at is None:
+                row.finished_at = now
+                if not row.shown:
+                    # Over before it was worth a row: gone without a trace,
+                    # as in Nautilus (the pane's refresh shows the result).
+                    self.remove(row)
+                    continue
+                self._attention()
+                callback = self._on_failed if state == "failed" else (
+                    self._on_finished if state == "done" else None
+                )
+                if callback is not None and previous == "running" and not list_open:
+                    try:
+                        callback(row.transfer)
+                    except Exception:
+                        logger.debug("Transfer notice failed", exc_info=True)
+            # Finished and cancelled ones leave on their own while the list is
+            # closed; a failure stays until it is removed.
+            if (
+                state in ("done", "cancelled")
+                and row.finished_at is not None
+                and not list_open
+                and now - row.finished_at >= _REMOVE_FINISHED_SECONDS
+            ):
+                self.remove(row)
         self._update_face()
 
     def _update_face(self) -> None:
-        running = self.running_count()
-        self.set_visible(bool(self._rows))
+        running = sum(
+            1 for row in self._rows if row.shown and row.last_state == "running"
+        )
+        self.set_visible(any(row.shown for row in self._rows))
         self._clear_button.set_visible(any(r.last_state != "running" for r in self._rows))
         if running:
             self._status_icon.set_visible(False)
@@ -303,6 +435,12 @@ class TransferIndicator(Gtk.MenuButton):
 
     def shutdown(self) -> None:
         """Stop refreshing (the file manager is closing)."""
+        if self._attention_id is not None:
+            try:
+                GLib.source_remove(self._attention_id)
+            except Exception:
+                pass
+            self._attention_id = None
         if self._tick_id is not None:
             try:
                 GLib.source_remove(self._tick_id)

@@ -61,6 +61,9 @@ _TAB_METHODS = (
     "_close_file_manager_window",
     "install_file_manager_pane_shortcut",
     "_toggle_selected_file_manager_pane",
+    "_file_manager_running_transfers",
+    "_confirm_file_manager_tab_close",
+    "_confirm_file_manager_window_close",
     "_launch_external_file_manager",
     "_on_tabmenu_rdp_detach",
     "_on_tabmenu_hide_left_pane",
@@ -914,8 +917,9 @@ def _detach_stub(monkeypatch):
             events.append(("select", self.name))
 
     class Window:
-        def __init__(self, main, title, *, on_move_back, on_close):
+        def __init__(self, main, title, *, on_move_back, on_close, confirm_close=None):
             self.title, self.on_move_back, self.on_close = title, on_move_back, on_close
+            self.confirm_close = confirm_close
             self.tab_view = TabView("detached")
 
         def set_default_size(self, w, h):
@@ -1067,3 +1071,40 @@ def test_window_f3_leaves_terminal_tabs_and_hidden_tabs_alone():
         stub, view = _f3_stub(child, controller)
         assert stub._toggle_selected_file_manager_pane(view) is False
     assert controller.single is False
+
+
+def test_closing_a_file_manager_tab_with_running_transfers_asks_first(monkeypatch):
+    """Closing cancels the transfers; ask, and finish the close per answer."""
+    from sshpilot import file_manager_window as fmw
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    asked = []
+    monkeypatch.setattr(fmw, "_quit_confirmed", False)
+    monkeypatch.setattr(
+        fmw, "confirm_cancel_transfers",
+        lambda parent, count, **kw: asked.append((count, kw)),
+    )
+    controller = types.SimpleNamespace(running_transfer_count=lambda: 2)
+    embed = types.SimpleNamespace(_controller=controller)
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embeds_for_child(self, _child):
+            return [embed]
+
+    finished = []
+    view = types.SimpleNamespace(close_page_finish=lambda page, ok: finished.append(ok))
+    page = types.SimpleNamespace(get_child=lambda: object())
+    stub = Stub()
+
+    assert stub._confirm_file_manager_tab_close(view, page) is True
+    count, kw = asked[0]
+    assert count == 2
+    kw["on_keep"]()
+    kw["on_confirm"]()
+    assert finished == [False, True]
+
+    controller.running_transfer_count = lambda: 0
+    assert stub._confirm_file_manager_tab_close(view, page) is False
+    monkeypatch.setattr(fmw, "_quit_confirmed", True)
+    controller.running_transfer_count = lambda: 2
+    assert stub._confirm_file_manager_tab_close(view, page) is False

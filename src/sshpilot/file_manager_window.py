@@ -24,6 +24,7 @@ import pathlib
 import posixpath
 import shutil
 import threading
+import time
 import types
 import weakref
 from concurrent.futures import Future, CancelledError
@@ -112,6 +113,80 @@ def _sftp_session_ready(manager) -> bool:
         except Exception:
             return False
     return getattr(manager, "_sftp", None) is not None
+
+
+# Set once the user agreed to cancel running transfers to quit, so the file
+# manager windows closing as part of that quit do not ask again.
+_quit_confirmed = False
+
+# How long a closing file manager waits for cancelled transfers to wind down
+# (the daemon removes their partial files) before it closes the connection.
+_TRANSFER_DRAIN_SECONDS = 30.0
+
+
+def running_transfer_count_everywhere() -> int:
+    """Transfers running in every open file manager (tabs and windows)."""
+    total = 0
+    for window in list(_file_manager_windows_registry):
+        if getattr(window, "_is_disposed", False):
+            continue
+        count = getattr(window, "running_transfer_count", None)
+        if callable(count):
+            try:
+                total += count()
+            except Exception:
+                continue
+    return total
+
+
+def set_quit_confirmed(confirmed: bool = True) -> None:
+    global _quit_confirmed
+    _quit_confirmed = bool(confirmed)
+
+
+def confirm_cancel_transfers(
+    parent, count: int, *, quitting: bool = False,
+    on_confirm: Callable[[], None], on_keep: Optional[Callable[[], None]] = None,
+) -> None:
+    """Ask before closing (or quitting) cancels running transfers.
+
+    Cancelling is what keeps the server clean: closed mid-transfer, the
+    connection used to go away under the transfer and left its partial file
+    on the server.
+    """
+    if quitting:
+        heading = _("Quit and Cancel Transfers?")
+        body = ngettext(
+            "{count} file transfer is still running. Quitting cancels it.",
+            "{count} file transfers are still running. Quitting cancels them.",
+            count,
+        ).format(count=count)
+        confirm_label = _("Cancel Transfers and Quit")
+    else:
+        heading = _("Close and Cancel Transfers?")
+        body = ngettext(
+            "{count} file transfer is still running in this file manager. Closing it cancels the transfer.",
+            "{count} file transfers are still running in this file manager. Closing it cancels them.",
+            count,
+        ).format(count=count)
+        confirm_label = _("Cancel Transfers and Close")
+    dialog = Adw.AlertDialog.new(heading, body)
+    dialog.add_response("keep", _("Keep Transferring"))
+    dialog.add_response("cancel-transfers", confirm_label)
+    dialog.set_response_appearance("cancel-transfers", Adw.ResponseAppearance.DESTRUCTIVE)
+    dialog.set_default_response("keep")
+    dialog.set_close_response("keep")
+
+    def _on_response(_dialog, response: str) -> None:
+        # Act once the dialog is gone: a window does not close while one of
+        # its own dialogs is still up (the detached and standalone file
+        # manager windows close themselves from here).
+        callback = on_confirm if response == "cancel-transfers" else on_keep
+        if callback is not None:
+            GLib.idle_add(lambda: (callback(), False)[1])
+
+    dialog.connect("response", _on_response)
+    dialog.present(parent)
 
 
 _layout_bar_css_installed = False
@@ -715,10 +790,9 @@ class FileManagerWindow(Adw.Window):
                 manager.disconnect(handler_id)
             except Exception:
                 pass
-        try:
-            manager.close()
-        except Exception:
-            logger.debug("Error closing the left pane's SFTP backend", exc_info=True)
+        # A transfer from the left pane's server goes on after the pane
+        # moves elsewhere; its connection closes once it ends.
+        self._close_backend_when_idle(manager)
 
     def _reconnect_left(self) -> None:
         self._teardown_left_backend()
@@ -848,10 +922,7 @@ class FileManagerWindow(Adw.Window):
                 except Exception:
                     pass
         if manager is not None:
-            try:
-                manager.close()
-            except Exception:
-                logger.debug("Error closing previous SFTP backend", exc_info=True)
+            self._close_backend_when_idle(manager)
         self._connection_error_reported = False
 
     def _reconnect(self) -> None:
@@ -1129,6 +1200,7 @@ class FileManagerWindow(Adw.Window):
         self._transfer_indicator = TransferIndicator(
             on_details=self._show_transfer_details,
             on_failed=self._on_transfer_failed,
+            on_finished=self._on_transfer_finished,
         )
         bar.append(self._transfer_indicator)
 
@@ -1506,18 +1578,92 @@ class FileManagerWindow(Adw.Window):
             if callable(rebind):
                 rebind(client, self._bridge)
 
+    # -- transfers outliving the view ---------------------------------------
+
+    def _running_transfers(self) -> list:
+        indicator = self.__dict__.get("_transfer_indicator")
+        if indicator is None:
+            return []
+        try:
+            return indicator.running_transfers()
+        except Exception:
+            return []
+
+    def running_transfer_count(self) -> int:
+        """Transfers this file manager runs now (shown in the indicator or not)."""
+        return len(self._running_transfers())
+
+    def _close_backend_when_idle(self, manager) -> None:
+        """Close *manager* once the transfers running now have ended.
+
+        A transfer writes through the file manager's SFTP service. Closing
+        the service under it killed the transfer, and its partial file stayed
+        on the server, because the cleanup needs that very connection. The
+        backend's transfer listener must stay open too: it is what learns the
+        daemon finished (or cancelled) the transfer.
+        """
+        # While the file manager closes, wait for the futures taken before it
+        # cancelled them: a cancelled transfer no longer reads as running,
+        # but the daemon is still removing its partial file.
+        futures = self.__dict__.get("_draining_futures")
+        if futures is None:
+            futures = self._pending_transfer_futures()
+        futures = [future for future in futures if not future.done()]
+
+        def _close() -> None:
+            try:
+                manager.close()
+            except Exception:
+                logger.debug("Error closing a file manager SFTP backend", exc_info=True)
+
+        if not futures:
+            _close()
+            return
+        deadline = time.monotonic() + _TRANSFER_DRAIN_SECONDS
+        logger.info(
+            "Keeping a file manager connection until %d transfer(s) end", len(futures)
+        )
+
+        def _poll() -> bool:
+            if all(future.done() for future in futures) or time.monotonic() >= deadline:
+                _close()
+                return False
+            return True
+
+        GLib.timeout_add(100, _poll)
+
+    def _pending_transfer_futures(self) -> list:
+        return [
+            future
+            for transfer in self._running_transfers()
+            for future in getattr(transfer, "_futures", [])
+            if future is not None and not future.done()
+        ]
+
+    def cancel_running_transfers(self) -> int:
+        """Cancel every running transfer; returns how many there were."""
+        running = self._running_transfers()
+        for transfer in running:
+            try:
+                transfer.cancel()
+            except Exception:
+                logger.debug("Cancelling a transfer failed", exc_info=True)
+        return len(running)
+
     def _cleanup_manager(self) -> None:
-        """Close the file manager backend and clear UI state."""
+        """Close the file manager backend and clear UI state.
+
+        Transfers still running are cancelled, and the connections close only
+        once the daemon has wound them down (removing their partial files).
+        """
+        if self.__dict__.get("_cleanup_done"):
+            return
+        self._cleanup_done = True
+        self._draining_futures = self._pending_transfer_futures()
+        self.cancel_running_transfers()
         self._is_disposed = True
         self._teardown_left_backend()
         indicator = self.__dict__.get("_transfer_indicator")
-        if indicator is not None:
-            for transfer in indicator.transfers():
-                try:
-                    transfer.discard()
-                except Exception:
-                    pass
-            indicator.shutdown()
         manager = getattr(self, "_manager", None)
         if isinstance(manager, (types.FunctionType, types.MethodType)):
             manager = None
@@ -1532,11 +1678,15 @@ class FileManagerWindow(Adw.Window):
 
         if manager is not None:
             self._manager = None
-            try:
-                logger.info("Cleaning up file manager backend resources")
-                manager.close()
-            except Exception as exc:
-                logger.error(f"Error closing file manager backend: {exc}", exc_info=True)
+            logger.info("Cleaning up file manager backend resources")
+            self._close_backend_when_idle(manager)
+        if indicator is not None:
+            for transfer in indicator.transfers():
+                try:
+                    transfer.discard()
+                except Exception:
+                    pass
+            indicator.shutdown()
         self._clear_progress_toast()
         try:
             _file_manager_windows_registry.discard(self)
@@ -1544,7 +1694,19 @@ class FileManagerWindow(Adw.Window):
             pass
 
     def _on_close_request(self, window) -> bool:
-        """Handle window close request - clean up resources."""
+        """Handle window close request - clean up resources.
+
+        A standalone file manager window with transfers running asks first;
+        closing cancels them cleanly.
+        """
+        count = self.running_transfer_count()
+        if count and not _quit_confirmed and not self.__dict__.get("_close_confirmed"):
+            def _confirmed() -> None:
+                self._close_confirmed = True
+                self.close()
+
+            confirm_cancel_transfers(self, count, on_confirm=_confirmed)
+            return True
         logger.info("FileManagerWindow close-request received, cleaning up")
         self._cleanup_manager()
         # Allow the window to close
@@ -4003,6 +4165,19 @@ class FileManagerWindow(Adw.Window):
     def _show_transfer_details(self, dialog) -> None:
         """The indicator's Details: the transfer's progress dialog."""
         self._present_transfer_dialog(dialog)
+
+    def _on_transfer_finished(self, dialog) -> None:
+        """A transfer long enough to show in the indicator finished (Nautilus
+        shows a toast too); a download offers to show where it landed."""
+        snap = dialog.snapshot()
+        toast = Adw.Toast.new(snap.get("title") or _("Transfer Complete"))
+        if snap.get("can_locate"):
+            toast.set_button_label(_("Show in Files"))
+            toast.connect("button-clicked", lambda *_a: dialog.open_location())
+        try:
+            self._toast_overlay.add_toast(toast)
+        except (AttributeError, RuntimeError, GLib.Error):
+            pass
 
     def _on_transfer_failed(self, dialog) -> None:
         """A background transfer failed: say so, with a way to the details."""

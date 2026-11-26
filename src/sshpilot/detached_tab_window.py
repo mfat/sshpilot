@@ -10,7 +10,7 @@ window ends the tab, as closing the tab would.
 from __future__ import annotations
 
 from gettext import gettext as _
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import gi
 
@@ -29,10 +29,13 @@ class DetachedTabWindow(Adw.ApplicationWindow):
         *,
         on_move_back: Callable[["DetachedTabWindow"], None],
         on_close: Callable[["DetachedTabWindow"], None],
+        confirm_close: Optional[Callable[["DetachedTabWindow"], bool]] = None,
     ) -> None:
         super().__init__(application=main_window.get_application(), title=title)
         self._on_move_back = on_move_back
         self._on_close = on_close
+        # Returns True when it asked first (the close then waits for it).
+        self._confirm_close = confirm_close
         self._moving_back = False
 
         # A tab view without a tab bar: transfer_page needs one on both sides,
@@ -64,6 +67,9 @@ class DetachedTabWindow(Adw.ApplicationWindow):
         self.destroy()
 
     def _on_close_request(self, *_args) -> bool:
-        if not self._moving_back:
-            self._on_close(self)
+        if self._moving_back:
+            return False
+        if self._confirm_close is not None and self._confirm_close(self):
+            return True
+        self._on_close(self)
         return False

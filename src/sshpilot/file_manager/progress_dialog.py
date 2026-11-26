@@ -412,6 +412,17 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         except Exception:
             return False
 
+    def remaining_seconds(self) -> Optional[float]:
+        """Estimated time left from the recent speed, or None if unknown."""
+        if self._total_bytes <= 0 or len(self._byte_samples) < 2:
+            return None
+        t0, b0 = self._byte_samples[0]
+        t1, b1 = self._byte_samples[-1]
+        if t1 <= t0 or b1 <= b0:
+            return None
+        rate = (b1 - b0) / (t1 - t0)
+        return max(0, self._total_bytes - self._transferred_bytes) / rate
+
     @property
     def locate_path(self) -> Optional[str]:
         return self._locate_path

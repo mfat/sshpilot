@@ -7951,6 +7951,26 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.debug(f"Failed to capture previous session on close: {e}")
 
+        # File transfers still running in any file manager (tab or window):
+        # quitting cancels them, so ask first.
+        if not getattr(self, '_transfers_quit_confirmed', False):
+            from . import file_manager_window as fmw
+            count = fmw.running_transfer_count_everywhere()
+            if count:
+                def _quit_anyway():
+                    self._transfers_quit_confirmed = True
+                    fmw.set_quit_confirmed(True)
+                    app = self.get_application()
+                    if app is not None:
+                        app.quit()
+                    else:
+                        self.close()
+
+                fmw.confirm_cancel_transfers(
+                    self, count, quitting=True, on_confirm=_quit_anyway,
+                )
+                return True
+
         # Check for active connections across all tabs
         actually_connected = {}
         local_terminals = []

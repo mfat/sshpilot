@@ -1030,6 +1030,61 @@ class WindowTabsMixin:
         set_single(not is_single())
         return True
 
+    def _file_manager_running_transfers(self, child) -> int:
+        from .split_view import SplitViewTab
+
+        if child is None or isinstance(child, (TerminalWidget, SplitViewTab)):
+            return 0
+        total = 0
+        for embed in self._file_manager_embeds_for_child(child):
+            controller = getattr(embed, '_controller', None)
+            count = getattr(controller, 'running_transfer_count', None)
+            if callable(count):
+                try:
+                    total += count()
+                except Exception:
+                    pass
+        return total
+
+    def _confirm_file_manager_tab_close(self, tab_view, page) -> bool:
+        """Ask before a file manager tab with running transfers closes.
+
+        Returns True when the question is up (the close waits for it).
+        """
+        from . import file_manager_window as fmw
+
+        if fmw._quit_confirmed:
+            return False
+        child = page.get_child() if hasattr(page, 'get_child') else None
+        count = self._file_manager_running_transfers(child)
+        if not count:
+            return False
+        fmw.confirm_cancel_transfers(
+            self, count,
+            on_confirm=lambda: tab_view.close_page_finish(page, True),
+            on_keep=lambda: tab_view.close_page_finish(page, False),
+        )
+        return True
+
+    def _confirm_file_manager_window_close(self, window) -> bool:
+        """The detached file manager window's close: same question."""
+        from . import file_manager_window as fmw
+
+        if fmw._quit_confirmed or getattr(window, '_close_confirmed', False):
+            return False
+        page = window.tab_view.get_selected_page()
+        child = page.get_child() if page is not None else None
+        count = self._file_manager_running_transfers(child)
+        if not count:
+            return False
+
+        def _confirmed() -> None:
+            window._close_confirmed = True
+            window.close()
+
+        fmw.confirm_cancel_transfers(window, count, on_confirm=_confirmed)
+        return True
+
     def _set_tab_file_manager_single_pane(self, single: bool) -> None:
         """Hide or show the left pane of the right-clicked file manager tab."""
         try:
@@ -1076,6 +1131,7 @@ class WindowTabsMixin:
             self, page.get_title() or _("Files"),
             on_move_back=self._attach_file_manager_window,
             on_close=self._close_file_manager_window,
+            confirm_close=self._confirm_file_manager_window_close,
         )
         width, height = embed.get_width(), embed.get_height()
         window.set_default_size(max(width, 640), max(height + 47, 480))
@@ -1457,6 +1513,12 @@ class WindowTabsMixin:
         # close behavior to proceed.
         if getattr(self, '_suppress_close_confirmation', False):
             return False
+
+        # A file manager with transfers running asks first; closing cancels
+        # them cleanly (the teardown waits for the daemon before it closes
+        # the connection, so no partial file is left on the server).
+        if self._confirm_file_manager_tab_close(tab_view, page):
+            return True
 
         # SplitViewTab: clean up all embedded terminals, then allow immediate close.
         # When confirm-disconnect is enabled and there are active terminals, ask first.

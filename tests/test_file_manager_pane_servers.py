@@ -206,3 +206,72 @@ def test_a_new_file_manager_starts_as_settings_say():
     assert window._load_single_pane_preference() is True
     window.config.get_setting.side_effect = lambda key, default=None: default
     assert window._load_single_pane_preference() is False
+
+
+
+class _Transfer:
+    def __init__(self):
+        from concurrent.futures import Future
+
+        self.future = Future()
+        self._futures = [self.future]
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def test_a_connection_closes_only_after_its_transfers_end(monkeypatch):
+    """Closing the SFTP service under a transfer killed it and left its
+    partial file on the server; the close now waits for the transfer."""
+    window_module = _module()
+    window = _window(window_module)
+    transfer = _Transfer()
+    window._running_transfers = lambda: [transfer]
+    polls = []
+    monkeypatch.setattr(
+        window_module.GLib, "timeout_add",
+        lambda _ms, fn, *a: polls.append(fn) or 1, raising=False,
+    )
+    manager = MagicMock()
+
+    window._close_backend_when_idle(manager)
+    assert polls and manager.close.call_count == 0
+    assert polls[0]() is True  # still running: keep waiting
+    manager.close.assert_not_called()
+
+    transfer.future.set_result(None)
+    assert polls[0]() is False
+    manager.close.assert_called_once_with()
+
+
+def test_without_transfers_the_connection_closes_at_once():
+    window_module = _module()
+    window = _window(window_module)
+    window._running_transfers = lambda: []
+    manager = MagicMock()
+    window._close_backend_when_idle(manager)
+    manager.close.assert_called_once_with()
+
+
+def test_closing_the_file_manager_cancels_its_transfers_first(monkeypatch):
+    window_module = _module()
+    window = _window(window_module)
+    transfer = _Transfer()
+    window._running_transfers = lambda: [transfer] if not transfer.cancelled else []
+    window._manager_signal_handlers = []
+    window._left_manager = None
+    window._clear_progress_toast = lambda: None
+    closed = []
+    window._close_backend_when_idle = lambda manager: closed.append(manager)
+
+    right = window._manager
+    window._cleanup_manager()
+
+    assert transfer.cancelled
+    assert closed == [right]
+    # The futures to wait for were taken before cancelling: a cancelled
+    # transfer stops reading as running while the daemon still cleans up.
+    assert window._draining_futures == [transfer.future]
+    window._cleanup_manager()  # destroy after close-request: once only
+    assert closed == [right]
