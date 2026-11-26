@@ -193,6 +193,7 @@ def _install_gi_stub(monkeypatch):
         CONTROL_MASK=1 << 0,
         ALT_MASK=1 << 1,
         SUPER_MASK=1 << 2,
+        SHIFT_MASK=1 << 3,
     )
     gdk_module.keyval_to_unicode = lambda value: value
 

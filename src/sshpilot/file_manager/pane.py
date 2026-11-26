@@ -3564,16 +3564,8 @@ class FilePane(Gtk.Box):
         The drag source advertises both COPY and MOVE; a drop within a single
         pane defaults to a move, and holding the primary modifier copies.
         """
-        if drop_target is None:
-            return False
-        try:
-            event = drop_target.get_current_event()
-            state = (
-                event.get_modifier_state()
-                if event is not None
-                else Gdk.ModifierType(0)
-            )
-        except Exception:
+        state = FilePane._drop_modifier_state(drop_target)
+        if state is None:
             return False
         primary_mask = getattr(Gdk.ModifierType, "CONTROL_MASK", 0)
         if is_macos():
@@ -3582,6 +3574,30 @@ class FilePane(Gtk.Box):
                 | getattr(Gdk.ModifierType, "SUPER_MASK", 0)
             )
         return bool(state & primary_mask)
+
+    @staticmethod
+    def _drop_modifier_state(drop_target: Optional[Gtk.DropTarget]):
+        """The modifier state of the drop event, or None when unknown."""
+        if drop_target is None:
+            return None
+        try:
+            event = drop_target.get_current_event()
+            return (
+                event.get_modifier_state()
+                if event is not None
+                else Gdk.ModifierType(0)
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _drag_move_modifier_pressed(drop_target: Optional[Gtk.DropTarget]) -> bool:
+        """True when the user held Shift during a drop: move where the
+        default is to copy (between two servers), as in Nautilus."""
+        state = FilePane._drop_modifier_state(drop_target)
+        if state is None:
+            return False
+        return bool(state & getattr(Gdk.ModifierType, "SHIFT_MASK", 0))
 
     def _on_drop_string(self, drop_target: Gtk.DropTarget, value: str, x: float, y: float) -> bool:
         """Handle dropped files from string data."""
@@ -3794,7 +3810,13 @@ class FilePane(Gtk.Box):
             destination = self._current_path
             if target_folder is not None:
                 destination = posixpath.join(self._current_path, target_folder.name)
-            move = not self._drag_copy_modifier_pressed(drop_target)
+            # One server in two panes is one file system: move, Ctrl copies.
+            # Two servers: copy, Shift moves; a plain drag must not delete
+            # the originals on another machine. Nautilus does the same.
+            if window._same_server(source_pane, self):
+                move = not self._drag_copy_modifier_pressed(drop_target)
+            else:
+                move = self._drag_move_modifier_pressed(drop_target)
             window._perform_pane_to_pane_remote_operation(
                 entries,
                 getattr(source_pane, "_current_path", "") or "/",
