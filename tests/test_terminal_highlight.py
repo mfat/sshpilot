@@ -1112,7 +1112,8 @@ def test_narrowed_rule_scan_gives_the_same_output_as_all_rules(monkeypatch):
             )
             reference = Highlighter(profile)
             compiled = reference._compiled
-            monkeypatch.setattr(compiled, "regex_for", lambda _text, c=compiled: c.regex)
+            plain = highlight._plain_alternation(compiled.rules)
+            monkeypatch.setattr(compiled, "regex_for", lambda _text, r=plain: r)
             want = b"".join(
                 reference.feed(_SPEED_CORPUS[i:i + chunk])
                 for i in range(0, len(_SPEED_CORPUS), chunk)
@@ -1154,3 +1155,110 @@ def test_disabled_fast_path_tracks_the_same_state_as_byte_by_byte():
         # Enabling afterwards behaves the same on both.
         whole.configure(True, "generic"), single.configure(True, "generic")
         assert whole.feed(b"m 10.0.0.1\r\n") == single.feed(b"m 10.0.0.1\r\n"), stream
+
+
+def _rule_samples():
+    """Deterministic strings built from the corpus tokens, for rule properties."""
+    import random
+
+    rng = random.Random(1426)
+    tokens = [t for t in re.split(rb"(\s+|[\x1b,()\[\]])", _SPEED_CORPUS) if t]
+    # Whole lines too: several rules need their context or a line start.
+    tokens += [line for line in _SPEED_CORPUS.splitlines(keepends=True) if line]
+    glue = [b"", b" ", b":", b"-", b".", b"/", b"a", b"Z", b"7", b"_", b"*", b"%", b"\r", b"\n"]
+    for _ in range(4000):
+        yield b"".join(
+            rng.choice(tokens) + rng.choice(glue) for _ in range(rng.randint(1, 6))
+        )
+
+
+def test_no_rule_starts_directly_after_a_letter_or_digit():
+    """_alternation tries rules at token starts only; every rule must agree."""
+    alnum = re.compile(rb"[0-9A-Za-z]")
+    samples = list(_rule_samples())
+    for profile in highlight.PROFILES:
+        for rule in highlight._rules(profile):
+            regex = re.compile(rule.pattern.encode("ascii"))
+            found = 0
+            for sample in samples:
+                # Overlapping scan: every position, not only leftmost matches.
+                for at in range(len(sample)):
+                    m = regex.match(sample, at)
+                    if m is not None and m.end() > at:
+                        found += 1
+                        assert at == 0 or not alnum.match(sample, at - 1), (
+                            rule.name, sample, at
+                        )
+            assert found, f"{profile}:{rule.name} never matched a sample"
+
+
+def test_first_bytes_cover_every_match_and_are_known_for_every_rule():
+    samples = list(_rule_samples())
+    for profile in highlight.PROFILES:
+        for rule in highlight._rules(profile):
+            first = highlight._first_bytes(rule.pattern)
+            # Not "any byte": the pattern was understood on this Python.
+            assert len(first) < 64, (rule.name, len(first))
+            regex = re.compile(rule.pattern.encode("ascii"))
+            for sample in samples:
+                for m in regex.finditer(sample):
+                    assert m.group()[0] in first, (rule.name, m.group())
+    assert highlight._first_bytes(r"(?i:ab)?[x-z]|\d+") == frozenset(b"aAxyz0123456789")
+    assert highlight._first_bytes(r"(?=q)") == highlight._ALL_BYTES  # can match nothing
+    assert highlight._first_bytes(r"\1(") == highlight._ALL_BYTES  # not a pattern
+
+
+def test_filtered_scan_finds_what_the_plain_alternation_finds():
+    samples = list(_rule_samples())
+    for profile in highlight.PROFILES:
+        rules = highlight._rules(profile)
+        fast, plain = highlight._alternation(rules), highlight._plain_alternation(rules)
+        assert fast.pattern != plain.pattern
+        for sample in samples:
+            assert [(m.lastgroup, m.span()) for m in fast.finditer(sample)] == [
+                (m.lastgroup, m.span()) for m in plain.finditer(sample)
+            ], sample
+
+
+def test_a_run_of_lines_is_coloured_like_the_same_lines_fed_one_by_one():
+    text = (
+        b"host 10.0.0.1 is up\rAuthenticated to host (via x)\r\n"
+        b"Server accepts key: /k 10.0.0.2\nversion\n1.2.3.4 up\n\rERROR\r"
+        b"debug1: Authentication succeeded (publickey).\n10:00 fe80::1 is down"
+    )
+    whole = Highlighter().feed(text)
+    by_line = Highlighter()
+    pieces = [p for p in re.split(rb"(?<=[\r\n])", text) if p]
+    assert b"".join(by_line.feed(p) for p in pieces) == whole
+    assert b"\x1b[1m" in whole
+    assert re.sub(rb"\x1b\[[0-9;]*m", b"", whole) == text
+
+
+def test_repeated_short_runs_follow_theme_and_profile_changes():
+    h = Highlighter()
+    line = b"\x1b[31mx\x1b[0m 10.0.0.1 \x1b[32my\x1b[0m Gi0/1 \x1b[0m"
+    first = h.feed(line)
+    assert h.feed(line) == first  # served from the short-run cache
+    assert b"Gi0/1" in first and b"\x1b[33mGi0/1" not in first
+    h.set_profile("cisco-ios")
+    assert b"\x1b[33mGi0/1" in h.feed(line)
+    h.set_theme((0.0, 0.0, 0.0), [(0.5, 0.5, 0.5)] * 16)
+    themed = h.feed(line)
+    assert b"\x1b[38;2;" in themed and themed != first
+
+
+def test_sgr_effects_are_the_same_cached_or_not():
+    cases = [b"", b"0", b"1;31", b"0;1;2;22", b"38;5;200;7", b"38;2;1;2;3;44", b"48:2::1:2:3",
+             b"31;0", b"7;27;8", b"999999999999999999999999", b"x;31", b"39;49;31;39"]
+    for params in cases:
+        keep, add = highlight._sgr_effect(params)
+        for before in range(64):
+            h = Highlighter()
+            h._attrs = before
+            h._sgr(params)
+            h._sgr(params)  # second time from the cache: idempotent on its result
+            once = before & keep | add
+            assert h._attrs == once & keep | add, (params, before)
+    h = Highlighter()
+    h._sgr(b"1;31"), h._sgr(b"0;7")
+    assert (h._fg, h._bold, h._reverse) == (False, False, True)

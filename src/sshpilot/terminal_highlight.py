@@ -22,11 +22,16 @@ Streaming rules:
 * A disabled highlighter returns its input unchanged but keeps tracking
   terminal state, so enabling it mid-session needs no resync.
 
-Speed (#1426): this runs on the GUI thread for every output byte, so the two
-common cases avoid per-token Python work. A disabled highlighter applies only
-the SGR sequences after a chunk's last reset when the chunk holds nothing
-else. An enabled one runs only the rules whose ``Rule.needs`` fragments occur
-in the text: the full alternation costs about 3 us per byte whatever the text.
+Speed (#1426): this runs on the GUI thread for every output byte, so nothing
+here may cost per byte in Python.
+
+* Disabled: a chunk holding only text and plain SGR applies the SGRs from its
+  last reset on and returns.
+* A run of plain text is scanned once, whatever its number of lines, by the
+  rules whose ``Rule.needs`` fragments occur in it (``_Compiled.regex_for``),
+  and only where a rule can start (``_alternation``).
+* SGR effects are worked out once per parameter string (``_sgr_effect``), and
+  short runs between escapes are remembered (``Highlighter._runs``).
 
 This module is pure Python and does not import ``gi``.
 """
@@ -109,9 +114,14 @@ def _numbers_at_most(limit: int, low: int = 0) -> Validator:
 
 def _valid_ipv6(_full: bytes, m: "re.Match[bytes]") -> bool:
     address, _, prefix = m.group().partition(b"/")
+    # Eight groups, or six and a dotted quad, unless "::" stands in for some.
+    # Checked first: "10:00" in a listing is the usual candidate, and letting
+    # ipaddress reject it costs an exception per line.
+    if b"::" not in address and address.count(b":") < 6:
+        return False
     if prefix and int(prefix) > 128:
         return False
-    if not re.search(rb"[0-9A-Fa-f]", address):
+    if _HEX_DIGIT_RE.search(address) is None:
         return False
     try:
         ipaddress.IPv6Address(address.decode("ascii"))
@@ -120,6 +130,7 @@ def _valid_ipv6(_full: bytes, m: "re.Match[bytes]") -> bool:
     return True
 
 
+_HEX_DIGIT_RE = re.compile(rb"[0-9A-Fa-f]")
 _VERSION_BEFORE = re.compile(rb"(?i)(?:version|ver|release|build)[ :=]+\Z")
 
 
@@ -131,6 +142,9 @@ _OCT = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
 _BEFORE = r"(?<![0-9A-Za-z])"
 _WORD = r"(?<![\w/-])"
 _NOT_WORD = r"(?![\w/-])"
+# A run of text is scanned in one pass, so "line start" is spelled out: the
+# start of the scanned bytes or just after a CR or LF.
+_LINE_START = r"(?:^|(?<=[\r\n]))"
 
 _MAC = [
     Rule(
@@ -274,14 +288,14 @@ def _rules(profile: str) -> List[Rule]:
     rules = [
         Rule(
             "auth_success",
-            r"(?m:^(?:debug[123]:[ \t]*)?(?i:Authenticated to|Authentication succeeded"
+            rf"(?:{_LINE_START}(?:debug[123]:[ \t]*)?(?i:Authenticated to|Authentication succeeded"
             r"|Authentication successful)\b[^\r\n]*)",
             _GREEN,
             needs=(b"authenticat",),
         ),
         Rule(
             "auth_key",
-            r"(?m:^(?:debug[123]:[ \t]*)?(?:Server accepts key:|Using private key:)"
+            rf"(?:{_LINE_START}(?:debug[123]:[ \t]*)?(?:Server accepts key:|Using private key:)"
             r"[^\r\n]*)",
             _CYAN,
             needs=(b"key:",),
@@ -307,9 +321,124 @@ def _rules(profile: str) -> List[Rule]:
     return rules
 
 
-def _alternation(rules: Sequence[Rule]) -> "re.Pattern[bytes]":
+_ALL_BYTES = frozenset(range(256))
+_WORD_BYTES = frozenset(b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz")
+
+
+def _fold_case(values: "frozenset[int]") -> "frozenset[int]":
+    extra = {b ^ 0x20 for b in values if 65 <= (b & ~0x20) <= 90}
+    return values | extra
+
+
+def _first_bytes(pattern: str) -> "frozenset[int]":
+    """Bytes a match of *pattern* can start with (never too few).
+
+    Read from the parsed pattern; anything not understood, or a Python whose
+    ``re`` internals differ, answers "any byte", which only costs speed.
+    """
+    try:
+        from re import _constants as c, _parser as parser
+
+        categories = {
+            c.CATEGORY_DIGIT: frozenset(b"0123456789"),
+            c.CATEGORY_WORD: _WORD_BYTES,
+            c.CATEGORY_SPACE: frozenset(b" \t\n\r\f\v"),
+        }
+
+        def of_class(items: Sequence) -> "frozenset[int]":
+            negate, found = False, set()
+            for op, value in items:
+                if op is c.NEGATE:
+                    negate = True
+                elif op is c.LITERAL:
+                    found.add(value)
+                elif op is c.RANGE:
+                    found.update(range(value[0], value[1] + 1))
+                elif op is c.CATEGORY and value in categories:
+                    found |= categories[value]
+                else:
+                    return _ALL_BYTES
+            found &= _ALL_BYTES
+            return _ALL_BYTES - found if negate else frozenset(found)
+
+        def first(items: Sequence, ignore_case: bool) -> "tuple[frozenset[int], bool]":
+            """(possible first bytes, whether the items can match nothing)"""
+            total: "frozenset[int]" = frozenset()
+            for op, value in items:
+                if op in (c.ASSERT, c.ASSERT_NOT, c.AT):
+                    continue  # zero width: ignoring it only widens the answer
+                if op is c.LITERAL:
+                    here, empty = frozenset({value}) & _ALL_BYTES or _ALL_BYTES, False
+                elif op is c.NOT_LITERAL:
+                    here, empty = _ALL_BYTES - {value}, False
+                elif op is c.IN:
+                    here, empty = of_class(value), False
+                elif op is c.SUBPATTERN:
+                    _group, add, remove, inner = value
+                    nested = (ignore_case or bool(add & re.IGNORECASE)) and not (
+                        remove & re.IGNORECASE
+                    )
+                    here, empty = first(inner, nested)
+                    if nested:
+                        here = _fold_case(here)
+                elif op is c.BRANCH:
+                    here, empty = frozenset(), False
+                    for branch in value[1]:
+                        branch_first, branch_empty = first(branch, ignore_case)
+                        here |= branch_first
+                        empty = empty or branch_empty
+                elif op in (c.MAX_REPEAT, c.MIN_REPEAT, c.POSSESSIVE_REPEAT):
+                    low, _high, inner = value
+                    here, empty = first(inner, ignore_case)
+                    empty = empty or low == 0
+                else:
+                    return _ALL_BYTES, False
+                if ignore_case:
+                    here = _fold_case(here)
+                total |= here
+                if not empty:
+                    return total, False
+            return total, True
+
+        found, empty = first(parser.parse(pattern.encode("ascii")), False)
+        return _ALL_BYTES if empty or not found else found
+    except Exception:  # noqa: BLE001 - private API; the answer is only a filter
+        return _ALL_BYTES
+
+
+def _byte_class(values: "frozenset[int]") -> str:
+    return "[" + "".join("\\x%02x" % b for b in sorted(values)) + "]"
+
+
+def _plain_alternation(rules: Sequence[Rule]) -> "re.Pattern[bytes]":
+    """Every rule at every byte: what the filtered scan below must equal."""
     pattern = "|".join(f"(?P<{r.name}>{r.pattern})" for r in rules)
     return re.compile(pattern.encode("ascii"))
+
+
+def _alternation(rules: Sequence[Rule]) -> "re.Pattern[bytes]":
+    """The rules as one leftmost-first scan that fails fast where none can start.
+
+    Tried at every byte, the bare alternation costs about as much per byte as
+    all its rules together. Two filters reject most positions first:
+
+    * no rule starts directly after ``[0-9A-Za-z]`` (each begins with a
+      lookbehind, or a line start, that says so; a test pins it), so only
+      token starts are tried;
+    * a rule is tried only where the byte is one its matches can begin with.
+
+    Neither removes a match: they are conditions every match already meets.
+    """
+    starts = [_first_bytes(r.pattern) for r in rules]
+    branches = []
+    for rule, first in zip(rules, starts):
+        guard = "" if first == _ALL_BYTES else f"(?={_byte_class(first)})"
+        branches.append(f"{guard}(?P<{rule.name}>{rule.pattern})")
+    union = frozenset().union(*starts)
+    lead = "(?<![0-9A-Za-z])"
+    if union != _ALL_BYTES:
+        lead += f"(?={_byte_class(union)})"
+    return re.compile((lead + "(?:" + "|".join(branches) + ")").encode("ascii"))
 
 
 _SUBSET_CACHE_MAX = 128
@@ -383,7 +512,8 @@ def _compile(profile: str) -> _Compiled:
 
 _COMPILED: Dict[str, _Compiled] = {}
 
-_NEXT_RE = re.compile(rb"\x1b|\xc2(?:[\x80-\x9f]|\Z)")
+# The next control; group 1 is set when it is a complete plain SGR.
+_NEXT_RE = re.compile(rb"\x1b(?:\[([0-9;:]*)m)?|\xc2(?:[\x80-\x9f]|\Z)")
 # A chunk whose every ESC starts one of these holds nothing but text and SGR.
 _PLAIN_SGR_RE = re.compile(rb"\x1b\[([0-9;:]*)m")
 _CSI_RE = re.compile(rb"(?:\x1b\[|\xc2\x9b)([0-?]*)([ -/]*)([@-~])")
@@ -398,6 +528,73 @@ _OSC_END_RE = re.compile(rb"\x07|\x1b\\|\xc2\x9c|[\x18\x1a]|\x1b(?!\\|\Z)")
 _ST_END_RE = re.compile(rb"\x1b\\|\xc2\x9c|[\x18\x1a]|\x1b(?!\\|\Z)")
 _TAIL_RE = re.compile(rb"[^\x00-\x20\x7f]*\Z")  # trailing run of non-break bytes
 _ALT_SCREEN_MODES = {b"47", b"1047", b"1049"}
+_LINE_BREAK_RE = re.compile(rb"[\r\n]")
+_LINE_RULES = frozenset({"auth_success", "auth_key"})
+
+# Tracked SGR attributes, one bit each.
+_FG, _BG, _REVERSE, _CONCEAL, _BOLD, _FAINT = 1, 2, 4, 8, 16, 32
+_ALL_ATTRS = 63
+_LEAVE_TEXT = _FG | _BG | _REVERSE | _CONCEAL  # the remote styled it: hands off
+_SGR_EFFECTS: Dict[bytes, "tuple[int, int]"] = {}
+_SGR_EFFECTS_MAX = 2048
+
+
+def _sgr_effect(params: bytes) -> "tuple[int, int]":
+    """What an SGR does to the tracked attributes, as ``(keep, add)`` masks.
+
+    Every code only sets or clears attributes, so a whole parameter string
+    reduces to ``attrs & keep | add`` and is worked out once per string.
+    """
+    keep, add = _ALL_ATTRS, 0
+    it = iter(params.split(b";") if params else [b"0"])
+    for raw in it:
+        # Colon sub-parameters (38:2::R:G:B, 4:3) belong to their own
+        # code: take the code, consume nothing else.
+        head, colon, _ = raw.partition(b":")
+        # Remote parameters are untrusted and can exceed Python's integer
+        # conversion limit. No supported SGR code needs more than 3 digits.
+        number = head.lstrip(b"0") or b"0"
+        if not number.isdigit() or len(number) > 3:
+            continue
+        code = int(number)
+        clear = 0
+        if code == 0:
+            clear = _ALL_ATTRS
+        elif code == 1:
+            add |= _BOLD
+        elif code == 2:
+            add |= _FAINT
+        elif code == 22:
+            clear = _BOLD | _FAINT
+        elif code == 7:
+            add |= _REVERSE
+        elif code == 27:
+            clear = _REVERSE
+        elif code == 8:
+            add |= _CONCEAL
+        elif code == 28:
+            clear = _CONCEAL
+        elif code == 39:
+            clear = _FG
+        elif code == 49:
+            clear = _BG
+        elif 30 <= code <= 37 or 90 <= code <= 97:
+            add |= _FG
+        elif 40 <= code <= 47 or 100 <= code <= 107:
+            add |= _BG
+        elif code in (38, 48, 58):
+            if code == 38:
+                add |= _FG
+            elif code == 48:
+                add |= _BG
+            if not colon:  # semicolon form: 38;5;n / 38;2;r;g;b
+                kind = next(it, b"")
+                for _ in range(3 if kind == b"2" else 1 if kind == b"5" else 0):
+                    next(it, None)
+        if clear:
+            keep &= ~clear
+            add &= ~clear
+    return keep, add
 _CARRY_MAX = 64
 _CTX_MAX = 64  # context for validators and authentication prefixes across chunks
 
@@ -412,12 +609,15 @@ class Highlighter:
     def __init__(self, profile: str = "generic", enabled: bool = True) -> None:
         self.enabled = enabled
         self._theme_colours: Dict[bytes, bytes] = {}
+        # short plain run -> (what to show, line rule left open); see _text
+        self._runs: Dict[bytes, "tuple[bytes, Optional[str]]"] = {}
         self.set_profile(profile)
         self.reset()
 
     def set_theme(self, background: RGB, palette: Sequence[RGB]) -> None:
         """Use the emulator's effective background, including group overrides."""
         self._theme_colours = {}
+        self._runs = {}
         for index, fallback in enumerate((
             (0.8, 0.2, 0.2), (0.2, 0.65, 0.3), (0.8, 0.6, 0.1),
             (0.25, 0.4, 0.8), (0.65, 0.3, 0.7), (0.1, 0.6, 0.65),
@@ -443,6 +643,7 @@ class Highlighter:
         if self.profile not in _COMPILED:
             _COMPILED[self.profile] = _compile(self.profile)
         self._compiled = _COMPILED[self.profile]
+        self._runs = {}
 
     def configure(self, enabled: bool, profile: str) -> bytes:
         """Apply settings without losing stream state.
@@ -468,7 +669,7 @@ class Highlighter:
         self._in_string: Optional[bytes] = None  # terminator kind: b"osc" or b"st"
         self._alt_modes: Set[bytes] = set()
         # Cursor save slots belong to the normal/alternate screen buffers.
-        self._saved_sgr: Dict[bool, tuple[bool, ...]] = {}
+        self._saved_sgr: Dict[bool, int] = {}
         self._line_rule: Optional[str] = None
         self._carry = b""
         self._ctx = b""  # plain text before the carry: lookbehind for validators
@@ -476,19 +677,20 @@ class Highlighter:
         self._reset_sgr()
 
     def _reset_sgr(self) -> None:
-        self._fg = self._bg = self._reverse = self._conceal = False
-        self._bold = self._faint = False
+        self._attrs = 0
 
     def _save_sgr(self) -> None:
-        self._saved_sgr[bool(self._alt_modes)] = (
-            self._fg, self._bg, self._reverse, self._conceal, self._bold, self._faint,
-        )
+        self._saved_sgr[bool(self._alt_modes)] = self._attrs
 
     def _restore_sgr(self) -> None:
-        (self._fg, self._bg, self._reverse, self._conceal,
-         self._bold, self._faint) = self._saved_sgr.get(
-            bool(self._alt_modes), (False,) * 6,
-        )
+        self._attrs = self._saved_sgr.get(bool(self._alt_modes), 0)
+
+    _fg = property(lambda self: bool(self._attrs & _FG))
+    _bg = property(lambda self: bool(self._attrs & _BG))
+    _reverse = property(lambda self: bool(self._attrs & _REVERSE))
+    _conceal = property(lambda self: bool(self._attrs & _CONCEAL))
+    _bold = property(lambda self: bool(self._attrs & _BOLD))
+    _faint = property(lambda self: bool(self._attrs & _FAINT))
 
     def feed(self, data: bytes) -> bytes:
         if (
@@ -549,11 +751,11 @@ class Highlighter:
             if nxt is None:
                 break
             self._carry = self._ctx = b""
-            sgr = _PLAIN_SGR_RE.match(buf, i)
-            if sgr is not None:  # by far the most common escape
-                self._sgr(sgr.group(1))
-                out.append(sgr.group())
-                i = sgr.end()
+            params = nxt.group(1)
+            if params is not None:  # a plain SGR, by far the most common escape
+                self._sgr(params)
+                out.append(nxt.group())
+                i = nxt.end()
             else:
                 i = self._escape(buf, i, out)
         if not self.enabled:
@@ -613,92 +815,46 @@ class Highlighter:
                         self._restore_sgr()
 
     def _sgr(self, params: bytes) -> None:
-        if not params or params == b"0":
-            self._reset_sgr()
-            return
-        it = iter(params.split(b";") if params else [b"0"])
-        for raw in it:
-            # Colon sub-parameters (38:2::R:G:B, 4:3) belong to their own
-            # code: take the code, consume nothing else.
-            head, colon, _ = raw.partition(b":")
-            # Remote parameters are untrusted and can exceed Python's integer
-            # conversion limit. No supported SGR code needs more than 3 digits.
-            number = head.lstrip(b"0") or b"0"
-            if not number.isdigit() or len(number) > 3:
-                continue
-            code = int(number)
-            if code == 0:
-                self._reset_sgr()
-            elif code == 1:
-                self._bold = True
-            elif code == 2:
-                self._faint = True
-            elif code == 22:
-                self._bold = self._faint = False
-            elif code == 7:
-                self._reverse = True
-            elif code == 27:
-                self._reverse = False
-            elif code == 8:
-                self._conceal = True
-            elif code == 28:
-                self._conceal = False
-            elif code == 39:
-                self._fg = False
-            elif code == 49:
-                self._bg = False
-            elif 30 <= code <= 37 or 90 <= code <= 97:
-                self._fg = True
-            elif 40 <= code <= 47 or 100 <= code <= 107:
-                self._bg = True
-            elif code in (38, 48, 58):
-                if code == 38:
-                    self._fg = True
-                elif code == 48:
-                    self._bg = True
-                if not colon:  # semicolon form: 38;5;n / 38;2;r;g;b
-                    kind = next(it, b"")
-                    for _ in range(3 if kind == b"2" else 1 if kind == b"5" else 0):
-                        next(it, None)
+        effect = _SGR_EFFECTS.get(params)
+        if effect is None:
+            effect = _sgr_effect(params)
+            if len(params) <= 24:
+                if len(_SGR_EFFECTS) >= _SGR_EFFECTS_MAX:
+                    _SGR_EFFECTS.clear()
+                _SGR_EFFECTS[params] = effect
+        self._attrs = self._attrs & effect[0] | effect[1]
 
     def _text(self, text: bytes, last: bool) -> bytes:
-        if (
-            not self.enabled
-            or self._alt_modes
-            or self._fg
-            or self._bg
-            or self._reverse
-            or self._conceal
-        ):
+        if not self.enabled or self._alt_modes or self._attrs & _LEAVE_TEXT:
             self._carry = self._ctx = b""
             self._line_rule = None
             return text
-        # Only the rules that can match somewhere in this run are scanned; the
-        # context and carry are rescanned with its first line, so they count.
-        regex = self._compiled.regex_for(self._ctx + self._carry + text)
-        if regex is None and not self._line_rule:
-            # Nothing to colour: keep only the state the loop below would.
-            cut = max(text.rfind(b"\r"), text.rfind(b"\n")) + 1
-            if cut:
-                self._carry = self._ctx = b""
-            if cut < len(text):
-                self._tokens(text[cut:], last, None)
-            return text
-        parts = []
+        rule = self._line_rule
+        if rule is None:
+            if last or self._attrs or self._ctx or self._carry or len(text) > _SHORT_TEXT_MAX:
+                return self._scan(text, last)
+            # A short run between two escapes with nothing carried in: its
+            # result depends on the bytes alone, and coloured output repeats
+            # the same few (" ", ": ", a level name) on every line.
+            known = self._runs.get(text)
+            if known is None:
+                shown = self._scan(text, False)
+                if len(self._runs) >= _SHORT_CACHE_MAX:
+                    self._runs.clear()
+                self._runs[text] = (shown, self._line_rule)
+                return shown
+            self._line_rule = known[1]
+            return known[0]
         # Keep full-message emphasis through output chunks, but never let it
         # leak onto the next line. Do not buffer output awaiting a newline.
-        for part in re.split(rb"([\r\n]+)", text):
-            if not part:
-                continue
-            if part.startswith((b"\r", b"\n")):
-                parts.append(part)
-                self._carry = self._ctx = b""
-                self._line_rule = None
-            elif self._line_rule:
-                parts.append(self._emphasize_line(part, self._line_rule))
-            else:
-                parts.append(self._tokens(part, last, regex))
-        return b"".join(parts)
+        line_break = _LINE_BREAK_RE.search(text)
+        if line_break is None:
+            return self._emphasize_line(text, rule)
+        end = line_break.start()
+        self._line_rule = None
+        self._carry = self._ctx = b""
+        head = self._emphasize_line(text[:end], rule) if end else b""
+        return head + self._scan(text[end:], last)
 
     def _emphasize_line(self, text: bytes, rule: str) -> bytes:
         colour = self._colour(rule)
@@ -709,40 +865,61 @@ class Highlighter:
         restore = b"" if self._bold else b"\x1b[22m" + (b"\x1b[2m" if self._faint else b"")
         return b"\x1b[1m" + colour + text + b"\x1b[39m" + restore
 
-    def _tokens(
-        self, text: bytes, last: bool, regex: Optional["re.Pattern[bytes]"]
-    ) -> bytes:
-        ctx, carry, self._ctx, self._carry = self._ctx, self._carry, b"", b""
-        validators = self._compiled.validators
-        full = ctx + carry + text
-        skip = len(ctx) + len(carry)
+    def _scan(self, text: bytes, last: bool) -> bytes:
+        """Colour the tokens of a run of plain text (any number of lines).
+
+        The run is scanned in one pass. No rule matches across a line break,
+        so this equals scanning line by line; the carried token and its
+        context (same line, earlier chunk) are rescanned in front of it.
+        """
+        ctx, carry = self._ctx, self._carry
+        self._ctx = self._carry = b""
+        if ctx or carry:
+            full = ctx + carry + text
+            skip = len(full) - len(text)
+        else:
+            full, skip = text, 0
+        size = len(full)
+        compiled = self._compiled
+        regex = compiled.regex_for(full)
         parts: List[bytes] = []
-        pos = 0
-        for m in regex.finditer(full) if regex is not None else ():
-            if m.end() <= skip:
-                continue
-            check = validators.get(m.lastgroup)
-            if check is not None and not check(full, m):
-                continue
-            start = max(m.start(), skip)
-            parts.append(full[max(pos, skip):start])
-            if m.lastgroup in ("auth_success", "auth_key"):
-                self._line_rule = m.lastgroup
-                parts.append(self._emphasize_line(full[start:m.end()], m.lastgroup))
-            else:
-                parts.append(self._colour(m.lastgroup))
-                parts.append(full[start:m.end()])
-                parts.append(b"\x1b[39m")
-            pos = m.end()
+        if regex is not None:
+            validators = compiled.validators
+            pos = skip
+            for m in regex.finditer(full):
+                end = m.end()
+                if end <= skip:
+                    continue
+                name = m.lastgroup
+                check = validators.get(name)
+                if check is not None and not check(full, m):
+                    continue
+                start = m.start()
+                if start < skip:
+                    start = skip
+                parts.append(full[pos:start])
+                if name in _LINE_RULES:
+                    # Runs to the end of its line: still open only if the
+                    # run ends there too.
+                    self._line_rule = name if end == size else None
+                    parts.append(self._emphasize_line(full[start:end], name))
+                else:
+                    parts.append(self._colour(name))
+                    parts.append(full[start:end])
+                    parts.append(b"\x1b[39m")
+                pos = end
         if last:
-            tail = _TAIL_RE.search(full, max(0, len(full) - _CARRY_MAX - 1)).group()
-            if len(tail) <= _CARRY_MAX:
-                self._carry = tail
-                keep = len(full) - len(tail)
-                self._ctx = full[max(0, keep - _CTX_MAX):keep]
+            # A token cut by the chunk end is rescanned with the next chunk.
+            line = max(full.rfind(b"\n"), full.rfind(b"\r")) + 1
+            if line < size:
+                tail = _TAIL_RE.search(full, max(line, size - _CARRY_MAX - 1)).group()
+                if len(tail) <= _CARRY_MAX:
+                    self._carry = tail
+                    keep = size - len(tail)
+                    self._ctx = full[max(line, keep - _CTX_MAX):keep]
         if not parts:
             return text
-        parts.append(full[max(pos, skip):])
+        parts.append(full[pos:])
         return b"".join(parts)
 
 
