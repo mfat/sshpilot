@@ -1619,15 +1619,25 @@ class FileManagerWindow(Adw.Window):
         if not futures:
             _close()
             return
-        deadline = time.monotonic() + _TRANSFER_DRAIN_SECONDS
         logger.info(
             "Keeping a file manager connection until %d transfer(s) end", len(futures)
         )
+        # Only a closing file manager stops waiting: it cancelled these
+        # transfers and gives the daemon a while to wind them down. A pane
+        # that merely moved to another server leaves them running, however
+        # long they take.
+        deadline: List[float] = []
 
         def _poll() -> bool:
-            if all(future.done() for future in futures) or time.monotonic() >= deadline:
+            if all(future.done() for future in futures):
                 _close()
                 return False
+            if self.__dict__.get("_cleanup_done"):
+                if not deadline:
+                    deadline.append(time.monotonic() + _TRANSFER_DRAIN_SECONDS)
+                elif time.monotonic() >= deadline[0]:
+                    _close()
+                    return False
             return True
 
         GLib.timeout_add(100, _poll)
@@ -2800,6 +2810,8 @@ class FileManagerWindow(Adw.Window):
                             future,
                             total_files=1,
                             source_path=path,
+                            manager=self._manager_for(pane),
+                            source_pane=pane,
                         )
                         future.add_done_callback(_on_single_done)
                     else:
@@ -2810,6 +2822,8 @@ class FileManagerWindow(Adw.Window):
                             future,
                             total_files=total_count,
                             source_path=base_dir,
+                            manager=self._manager_for(pane),
+                            source_pane=pane,
                         )
                         future.add_done_callback(_on_batch_done)
                 except Exception as exc:
@@ -3929,14 +3943,27 @@ class FileManagerWindow(Adw.Window):
         *,
         index: Optional[int] = None,
     ) -> None:
+        # The server the files are on now. The transfer runs in the
+        # background, and the pane may show another server by the time it
+        # ends: the originals must never be removed there.
+        source_manager = self._manager_for(pane)
+
         def _cleanup(completed: Future, path: str = source_path, target_pane: FilePane = pane) -> None:
             if not self._transfer_item_succeeded(completed, index):
                 return
             # Move sources may be files or trees; recursive handles both. The
             # download dialog is still up for the rest of the batch, so keep
             # this background delete off the shared progress signal.
-            manager = self._manager_for(target_pane)
+            manager = source_manager
             if manager is None:
+                return
+            if self._manager_for(target_pane) is not manager:
+                # The pane left that server and its connection is closing:
+                # the originals stay, the move ends as a copy.
+                logger.info(
+                    "Not removing %s after the move: its pane shows another server now",
+                    path,
+                )
                 return
             cleanup_future = manager.remove(path, recursive=True, report_progress=False)
             self._attach_refresh(cleanup_future, refresh_remote=target_pane)
@@ -4553,7 +4580,16 @@ class FileManagerWindow(Adw.Window):
                             # Check for exceptions
                             try:
                                 exception = future_result.exception()
-                                if exception:
+                                if isinstance(exception, TransferCancelledException):
+                                    # The daemon confirmed the cancel: the
+                                    # backend reports that as an error.
+                                    self._settle_batch_transfer(future_result, success=False)
+                                    self._aggregate_dialog.mark_cancelled()
+                                elif self._aggregate_dialog.is_cancelled:
+                                    self._settle_batch_transfer(
+                                        future_result, success=exception is None
+                                    )
+                                elif exception:
                                     self._settle_batch_transfer(future_result, success=False)
                                     error_msg = str(exception)
                                     # Get filename for this future

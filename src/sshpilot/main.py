@@ -1507,6 +1507,11 @@ class SshPilotApplication(Adw.Application):
                 self.window._is_quitting = True
         except Exception:
             logger.debug("Failed to mark windows quitting on shutdown", exc_info=True)
+        try:
+            from . import file_manager_window as fmw
+            fmw.set_quit_confirmed(True)
+        except Exception:
+            logger.debug("Could not mark the quit for file managers", exc_info=True)
 
         # Notify plugins first (before any teardown), then best-effort
         # deactivate them.

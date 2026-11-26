@@ -275,3 +275,22 @@ def test_same_path_on_the_same_service_is_still_rejected():
         SftpCopyRequest("svc-a", "/a", "/a")
     with pytest.raises(ValueError):
         SftpCopyRequest("svc-a", "/a", "/a", destination_service_id="svc-a")
+
+
+def test_two_connections_to_one_machine_refuse_a_folder_into_itself():
+    """Two saved connections can reach one machine. Their ids differ, so
+    only the files can tell: the copy must stop instead of copying the new
+    folder into itself without end, and leave nothing behind."""
+    fs = _tree_client()
+    runtime, ops, a, b = _two_services(fs, fs)
+    before_dirs, before_files = dict(fs.dirs), dict(fs.files)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, "/tree", "/tree/sub/copy", recursive=True, destination_service_id=b,
+    ))
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF
+    assert "/tree/sub/copy" not in fs.dirs
+    assert set(fs.dirs) == set(before_dirs)
+    assert fs.files == before_files

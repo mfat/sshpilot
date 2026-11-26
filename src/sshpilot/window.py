@@ -7940,6 +7940,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     controller.shutdown()
             except Exception:
                 logger.debug('Fullscreen controller shutdown failed', exc_info=True)
+            self._mark_transfers_quit_committed()
             return False  # Already quitting, allow close
 
         # Capture the currently-open tabs so they can be restored next launch
@@ -7953,13 +7954,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # File transfers still running in any file manager (tab or window):
         # quitting cancels them, so ask first.
-        if not getattr(self, '_transfers_quit_confirmed', False):
+        # The answer covers the one quit it was given for. That quit may
+        # still be called off (the question about open terminals), and the
+        # transfers are then as worth asking about as before.
+        transfers_answered = bool(getattr(self, '_transfers_quit_answered', False))
+        self._transfers_quit_answered = False
+        if not transfers_answered:
             from . import file_manager_window as fmw
             count = fmw.running_transfer_count_everywhere()
             if count:
                 def _quit_anyway():
-                    self._transfers_quit_confirmed = True
-                    fmw.set_quit_confirmed(True)
+                    self._transfers_quit_answered = True
                     app = self.get_application()
                     if app is not None:
                         app.quit()
@@ -8016,7 +8021,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         self._teardown_ssh_config_monitor()
         self._invalidate_api_window_callbacks()
+        self._mark_transfers_quit_committed()
         return False  # Allow close
+
+    @staticmethod
+    def _mark_transfers_quit_committed() -> None:
+        """The quit goes ahead: file managers close without asking again."""
+        try:
+            from . import file_manager_window as fmw
+            fmw.set_quit_confirmed(True)
+        except Exception:
+            logger.debug("Could not mark the quit for file managers", exc_info=True)
 
     def _proceed_with_confirmed_quit(self) -> None:
         """Quit through the verified-teardown path whenever a daemon exists.

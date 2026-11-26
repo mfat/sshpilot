@@ -478,6 +478,16 @@ class WindowTabsMixin:
                      for i in range(self.tab_view.get_n_pages())]
         except Exception:
             return
+        # File managers moved into a window of their own live in that
+        # window's tab view, not in this one.
+        for window in list(self.__dict__.get('_file_manager_windows', [])):
+            try:
+                tab_view = window.tab_view
+                pages.extend(
+                    tab_view.get_nth_page(i) for i in range(tab_view.get_n_pages())
+                )
+            except Exception:
+                logger.debug('Could not list a detached file manager window', exc_info=True)
         for page in pages:
             try:
                 embeds = self._file_manager_embeds_for_child(page.get_child())
@@ -745,6 +755,11 @@ class WindowTabsMixin:
                     controller, '_left_pane' if side == 'local' else '_right_pane', None
                 )
                 path = getattr(file_pane, '_current_path', None)
+                # The left pane may browse a server: its folder is not one
+                # on this computer.
+                is_local_pane = getattr(controller, '_is_local_pane', None)
+                if side == 'local' and callable(is_local_pane) and not is_local_pane(file_pane):
+                    path = None
             terminal, created = self._show_file_manager_terminal_panel(
                 embed, side, local_cwd=path,
             )
@@ -1031,9 +1046,9 @@ class WindowTabsMixin:
         return True
 
     def _file_manager_running_transfers(self, child) -> int:
-        from .split_view import SplitViewTab
-
-        if child is None or isinstance(child, (TerminalWidget, SplitViewTab)):
+        # Terminal and split-view tabs count too: their files panels are
+        # torn down with the tab, which cancels what they transfer.
+        if child is None:
             return 0
         total = 0
         for embed in self._file_manager_embeds_for_child(child):

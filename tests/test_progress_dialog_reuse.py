@@ -163,3 +163,20 @@ def test_delete_items_done_floors_fractional_recursive_progress():
     assert done(1.0, 1, 0) == 1
     # Never move the counter backwards.
     assert done(0.1, 10, 3) == 3
+
+
+def test_a_cancelled_transfer_never_turns_into_a_failure():
+    """The daemon confirms a cancel as an error. That must not flip the
+    indicator row from cancelled to failed, where it would stay for good."""
+    import types as _types
+
+    from sshpilot.file_manager import progress_dialog
+
+    stopped = []
+    dialog = _types.SimpleNamespace(
+        is_cancelled=True, _completion_shown=False,
+        _stop_render_timer=lambda: stopped.append(True),
+    )
+    progress_dialog.SFTPProgressDialog._show_completion_ui(dialog, False, "cancelled")
+    assert dialog._completion_shown is False
+    assert not stopped

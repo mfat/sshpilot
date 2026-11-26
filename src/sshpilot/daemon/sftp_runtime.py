@@ -2164,11 +2164,57 @@ class SftpServiceRuntime:
             copied += 1
             _report_copy_progress()
 
-        def _copy_directory(source_path: str, destination_path: str) -> None:
+        def _into_itself_error() -> _SftpSummaryError:
+            return _SftpSummaryError(
+                ErrorCode.VALIDATION_FAILED,
+                "A directory cannot be copied into itself",
+                SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF,
+                details={
+                    "service_id": record.service_id,
+                    SFTP_FAILURE_CODE_DETAIL: (
+                        SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF.value
+                    ),
+                },
+            )
+
+        def _make_root_unless_inside_source() -> None:
+            """Create the destination root of a copy between two connections.
+
+            Two saved connections can reach one machine. The destination
+            then lies inside the tree being copied, and the walk would copy
+            the new folder into itself without end. Connection ids cannot
+            tell; the files can: a folder made through the destination that
+            shows up through the source is on the same filesystem.
+            """
+            try:
+                client.lstat(destination)
+            except Exception:
+                seen_before = False
+            else:
+                seen_before = True
+            destination_client.mkdir(destination)
+            if seen_before:
+                # The source had this path while the destination did not:
+                # they are different filesystems.
+                return
+            try:
+                client.lstat(destination)
+            except Exception:
+                return
+            try:
+                destination_client.rmdir(destination)
+            except Exception:
+                pass
+            raise _into_itself_error()
+
+        def _copy_directory(
+            source_path: str, destination_path: str, *, made: bool = False
+        ) -> None:
             nonlocal pending_files
             if cancel is not None and cancel():
                 raise OperationCancelled()
-            destination_client.mkdir(destination_path)
+            if not made:
+                destination_client.mkdir(destination_path)
             entries = client.listdir_attr(source_path)
             pending_files += sum(
                 1 for entry in entries if not (entry.is_dir() and not entry.is_symlink())
@@ -2220,7 +2266,11 @@ class SftpServiceRuntime:
                         SftpFailureCode.RECURSIVE_COPY_REQUIRED,
                         details={"service_id": record.service_id},
                     )
-                _copy_directory(source, destination)
+                if not same_server and _remote_path_is_descendant(source, destination):
+                    _make_root_unless_inside_source()
+                    _copy_directory(source, destination, made=True)
+                else:
+                    _copy_directory(source, destination)
             else:
                 if request.recursive:
                     raise _SftpSummaryError(

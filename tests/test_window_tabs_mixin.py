@@ -1108,3 +1108,21 @@ def test_closing_a_file_manager_tab_with_running_transfers_asks_first(monkeypatc
     monkeypatch.setattr(fmw, "_quit_confirmed", True)
     controller.running_transfer_count = lambda: 2
     assert stub._confirm_file_manager_tab_close(view, page) is False
+
+
+def test_a_terminal_tab_counts_the_transfers_of_its_files_panel():
+    """The files panel below a terminal is torn down with the tab, which
+    cancels its transfers: the tab close must ask for it too."""
+    from sshpilot.terminal import TerminalWidget
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    controller = types.SimpleNamespace(running_transfer_count=lambda: 3)
+    embed = types.SimpleNamespace(_controller=controller)
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embeds_for_child(self, _child):
+            return [embed]
+
+    terminal = TerminalWidget.__new__(TerminalWidget)
+    assert Stub()._file_manager_running_transfers(terminal) == 3
+    assert Stub()._file_manager_running_transfers(None) == 0

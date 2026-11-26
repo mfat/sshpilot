@@ -437,10 +437,14 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         ``state`` is running, done, failed or cancelled; ``fraction`` is None
         while the size is unknown (the indicator pulses then).
         """
-        if self._completion_shown:
-            state = "done" if self._succeeded else "failed"
-        elif self.is_cancelled or self._futures_all_cancelled():
+        # Cancelled wins: the daemon confirms a cancel as an error, which
+        # must not turn the row into a failure.
+        if self.is_cancelled or (
+            not self._completion_shown and self._futures_all_cancelled()
+        ):
             state = "cancelled"
+        elif self._completion_shown:
+            state = "done" if self._succeeded else "failed"
         else:
             state = "running"
         fraction = None
@@ -866,7 +870,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
     def _show_completion_ui(self, success, error_message):
         """Update UI to show completion state (idempotent - safe to call multiple times)"""
         # Prevent multiple completion dialogs from being shown
-        if self._completion_shown:
+        if self._completion_shown or getattr(self, "is_cancelled", False):
             return False
         self._completion_shown = True
         self._succeeded = bool(success)

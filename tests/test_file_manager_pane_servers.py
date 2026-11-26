@@ -275,3 +275,62 @@ def test_closing_the_file_manager_cancels_its_transfers_first(monkeypatch):
     assert window._draining_futures == [transfer.future]
     window._cleanup_manager()  # destroy after close-request: once only
     assert closed == [right]
+
+
+def test_a_pane_that_moved_on_waits_for_a_long_transfer(monkeypatch):
+    """Only a closing file manager stops waiting (it cancelled the
+    transfers). A pane that picked another server must not kill a transfer
+    that takes longer than the drain time."""
+    window_module = _module()
+    window = _window(window_module)
+    transfer = _Transfer()
+    window._running_transfers = lambda: [transfer]
+    polls = []
+    monkeypatch.setattr(
+        window_module.GLib, "timeout_add",
+        lambda _ms, fn, *a: polls.append(fn) or 1, raising=False,
+    )
+    now = [1000.0]
+    monkeypatch.setattr(window_module.time, "monotonic", lambda: now[0])
+    manager = MagicMock()
+
+    window._close_backend_when_idle(manager)
+    now[0] += window_module._TRANSFER_DRAIN_SECONDS * 10
+    assert polls[0]() is True
+    manager.close.assert_not_called()
+
+    # The file manager closes: from then on the wait is bounded.
+    window._cleanup_done = True
+    assert polls[0]() is True
+    now[0] += window_module._TRANSFER_DRAIN_SECONDS + 1
+    assert polls[0]() is False
+    manager.close.assert_called_once_with()
+
+
+def test_move_cleanup_never_deletes_on_a_server_the_pane_switched_to():
+    """A cut-and-paste download runs in the background; the pane may show
+    another server when it ends. The originals are removed on the server
+    they are on, or not at all."""
+    from concurrent.futures import Future
+
+    window_module = _module()
+    window = _window(window_module)
+    pane = window._right_pane
+    server_a, server_b = MagicMock(), MagicMock()
+    window._manager = server_a
+    window._attach_refresh = lambda *a, **k: None
+
+    stayed = Future()
+    window._schedule_remote_move_cleanup(stayed, "/var/www", pane)
+    stayed.set_result(None)
+    server_a.remove.assert_called_once_with(
+        "/var/www", recursive=True, report_progress=False
+    )
+
+    server_a.reset_mock()
+    switched = Future()
+    window._schedule_remote_move_cleanup(switched, "/var/www", pane)
+    window._manager = server_b
+    switched.set_result(None)
+    server_a.remove.assert_not_called()
+    server_b.remove.assert_not_called()
