@@ -23,7 +23,8 @@ from __future__ import annotations
 import logging
 import threading
 from gettext import gettext as _
-from typing import List, Optional, Sequence, Tuple
+from gettext import ngettext
+from typing import Optional, Sequence
 
 try:
     from gi.repository import Adw, GLib
@@ -47,14 +48,16 @@ FAILED = "failed"        # OpenSSH was asked and did not answer
 WAITING = "waiting"      # no answer yet
 
 
-def identity_status_text(state: str, dirty: bool) -> str:
-    """The caption under "Keys OpenSSH offers"."""
+def identity_status_text(state: str, count: int = 0) -> str:
+    """The caption under "Keys OpenSSH offers": how many, while known."""
     if state == FAILED:
         return _("Unknown: OpenSSH could not read the configuration.")
-    if state == PENDING and dirty:
-        return _("Includes unsaved changes to authentication and keys")
+    if state == PENDING and count:
+        return ngettext(
+            "{count} key, tried in this order", "{count} keys, tried in this order", count
+        ).format(count=count)
     if state == PENDING:
-        return _("As saved")
+        return _("No keys")
     return _("Shown once OpenSSH has read the configuration.")
 
 
@@ -72,23 +75,6 @@ def identity_source_text(identity: EffectiveIdentity) -> str:
     return ""
 
 
-def identity_lines_for(
-    files: Sequence[str], identities_only: str, none_first: bool = False
-) -> List[str]:
-    """The block's identity lines as a save writes them."""
-    lines = []
-    if none_first and not files:
-        lines.append("IdentityFile none")
-    for path in files:
-        text = str(path)
-        if any(ch.isspace() for ch in text):
-            text = f'"{text}"'
-        lines.append(f"IdentityFile {text}")
-    if identities_only:
-        lines.append(f"IdentitiesOnly {identities_only}")
-    return lines
-
-
 class ConnectionDialogEffectiveMixin:
     """Draft evaluation for the connection editor; see the module docstring."""
 
@@ -97,19 +83,19 @@ class ConnectionDialogEffectiveMixin:
     def _build_effective_identity_row(self):
         """The read-only "Keys OpenSSH offers" expander."""
         row = Adw.ExpanderRow(title=_("Keys OpenSSH offers"))
-        row.set_subtitle(identity_status_text(WAITING, False))
+        row.set_subtitle(identity_status_text(WAITING))
         self.effective_identity_row = row
         self._effective_identity_rows = []
         self._effective_identity_shown: Optional[tuple] = None
         return row
 
     def _show_effective_identities(
-        self, state: str, identities: Sequence[EffectiveIdentity], dirty: bool
+        self, state: str, identities: Sequence[EffectiveIdentity]
     ) -> None:
         row = getattr(self, "effective_identity_row", None)
         if row is None:
             return
-        row.set_subtitle(identity_status_text(state, dirty))
+        row.set_subtitle(identity_status_text(state, len(identities)))
         shown = tuple(identities) if state == PENDING else ()
         if shown == self._effective_identity_shown:
             return
@@ -128,40 +114,6 @@ class ConnectionDialogEffectiveMixin:
             row.add_row(child)
             self._effective_identity_rows.append(child)
         row.set_enable_expansion(bool(shown))
-
-    # -- what is pending ---------------------------------------------------
-
-    def _identity_state(self) -> Tuple[Tuple[str, ...], str]:
-        try:
-            files = tuple(str(p) for p in self._collect_identity_files())
-        except Exception:
-            files = ()
-        try:
-            only = self._selected_identities_only()
-        except Exception:
-            only = ""
-        return files, only
-
-    def _capture_effective_baseline(self) -> None:
-        """Remember the loaded lines: what differs from them is unsaved."""
-        section = getattr(self, "auth_policy", None)
-        self._effective_baseline = (
-            tuple(section.policy.to_lines()) if section is not None else (),
-            self._identity_state(),
-        )
-
-    def _pending_identity_lines(self) -> Optional[List[str]]:
-        """The identity lines to put in the draft; ``None`` when unchanged
-        (the saved lines then stay exactly as written)."""
-        baseline = getattr(self, "_effective_baseline", None)
-        state = self._identity_state()
-        if baseline is not None and baseline[1] == state and self.is_editing:
-            return None
-        files, only = state
-        keeps_none = bool(
-            getattr(getattr(self, "connection", None), "identity_file_none", False)
-        )
-        return identity_lines_for(files, only, none_first=keeps_none)
 
     # -- asking ------------------------------------------------------------
 
@@ -241,7 +193,7 @@ class ConnectionDialogEffectiveMixin:
             return False
         request = self._edit_evaluation_request()
         if request is None:
-            self._show_effective_identities(WAITING, (), False)
+            self._show_effective_identities(WAITING, ())
             # No host to ask about yet (a new connection without a name):
             # the authentication section starts from OpenSSH's built-in
             # order, so it stays editable; an answer replaces it.
@@ -251,12 +203,6 @@ class ConnectionDialogEffectiveMixin:
             return False
         section = getattr(self, "auth_policy", None)
         auth_lines = list(section.policy.to_lines()) if section is not None else []
-        if getattr(self, "_effective_baseline", None) is None:
-            self._capture_effective_baseline()
-        identity_lines = self._pending_identity_lines()
-        dirty = (not getattr(self, "is_editing", False)) or identity_lines is not None or (
-            tuple(auth_lines) != self._effective_baseline[0]
-        )
         self._effective_serial = serial = getattr(self, "_effective_serial", 0) + 1
 
         def current() -> bool:
@@ -264,7 +210,7 @@ class ConnectionDialogEffectiveMixin:
 
         def apply(result):
             if current():
-                self._take_editor_answer(result, auth_lines, dirty)
+                self._take_editor_answer(result, auth_lines)
             return False
 
         def worker():
@@ -301,7 +247,7 @@ class ConnectionDialogEffectiveMixin:
                     raise
         return None
 
-    def _take_editor_answer(self, result, auth_lines, dirty) -> None:
+    def _take_editor_answer(self, result, auth_lines) -> None:
         """Put OpenSSH's answer on every page of the editor."""
         from .connection_dialog_answer import NO_EFFECT, EditorAnswer
 
@@ -339,7 +285,7 @@ class ConnectionDialogEffectiveMixin:
             draft = read_answer(result.evaluation, result.text, result.host)
             identities = draft.identities if draft is not None else None
         self._show_effective_identities(
-            PENDING if identities is not None else FAILED, identities or (), dirty
+            PENDING if identities is not None else FAILED, identities or ()
         )
         if available:
             inherited = getattr(self, "_apply_inherited_rows", None)

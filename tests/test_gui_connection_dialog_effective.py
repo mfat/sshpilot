@@ -107,7 +107,7 @@ def test_inherited_identity_files_are_listed_but_never_copied(gui, root):
         "effkeys_own", "effkeys_shared",
     ]
     assert rows[1].get_subtitle().endswith("Host *")
-    assert dialog.effective_identity_row.get_subtitle() == "As saved"
+    assert dialog.effective_identity_row.get_subtitle() == "2 keys, tried in this order"
 
     dialog.port_row.set_text("2222")
     _save(dialog)

@@ -3512,11 +3512,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         finally:
             self._refresh_save_sensitivity()
         self._sync_shared_block_ui()
-        # The lines as loaded: what differs from them later is unsaved.
-        try:
-            self._capture_effective_baseline()
-        except Exception:
-            logger.debug("Could not record the loaded lines", exc_info=True)
         # After the authored values are in place: ask OpenSSH about the form,
         # and fill unauthored rows with what it resolves from the first
         # answer, so the form never implies this block owns a value it merely

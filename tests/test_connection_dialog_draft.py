@@ -240,3 +240,15 @@ def test_builtin_identity_files_are_named_as_defaults(tmp_path):
     answer = _ask(tmp_path, "Host demo\n    User me\n")
     assert answer.identities
     assert {i.origin for i in answer.identities} == {"default"}
+
+
+def test_the_key_list_caption_counts_the_keys():
+    from sshpilot.connection_dialog_effective import (
+        FAILED, PENDING, WAITING, identity_status_text,
+    )
+
+    assert identity_status_text(PENDING, 3) == "3 keys, tried in this order"
+    assert identity_status_text(PENDING, 1) == "1 key, tried in this order"
+    assert identity_status_text(PENDING, 0) == "No keys"
+    assert identity_status_text(FAILED).startswith("Unknown")
+    assert identity_status_text(WAITING) == "Shown once OpenSSH has read the configuration."
