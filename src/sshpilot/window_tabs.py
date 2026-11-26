@@ -247,6 +247,7 @@ class WindowTabsMixin:
         'tabmenu-show-terminal-panel', 'tabmenu-hide-terminal-panel',
         'tabmenu-open-system-terminal', 'tabmenu-new-local',
         'tabmenu-fm-new-window', 'tabmenu-rdp-detach',
+        'tabmenu-hide-left-pane', 'tabmenu-show-left-pane',
         'tabmenu-layout-horizontal', 'tabmenu-layout-vertical',
         'tabmenu-layout-default', 'tabmenu-layout-compact',
         'tabmenu-close', 'tabmenu-close-others', 'tabmenu-close-right',
@@ -275,6 +276,8 @@ class WindowTabsMixin:
             'tabmenu-new-local': self._on_tabmenu_new_local,
             'tabmenu-fm-new-window': self._on_tabmenu_fm_new_window,
             'tabmenu-rdp-detach': self._on_tabmenu_rdp_detach,
+            'tabmenu-hide-left-pane': self._on_tabmenu_hide_left_pane,
+            'tabmenu-show-left-pane': self._on_tabmenu_show_left_pane,
             'tabmenu-layout-horizontal': self._on_tabmenu_layout_horizontal,
             'tabmenu-layout-vertical': self._on_tabmenu_layout_vertical,
             'tabmenu-layout-default': self._on_tabmenu_layout_default,
@@ -313,6 +316,8 @@ class WindowTabsMixin:
         sec2.append_item(_item(_('Hide Terminal Pane'), 'tabmenu-hide-terminal-panel'))
         sec2.append_item(_item(_('Open in System Terminal'), 'tabmenu-open-system-terminal'))
         sec2.append_item(_item(_('New Local Tab'), 'tabmenu-new-local'))
+        sec2.append_item(_item(_('Hide Left Pane'), 'tabmenu-hide-left-pane'))
+        sec2.append_item(_item(_('Show Left Pane'), 'tabmenu-show-left-pane'))
         sec2.append_item(_item(_('Open in New Window'), 'tabmenu-fm-new-window'))
         sec2.append_item(_item(_('Move to New Window'), 'tabmenu-rdp-detach'))
         menu.append_section(None, sec2)
@@ -548,6 +553,12 @@ class WindowTabsMixin:
             enabled = set(common)
             enabled.add('tabmenu-fm-new-window')
             controller = getattr(embed, '_controller', None)
+            is_single_pane = getattr(controller, 'is_single_pane', None)
+            if callable(is_single_pane):
+                enabled.add(
+                    'tabmenu-show-left-pane' if is_single_pane()
+                    else 'tabmenu-hide-left-pane'
+                )
             conn = getattr(controller, '_connection', None) if controller else None
             if conn is not None and hasattr(embed, 'has_terminal_panel'):
                 enabled.add(
@@ -974,6 +985,24 @@ class WindowTabsMixin:
                 child.reset_all_row_heights(0.3)
         except Exception as exc:
             logger.error("Tab layout compact failed: %s", exc)
+
+    def _set_tab_file_manager_single_pane(self, single: bool) -> None:
+        """Hide or show the left pane of the right-clicked file manager tab."""
+        try:
+            _page, child = self._tab_menu_target()
+            embed = self._file_manager_embed_for_child(child)
+            controller = getattr(embed, '_controller', None) if embed else None
+            set_single_pane = getattr(controller, 'set_single_pane', None)
+            if callable(set_single_pane):
+                set_single_pane(single)
+        except Exception:
+            logger.debug("Could not change the file manager's panes", exc_info=True)
+
+    def _on_tabmenu_hide_left_pane(self, action, param=None):
+        self._set_tab_file_manager_single_pane(True)
+
+    def _on_tabmenu_show_left_pane(self, action, param=None):
+        self._set_tab_file_manager_single_pane(False)
 
     def _on_tabmenu_fm_new_window(self, action, param=None):
         try:

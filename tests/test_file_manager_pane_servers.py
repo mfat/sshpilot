@@ -133,3 +133,16 @@ def test_paste_between_two_server_panes_copies_through_the_daemon():
         destination_manager=window._manager,
     )
     window._manager.copy_remote.assert_not_called()
+
+
+def test_single_pane_switch_drives_the_toolbar_toggle():
+    """The tab menu and F3 go through the toggle, which applies and saves."""
+    window_module = _module()
+    window = _window(window_module)
+    toggle = MagicMock()
+    toggle.get_active.return_value = False
+    window._single_pane_toggle = toggle
+
+    assert window.is_single_pane() is False
+    assert window._toggle_single_pane() is True
+    toggle.set_active.assert_called_once_with(True)

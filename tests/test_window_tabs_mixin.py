@@ -58,6 +58,9 @@ _TAB_METHODS = (
     "_on_tabmenu_fm_new_window",
     "_launch_external_file_manager",
     "_on_tabmenu_rdp_detach",
+    "_on_tabmenu_hide_left_pane",
+    "_on_tabmenu_show_left_pane",
+    "_set_tab_file_manager_single_pane",
     "focus_rdp_tab",
     "detach_rdp_tab",
     "_attach_rdp_window",
@@ -118,6 +121,60 @@ def test_enabled_tab_actions_for_plugin_like_page():
         "tabmenu-close-others",
         "tabmenu-close-right",
     }
+
+
+class _FileManagerController:
+    def __init__(self, single):
+        self.single = single
+        self._connection = None
+
+    def is_single_pane(self):
+        return self.single
+
+    def set_single_pane(self, single):
+        self.single = single
+
+
+def _file_manager_tab_stub(controller):
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    embed = types.SimpleNamespace(_controller=controller)
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embed_for_child(self, _child):
+            return embed
+
+        def _tab_menu_target(self):
+            return object(), object()
+
+    return Stub()
+
+
+@pytest.mark.parametrize(
+    "single, offered, hidden",
+    [
+        (False, "tabmenu-hide-left-pane", "tabmenu-show-left-pane"),
+        (True, "tabmenu-show-left-pane", "tabmenu-hide-left-pane"),
+    ],
+)
+def test_file_manager_tab_menu_offers_the_left_pane_switch(single, offered, hidden):
+    """#1356: the left pane can be hidden from the tab's context menu too."""
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    stub = _file_manager_tab_stub(_FileManagerController(single))
+    enabled = stub._enabled_tab_actions(object())
+    assert offered in enabled
+    assert hidden not in enabled
+    assert offered in WindowTabsMixin._TAB_MENU_ACTIONS
+
+
+def test_left_pane_menu_items_switch_the_tabs_file_manager():
+    controller = _FileManagerController(False)
+    stub = _file_manager_tab_stub(controller)
+    stub._on_tabmenu_hide_left_pane(None)
+    assert controller.single is True
+    stub._on_tabmenu_show_left_pane(None)
+    assert controller.single is False
 
 
 def test_rdp_tab_context_menu_offers_move_to_new_window():

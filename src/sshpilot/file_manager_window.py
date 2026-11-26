@@ -348,6 +348,7 @@ class FileManagerWindow(Adw.Window):
         self._install_remote_host_button()
         self._install_left_location_button()
         self._install_single_pane_toggle()
+        self._install_single_pane_shortcut()
 
         # Seed each pane with the persisted list and grid zoom levels. Each pane
         # tracks its own level from here on (zooming one does not affect the
@@ -1095,6 +1096,43 @@ class FileManagerWindow(Adw.Window):
             toggle.set_tooltip_text(
                 _("Show Both Panes") if single else _("Show One Pane")
             )
+
+    def _install_single_pane_shortcut(self) -> None:
+        """F3 shows or hides the left pane, as in Dolphin.
+
+        On the file manager's own content, not the tab: the terminals below
+        it are siblings of that content, so programs there keep F3.
+        """
+        controller = Gtk.ShortcutController()
+        controller.set_scope(Gtk.ShortcutScope.LOCAL)
+        action = Gtk.CallbackAction.new(lambda *_args: self._toggle_single_pane())
+        controller.add_shortcut(
+            Gtk.Shortcut.new(
+                Gtk.KeyvalTrigger.new(Gdk.KEY_F3, Gdk.ModifierType(0)), action
+            )
+        )
+        self._toolbar_view.add_controller(controller)
+
+    def _toggle_single_pane(self) -> bool:
+        self.set_single_pane(not self.is_single_pane())
+        return True
+
+    def is_single_pane(self) -> bool:
+        """True while the left pane is hidden."""
+        toggle = self.__dict__.get("_single_pane_toggle")
+        if toggle is not None:
+            return bool(toggle.get_active())
+        return not self._left_pane.get_visible()
+
+    def set_single_pane(self, single: bool) -> None:
+        """Hide or show the left pane, as the toolbar toggle does (and
+        remember it); the tab menu and F3 come through here."""
+        toggle = self.__dict__.get("_single_pane_toggle")
+        if toggle is not None:
+            # Its "toggled" handler applies and saves the choice.
+            toggle.set_active(bool(single))
+        else:
+            self._apply_single_pane(bool(single))
 
     def _on_single_pane_toggled(self, toggle: Gtk.ToggleButton) -> None:
         single = bool(toggle.get_active())
