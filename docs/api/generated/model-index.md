@@ -225,11 +225,13 @@ Synthetic representation:
 | `request_input` | `bool` | No | `true` | No |
 | `want_terminal_output` | `bool` | No | `false` | No |
 | `from_sequence` | `int` | No | `0` | No |
+| `flow_control` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "flow_control": false,
   "from_sequence": 0,
   "request_input": true,
   "session_id": "session-12",
@@ -6773,6 +6775,36 @@ Synthetic representation:
   "data": "<sensitive value omitted>",
   "eof": false,
   "replay": false,
+  "sequence": 0,
+  "session_id": "session-12"
+}
+```
+
+<!-- api-model: TerminalOutputAck -->
+## `TerminalOutputAck`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** The frontend has displayed a session's output up to ``sequence``.
+
+Sent only for attachments opened with ``flow_control``. While the input
+owner's attachment is far enough behind, the daemon stops reading the
+session's PTY, so a fast producer slows down instead of losing output.
+
+**Related methods:** `acknowledge_terminal_output`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `session_id` | `SessionId` | Yes | — | No |
+| `attachment_id` | `AttachmentId` | Yes | — | No |
+| `sequence` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "attachment_id": "attachment-2",
   "sequence": 0,
   "session_id": "session-12"
 }

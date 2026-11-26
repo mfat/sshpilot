@@ -3780,19 +3780,23 @@ def open_session_request_from_wire(value: Any) -> OpenSessionRequest:
 def attach_session_request_to_wire(request: AttachSessionRequest) -> Dict[str, Any]:
     if type(request) is not AttachSessionRequest:
         raise TypeError("attach session request is required")
-    return {
+    wire = {
         "session_id": request.session_id,
         "request_input": request.request_input,
         "want_terminal_output": request.want_terminal_output,
         "from_sequence": request.from_sequence,
     }
+    if request.flow_control:
+        # Omitted when off: daemons before API 0.118 reject unknown fields.
+        wire["flow_control"] = True
+    return wire
 
 
 def attach_session_request_from_wire(value: Any) -> AttachSessionRequest:
     data = _strict_fields(
         value,
         required={"session_id", "request_input"},
-        optional={"want_terminal_output", "from_sequence"},
+        optional={"want_terminal_output", "from_sequence", "flow_control"},
         context="attach session request",
     )
     return AttachSessionRequest(
@@ -3805,6 +3809,10 @@ def attach_session_request_from_wire(value: Any) -> AttachSessionRequest:
         from_sequence=_integer(
             data.get("from_sequence", 0),
             "terminal replay sequence",
+        ),
+        flow_control=_boolean(
+            data.get("flow_control", False),
+            "terminal flow control",
         ),
     )
 

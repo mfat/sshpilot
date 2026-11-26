@@ -169,6 +169,7 @@ from .models.terminal import (
     TerminalInputStatus,
     TerminalInputStatusRequest,
     TerminalInput,
+    TerminalOutputAck,
     TerminalOutput,
 )
 from .models.transfers import (
@@ -412,6 +413,12 @@ SECRET_BACKEND_METHODS = frozenset({
     "login_profiles.delete",
 })
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
+# The reader hands terminal frames to the dispatch thread through a queue
+# bounded by bytes, not items: output arrives in PTY-read-sized frames (often
+# ~4 KiB), so the 256-item event bound held under 1 MiB and dropped output
+# during a burst while the frontend's own spool had room (#1426).
+DEFAULT_CLIENT_TERMINAL_QUEUE_BYTES = 16 * 1024 * 1024
+_CLIENT_TERMINAL_QUEUE_ITEMS = 65536
 _EVENT_STOP = object()
 receive_frame = receive_multiplexed_frame
 
@@ -464,6 +471,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "restart_daemon": Capability.DAEMON_CONTROL,
     "set_daemon_log_level": Capability.DAEMON_CONTROL,
     "send_terminal_input": Capability.TERMINAL_INPUT,
+    "acknowledge_terminal_output": Capability.TERMINAL_FLOW_CONTROL,
     "stop_daemon": Capability.DAEMON_CONTROL,
     "subscribe_terminal": Capability.TERMINAL_OUTPUT,
     "resize_terminal": Capability.TERMINAL_RESIZE,
@@ -672,7 +680,11 @@ class DaemonClient:
         self._pending_secret_responses: Dict[RequestId, _PendingSecretResponse] = {}
         self._abandoned_requests: "OrderedDict[RequestId, None]" = OrderedDict()
         self._event_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
-        self._terminal_queue: queue.Queue = queue.Queue(maxsize=event_dispatch_limit)
+        self._terminal_queue: queue.Queue = queue.Queue(
+            maxsize=_CLIENT_TERMINAL_QUEUE_ITEMS
+        )
+        self._terminal_queue_bytes = 0
+        self._terminal_queue_byte_limit = DEFAULT_CLIENT_TERMINAL_QUEUE_BYTES
         self._terminal_subscribers: Dict[
             SessionId,
             Dict[int, _TerminalCallbacks],
@@ -2788,6 +2800,43 @@ class DaemonClient:
                 )
                 raise self._closed_error() from None
 
+    def acknowledge_terminal_output(self, request: TerminalOutputAck) -> None:
+        """Tell the daemon this attachment has displayed output up to a sequence.
+
+        Fire-and-forget binary frame; only meaningful for an attachment opened
+        with ``flow_control``. The daemon ignores stale or unknown attachments.
+        """
+        self._require_capability(Capability.TERMINAL_FLOW_CONTROL)
+        if type(request) is not TerminalOutputAck:
+            raise TypeError("terminal output acknowledgement is required")
+        frame = encode_binary_frame(
+            encode_terminal_payload(
+                TerminalFrame(
+                    kind=TerminalFrameKind.ACK,
+                    session_id=request.session_id,
+                    attachment_id=request.attachment_id,
+                    sequence=request.sequence,
+                )
+            )
+        )
+        with self._send_lock:
+            with self._state_lock:
+                transport = self._socket
+                if self._closed or transport is None:
+                    raise self._closed_error()
+            try:
+                transport.sendall(frame)
+            except OSError:
+                self._fail_transport(
+                    SshPilotError(
+                        ErrorCode.TRANSPORT_CLOSED,
+                        "The daemon transport failed",
+                        retryable=True,
+                        session_id=request.session_id,
+                    )
+                )
+                raise self._closed_error() from None
+
     def get_terminal_input_status(
         self,
         request: TerminalInputStatusRequest,
@@ -4065,8 +4114,17 @@ class DaemonClient:
         return True
 
     def _queue_terminal_item(self, item: object) -> None:
+        size = len(item.data) if isinstance(item, TerminalOutput) else 0
         try:
-            self._terminal_queue.put_nowait(item)
+            with self._state_lock:
+                if (
+                    size
+                    and self._terminal_queue_bytes + size
+                    > self._terminal_queue_byte_limit
+                ):
+                    raise queue.Full
+                self._terminal_queue.put_nowait(item)
+                self._terminal_queue_bytes += size
         except queue.Full:
             if isinstance(item, TerminalOutput):
                 session_id = item.session_id
@@ -4082,6 +4140,9 @@ class DaemonClient:
             item = self._terminal_queue.get()
             if item is _EVENT_STOP:
                 return
+            if isinstance(item, TerminalOutput):
+                with self._state_lock:
+                    self._terminal_queue_bytes -= len(item.data)
             with self._state_lock:
                 overflow = tuple(self._terminal_overflow)
                 self._terminal_overflow.clear()
@@ -4371,6 +4432,8 @@ class DaemonClient:
                 self._terminal_queue.get_nowait()
             except queue.Empty:
                 break
+        with self._state_lock:
+            self._terminal_queue_bytes = 0
         try:
             self._terminal_queue.put_nowait(_EVENT_STOP)
         except queue.Full:

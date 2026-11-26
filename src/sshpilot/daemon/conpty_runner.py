@@ -138,6 +138,11 @@ class ConPtyProcessHandle:
         self._eof_notified = False
         self._eof_event = threading.Event()
         self._exited = threading.Event()
+        # Flow control: cleared while the frontend is too far behind; the
+        # pseudo console then blocks the child's writes. Set again whenever
+        # the session must drain (exit, terminate, kill, close).
+        self._read_allowed = threading.Event()
+        self._read_allowed.set()
         self.last_dimensions: Optional[TerminalDimensions] = None
         self._reader = threading.Thread(
             target=self._read_loop,
@@ -153,12 +158,14 @@ class ConPtyProcessHandle:
     def terminate(self) -> None:
         # Windows has no SIGTERM for console programs; closing the pseudo
         # console delivers CTRL_CLOSE_EVENT, which ssh.exe treats as hangup.
+        self._read_allowed.set()
         if self._exited.is_set():
             return
         if self.pid is not None:
             _terminate_tree(self.pid)
 
     def kill(self) -> None:
+        self._read_allowed.set()
         if not self._exited.is_set() and self.pid is not None:
             _terminate_tree(self.pid)
         if self.pid is not None:
@@ -191,6 +198,7 @@ class ConPtyProcessHandle:
                 reason="process_exit",
             )
             self._exited.set()
+            self._read_allowed.set()
         # Let the reader deliver the console's last frame before EOF/exit.
         if not self._eof_event.wait(_EOF_DRAIN_TIMEOUT):
             self.notify_eof()
@@ -226,6 +234,13 @@ class ConPtyProcessHandle:
         except Exception:
             logger.debug("ConPTY resize failed", exc_info=True)
 
+    def pause_output(self) -> None:
+        if not self._exited.is_set():
+            self._read_allowed.clear()
+
+    def resume_output(self) -> None:
+        self._read_allowed.set()
+
     def notify_eof(self) -> None:
         with self._lock:
             if self._eof_notified:
@@ -237,6 +252,7 @@ class ConPtyProcessHandle:
     def close(self) -> None:
         # Dropping a pywinpty PTY closes the pseudo console and its pipes; the
         # ctypes one closes explicitly while the reader drains the output.
+        self._read_allowed.set()
         pty, self._pty = self._pty, _ClosedPty()
         closer = getattr(pty, "close", None)
         if callable(closer):
@@ -249,9 +265,17 @@ class ConPtyProcessHandle:
 
     def _read_loop(self) -> None:
         pty = self._pty
+        drain_first = False
         while True:
+            self._read_allowed.wait()
             try:
-                text = pty.read(_READ_CHUNK, blocking=True)
+                # After a flow-control pause the pipe may still hold bytes a
+                # blocking read would not return until the console writes
+                # again (see below), so drain without blocking first.
+                text = pty.read(_READ_CHUNK, blocking=False) if drain_first else ""
+                drain_first = False
+                if not text:
+                    text = pty.read(_READ_CHUNK, blocking=True)
             except Exception:
                 break
             if text:
@@ -261,6 +285,9 @@ class ConPtyProcessHandle:
                 # does after the next keystroke. Drain them without blocking.
                 while text:
                     self._deliver(text)
+                    if not self._read_allowed.is_set():
+                        drain_first = True
+                        break  # paused: wait at the top of the loop
                     try:
                         text = pty.read(_READ_CHUNK, blocking=False)
                     except Exception:

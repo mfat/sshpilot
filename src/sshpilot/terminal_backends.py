@@ -2991,6 +2991,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._fc_written = 0
         self._fc_pending = 0
         self._cancel_fc_safety()
+        self._run_output_processed_waiters()
         if self._fc_paused and self._bridge is not None:
             try:
                 self._bridge.resume()
@@ -3046,12 +3047,65 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             self._fc_pending = 0
             self._fc_written = 0
             self._resume_pty_flow()
+            self._run_output_processed_waiters()
         return False
 
     def _on_write_ack(self) -> None:
         self._fc_pending = max(self._fc_pending - 1, 0)
         if self._fc_pending < self._FC_LOW:
             self._resume_pty_flow()
+        if self._fc_pending == 0:
+            self._run_output_processed_waiters()
+
+    def call_when_output_processed(self, callback) -> None:
+        """Call *callback* once xterm.js has written what was fed so far.
+
+        Daemon flow control acks displayed output through this. It relies on
+        the write callbacks ``_write_to_term`` requests every ~100 KB, so the
+        unacknowledged tail stays bounded; a safety timer covers a lost ack.
+        """
+        from gi.repository import GLib
+
+        if getattr(self, "_fc_pending", 0) <= 0:
+            def run_once():
+                callback()
+                return False
+
+            GLib.idle_add(run_once, priority=GLib.PRIORITY_LOW)
+            return
+        waiters = getattr(self, "_fc_processed_waiters", None)
+        if waiters is None:
+            waiters = self._fc_processed_waiters = []
+        waiters.append(callback)
+        if getattr(self, "_fc_waiter_safety_id", None) is None:
+            def safety():
+                self._fc_waiter_safety_id = None
+                logger.debug("PyXterm processed-output safety flush (missing write-ack)")
+                self._run_output_processed_waiters()
+                return False
+
+            self._fc_waiter_safety_id = GLib.timeout_add(
+                self._FC_SAFETY_MS, safety
+            )
+
+    def _run_output_processed_waiters(self) -> None:
+        waiters = getattr(self, "_fc_processed_waiters", None)
+        safety_id = getattr(self, "_fc_waiter_safety_id", None)
+        if safety_id is not None:
+            self._fc_waiter_safety_id = None
+            try:
+                from gi.repository import GLib
+                GLib.source_remove(safety_id)
+            except Exception:  # noqa: BLE001
+                pass
+        if not waiters:
+            return
+        self._fc_processed_waiters = []
+        for callback in waiters:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001
+                logger.debug("processed-output waiter raised", exc_info=True)
 
     def _write_to_term(self, text: str, *, bulk: bool = False):
         import json

@@ -78,6 +78,26 @@ class TerminalInput:
 
 
 @dataclass(frozen=True)
+class TerminalOutputAck:
+    """The frontend has displayed a session's output up to ``sequence``.
+
+    Sent only for attachments opened with ``flow_control``. While the input
+    owner's attachment is far enough behind, the daemon stops reading the
+    session's PTY, so a fast producer slows down instead of losing output.
+    """
+
+    session_id: SessionId
+    attachment_id: AttachmentId
+    sequence: int
+
+    def __post_init__(self) -> None:
+        require_identifier(self.session_id, "session id")
+        require_identifier(self.attachment_id, "attachment id")
+        if type(self.sequence) is not int or self.sequence < 0:
+            raise ValueError("acknowledged sequence must be a non-negative integer")
+
+
+@dataclass(frozen=True)
 class TerminalInputStatusRequest:
     """Ask how much of the session's bounded input queue is in use."""
 

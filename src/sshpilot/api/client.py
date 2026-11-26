@@ -124,6 +124,7 @@ from .models.terminal import (
     TerminalInputStatus,
     TerminalInputStatusRequest,
     TerminalInput,
+    TerminalOutputAck,
 )
 from .models.common import (
     ConnectionId,
@@ -481,6 +482,9 @@ class SshPilotClient(Protocol):
         ...
 
     def send_terminal_input(self, request: TerminalInput) -> None:
+        ...
+
+    def acknowledge_terminal_output(self, request: TerminalOutputAck) -> None:
         ...
 
     def get_terminal_input_status(

@@ -1439,12 +1439,23 @@ class DaemonServer:
             or state.protocol.client_info is None
             or "binary-terminal-v1"
             not in state.protocol.client_info.supported_frame_types
-            or frame.kind is not TerminalFrameKind.INPUT
+            or frame.kind
+            not in {TerminalFrameKind.INPUT, TerminalFrameKind.ACK}
         ):
             self._queue_protocol_error(
                 state,
                 ErrorCode.PROTOCOL_ERROR,
                 "The binary terminal frame is not permitted",
+            )
+            return
+        if frame.kind is TerminalFrameKind.ACK:
+            # Flow control: a stale ack (attachment just detached) is benign
+            # and ignored by the runtime, never answered.
+            runtime.acknowledge_terminal_output(
+                frame.session_id,
+                frame.attachment_id,
+                frame.sequence,
+                client_id=client_id,
             )
             return
         try:

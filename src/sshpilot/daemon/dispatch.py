@@ -3822,6 +3822,7 @@ class RequestDispatcher:
                     Capability.TERMINAL_INPUT,
                     Capability.TERMINAL_RESIZE,
                     Capability.TERMINAL_REPLAY,
+                    Capability.TERMINAL_FLOW_CONTROL,
                     Capability.SESSIONS_COMMAND,
                 }
             )

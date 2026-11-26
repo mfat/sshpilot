@@ -102,6 +102,7 @@ direct core service compositions are test-only and are not client choices.
 | `detach_session` | Daemon only | `sessions.write` |
 | `close_session` | Daemon only | `sessions.write` |
 | `send_terminal_input` | Daemon only | `terminal.input` |
+| `acknowledge_terminal_output` | Daemon only | `terminal.flow_control` |
 | `get_terminal_input_status` | Daemon only | `terminal.input` |
 | `broadcast_terminal_input` | Daemon only | `terminal.input` |
 | `resize_terminal` | Daemon only | `terminal.resize` |
@@ -232,6 +233,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: respond_to_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_interaction_secret status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_terminal_input status=daemon-only capability=terminal.input -->
+<!-- api-method-contract: acknowledge_terminal_output status=daemon-only capability=terminal.flow_control -->
 <!-- api-method-contract: get_terminal_input_status status=daemon-only capability=terminal.input -->
 <!-- api-method-contract: set_plugin_setting status=daemon-only capability=plugins.settings.write -->
 <!-- api-method-contract: sftp_chmod status=daemon-only capability=sftp.mutate -->
@@ -1773,6 +1775,36 @@ assert session.state is SessionState.STARTING
 - **Threading:** Terminate, wait, and kill never run on the selector. A close
   queued behind startup for the same session cannot overtake it; unrelated
   session lanes can progress concurrently.
+
+<!-- api-method: acknowledge_terminal_output -->
+## `acknowledge_terminal_output`
+
+- **Status / introduced:** Daemon-only / Protocol v1, API 0.118.
+- **Capability / purpose:** `terminal.flow_control`; tell the daemon an
+  attachment opened with `AttachSessionRequest(flow_control=True)` has
+  displayed the session's output up to `sequence` (the next byte it has not
+  displayed). While the input owner's flow-controlled attachment is more than
+  1 MiB behind, the daemon stops reading the session's PTY, so a fast producer
+  slows down instead of output being dropped; reads resume within 256 KiB.
+- **Parameters / return:** `TerminalOutputAck`; returns after the binary
+  `ACK` frame is sent.
+- **Errors:** Local capability/lifecycle validation is synchronous. The daemon
+  never answers: acknowledgements for unknown, foreign, view-only or
+  non-flow-controlled attachments, and ones that do not move forward, are
+  ignored.
+- **Ordering / threading:** Shares the client send lock with terminal input.
+  Acknowledge only bytes the display has actually processed; acknowledging
+  bytes merely received moves the backlog into the frontend instead.
+- **Side effects / security:** Pausing stops reads only; input and resize
+  still reach the PTY. Detach, disconnect, input-ownership change, child
+  exit and close resume reads, so a stalled frontend never holds a session
+  past its own lifetime.
+
+```python
+client.acknowledge_terminal_output(
+    TerminalOutputAck(session_id, attachment_id, displayed_sequence)
+)
+```
 
 <!-- api-method: send_terminal_input -->
 ## `send_terminal_input`

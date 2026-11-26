@@ -163,3 +163,97 @@ def test_terminal_frame_limits_and_malformed_payload_are_rejected():
     with pytest.raises(FramingError) as raised:
         decode_terminal_payload(b"SPTB")
     assert raised.value.code is ErrorCode.INVALID_FRAME
+
+
+def test_terminal_ack_frame_carries_an_attachment_and_no_data():
+    frame = TerminalFrame(
+        kind=TerminalFrameKind.ACK,
+        session_id=_session_id(),
+        attachment_id=_attachment_id(),
+        sequence=1_048_576,
+    )
+    assert decode_terminal_payload(encode_terminal_payload(frame)) == frame
+
+    with pytest.raises(ValueError):
+        TerminalFrame(
+            kind=TerminalFrameKind.ACK,
+            session_id=_session_id(),
+            sequence=1,
+        )
+    with pytest.raises(ValueError):
+        TerminalFrame(
+            kind=TerminalFrameKind.ACK,
+            session_id=_session_id(),
+            attachment_id=_attachment_id(),
+            sequence=1,
+            data=b"x",
+        )
+    with pytest.raises(ValueError):
+        TerminalFrame(
+            kind=TerminalFrameKind.ACK,
+            session_id=_session_id(),
+            attachment_id=_attachment_id(),
+            sequence=1,
+            flags=TerminalFrameFlags.REPLAY,
+        )
+
+
+def test_client_sends_terminal_output_ack_as_a_binary_frame():
+    from sshpilot.api.models.terminal import TerminalOutputAck
+
+    sent = bytearray()
+    client = object.__new__(DaemonClient)
+    client._require_capability = lambda _capability: None
+    client._state_lock = threading.RLock()
+    client._send_lock = threading.Lock()
+    client._closed = False
+    client._socket = SimpleNamespace(sendall=sent.extend)
+
+    client.acknowledge_terminal_output(
+        TerminalOutputAck(
+            session_id=_session_id(),
+            attachment_id=_attachment_id(),
+            sequence=4096,
+        )
+    )
+
+    (frame,) = MultiplexedFrameDecoder().feed(bytes(sent))
+    assert frame.kind is TerminalFrameKind.ACK
+    assert frame.attachment_id == _attachment_id()
+    assert frame.sequence == 4096
+    assert frame.data == b""
+
+
+def test_client_terminal_queue_is_bounded_by_bytes_not_frames():
+    """256 small frames used to overflow under 1 MiB during a burst (#1426)."""
+
+    import queue
+    from datetime import datetime, timezone
+
+    from sshpilot.api.daemon_client import DEFAULT_CLIENT_TERMINAL_QUEUE_BYTES
+    from sshpilot.api.models.terminal import TerminalOutput
+
+    client = object.__new__(DaemonClient)
+    client._state_lock = threading.RLock()
+    client._terminal_queue = queue.Queue(maxsize=65536)
+    client._terminal_queue_bytes = 0
+    client._terminal_queue_byte_limit = DEFAULT_CLIENT_TERMINAL_QUEUE_BYTES
+    client._terminal_overflow = set()
+
+    def output(sequence, size):
+        return TerminalOutput(
+            session_id=_session_id(),
+            sequence=sequence,
+            data=b"x" * size,
+            created_at=datetime.now(timezone.utc),
+        )
+
+    frames = 1024  # 4 MiB in 4 KiB PTY reads: far past the old 256-item bound
+    for index in range(frames):
+        client._queue_terminal_item(output(index * 4096, 4096))
+    assert client._terminal_queue.qsize() == frames
+    assert client._terminal_overflow == set()
+
+    big = DEFAULT_CLIENT_TERMINAL_QUEUE_BYTES - client._terminal_queue_bytes
+    client._queue_terminal_item(output(frames * 4096, big + 1))
+    assert client._terminal_overflow == {_session_id()}

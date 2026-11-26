@@ -63,6 +63,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: terminal.input -->
 <!-- api-daemon-runtime-capability: terminal.resize -->
 <!-- api-daemon-runtime-capability: terminal.replay -->
+<!-- api-daemon-runtime-capability: terminal.flow_control -->
 <!-- api-daemon-runtime-capability: interactions.read -->
 <!-- api-daemon-runtime-capability: interactions.respond -->
 <!-- api-daemon-runtime-capability: interactions.events -->
@@ -111,6 +112,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `terminal.input` | Send raw bytes to the owned PTY | Daemon: Implemented after binary-frame negotiation | `send_terminal_input` | None | Input-owner attachment and bounded PTY input queue | v1 / API 0.8 |
 | `terminal.resize` | Resize the owned PTY | Daemon: Implemented after binary-frame negotiation | `resize_terminal`; wire `terminal.resize` | None | Attached input owner and `TIOCSWINSZ` | v1 / API 0.8 |
 | `terminal.replay` | Replay retained terminal bytes | Daemon: Implemented after binary-frame negotiation | `replay_terminal`; wire `terminal.replay` | Dedicated replay binary frames | Bounded per-session replay ring | v1 / API 0.8 |
+| `terminal.flow_control` | Pace PTY reads to a frontend's displayed output | Daemon: Implemented after binary-frame negotiation | `acknowledge_terminal_output`; `AttachSessionRequest.flow_control` | Binary `ACK` frames (client to daemon) | Per-attachment acknowledged sequence; 1 MiB / 256 KiB pause and resume thresholds | v1 / API 0.118 |
 | `interactions` | Legacy broad interaction identifier | Deprecated and never advertised | None | None | Replaced by narrow interaction capabilities | v1 |
 | `interactions.read` | Read safe typed interaction metadata | Daemon implemented after `binary-secret-v2` negotiation | `list_interactions`, `get_interaction` | Interaction lifecycle events | Daemon interaction broker | v1 / API 0.9 |
 | `interactions.respond` | Claim and answer eligible interactions | Daemon implemented after `binary-secret-v2` negotiation | claim/release/respond/cancel and one-use secret send | Interaction lifecycle events | Responder-bound nonce and secure Unix socket | v1 / API 0.9 |
@@ -258,6 +260,17 @@ strictly limited to 1–1000.
 Daemon-only bounded replay. The JSON response carries retained-range and
 truncation metadata; replay bytes use the same binary output frames as live
 data.
+
+<!-- api-capability: terminal.flow_control -->
+## `terminal.flow_control`
+
+Daemon-only output flow control. An attachment opened with `flow_control`
+acknowledges displayed output with binary `ACK` frames. While the session's
+input owner is such an attachment and is more than 1 MiB behind, the daemon
+stops reading the PTY (input and resize continue), so the producer blocks as
+it would on a slow local terminal; it reads again once the owner is within
+256 KiB. View-only attachments never pause a session. Clients that do not
+request flow control keep the loss-and-replay behaviour.
 
 <!-- api-capability: interactions -->
 ## `interactions`

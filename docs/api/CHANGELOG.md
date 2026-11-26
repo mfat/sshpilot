@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- Terminal output flow control (capability `terminal.flow_control`):
+  `AttachSessionRequest` gains `flow_control` (sent only when true, so older
+  daemons are unaffected), and `acknowledge_terminal_output` sends a new
+  binary `ACK` frame (`TerminalFrameKind.ACK = 5`) carrying a
+  `TerminalOutputAck`. While the input owner's flow-controlled attachment is
+  more than 1 MiB behind, the daemon stops reading the session's PTY instead
+  of dropping output for that peer; reads resume within 256 KiB, and on
+  detach, disconnect, ownership change, child exit and close. The client's
+  terminal dispatch queue is bounded by bytes (16 MiB) instead of 256 frames.
+  Additive. The API implementation version is 0.118; Protocol remains 1.0.
 - `open_draft_test_connection` (`connections.open_draft_test`, capability
   `sessions.write`, plus `connections.config.read`) registers an unsaved
   target that reaches a host as an SSH configuration draft would: it takes

@@ -338,6 +338,7 @@ if TYPE_CHECKING:
         TerminalDimensions,
         TerminalInput,
         TerminalOutput,
+        TerminalOutputAck,
     )
     from .login_profiles import (
         AssignLoginProfileRequest,
@@ -708,6 +709,7 @@ __all__ = [
     "TerminalInput",
     "TerminalInputStatus",
     "TerminalInputStatusRequest",
+    "TerminalOutputAck",
     "TerminalOutput",
     "TransferBackend",
     "TransferConflictPolicy",
@@ -1059,6 +1061,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "TerminalDimensions": ("terminal", "TerminalDimensions"),
     "TerminalInput": ("terminal", "TerminalInput"),
     "TerminalOutput": ("terminal", "TerminalOutput"),
+    "TerminalOutputAck": ("terminal", "TerminalOutputAck"),
     "TransferBackend": ("transfers", "TransferBackend"),
     "TransferConflictPolicy": ("transfers", "TransferConflictPolicy"),
     "TransferDirection": ("transfers", "TransferDirection"),

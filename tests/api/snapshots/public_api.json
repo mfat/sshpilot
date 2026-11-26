@@ -15,7 +15,7 @@
     "TerminalSubscription",
     "ValidationReason"
   ],
-  "api_implementation_version": "0.117",
+  "api_implementation_version": "0.118",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -86,6 +86,7 @@
     "terminal",
     "terminal.attach",
     "terminal.external_launch",
+    "terminal.flow_control",
     "terminal.input",
     "terminal.output",
     "terminal.replay",
@@ -99,6 +100,10 @@
     "transfers.write"
   ],
   "client_method_contract": {
+    "acknowledge_terminal_output": {
+      "capability": "terminal.flow_control",
+      "status": "daemon-only"
+    },
     "add_agent_key": {
       "capability": "identity.operate",
       "status": "daemon-only"
@@ -789,6 +794,7 @@
     }
   },
   "client_methods": [
+    "acknowledge_terminal_output",
     "add_agent_key",
     "add_tag_to_connections",
     "assign_connection_to_group",
@@ -985,6 +991,16 @@
     "verify_key_passphrase"
   ],
   "client_signatures": {
+    "acknowledge_terminal_output": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "TerminalOutputAck"
+        }
+      ],
+      "return": "None"
+    },
     "add_agent_key": {
       "parameters": [
         {
@@ -3965,6 +3981,7 @@
     "TerminalInputStatus",
     "TerminalInputStatusRequest",
     "TerminalOutput",
+    "TerminalOutputAck",
     "TransferBackend",
     "TransferConflictPolicy",
     "TransferDirection",
@@ -4045,7 +4062,8 @@
       "session_id",
       "request_input",
       "want_terminal_output",
-      "from_sequence"
+      "from_sequence",
+      "flow_control"
     ],
     "AttachSessionResult": [
       "session",
@@ -5482,6 +5500,11 @@
       "replay",
       "eof"
     ],
+    "TerminalOutputAck": [
+      "session_id",
+      "attachment_id",
+      "sequence"
+    ],
     "TransferItem": [
       "local_path",
       "remote_path",
@@ -5616,6 +5639,7 @@
       "terminal.input",
       "terminal.resize",
       "terminal.replay",
+      "terminal.flow_control",
       "terminal.external_launch",
       "interactions",
       "interactions.read",

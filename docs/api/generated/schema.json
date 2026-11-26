@@ -1,6 +1,10 @@
 {
-  "api_implementation_version": "0.117",
+  "api_implementation_version": "0.118",
   "client_method_contract": {
+    "acknowledge_terminal_output": {
+      "capability": "terminal.flow_control",
+      "status": "daemon-only"
+    },
     "add_agent_key": {
       "capability": "identity.operate",
       "status": "daemon-only"
@@ -1342,6 +1346,7 @@
       "terminal.input",
       "terminal.resize",
       "terminal.replay",
+      "terminal.flow_control",
       "terminal.external_launch",
       "interactions",
       "interactions.read",
@@ -2266,6 +2271,13 @@
           "required": false,
           "sensitive": false,
           "type": "int"
+        },
+        {
+          "default": false,
+          "name": "flow_control",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -10413,6 +10425,32 @@
         }
       ],
       "status": "Schema only"
+    },
+    "TerminalOutputAck": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        },
+        {
+          "default": null,
+          "name": "sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
     },
     "TransferItem": {
       "fields": [

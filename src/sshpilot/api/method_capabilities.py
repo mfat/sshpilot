@@ -48,6 +48,7 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "set_connection_layout": Capability.CONNECTIONS_GROUPS,
     "sftp_copy": Capability.SFTP_MUTATE,
     "send_terminal_input": Capability.TERMINAL_INPUT,
+    "acknowledge_terminal_output": Capability.TERMINAL_FLOW_CONTROL,
     "broadcast_terminal_input": Capability.TERMINAL_INPUT,
     "get_terminal_input_status": Capability.TERMINAL_INPUT,
     "stop_daemon": Capability.DAEMON_CONTROL,
