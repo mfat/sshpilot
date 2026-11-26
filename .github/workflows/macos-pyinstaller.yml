@@ -71,7 +71,7 @@ jobs:
           {
             echo "runner=${ImageOS:-unknown}-${ImageVersion:-unknown}"
             echo "homebrew_core_snapshot=$(git -C "$CORE" rev-parse HEAD)"
-            brew list --versions
+            brew list --formula --versions
           } > build-env.txt
           echo "=== Toolkit versions ==="
           brew list --versions gtk4 libadwaita vte3 gtksourceview5 glib pygobject3

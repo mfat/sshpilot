@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.5.0}
+Version:        %{?version}%{!?version:6.5.1}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -180,6 +180,13 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtkghostty-1.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Thu Nov 26 2026 mFat <newmfat@gmail.com> - 6.5.1-1
+- Added Advanced Configuration Manager, a complete sshconfig management and diagnostic suite
+- Redesigned connection dialogs, with better layout and visual maps for jump hosts and port forwards
+- Added background transfer to file manager - transfers will no longer lock the UI
+- Added options to use the file manager in single-pane or dual-pane mode
+- Added remote-to-remote transfer support to file manager
+
 * Thu Nov 26 2026 mFat <newmfat@gmail.com> - 6.5.0-1
 - Added Advanced Configuration Manager, a complete sshconfig management and diagnostic suite
 - Redesigned connection dialog, with better layout and visual maps for jump hosts and port forwards

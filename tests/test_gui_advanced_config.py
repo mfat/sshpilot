@@ -1138,6 +1138,29 @@ def test_a_source_s_line_is_shown_without_losing_the_host(gtk, tmp_path):
         _close(win)
 
 
+def test_wildcard_host_chips_fit_inside_the_applies_to_tile(gtk, tmp_path):
+    hosts = [f"long-production-server-{i:02}" for i in range(21)]
+    win = _open_on(gtk, tmp_path, "Host *\n    Compression yes\nHost " + " ".join(hosts) + "\n")
+    try:
+        _show(win)
+        _pick(win, "Host *")
+        view = win.structured
+        assert _pump(lambda: _applies(win) == hosts[:8]
+                     and view.applies_chips.get_child_at_index(8).get_height() > 0)
+        chips = _children(view.applies_chips)
+        assert chips[-1].get_child().get_label() == "+13"
+        bounds = []
+        for child in chips:
+            found, rect = child.compute_bounds(view.applies_box)
+            assert found
+            bounds.append(rect)
+            assert rect.get_y() + rect.get_height() <= view.applies_box.get_height() + 1
+        assert bounds[0].get_y() == bounds[1].get_y()
+        assert bounds[-1].get_y() > bounds[0].get_y()
+    finally:
+        _close(win)
+
+
 def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
     """A pattern or a Match rule names no host. Picking one says which
     listed hosts it applies to, each host being OpenSSH's answer; the
@@ -1695,9 +1718,8 @@ def test_the_consent_prompt_says_what_would_run_and_for_whom(window, tmp_path):
 
 # -- where it is shown -------------------------------------------------------------------
 
-def test_embedded_the_list_of_blocks_is_left_to_the_host(window, shell):
-    if shell != "embedded":
-        pytest.skip("the window's own sidebar is the next test's")
+@pytest.mark.parametrize("shell", ["embedded"], indirect=True)
+def test_embedded_the_list_of_blocks_is_left_to_the_host(window):
     assert window.split is None and not window.sidebar_button.get_visible()
     assert window.sidebar_column is window.sidebar
     assert window.sidebar.get_parent() is not None             # in the host's box
@@ -1705,9 +1727,8 @@ def test_embedded_the_list_of_blocks_is_left_to_the_host(window, shell):
     assert window.stack.get_visible_child_name() == "raw"
 
 
-def test_the_window_s_sidebar_folds_away(window, shell):
-    if shell == "embedded":
-        pytest.skip("embedded, the list of blocks is in the host's sidebar")
+@pytest.mark.parametrize("shell", ["window"], indirect=True)
+def test_the_window_s_sidebar_folds_away(window):
     assert window.split.get_sidebar() is window.sidebar
     window.sidebar_button.set_active(False)
     assert not window.split.get_show_sidebar()
