@@ -650,13 +650,12 @@ class SSHConfigAdvancedTab(Gtk.Box):
 
         # What the host gets for the options it does not set: another
         # block, another file, or Settings ▸ SSH Options decide them.
-        # Read-only: adding the option above gives the host its own value.
+        # Read-only.
         self.inherited_group = Adw.PreferencesGroup(
             title=_("Inherited Options"),
             description=_(
                 "This host gets these options from other blocks of your SSH "
-                "configuration or from Settings ▸ SSH Options. Set one here "
-                "to give this host its own value."
+                "configuration or from Settings ▸ SSH Options."
             ),
         )
         self.inherited_group.set_visible(False)
