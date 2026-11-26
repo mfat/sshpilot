@@ -1695,9 +1695,8 @@ def test_the_consent_prompt_says_what_would_run_and_for_whom(window, tmp_path):
 
 # -- where it is shown -------------------------------------------------------------------
 
-def test_embedded_the_list_of_blocks_is_left_to_the_host(window, shell):
-    if shell != "embedded":
-        pytest.skip("the window's own sidebar is the next test's")
+@pytest.mark.parametrize("shell", ["embedded"], indirect=True)
+def test_embedded_the_list_of_blocks_is_left_to_the_host(window):
     assert window.split is None and not window.sidebar_button.get_visible()
     assert window.sidebar_column is window.sidebar
     assert window.sidebar.get_parent() is not None             # in the host's box
@@ -1705,9 +1704,8 @@ def test_embedded_the_list_of_blocks_is_left_to_the_host(window, shell):
     assert window.stack.get_visible_child_name() == "raw"
 
 
-def test_the_window_s_sidebar_folds_away(window, shell):
-    if shell == "embedded":
-        pytest.skip("embedded, the list of blocks is in the host's sidebar")
+@pytest.mark.parametrize("shell", ["window"], indirect=True)
+def test_the_window_s_sidebar_folds_away(window):
     assert window.split.get_sidebar() is window.sidebar
     window.sidebar_button.set_active(False)
     assert not window.split.get_show_sidebar()
