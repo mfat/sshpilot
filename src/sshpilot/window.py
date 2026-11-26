@@ -3816,6 +3816,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._build_tab_context_menus()
         self.tab_view.set_menu_model(self._tab_menu_model)
         self.tab_view.connect('setup-menu', self._on_tab_setup_menu)
+        self.install_file_manager_pane_shortcut(self, self.tab_view)
 
         # Whenever the window layout changes, propagate toolbar height to
         # any TerminalWidget so the reconnect banner exactly matches.

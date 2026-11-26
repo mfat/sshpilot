@@ -921,6 +921,7 @@ class Config(GObject.Object):
             'terminal_panes': _get_terminal_panes(),
             'terminal_follows_navigation': _get_bool('terminal_follows_navigation'),
             'open_externally': _get_bool('open_externally'),
+            'single_pane': _get_bool('single_pane'),
             'max_concurrent_transfers': _get_concurrent_transfers(),
             'list_icon_level': _get_icon_level('list_icon_level', 2),
             'grid_icon_level': _get_icon_level('grid_icon_level', 4),

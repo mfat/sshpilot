@@ -149,3 +149,32 @@ def test_single_pane_switch_drives_the_toolbar_toggle():
     assert window.is_single_pane() is False
     assert window._toggle_single_pane() is True
     toggle.set_active.assert_called_once_with(True)
+
+
+def test_toggling_the_pane_leaves_the_setting_alone():
+    """Settings decides how a file manager starts; the toggle, F3 and the
+    tab menu change only the one in front of you (as in Dolphin)."""
+    window_module = _module()
+    window = _window(window_module)
+    settings = MagicMock()
+    window.config = settings
+    toggle = MagicMock()
+    toggle.get_active.return_value = True
+    window._single_pane_toggle = toggle
+
+    window._on_single_pane_toggled(toggle)
+
+    window._left_pane.set_visible.assert_called_with(False)
+    settings.set_setting.assert_not_called()
+
+
+def test_a_new_file_manager_starts_as_settings_say():
+    window_module = _module()
+    window = _window(window_module)
+    window.config = MagicMock()
+    window.config.get_setting.side_effect = (
+        lambda key, default=None: key == "file_manager.single_pane"
+    )
+    assert window._load_single_pane_preference() is True
+    window.config.get_setting.side_effect = lambda key, default=None: default
+    assert window._load_single_pane_preference() is False

@@ -131,29 +131,28 @@ def test_tabmenu_show_files_panel_gates_on_vault_unlock(monkeypatch):
     terminal_manager._maybe_unlock_secrets_then.assert_called_once()
 
 
-def test_tabmenu_fm_new_window_gates_on_vault_unlock(monkeypatch):
+def test_tabmenu_fm_new_window_moves_the_tab_without_a_vault_unlock(monkeypatch):
+    """Open in New Window moves the live file manager into a window of its
+    own (#1356): no new daemon connection, so nothing to unlock first."""
 
     window = WindowTabsMixin.__new__(WindowTabsMixin)
     connection = _connection()
     embed = mock.Mock()
-    controller = mock.Mock(_connection=connection)
-    embed._controller = controller
-    window._tab_menu_target = lambda: (None, mock.Mock())
+    embed._controller = mock.Mock(_connection=connection)
+    page = mock.Mock()
+    window._tab_menu_target = lambda: (page, mock.Mock())
     window._file_manager_embed_for_child = lambda child: embed
 
     launch_calls = []
     window._launch_external_file_manager = lambda conn: launch_calls.append(conn)
-
+    moved = []
+    window.move_file_manager_tab_to_window = lambda p, e: moved.append((p, e)) or True
     terminal_manager, captured_retry = _gated_terminal_manager()
     window.terminal_manager = terminal_manager
 
     window._on_tabmenu_fm_new_window(None)
 
-    # Gated: the external file manager must not have launched yet.
+    assert moved == [(page, embed)]
     assert launch_calls == []
-    assert len(captured_retry) == 1
-
-    captured_retry[0]()
-
-    assert launch_calls == [connection]
-    terminal_manager._maybe_unlock_secrets_then.assert_called_once()
+    assert captured_retry == []
+    terminal_manager._maybe_unlock_secrets_then.assert_not_called()

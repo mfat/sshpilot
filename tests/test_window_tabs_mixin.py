@@ -59,6 +59,8 @@ _TAB_METHODS = (
     "move_file_manager_tab_to_window",
     "_attach_file_manager_window",
     "_close_file_manager_window",
+    "install_file_manager_pane_shortcut",
+    "_toggle_selected_file_manager_pane",
     "_launch_external_file_manager",
     "_on_tabmenu_rdp_detach",
     "_on_tabmenu_hide_left_pane",
@@ -919,6 +921,9 @@ def _detach_stub(monkeypatch):
         def set_default_size(self, w, h):
             self.size = (w, h)
 
+        def add_controller(self, controller):
+            events.append(("controller", controller))
+
         def present(self):
             events.append(("present", self.title))
 
@@ -941,6 +946,9 @@ def _detach_stub(monkeypatch):
             raise AssertionError("must not open a second connection")
 
     stub = Stub()
+    stub.install_file_manager_pane_shortcut = (
+        lambda window, view: window.add_controller(("F3", view))
+    )
     return stub, events
 
 
@@ -956,6 +964,8 @@ def test_open_in_new_window_moves_the_tab_page_and_back(monkeypatch):
     window = stub._file_manager_windows[0]
     # Moved, not closed: on_tab_detached sees the flag and leaves it alive.
     assert events[0] == ("transfer", "main", "detached", True)
+    # F3 follows the file manager into its window.
+    assert ("controller", ("F3", window.tab_view)) in events
     assert stub._transferring_tab_out is False
     assert window.tab_view.pages == [page] and window.title == "oracle Files"
     assert window.size == (900, 647)
@@ -1014,3 +1024,46 @@ def test_tab_detach_keeps_a_transferred_file_manager_alive(monkeypatch):
 
     Stub().on_tab_detached(None, types.SimpleNamespace(get_child=lambda: object()), 0)
     assert torn == []
+
+
+class _Mapped:
+    def __init__(self, mapped=True):
+        self.mapped = mapped
+
+    def get_mapped(self):
+        return self.mapped
+
+
+def _f3_stub(child, controller):
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    class Stub(WindowTabsMixin):
+        def _file_manager_embed_for_child(self, _child):
+            return types.SimpleNamespace(_controller=controller)
+
+    page = types.SimpleNamespace(get_child=lambda: child)
+    view = types.SimpleNamespace(get_selected_page=lambda: page)
+    return Stub(), view
+
+
+def test_window_f3_toggles_the_selected_file_manager_tab():
+    """F3 that no focused widget took toggles the selected file manager."""
+    controller = _FileManagerController(False)
+    stub, view = _f3_stub(_Mapped(), controller)
+    assert stub._toggle_selected_file_manager_pane(view) is True
+    assert controller.single is True
+    assert stub._toggle_selected_file_manager_pane(view) is True
+    assert controller.single is False
+
+
+def test_window_f3_leaves_terminal_tabs_and_hidden_tabs_alone():
+    """Not a file manager tab, or not on screen: F3 is not handled, so it
+    carries on to whatever else wants it."""
+    from sshpilot.terminal import TerminalWidget
+
+    controller = _FileManagerController(False)
+    terminal = TerminalWidget.__new__(TerminalWidget)
+    for child in (terminal, _Mapped(mapped=False), None):
+        stub, view = _f3_stub(child, controller)
+        assert stub._toggle_selected_file_manager_pane(view) is False
+    assert controller.single is False

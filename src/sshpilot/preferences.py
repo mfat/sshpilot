@@ -3156,6 +3156,19 @@ class PreferencesWindow(Adw.Window):
 
         file_manager_group.add(self.open_file_manager_externally_row)
 
+        self.file_manager_single_pane_row = Adw.SwitchRow()
+        self.file_manager_single_pane_row.set_title(_("Start With One Pane"))
+        self.file_manager_single_pane_row.set_subtitle(
+            _("Hide the left pane when a file manager opens; F3 shows it")
+        )
+        self.file_manager_single_pane_row.set_active(
+            bool(self.config.get_setting('file_manager.single_pane', False))
+        )
+        self.file_manager_single_pane_row.connect(
+            'notify::active', self.on_file_manager_single_pane_changed
+        )
+        file_manager_group.add(self.file_manager_single_pane_row)
+
         file_manager_defaults = {}
         try:
             defaults = self.config.get_default_config()
@@ -6181,6 +6194,11 @@ class PreferencesWindow(Adw.Window):
                     'file_manager.open_externally',
                     bool(self.open_file_manager_externally_row.get_active()),
                 )
+            if getattr(self, 'file_manager_single_pane_row', None) is not None:
+                self.config.set_setting(
+                    'file_manager.single_pane',
+                    bool(self.file_manager_single_pane_row.get_active()),
+                )
             if getattr(self, 'max_concurrent_transfers_row', None) is not None:
                 concurrent_value = max(
                     1, min(10, int(self.max_concurrent_transfers_row.get_value()))
@@ -7312,6 +7330,13 @@ class PreferencesWindow(Adw.Window):
             self.config.set_setting('file_manager.open_externally', active)
         except Exception as exc:
             logger.error("Failed to update external file manager preference: %s", exc)
+
+    def on_file_manager_single_pane_changed(self, switch, *args):
+        """Persist whether new file managers start with the left pane hidden."""
+        try:
+            self.config.set_setting('file_manager.single_pane', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update file manager single pane preference: %s", exc)
 
     def on_terminal_panes_changed(self, row, *args):
         """Persist which terminals a new file manager tab opens."""

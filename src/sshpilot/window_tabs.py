@@ -316,8 +316,13 @@ class WindowTabsMixin:
         sec2.append_item(_item(_('Hide Terminal Pane'), 'tabmenu-hide-terminal-panel'))
         sec2.append_item(_item(_('Open in System Terminal'), 'tabmenu-open-system-terminal'))
         sec2.append_item(_item(_('New Local Tab'), 'tabmenu-new-local'))
-        sec2.append_item(_item(_('Hide Left Pane'), 'tabmenu-hide-left-pane'))
-        sec2.append_item(_item(_('Show Left Pane'), 'tabmenu-show-left-pane'))
+        # F3 toggles the left pane (file manager and main window shortcuts);
+        # the accel attribute only labels it in the menu.
+        for label, name in ((_('Hide Left Pane'), 'tabmenu-hide-left-pane'),
+                            (_('Show Left Pane'), 'tabmenu-show-left-pane')):
+            pane_item = _item(label, name)
+            pane_item.set_attribute_value('accel', GLib.Variant('s', 'F3'))
+            sec2.append_item(pane_item)
         sec2.append_item(_item(_('Open in New Window'), 'tabmenu-fm-new-window'))
         sec2.append_item(_item(_('Move to New Window'), 'tabmenu-rdp-detach'))
         menu.append_section(None, sec2)
@@ -986,6 +991,45 @@ class WindowTabsMixin:
         except Exception as exc:
             logger.error("Tab layout compact failed: %s", exc)
 
+    def install_file_manager_pane_shortcut(self, window, tab_view) -> None:
+        """F3 on *window* toggles the left pane of its selected file manager
+        tab, wherever the focus is (the tab bar, the sidebar), not only inside
+        the file manager.
+
+        BUBBLE phase on the window runs after the focused widget: a terminal
+        with focus consumes F3 for its program and it never gets here, so
+        mc, htop and the rest keep it. Only a file manager tab answers; F3
+        goes on unhandled anywhere else.
+        """
+        controller = Gtk.ShortcutController()
+        controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+        action = Gtk.CallbackAction.new(
+            lambda *_args: self._toggle_selected_file_manager_pane(tab_view)
+        )
+        controller.add_shortcut(Gtk.Shortcut.new(
+            Gtk.KeyvalTrigger.new(Gdk.KEY_F3, Gdk.ModifierType(0)), action))
+        window.add_controller(controller)
+
+    def _toggle_selected_file_manager_pane(self, tab_view) -> bool:
+        from .split_view import SplitViewTab
+
+        page = tab_view.get_selected_page() if tab_view is not None else None
+        child = page.get_child() if page is not None else None
+        # A terminal's files panel is not a file manager tab, and neither is
+        # anything off screen.
+        if child is None or isinstance(child, (TerminalWidget, SplitViewTab)):
+            return False
+        if not child.get_mapped():
+            return False
+        embed = self._file_manager_embed_for_child(child)
+        controller = getattr(embed, '_controller', None) if embed else None
+        is_single = getattr(controller, 'is_single_pane', None)
+        set_single = getattr(controller, 'set_single_pane', None)
+        if not (callable(is_single) and callable(set_single)):
+            return False
+        set_single(not is_single())
+        return True
+
     def _set_tab_file_manager_single_pane(self, single: bool) -> None:
         """Hide or show the left pane of the right-clicked file manager tab."""
         try:
@@ -1042,6 +1086,7 @@ class WindowTabsMixin:
             self.tab_view.transfer_page(page, window.tab_view, 0)
         finally:
             self._transferring_tab_out = False
+        self.install_file_manager_pane_shortcut(window, window.tab_view)
         windows = self.__dict__.setdefault('_file_manager_windows', [])
         windows.append(window)
         if not getattr(self, '_file_manager_windows_close_hooked', False):

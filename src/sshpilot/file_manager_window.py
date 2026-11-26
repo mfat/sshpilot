@@ -1051,7 +1051,8 @@ class FileManagerWindow(Adw.Window):
 
         It lives in the pane toolbar, not the header bar: a file manager
         opened as a tab hides its header bar, and the button with it (#1356).
-        The choice is remembered for the next file manager.
+        A new file manager starts as Settings says (file_manager.single_pane);
+        the toggle, F3 and the tab menu change only this one, as in Dolphin.
         """
         toolbar = getattr(self._right_pane, "toolbar", None)
         label = getattr(toolbar, "_pane_label", None)
@@ -1093,8 +1094,10 @@ class FileManagerWindow(Adw.Window):
         self._left_pane.set_visible(not single)
         toggle = getattr(self, "_single_pane_toggle", None)
         if toggle is not None:
+            shortcut = Gtk.accelerator_get_label(Gdk.KEY_F3, Gdk.ModifierType(0))
             toggle.set_tooltip_text(
-                _("Show Both Panes") if single else _("Show One Pane")
+                (_("Show Both Panes ({shortcut})") if single
+                 else _("Show One Pane ({shortcut})")).format(shortcut=shortcut)
             )
 
     def _install_single_pane_shortcut(self) -> None:
@@ -1125,8 +1128,8 @@ class FileManagerWindow(Adw.Window):
         return not self._left_pane.get_visible()
 
     def set_single_pane(self, single: bool) -> None:
-        """Hide or show the left pane, as the toolbar toggle does (and
-        remember it); the tab menu and F3 come through here."""
+        """Hide or show the left pane, as the toolbar toggle does; the tab
+        menu and F3 come through here. Settings is left as it is."""
         toggle = self.__dict__.get("_single_pane_toggle")
         if toggle is not None:
             # Its "toggled" handler applies and saves the choice.
@@ -1135,14 +1138,7 @@ class FileManagerWindow(Adw.Window):
             self._apply_single_pane(bool(single))
 
     def _on_single_pane_toggled(self, toggle: Gtk.ToggleButton) -> None:
-        single = bool(toggle.get_active())
-        self._apply_single_pane(single)
-        setter = getattr(self._settings(), "set_setting", None)
-        if callable(setter):
-            try:
-                setter(self._SINGLE_PANE_KEY, single)
-            except Exception:
-                logger.debug("Could not save the single-pane choice", exc_info=True)
+        self._apply_single_pane(bool(toggle.get_active()))
 
     # -- which pane is where ---------------------------------------------
 

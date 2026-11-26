@@ -221,6 +221,9 @@ def get_default_config() -> Dict[str, Any]:
             'terminal_panes': 'none',
             # cd the terminal panes into the folder each file pane browses to.
             'terminal_follows_navigation': False,
+            # A new file manager starts with the left pane hidden. The toolbar
+            # toggle, F3 and the tab menu change only that file manager.
+            'single_pane': False,
         },
         'security': {
             'store_passwords': True,
