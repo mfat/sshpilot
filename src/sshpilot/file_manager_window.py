@@ -1201,6 +1201,7 @@ class FileManagerWindow(Adw.Window):
             on_details=self._show_transfer_details,
             on_failed=self._on_transfer_failed,
             on_finished=self._on_transfer_finished,
+            on_face=self._update_tab_indicator,
         )
         bar.append(self._transfer_indicator)
 
@@ -4308,6 +4309,70 @@ class FileManagerWindow(Adw.Window):
     def _show_transfer_details(self, dialog) -> None:
         """The indicator's Details: the transfer's progress dialog."""
         self._present_transfer_dialog(dialog)
+
+    def _own_tab_page(self):
+        """The tab this file manager is shown in, wherever it is now."""
+        if self._embedded_parent is None:
+            return None
+        content = getattr(self, "_toolbar_view", None)
+        try:
+            tab_view = content.get_ancestor(Adw.TabView) if content is not None else None
+            if tab_view is None:
+                return None
+            pages = tab_view.get_pages()
+            for index in range(pages.get_n_items()):
+                page = pages.get_item(index)
+                child = page.get_child() if page is not None else None
+                if child is not None and (child is content or content.is_ancestor(child)):
+                    return page
+        except Exception:
+            logger.debug("Finding the file manager's tab failed", exc_info=True)
+        return None
+
+    def _update_tab_indicator(
+        self, state: str, fraction: Optional[float], tooltip: Optional[str]
+    ) -> None:
+        """Show the transfers on the tab too: it is what stays visible while
+        another tab is in front. The same ring as the toolbar button, a
+        spinner until a size is known, a warning after a failure."""
+        page = self._own_tab_page()
+        if page is None:
+            return
+        held = self.__dict__.get("_tab_indicator_held")
+        if held is not None and held[0] is not page:
+            # The tab moved to another window: that is a new page.
+            held = None
+        try:
+            if state == "idle":
+                if held is not None:
+                    page.set_loading(False)
+                    page.set_indicator_icon(held[1])
+                    page.set_indicator_tooltip(held[2] or "")
+                self._tab_indicator_held = None
+                return
+            if held is None:
+                # Whatever the tab showed there (a group colour) comes back.
+                held = (page, page.get_indicator_icon(), page.get_indicator_tooltip())
+                self._tab_indicator_held = held
+            if state == "failed":
+                from sshpilot import icon_utils
+
+                icon = icon_utils.new_gicon_from_icon_name("dialog-warning-symbolic")
+                tooltip = _("Transfer Failed")
+            elif fraction is None:
+                icon = held[1]
+            else:
+                from .file_manager.transfer_indicator import progress_ring_icon
+
+                indicator = self._transfer_indicator
+                icon = progress_ring_icon(
+                    fraction, indicator.get_color(), indicator.get_scale_factor()
+                )
+            page.set_loading(state == "running" and fraction is None)
+            page.set_indicator_icon(icon)
+            page.set_indicator_tooltip(tooltip or "")
+        except Exception:
+            logger.debug("Updating the tab's transfer indicator failed", exc_info=True)
 
     def _on_transfer_finished(self, dialog) -> None:
         """A transfer long enough to show in the indicator finished (Nautilus

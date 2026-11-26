@@ -18,7 +18,6 @@ that showed and finished pulses the button and gets a toast.
 from __future__ import annotations
 
 import logging
-import math
 import time
 from gettext import gettext as _, ngettext
 from typing import Callable, List, Optional
@@ -89,6 +88,53 @@ def combined_fraction(snaps) -> Optional[float]:
     return max(0.0, min(1.0, done / total))
 
 
+def _draw_ring(cr, width: float, height: float, fraction: float, colour, line: float) -> None:
+    """The ring both the toolbar button and the tab show: the done part
+    clockwise from the top in *colour*, the rest of the circle at a quarter."""
+    import math
+
+    radius = (min(width, height) - line) / 2.0
+    if radius <= 0:
+        return
+    start = -math.pi / 2
+    cr.translate(width / 2.0, height / 2.0)
+    cr.set_line_width(line)
+    cr.set_source_rgba(colour.red, colour.green, colour.blue, colour.alpha * 0.25)
+    cr.arc(0, 0, radius, 0, 2 * math.pi)
+    cr.stroke()
+    if fraction > 0:
+        cr.set_source_rgba(colour.red, colour.green, colour.blue, colour.alpha)
+        cr.arc(0, 0, radius, start, start + fraction * 2 * math.pi)
+        cr.stroke()
+
+
+def progress_ring_icon(fraction: float, colour, scale: int = 1):
+    """The ring as an icon, for places that take only a GIcon (a tab's
+    indicator). Drawn into a texture, as Ptyxis does for its tab progress
+    (ptyxis-tab.c): libadwaita has no progress for tabs."""
+    import sys
+
+    import cairo
+    from gi.repository import Gdk
+
+    scale = max(1, int(scale))
+    size = 16 * scale
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+    cr = cairo.Context(surface)
+    _draw_ring(cr, size, size, max(0.0, min(1.0, float(fraction))), colour, 2.0 * scale)
+    surface.flush()
+    # Cairo's ARGB32 is native-endian premultiplied.
+    memory_format = (
+        Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED
+        if sys.byteorder == "little"
+        else Gdk.MemoryFormat.A8R8G8B8_PREMULTIPLIED
+    )
+    return Gdk.MemoryTexture.new(
+        size, size, memory_format,
+        GLib.Bytes.new(bytes(surface.get_data())), surface.get_stride(),
+    )
+
+
 class _ProgressRing(Gtk.DrawingArea):
     """A ring whose outline fills clockwise from the top, as in Nautilus
     (nautilus-progress-paintable.c): the done part in the button's text
@@ -151,21 +197,7 @@ class _ProgressRing(Gtk.DrawingArea):
         return True
 
     def _draw(self, _area, cr, width, height) -> None:
-        colour = self.get_color()
-        radius = (min(width, height) - self._LINE) / 2.0
-        if radius <= 0:
-            return
-        start = -math.pi / 2
-        end = start + self._shown * 2 * math.pi
-        cr.translate(width / 2.0, height / 2.0)
-        cr.set_line_width(self._LINE)
-        cr.set_source_rgba(colour.red, colour.green, colour.blue, colour.alpha * 0.25)
-        cr.arc(0, 0, radius, 0, 2 * math.pi)
-        cr.stroke()
-        if self._shown > 0:
-            cr.set_source_rgba(colour.red, colour.green, colour.blue, colour.alpha)
-            cr.arc(0, 0, radius, start, end)
-            cr.stroke()
+        _draw_ring(cr, width, height, self._shown, self.get_color(), self._LINE)
 
 
 class _TransferRow:
@@ -293,9 +325,15 @@ class TransferIndicator(Gtk.MenuButton):
         on_details: Callable[[object], None],
         on_failed: Optional[Callable[[object], None]] = None,
         on_finished: Optional[Callable[[object], None]] = None,
+        on_face: Optional[Callable[[str, Optional[float], Optional[str]], None]] = None,
     ) -> None:
         super().__init__()
         _ensure_css()
+        # Told what the button shows, for a second indicator elsewhere (the
+        # file manager's tab): ("idle" | "running" | "failed", fraction or
+        # None, tooltip).
+        self._on_face = on_face
+        self._face_told: Optional[tuple] = None
         self._on_details = on_details
         self._on_failed = on_failed
         self._on_finished = on_finished
@@ -512,6 +550,23 @@ class TransferIndicator(Gtk.MenuButton):
         self._update_face()
 
     def _update_face(self) -> None:
+        state, fraction = self._draw_face()
+        if self._on_face is None:
+            return
+        # A whole percent at a time: the tab's icon is redrawn for each.
+        tooltip = self.get_tooltip_text() if state != "idle" else None
+        face = (state, None if fraction is None else int(fraction * 100), tooltip)
+        if face == self._face_told:
+            return
+        self._face_told = face
+        try:
+            self._on_face(
+                state, None if fraction is None else face[1] / 100.0, tooltip
+            )
+        except Exception:
+            logger.debug("Transfer face callback failed", exc_info=True)
+
+    def _draw_face(self) -> tuple:
         snaps = [
             row.last_snap for row in self._rows
             if row.shown and row.last_state == "running" and row.last_snap
@@ -537,7 +592,7 @@ class TransferIndicator(Gtk.MenuButton):
                         running,
                     ).format(count=running)
                 )
-                return
+                return "running", None
             self._spinner.stop()
             self._spinner.set_visible(False)
             # Glide only while the ring is already on screen; a ring that
@@ -551,7 +606,7 @@ class TransferIndicator(Gtk.MenuButton):
                     running,
                 ).format(count=running, percent=int(fraction * 100))
             )
-            return
+            return "running", fraction
         self._spinner.stop()
         self._spinner.set_visible(False)
         self._ring.set_visible(False)
@@ -565,6 +620,7 @@ class TransferIndicator(Gtk.MenuButton):
         )
         self._status_icon.set_visible(True)
         self.set_tooltip_text(_("Transfers"))
+        return ("failed" if failed else "idle"), None
 
     def shutdown(self) -> None:
         """Stop refreshing (the file manager is closing)."""
