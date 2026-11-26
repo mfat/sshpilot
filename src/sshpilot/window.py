@@ -4956,6 +4956,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if hide_hosts and hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(hide_hosts)
 
+        popup = getattr(self, "_search_popup", None)
+        searching = bool(self.search_entry.get_text().strip())
+        if searching or (popup is not None and popup.visible and not popup.show_groups):
+            from .search_groups import make_group_context_label
+            context = make_group_context_label(self.group_manager, connection)
+            if context is not None:
+                row._info_box.append(context)
+
         return row
 
     def _on_runtime_connection_status_changed(self, connection_id, _status):

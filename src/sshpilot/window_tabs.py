@@ -242,7 +242,7 @@ class WindowTabsMixin:
     # All tab-menu action names, in display order within their sections.
     _TAB_MENU_ACTIONS = (
         'tabmenu-duplicate', 'tabmenu-rename',
-        'tabmenu-reconnect', 'tabmenu-manage-files',
+        'tabmenu-reconnect', 'tabmenu-manage-files', 'tabmenu-reveal-sidebar',
         'tabmenu-show-files-panel', 'tabmenu-hide-files-panel',
         'tabmenu-show-terminal-panel', 'tabmenu-hide-terminal-panel',
         'tabmenu-open-system-terminal', 'tabmenu-new-local',
@@ -268,6 +268,7 @@ class WindowTabsMixin:
             'tabmenu-rename': self._on_tabmenu_rename,
             'tabmenu-reconnect': self._on_tabmenu_reconnect,
             'tabmenu-manage-files': self._on_tabmenu_manage_files,
+            'tabmenu-reveal-sidebar': self._on_tabmenu_reveal_sidebar,
             'tabmenu-show-files-panel': self._on_tabmenu_show_files_panel,
             'tabmenu-hide-files-panel': self._on_tabmenu_hide_files_panel,
             'tabmenu-show-terminal-panel': self._on_tabmenu_show_terminal_panel,
@@ -310,6 +311,7 @@ class WindowTabsMixin:
         sec2 = Gio.Menu()
         sec2.append_item(_item(_('Reconnect'), 'tabmenu-reconnect'))
         sec2.append_item(_item(_('Manage Files'), 'tabmenu-manage-files'))
+        sec2.append_item(_item(_('Reveal in Sidebar'), 'tabmenu-reveal-sidebar'))
         sec2.append_item(_item(_('Show File Pane'), 'tabmenu-show-files-panel'))
         sec2.append_item(_item(_('Hide File Pane'), 'tabmenu-hide-files-panel'))
         sec2.append_item(_item(_('Show Terminal Pane'), 'tabmenu-show-terminal-panel'))
@@ -547,6 +549,8 @@ class WindowTabsMixin:
                 return enabled
             enabled.add('tabmenu-reconnect')
             conn = self.terminal_to_connection.get(child)
+            if conn is not None:
+                enabled.add('tabmenu-reveal-sidebar')
             caps = capabilities_for(conn) if conn else frozenset()
             if Capability.FILE_TRANSFER in caps:
                 enabled.add('tabmenu-manage-files')
@@ -561,7 +565,7 @@ class WindowTabsMixin:
 
         from .rdp_tab import RdpTab
         if isinstance(child, RdpTab):
-            return common | {'tabmenu-rdp-detach'}
+            return common | {'tabmenu-rdp-detach', 'tabmenu-reveal-sidebar'}
 
         embed = self._file_manager_embed_for_child(child)
         if embed is not None:
@@ -666,6 +670,51 @@ class WindowTabsMixin:
                 child._on_reconnect_clicked()
         except Exception as exc:
             logger.error("Tab reconnect failed: %s", exc)
+
+    def _on_tabmenu_reveal_sidebar(self, action, param=None):
+        _page, child = self._tab_menu_target()
+        connection = self.terminal_to_connection.get(child)
+        if connection is None:
+            from .rdp_tab import RdpTab
+            if isinstance(child, RdpTab):
+                connection = child.connection
+        if connection is None:
+            return
+        from .sidebar_views import CONNECTIONS, show_view
+        from .sidebar import GroupRow, SectionHeaderRow
+
+        popup = getattr(self, "_search_popup", None)
+        if popup is not None and popup.visible:
+            popup.hide(animate=False)
+        self._tag_filter = None
+        filter_action = self.lookup_action("filter-tag")
+        if filter_action is not None:
+            filter_action.set_state(GLib.Variant("s", ""))
+        self.search_entry.set_text("")
+        show_view(self, CONNECTIONS)
+        self._apply_sidebar_visible(True)
+        self.rebuild_connection_list()
+        self.complete_pending_connection_rows()
+        ancestors = set()
+        for group_id in self.group_manager.get_connection_groups(connection):
+            while group_id and group_id not in ancestors:
+                ancestors.add(group_id)
+                group_id = self.group_manager.groups.get(group_id, {}).get("parent_id")
+        for row in self.connection_list:
+            if isinstance(row, SectionHeaderRow) and not row._expanded:
+                row._toggle_expand()
+            elif (isinstance(row, GroupRow) and row.group_id in ancestors
+                  and not row.group_info.get("expanded", True)):
+                row._toggle_expand()
+        rows = self._rows_for_connection(connection)
+        if rows:
+            self._select_only_row(rows[0])
+            # Rebuild restores the old scroll position on idle. Focus after
+            # that restoration so GTK brings the revealed row into view.
+            def _focus():
+                rows[0].grab_focus()
+                return False
+            GLib.idle_add(_focus)
 
     def _on_tabmenu_manage_files(self, action, param=None):
         try:

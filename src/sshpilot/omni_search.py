@@ -1468,6 +1468,13 @@ class OmniSearchController:
             subtitle.add_css_class("dim-label")
             subtitle.set_ellipsize(3)
             labels.append(subtitle)
+        if result.kind == "connection":
+            from .search_groups import make_group_context_label
+            context = make_group_context_label(
+                getattr(self.window, "group_manager", None), result.payload
+            )
+            if context is not None:
+                labels.append(context)
         box.append(labels)
         row.set_child(box)
         return row

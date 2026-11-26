@@ -45,6 +45,7 @@ _TAB_METHODS = (
     "_rename_tab_page",
     "_on_tabmenu_reconnect",
     "_on_tabmenu_manage_files",
+    "_on_tabmenu_reveal_sidebar",
     "_on_tabmenu_open_system_terminal",
     "_on_tabmenu_new_local",
     "_on_tabmenu_close",
@@ -1152,3 +1153,55 @@ class _IdentityMap:
 
     def __contains__(self, item):
         return any(item is member for member in self._members)
+
+
+def test_reveal_sidebar_expands_memberships_and_clears_filters(monkeypatch):
+    from unittest.mock import Mock
+    from sshpilot import sidebar, sidebar_views
+    from sshpilot.window_tabs import WindowTabsMixin
+    from sshpilot import window_tabs
+    monkeypatch.setattr(window_tabs.GLib, "idle_add", lambda fn: fn())
+
+    class Group:
+        def __init__(self, group_id):
+            self.group_id = group_id
+            self.group_info = {"expanded": False}
+        def _toggle_expand(self):
+            self.group_info["expanded"] = True
+
+    class Section:
+        _expanded = False
+        def _toggle_expand(self):
+            self._expanded = True
+
+    monkeypatch.setattr(sidebar, "GroupRow", Group)
+    monkeypatch.setattr(sidebar, "SectionHeaderRow", Section)
+    monkeypatch.setattr(sidebar_views, "show_view", Mock())
+    child, connection = object(), object()
+    root, nested, unrelated, section = Group("root"), Group("nested"), Group("other"), Section()
+    selected = Mock()
+    window = types.SimpleNamespace(
+        _tab_menu_target=lambda: (None, child),
+        terminal_to_connection={child: connection},
+        _search_popup=types.SimpleNamespace(visible=True, hide=Mock()),
+        _tag_filter="production", search_entry=Mock(),
+        lookup_action=lambda name: None,
+        _apply_sidebar_visible=Mock(), rebuild_connection_list=Mock(),
+        complete_pending_connection_rows=Mock(),
+        group_manager=types.SimpleNamespace(
+            get_connection_groups=lambda conn: ["nested"],
+            groups={"nested": {"parent_id": "root"}, "root": {}},
+        ),
+        connection_list=[section, root, nested, unrelated],
+        _rows_for_connection=lambda conn: [selected],
+        _select_only_row=Mock(),
+    )
+    WindowTabsMixin._on_tabmenu_reveal_sidebar(window, None)
+    assert window._tag_filter is None
+    window.search_entry.set_text.assert_called_once_with("")
+    window._search_popup.hide.assert_called_once_with(animate=False)
+    assert root.group_info["expanded"] and nested.group_info["expanded"]
+    assert not unrelated.group_info["expanded"]
+    assert section._expanded
+    window._select_only_row.assert_called_once_with(selected)
+    selected.grab_focus.assert_called_once()

@@ -72,6 +72,10 @@ class DummyGroupManager:
     def __init__(self, groups):
         self.groups = groups
 
+    def get_connection_groups(self, connection):
+        return [gid for gid, group in self.groups.items()
+                if connection.nickname in group.get("connections", [])]
+
     def get_all_groups(self):
         return [
             {
@@ -101,6 +105,8 @@ class StubConnectionRow(DummyRowBase):
         self.connection = connection
         self.indentation = 0
         self.hide_hosts = None
+        self.context_labels = []
+        self._info_box = types.SimpleNamespace(append=self.context_labels.append)
         
     def set_indentation(self, level):
         self.indentation = level
@@ -114,6 +120,9 @@ def test_search_results_include_matching_groups(monkeypatch):
     window_module = importlib.import_module("sshpilot.window")
     window_module = importlib.reload(window_module)
 
+    from sshpilot import search_groups
+    monkeypatch.setattr(search_groups, "make_group_context_label",
+                        lambda manager, connection: search_groups.connection_group_context(manager, connection) or None)
     monkeypatch.setattr(window_module, "GroupRow", StubGroupRow)
     monkeypatch.setattr(window_module, "ConnectionRow", StubConnectionRow)
 
@@ -204,6 +213,9 @@ def test_tag_filter_matches_automatic_protocol_tag(monkeypatch):
     window_module = importlib.import_module("sshpilot.window")
     window_module = importlib.reload(window_module)
 
+    from sshpilot import search_groups
+    monkeypatch.setattr(search_groups, "make_group_context_label",
+                        lambda manager, connection: search_groups.connection_group_context(manager, connection) or None)
     monkeypatch.setattr(window_module, "GroupRow", StubGroupRow)
     monkeypatch.setattr(window_module, "ConnectionRow", StubConnectionRow)
 
