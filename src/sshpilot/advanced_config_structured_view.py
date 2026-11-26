@@ -353,6 +353,15 @@ class _Suggestions:
             self.popover = None
 
 
+def _directive_fields() -> Gtk.Box:
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    box.set_margin_top(6)
+    box.set_margin_bottom(6)
+    box.set_margin_start(6)
+    box.set_margin_end(6)
+    return box
+
+
 class LineRow:
     """One line of the block, as every line is shown: its keyword and value
     in two fields, what OpenSSH does with it, and (while it goes unused)
@@ -364,11 +373,7 @@ class LineRow:
         self.uid = uid
         self.row = Gtk.ListBoxRow()
         self.row.set_activatable(False)
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        for side in ("top", "bottom"):
-            getattr(box, f"set_margin_{side}")(6)
-        box.set_margin_start(6)
-        box.set_margin_end(6)
+        box = _directive_fields()
         # The grip: drag the line to another place in the block.
         self.handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
         self.handle.add_css_class("advcfg-drag-handle")
@@ -757,18 +762,23 @@ class StructuredView(Gtk.Box):
         target.connect("drop", self._on_line_drop)
         self.options_list.add_controller(target)
         # The block's Host or Match line: a row like the others, first.
-        self.header_row = Adw.ActionRow()
-        self.header_row.set_title_selectable(False)
-        self.patterns_row = _entry(width=34)
-        self.patterns_row.set_hexpand(False)
+        self.header_row = Gtk.ListBoxRow(activatable=False)
+        header_fields = _directive_fields()
+        # Reserve the grip column without offering to reorder the block header.
+        grip_space = Gtk.Image(icon_name="list-drag-handle-symbolic",
+                              accessible_role=Gtk.AccessibleRole.PRESENTATION)
+        grip_space.add_css_class("advcfg-drag-handle")
+        grip_space.set_opacity(0)
+        header_fields.append(grip_space)
+        self.header_keyword = _entry(width=24)
+        self.header_keyword.set_editable(False)
+        self.header_keyword.update_property([Gtk.AccessibleProperty.LABEL], [_("Option")])
+        header_fields.append(self.header_keyword)
+        self.patterns_row = _entry()
+        self.patterns_row.set_hexpand(True)
         self.patterns_row.connect("changed", self._on_patterns_changed)
-        self.header_row.add_suffix(self.patterns_row)
-        # Where the others have Remove: kept empty, so the fields line up.
-        spacer = _icon_button("user-trash-symbolic", "", lambda: None)
-        spacer.set_opacity(0)
-        spacer.set_can_target(False)
-        spacer.set_can_focus(False)
-        self.header_row.add_suffix(spacer)
+        header_fields.append(self.patterns_row)
+        self.header_row.set_child(header_fields)
         self.options_list.append(self.header_row)
         self.add_option_row = Adw.ActionRow(title=_("Add Option"))
         self.add_option_row.add_prefix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
@@ -959,9 +969,9 @@ class StructuredView(Gtk.Box):
         # Global options have no Host or Match line.
         self.header_row.set_visible(not is_global)
         keyword = "Host" if block.kind == HOST else "Match"
-        if self.header_row.get_title() != keyword:
-            self.header_row.set_title(keyword)
-            self.header_row.set_subtitle(
+        if self.header_keyword.get_text() != keyword:
+            self.header_keyword.set_text(keyword)
+            self.patterns_row.set_tooltip_text(
                 _("The names and patterns this block is for") if block.kind == HOST
                 else _("The conditions this block is for")
             )
