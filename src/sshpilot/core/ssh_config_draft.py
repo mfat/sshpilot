@@ -41,6 +41,7 @@ import re
 import secrets
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -610,6 +611,13 @@ def evaluate_draft(
     with tempfile.TemporaryDirectory(
         prefix="sshpilot-config-draft-", ignore_cleanup_errors=True
     ) as directory:
+        if sys.platform == "win32":
+            # Python 3.13+ gives the folder an OWNER RIGHTS entry that every
+            # file in it inherits; OpenSSH for Windows then refuses the
+            # draft and its included copies ("Bad permissions", exit 255).
+            from ..platform.windows.acl import drop_owner_rights
+
+            drop_owner_rights(directory)
         system_copy = _system_copy(system, directory) if system else None
         context_files = {os.path.abspath(system_copy): system} if system_copy else {}
         draft_file = os.path.join(directory, "config")
