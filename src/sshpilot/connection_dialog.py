@@ -2807,7 +2807,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             str(getattr(self.connection, name, '') or '')
             for name in ('nickname', 'host')
         } if self.connection is not None else set()
-        filled = False
+        # The rows whose text this pass sets (not the user).
+        filled = set()
         for row_name, directive, ssh_key in self._INHERITABLE_ROWS:
             row = getattr(self, row_name, None)
             if row is None:
@@ -2824,6 +2825,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 if showing:
                     if value and row.get_text() != value:
                         self._show_inherited_value(row_name, row, value)
+                        filled.add(row_name)
                     elif not value:
                         # Nothing is inherited any more: the row is empty,
                         # and still not this host's own.
@@ -2835,21 +2837,38 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                             self._applying_inherited_value = False
                         row.remove_css_class('dim-label')
                         self._set_row_inherited_note(row, '')
-                    filled = True
+                        filled.add(row_name)
                 elif row.get_text().strip():
                     continue
                 elif first and value:
                     self._show_inherited_value(row_name, row, value)
-                    filled = True
+                    filled.add(row_name)
                 else:
                     # The row's tag shows the value (row_mark, empty=True).
                     self._set_row_inherited_note(row, answer.inherited_note(ssh_key))
             except Exception:
                 logger.debug("Could not show inherited value for %s", row_name, exc_info=True)
         if filled:
-            # The rows were filled programmatically; re-baseline so an
-            # untouched inherited value is never mistaken for an edit.
-            self._capture_editor_delta_baseline()
+            # The rows were filled programmatically: an untouched inherited
+            # value is not an edit. Only those rows are re-baselined; the
+            # rest of the form keeps its loaded baseline, so what the user
+            # changed meanwhile (a key added, a field typed) is still saved.
+            self._rebaseline_fields(
+                {self._INHERITED_ROW_FIELDS[name] for name in filled
+                 if name in self._INHERITED_ROW_FIELDS}
+            )
+
+    def _rebaseline_fields(self, fields) -> None:
+        """Take the form's current values of *fields* as their loaded ones,
+        leaving every other field's baseline as it was."""
+        old = dict(getattr(self, '_editor_delta_baseline', None) or {})
+        self._capture_editor_delta_baseline()
+        if not old:
+            return
+        new = self._editor_delta_baseline
+        for key in list(new):
+            if key not in fields and key in old:
+                new[key] = old[key]
 
     def _load_inherited_values_async(self):
         """Saving a search-box target: fill its rows, once, with what its

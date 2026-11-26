@@ -394,3 +394,22 @@ def test_the_saved_password_has_no_effect_when_no_password_login_is_tried():
     row.set_text("")
     dialog._mark_unused_password()
     assert not row.has_css_class("warning")
+
+
+def test_refilling_an_inherited_row_keeps_other_edits_in_the_save():
+    """Regression: each answer that refilled an inherited row took the whole
+    form as loaded, so a key added meanwhile was never saved."""
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    form = {"username": "shared", "identity_files": ("~/.ssh/kwp4",)}
+    dialog = types.SimpleNamespace(
+        _editor_delta_baseline={"username": "", "identity_files": ()},
+    )
+    dialog._capture_editor_delta_baseline = lambda: setattr(
+        dialog, "_editor_delta_baseline", dict(form)
+    )
+    ConnectionDialog._rebaseline_fields(dialog, {"username"})
+    assert dialog._editor_delta_baseline == {
+        "username": "shared",         # filled by the dialog: not an edit
+        "identity_files": (),         # the user's key: still a change
+    }

@@ -358,3 +358,19 @@ def test_advanced_configuration_opened_from_a_modal_dialog_is_an_ordinary_window
         fresh.close()
     finally:
         editor.destroy()
+
+
+def test_a_key_added_while_an_inherited_value_shows_is_saved(gui, tmp_path):
+    """Regression: an answer refilling an inherited row re-baselined the
+    whole form, so the added key was not in the save."""
+    key = tmp_path / "kwp4"
+    key.write_text("x")
+    dialog = _saved("Host web\n    HostName web.example.com\n\nHost *\n    User shared\n")
+    _pump(lambda: "username_row" in (getattr(dialog, "_inherited_row_handlers", None) or {}))
+    asked = len(dialog.parent_window.client.questions)
+    dialog.key_editor.add_path(str(key))
+    _pump(lambda: len(dialog.parent_window.client.questions) > asked)
+    _pump(lambda: False, seconds=0.5)
+    data = dialog._collect_connection_data()
+    assert "identity_files" in data["__changed_fields"]
+    assert "username" not in data["__changed_fields"]
