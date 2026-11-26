@@ -22,6 +22,12 @@ Streaming rules:
 * A disabled highlighter returns its input unchanged but keeps tracking
   terminal state, so enabling it mid-session needs no resync.
 
+Speed (#1426): this runs on the GUI thread for every output byte, so the two
+common cases avoid per-token Python work. A disabled highlighter applies only
+the SGR sequences after a chunk's last reset when the chunk holds nothing
+else. An enabled one runs only the rules whose ``Rule.needs`` fragments occur
+in the text: the full alternation costs about 3 us per byte whatever the text.
+
 This module is pure Python and does not import ``gi``.
 """
 
@@ -88,6 +94,10 @@ class Rule(NamedTuple):
     pattern: str
     colour: int
     validate: Optional[Validator] = None
+    # Lowercase fragments, one of which every match of ``pattern`` contains
+    # (compared against the lowercased text). Text with none of them cannot
+    # match, so the rule is left out of the scan. Empty: always scanned.
+    needs: tuple[bytes, ...] = ()
 
 
 def _numbers_at_most(limit: int, low: int = 0) -> Validator:
@@ -128,12 +138,14 @@ _MAC = [
         r"(?<![0-9A-Za-z:])[0-9A-Fa-f]{2}(?P<ms>[:-])(?:[0-9A-Fa-f]{2}(?P=ms)){4}"
         r"[0-9A-Fa-f]{2}(?![0-9A-Za-z]|:[0-9A-Fa-f])",
         _MAGENTA,
+        needs=(b":", b"-"),
     ),
     Rule(
         "mac_dotted",
         r"(?<![0-9A-Za-z:])[0-9A-Fa-f]{4}(?P<md>[.-])[0-9A-Fa-f]{4}(?P=md)[0-9A-Fa-f]{4}"
         r"(?![0-9A-Za-z])",
         _MAGENTA,
+        needs=(b".", b"-"),
     ),
 ]
 _IP = [
@@ -143,6 +155,7 @@ _IP = [
         r"(?:/\d{1,3})?(?![0-9A-Za-z:])",
         _CYAN,
         _valid_ipv6,
+        needs=(b":",),
     ),
     Rule(
         "ipv4",
@@ -150,6 +163,7 @@ _IP = [
         r"(?![0-9A-Za-z]|\.[0-9])",
         _CYAN,
         _not_a_version,
+        needs=(b".",),
     ),
 ]
 _VLAN = Rule(
@@ -158,12 +172,14 @@ _VLAN = Rule(
     r"(?![0-9A-Za-z])",
     _BLUE,
     _numbers_at_most(_MAX_VLAN, low=1),
+    needs=(b"vlan",),
 )
 _MPLS = Rule(
     "mpls",
     rf"{_BEFORE}[Ll]abel:?[ \t]+\d{{1,7}}(?![0-9.])|{_WORD}(?:implicit|explicit)-null{_NOT_WORD}",
     _BLUE,
     _numbers_at_most(_MAX_MPLS_LABEL),
+    needs=(b"label", b"-null"),
 )
 
 # Interfaces: long forms every vendor spells out; profiles add abbreviations.
@@ -176,6 +192,11 @@ _IFACE = Rule(
     rf"|{_BEFORE}(?:(?:ge|xe|et|fe)-\d+/\d+/\d+(?::\d+)?(?:\.\d+)?|ae\d+(?:\.\d+)?)"
     r"(?![0-9A-Za-z])",
     _YELLOW,
+    needs=(
+        b"ethernet", b"port-channel", b"loopback", b"tunnel", b"serial", b"vlan",
+        b"eth-trunk", b"management", b"meth", b"gige",
+        b"ge-", b"xe-", b"et-", b"fe-", b"ae",
+    ),
 )
 _EXTRA_IFACE: Dict[str, str] = {
     "cisco-ios": r"(?:Gi|Te|Fa|Eth|Et|Po|Lo|Tu|Hu|Fo|Twe|Vl)\d+(?:/\d+){0,4}(?:\.\d+)?",
@@ -188,15 +209,26 @@ _EXTRA_IFACE: Dict[str, str] = {
 
 # Link state: generic rules only fire in an obvious status context ("is up",
 # "up/down"); vendors add the bare column words their tables use.
+_EXTRA_IFACE_NEEDS: Dict[str, tuple[bytes, ...]] = {
+    "cisco-ios": (b"gi", b"te", b"fa", b"et", b"po", b"lo", b"tu", b"hu", b"fo", b"twe", b"vl"),
+    "junos": (
+        b"so-", b"vcp-", b"lt-", b"pp-", b"ip-", b"gr-", b"st-",
+        b"lo", b"em", b"fxp", b"me", b"reth", b"irb.", b"vlan.",
+    ),
+    "huawei-vrp": (b"ge", b"null"),
+}
+
 _STATE_CONTEXT = r"(?:(?<=\bis )|(?<=\bare )|(?<=: )|(?<=\bstate )|(?<=\bstatus ))"
 _STATE = [
-    Rule("state_ok", rf"{_STATE_CONTEXT}[Uu]p{_NOT_WORD}(?! to\b)|{_WORD}up/up{_NOT_WORD}", _GREEN),
+    Rule("state_ok", rf"{_STATE_CONTEXT}[Uu]p{_NOT_WORD}(?! to\b)|{_WORD}up/up{_NOT_WORD}", _GREEN,
+         needs=(b"up",)),
     Rule(
         "state_bad",
         rf"{_STATE_CONTEXT}(?:administratively )?[Dd]own{_NOT_WORD}"
         rf"|{_WORD}(?:up/down|down/up|down/down){_NOT_WORD}"
         rf"|{_WORD}(?:err-disabled|notconnect){_NOT_WORD}",
         _RED,
+        needs=(b"down", b"err-disabled", b"notconnect"),
     ),
 ]
 # profile -> (good words, bad words, prefix on bad words, suffix on both)
@@ -210,15 +242,17 @@ _ERROR = Rule(
     r"(?<![A-Za-z0-9_])(?:%[ ]?(?:Invalid|Incomplete|Ambiguous|Unknown|Bad)|syntax error"
     r"|unknown command|missing argument|[Ee]rror:)[^\r\n]*",
     _RED,
+    needs=(b"%", b"syntax error", b"unknown command", b"missing argument", b"error:"),
 )
 
 # Uppercase labels are conventional log fields. Lowercase words need an
 # explicit bracket or level= context to avoid colouring ordinary prose.
 _LOG_LEVELS = [
-    ("log_error", "EMERGENCY|EMERG|ALERT|CRITICAL|CRIT|FATAL|ERROR|ERR", _RED),
-    ("log_warning", "WARNING|WARN", _YELLOW),
-    ("log_info", "NOTICE|INFO", _CYAN),
-    ("log_debug", "DEBUG|TRACE", _MAGENTA),
+    ("log_error", "EMERGENCY|EMERG|ALERT|CRITICAL|CRIT|FATAL|ERROR|ERR", _RED,
+     (b"emerg", b"alert", b"crit", b"fatal", b"err")),
+    ("log_warning", "WARNING|WARN", _YELLOW, (b"warn",)),
+    ("log_info", "NOTICE|INFO", _CYAN, (b"notice", b"info")),
+    ("log_debug", "DEBUG|TRACE", _MAGENTA, (b"debug", b"trace")),
 ]
 
 
@@ -230,8 +264,9 @@ def _log_rules() -> List[Rule]:
             rf"|(?<=\[)(?i:{levels})(?=\])"
             rf"|(?<=\blevel=)(?i:{levels})(?![\w./-])",
             colour,
+            needs=needs,
         )
-        for name, levels, colour in _LOG_LEVELS
+        for name, levels, colour, needs in _LOG_LEVELS
     ]
 
 
@@ -242,50 +277,115 @@ def _rules(profile: str) -> List[Rule]:
             r"(?m:^(?:debug[123]:[ \t]*)?(?i:Authenticated to|Authentication succeeded"
             r"|Authentication successful)\b[^\r\n]*)",
             _GREEN,
+            needs=(b"authenticat",),
         ),
         Rule(
             "auth_key",
             r"(?m:^(?:debug[123]:[ \t]*)?(?:Server accepts key:|Using private key:)"
             r"[^\r\n]*)",
             _CYAN,
+            needs=(b"key:",),
         ),
         *_MAC, *_IP, _IFACE,
     ]
     if profile in _EXTRA_IFACE:
-        rules.append(Rule("iface_x", rf"{_BEFORE}{_EXTRA_IFACE[profile]}(?![0-9A-Za-z])", _YELLOW))
+        rules.append(Rule("iface_x", rf"{_BEFORE}{_EXTRA_IFACE[profile]}(?![0-9A-Za-z])", _YELLOW,
+                          needs=_EXTRA_IFACE_NEEDS[profile]))
     rules += [_VLAN, _MPLS]
     if profile == "junos":
         rules.append(Rule("mpls_x", rf"{_BEFORE}(?:push|swap)[ \t]+\d{{2,7}}(?![0-9.])", _BLUE,
-                          _numbers_at_most(_MAX_MPLS_LABEL)))
+                          _numbers_at_most(_MAX_MPLS_LABEL), needs=(b"push", b"swap")))
     if profile in _EXTRA_STATE:
         good, bad, prefix, suffix = _EXTRA_STATE[profile]
-        rules.append(Rule("state_ok_x", rf"{_WORD}(?:{good}){suffix}{_NOT_WORD}", _GREEN))
-        rules.append(Rule("state_bad_x", rf"{_WORD}{prefix}(?:{bad}){suffix}{_NOT_WORD}", _RED))
+        rules.append(Rule("state_ok_x", rf"{_WORD}(?:{good}){suffix}{_NOT_WORD}", _GREEN,
+                          needs=(b"up", b"connected", b"established")))
+        rules.append(Rule("state_bad_x", rf"{_WORD}{prefix}(?:{bad}){suffix}{_NOT_WORD}", _RED,
+                          needs=(b"down", b"idle")))
     rules += _STATE
     rules += _log_rules()
     rules.append(_ERROR)
     return rules
 
 
-class _Compiled(NamedTuple):
-    regex: "re.Pattern[bytes]"
-    colours: Dict[str, bytes]
-    validators: Dict[str, Validator]
+def _alternation(rules: Sequence[Rule]) -> "re.Pattern[bytes]":
+    pattern = "|".join(f"(?P<{r.name}>{r.pattern})" for r in rules)
+    return re.compile(pattern.encode("ascii"))
+
+
+_SUBSET_CACHE_MAX = 128
+_SHORT_TEXT_MAX = 48
+_SHORT_CACHE_MAX = 1024
+
+
+class _Compiled:
+    """One profile's rules, with the scan narrowed to what a text can match."""
+
+    def __init__(self, profile: str) -> None:
+        self.rules = _rules(profile)
+        self.regex = _alternation(self.rules)  # every rule; the reference scan
+        self.colours = {r.name: b"\x1b[%dm" % r.colour for r in self.rules}
+        self.validators = {r.name: r.validate for r in self.rules if r.validate}
+        self._always = sum(1 << bit for bit, r in enumerate(self.rules) if not r.needs)
+        # fragment -> the rules it lets in; one flat pass over distinct fragments.
+        masks: Dict[bytes, int] = {}
+        for bit, rule in enumerate(self.rules):
+            for fragment in rule.needs:
+                masks[fragment] = masks.get(fragment, 0) | 1 << bit
+        self._fragments = tuple(masks.items())
+        # Text without any byte of any fragment (digits, blanks) needs no pass.
+        used = bytes(sorted({b for f in masks for b in f + f.upper()} - {0x20}))
+        self._fragment_byte = (
+            None if self._always else re.compile(b"[" + re.escape(used) + b"]")
+        )
+        self._subsets: Dict[int, "re.Pattern[bytes]"] = {}
+        # Coloured output arrives as many short runs that repeat (" ", ": ").
+        self._short: Dict[bytes, Optional["re.Pattern[bytes]"]] = {}
+
+    def regex_for(self, text: bytes) -> Optional["re.Pattern[bytes]"]:
+        """The rules that can match in *text*, in priority order; None if none.
+
+        Dropping a rule that cannot match leaves every match unchanged: the
+        alternation is leftmost-first and that branch would have failed.
+        """
+        if self._fragment_byte is not None and not self._fragment_byte.search(text):
+            return None
+        if len(text) <= _SHORT_TEXT_MAX:
+            try:
+                return self._short[text]
+            except KeyError:
+                if len(self._short) >= _SHORT_CACHE_MAX:
+                    self._short.clear()
+                regex = self._short[text] = self._select(text)
+                return regex
+        return self._select(text)
+
+    def _select(self, text: bytes) -> Optional["re.Pattern[bytes]"]:
+        low = text.lower()
+        key = self._always
+        for fragment, mask in self._fragments:
+            if fragment in low:
+                key |= mask
+        if not key:
+            return None
+        regex = self._subsets.get(key)
+        if regex is None:
+            if len(self._subsets) >= _SUBSET_CACHE_MAX:
+                self._subsets.clear()
+            regex = self._subsets[key] = _alternation(
+                [r for bit, r in enumerate(self.rules) if key >> bit & 1]
+            )
+        return regex
 
 
 def _compile(profile: str) -> _Compiled:
-    rules = _rules(profile)
-    pattern = "|".join(f"(?P<{r.name}>{r.pattern})" for r in rules)
-    return _Compiled(
-        re.compile(pattern.encode("ascii")),
-        {r.name: b"\x1b[%dm" % r.colour for r in rules},
-        {r.name: r.validate for r in rules if r.validate},
-    )
+    return _Compiled(profile)
 
 
 _COMPILED: Dict[str, _Compiled] = {}
 
 _NEXT_RE = re.compile(rb"\x1b|\xc2(?:[\x80-\x9f]|\Z)")
+# A chunk whose every ESC starts one of these holds nothing but text and SGR.
+_PLAIN_SGR_RE = re.compile(rb"\x1b\[([0-9;:]*)m")
 _CSI_RE = re.compile(rb"(?:\x1b\[|\xc2\x9b)([0-?]*)([ -/]*)([@-~])")
 _STRING_INTRO_RE = re.compile(rb"\x1b([\]PX^_])|\xc2([\x90\x98\x9d\x9e\x9f])")
 # Short escapes: anything but the CSI/string introducers [ ] P X ^ _ (ESC) or
@@ -400,6 +500,28 @@ class Highlighter:
         ):
             self._carry = self._ctx = b""
             return data  # nothing that changes tracked state: skip the scan
+        if (
+            not self.enabled
+            and not self._hold
+            and not self._in_string
+            and b"\xc2" not in data
+        ):
+            sgr = _PLAIN_SGR_RE.findall(data)
+            if len(sgr) == data.count(b"\x1b"):
+                # Coloured output with highlighting off (#1426): the state
+                # after this chunk depends only on the SGRs from its last
+                # full reset on, so the rest need no work at all.
+                first = len(sgr) - 1
+                while first > 0:
+                    params = sgr[first]
+                    if not params or params == b"0" or params.startswith(b"0;"):
+                        break
+                    first -= 1
+                for params in sgr[first:]:
+                    self._sgr(params)
+                self._carry = self._ctx = b""
+                self._line_rule = None
+                return data
         shown, self._shown = self._shown, 0
         buf = self._hold + bytes(data)
         self._hold = b""
@@ -427,7 +549,13 @@ class Highlighter:
             if nxt is None:
                 break
             self._carry = self._ctx = b""
-            i = self._escape(buf, i, out)
+            sgr = _PLAIN_SGR_RE.match(buf, i)
+            if sgr is not None:  # by far the most common escape
+                self._sgr(sgr.group(1))
+                out.append(sgr.group())
+                i = sgr.end()
+            else:
+                i = self._escape(buf, i, out)
         if not self.enabled:
             self._shown = len(self._hold)  # disabled output shows everything
             return bytes(data)
@@ -485,6 +613,9 @@ class Highlighter:
                         self._restore_sgr()
 
     def _sgr(self, params: bytes) -> None:
+        if not params or params == b"0":
+            self._reset_sgr()
+            return
         it = iter(params.split(b";") if params else [b"0"])
         for raw in it:
             # Colon sub-parameters (38:2::R:G:B, 4:3) belong to their own
@@ -542,6 +673,17 @@ class Highlighter:
             self._carry = self._ctx = b""
             self._line_rule = None
             return text
+        # Only the rules that can match somewhere in this run are scanned; the
+        # context and carry are rescanned with its first line, so they count.
+        regex = self._compiled.regex_for(self._ctx + self._carry + text)
+        if regex is None and not self._line_rule:
+            # Nothing to colour: keep only the state the loop below would.
+            cut = max(text.rfind(b"\r"), text.rfind(b"\n")) + 1
+            if cut:
+                self._carry = self._ctx = b""
+            if cut < len(text):
+                self._tokens(text[cut:], last, None)
+            return text
         parts = []
         # Keep full-message emphasis through output chunks, but never let it
         # leak onto the next line. Do not buffer output awaiting a newline.
@@ -555,7 +697,7 @@ class Highlighter:
             elif self._line_rule:
                 parts.append(self._emphasize_line(part, self._line_rule))
             else:
-                parts.append(self._tokens(part, last))
+                parts.append(self._tokens(part, last, regex))
         return b"".join(parts)
 
     def _emphasize_line(self, text: bytes, rule: str) -> bytes:
@@ -567,14 +709,16 @@ class Highlighter:
         restore = b"" if self._bold else b"\x1b[22m" + (b"\x1b[2m" if self._faint else b"")
         return b"\x1b[1m" + colour + text + b"\x1b[39m" + restore
 
-    def _tokens(self, text: bytes, last: bool) -> bytes:
+    def _tokens(
+        self, text: bytes, last: bool, regex: Optional["re.Pattern[bytes]"]
+    ) -> bytes:
         ctx, carry, self._ctx, self._carry = self._ctx, self._carry, b"", b""
-        regex, _colours, validators = self._compiled
+        validators = self._compiled.validators
         full = ctx + carry + text
         skip = len(ctx) + len(carry)
         parts: List[bytes] = []
         pos = 0
-        for m in regex.finditer(full):
+        for m in regex.finditer(full) if regex is not None else ():
             if m.end() <= skip:
                 continue
             check = validators.get(m.lastgroup)
