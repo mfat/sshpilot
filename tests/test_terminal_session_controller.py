@@ -1057,3 +1057,86 @@ def test_no_acks_without_a_display_barrier(mock_client):
     controller._handle_output(_live(0, 100))
     bridge.complete_all()
     assert _acked(mock_client) == []
+
+
+# ---- Recovery that cannot be completed continues past the gap (#1426) ----
+
+
+def _recovering_controller(mock_client):
+    from sshpilot.api.capabilities import Capability  # noqa: F401
+
+    losses = []
+    bridge = _ManualBridge()
+    controller = DaemonTerminalSessionController(
+        client=mock_client,
+        bridge=bridge,
+        connection_id=ConnectionId("test-connection"),
+        view_id="test-view",
+        on_output=lambda _data: None,
+        on_continuity_lost=lambda: losses.append(True),
+    )
+    _active(controller)
+    controller._tab_state.expected_sequence = 100
+    return controller, bridge, losses
+
+
+def _replay_result(first, next_sequence, *, truncated, earliest=None, latest=None):
+    from sshpilot.api.models.terminal import ReplayBounds, ReplayResult
+
+    return ReplayResult(
+        session_id=SessionId("test-session"),
+        first_sequence=first,
+        next_sequence=next_sequence,
+        bounds=ReplayBounds(
+            earliest_sequence=first if earliest is None else earliest,
+            latest_sequence=next_sequence if latest is None else latest,
+            retained_bytes=next_sequence - first,
+        ),
+        truncated=truncated,
+    )
+
+
+def test_replay_past_evicted_output_marks_the_gap_and_continues(mock_client):
+    controller, bridge, losses = _recovering_controller(mock_client)
+    mock_client.replay_terminal.side_effect = [
+        _replay_result(500, 1000, truncated=True, latest=1000),  # 100..500 gone
+        _replay_result(500, 1000, truncated=False),
+    ]
+
+    controller._begin_output_recovery(reattach=False)
+    bridge.complete_all()
+
+    assert losses == [True]  # the marker and parser reset, once
+    assert controller.state is TerminalSessionState.RECOVERING
+    assert controller.tab_state.expected_sequence == 500
+    requests = [call.args[0] for call in mock_client.replay_terminal.call_args_list]
+    assert [request.after_sequence for request in requests] == [100, 500]
+
+
+def test_reattach_past_evicted_output_continues_instead_of_failing(mock_client):
+    errors = []
+    controller, bridge, losses = _recovering_controller(mock_client)
+    controller._on_error = errors.append
+    result = Mock()
+    result.attachment = AttachmentInfo(
+        id=AttachmentId("new-attachment"),
+        session_id=SessionId("test-session"),
+        client_id="client",
+        input_owner=True,
+    )
+    result.replay_truncated = True
+    result.available_start = 700
+    result.live_sequence = 900
+    mock_client.attach_session.return_value = result
+    mock_client.replay_terminal.return_value = _replay_result(700, 900, truncated=False)
+
+    controller._begin_output_recovery(reattach=True)
+    bridge.complete_all()
+
+    assert errors == []
+    assert losses == [True]
+    assert controller.tab_state.attachment_id == AttachmentId("new-attachment")
+    assert controller.tab_state.expected_sequence == 700
+    request = mock_client.replay_terminal.call_args.args[0]
+    assert request.after_sequence == 700
+    assert request.attachment_id == AttachmentId("new-attachment")

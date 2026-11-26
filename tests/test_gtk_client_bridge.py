@@ -318,3 +318,74 @@ def test_default_dispatcher_queues_at_default_priority(monkeypatch):
         assert bridge._dispatcher is gtk_client_bridge.gtk_thread_idle
     finally:
         bridge.shutdown()
+
+
+def _recovery_binding(start):
+    dispatches = queue.Queue()
+    client = _TerminalClient()
+    delivered = []
+    losses = []
+    bridge = GtkClientBridge(
+        dispatcher=lambda callback, *args, **_kw: dispatches.put((callback, args))
+    )
+    binding = bridge.bind_terminal(
+        client,
+        SessionId("session-1"),
+        on_output=delivered.append,
+        on_continuity_lost=lambda *args: losses.append(args),
+        start_paused=True,
+        recovery_sequence=start,
+    )
+    binding.resume(replay_end=start + 1024, allow_live=False)
+    return bridge, client, binding, dispatches, delivered, losses
+
+
+def _drain(dispatches):
+    while not dispatches.empty():
+        _run_dispatched(dispatches)
+
+
+def _replay(sequence, data):
+    return TerminalOutput(
+        session_id=SessionId("session-1"), sequence=sequence, data=data, replay=True
+    )
+
+
+def test_recovery_binding_ignores_an_earlier_attempts_replay_tail():
+    """A superseded attempt's frames ahead of our start are not a loss (#1426)."""
+
+    bridge, client, binding, dispatches, delivered, losses = _recovery_binding(100)
+    try:
+        client.on_output(_replay(150, b"stale-tail"))  # earlier attempt, mid-range
+        client.on_output(_replay(100, b"x" * 50))  # our own replay starts here
+        client.on_output(_replay(150, b"y" * 10))
+        _drain(dispatches)
+        assert losses == []
+        assert [(item.sequence, item.data) for item in delivered] == [
+            (100, b"x" * 50),
+            (150, b"y" * 10),
+        ]
+    finally:
+        binding.close()
+        bridge.shutdown()
+
+
+def test_recovery_binding_trims_overlap_and_still_reports_a_real_gap():
+    bridge, client, binding, dispatches, delivered, losses = _recovery_binding(100)
+    try:
+        client.on_output(_replay(100, b"a" * 20))
+        client.on_output(_replay(100, b"a" * 10))  # fully duplicate: dropped
+        client.on_output(_replay(110, b"a" * 10 + b"b" * 5))  # overlap: trimmed
+        _drain(dispatches)
+        assert [(item.sequence, item.data) for item in delivered] == [
+            (100, b"a" * 20),
+            (120, b"b" * 5),
+        ]
+        assert losses == []
+
+        client.on_output(_replay(200, b"after-a-gap"))
+        _drain(dispatches)
+        assert losses and losses[0][1:] == (125, 200)
+    finally:
+        binding.close()
+        bridge.shutdown()

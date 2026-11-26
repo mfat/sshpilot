@@ -1194,6 +1194,12 @@ class DaemonTerminalSessionController:
     ) -> None:
         if not self._recovery_is_current(generation, binding):
             return
+        if result.first_sequence > safe_sequence:
+            # The bytes after safe_sequence are no longer retained. Continue
+            # from the oldest retained byte with a visible marker instead of
+            # failing the view (#1426).
+            self._skip_lost_output(result.first_sequence)
+            return
         if (
             result.first_sequence != safe_sequence
             or result.next_sequence < safe_sequence
@@ -1264,11 +1270,7 @@ class DaemonTerminalSessionController:
         if not self._recovery_is_current(generation, binding):
             self._discard_recovery_attachment(recovery_client, result)
             return
-        if (
-            result.replay_truncated
-            or result.available_start > safe_sequence
-            or result.live_sequence < safe_sequence
-        ):
+        if result.live_sequence < safe_sequence:
             self._fail_output_recovery(
                 generation,
                 "The retained terminal output cannot restore this view",
@@ -1276,9 +1278,36 @@ class DaemonTerminalSessionController:
             return
         self._tab_state.attachment_id = result.attachment.id
         self._tab_state.input_owner = result.attachment.input_owner
+        if result.replay_truncated or result.available_start > safe_sequence:
+            # This binding expects safe_sequence; continue from the oldest
+            # retained byte on a fresh one, through the new attachment.
+            self._skip_lost_output(result.available_start)
+            return
         self._validate_and_resume_recovery(binding, result.live_sequence)
         self._flush_recovery_input()
         self._schedule_display_ack()
+
+    def _skip_lost_output(self, resume_sequence: int) -> None:
+        """Accept a gap: mark it on screen and recover from resume_sequence.
+
+        The display shows "[Earlier terminal output is no longer available]"
+        and resets its parser (the known-good prefix may end mid escape
+        sequence), then a new recovery replays from the oldest retained byte.
+        Each skip moves forward, so this cannot loop in place.
+        """
+
+        if resume_sequence <= self._tab_state.expected_sequence:
+            return
+        logger.info(
+            "Terminal output skipped bytes=%s; continuing from retained output",
+            resume_sequence - self._tab_state.expected_sequence,
+        )
+        if self._on_continuity_lost is not None:
+            self._on_continuity_lost()
+        self._tab_state.expected_sequence = resume_sequence
+        self._recovery_replay_pending = None
+        self._recovery_catchup_target = None
+        self._begin_output_recovery(reattach=False)
 
     def _discard_recovery_attachment(self, client, result) -> None:
         """Release an attachment created by a superseded reconnect."""

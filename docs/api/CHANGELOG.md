@@ -14,6 +14,11 @@ notes remain separate.
   of dropping output for that peer; reads resume within 256 KiB, and on
   detach, disconnect, ownership change, child exit and close. The client's
   terminal dispatch queue is bounded by bytes (16 MiB) instead of 256 frames.
+  The `TRUNCATED` output flag is now set only on the first frame of a replay
+  whose requested start was evicted, not on every frame of a replay that
+  stops short of the live end; `DaemonClient` reports `TRUNCATED` frames as
+  continuity loss, so chunked replay recovery previously restarted on every
+  chunk.
   Additive. The API implementation version is 0.118; Protocol remains 1.0.
 - `open_draft_test_connection` (`connections.open_draft_test`, capability
   `sessions.write`, plus `connections.config.read`) registers an unsaved

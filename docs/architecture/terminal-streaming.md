@@ -72,7 +72,11 @@ Kinds currently cover output, input, continuity loss, safe input rejection,
 and output acknowledgement (`ACK`, client to daemon, flow control below).
 An input-rejection frame carries only a stable `ErrorCode` string and its safe
 session/attachment identifiers; it never echoes input. Output flags identify
-replay, EOF, and truncation. Each terminal payload is at most 64 KiB. IDs,
+replay, EOF, and truncation. `TRUNCATED` means bytes before the frame are gone:
+the daemon sets it only on the first frame of a replay whose requested start
+was evicted, never on a replay that merely stops short of the live end (a
+chunk of a chunked recovery), because the client reports every `TRUNCATED`
+frame as continuity loss. Each terminal payload is at most 64 KiB. IDs,
 flags, lengths, kinds, stream versions, and attachment requirements are
 validated before dispatch. Invalid binary input closes only the offending peer.
 
@@ -155,6 +159,15 @@ terminal frames for that session are dropped, a continuity-loss status frame
 reports the expected and currently available sequence, and the control channel
 remains usable. The client can request replay if the ring still covers the gap;
 otherwise truncation is visible. Healthy peers and other sessions continue.
+
+The GTK controller recovers in 512 KiB replay chunks and only accepts live
+output after the chunk that reaches the live end. When the ring no longer
+covers the gap (on replay, or on a reattach after a transport swap), it shows
+"[Earlier terminal output is no longer available]", resets the emulator's
+parser and continues from the oldest retained byte; the view never fails for
+lost output alone. A recovery binding ignores replay frames that belong to a
+superseded attempt (ahead of its start before its own replay begins) and trims
+overlap, so overlapping attempts cannot restart each other.
 
 ## EOF, exit, close, and shutdown
 

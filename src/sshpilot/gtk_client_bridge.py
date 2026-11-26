@@ -401,6 +401,19 @@ class GtkClientBridge:
                 time.sleep(0.01)
 
 
+def _trim_output(output, start: int):
+    """Drop the part of *output* before absolute sequence *start*."""
+
+    return TerminalOutput(
+        session_id=output.session_id,
+        sequence=start,
+        data=output.data[start - output.sequence :],
+        created_at=output.created_at,
+        replay=output.replay,
+        eof=output.eof,
+    )
+
+
 class GtkTerminalBinding:
     """One ordered, bounded terminal-to-GLib handoff.
 
@@ -514,7 +527,20 @@ class GtkTerminalBinding:
                     else self._recovery_sequence
                 )
                 if output.replay:
-                    if output.sequence != progress:
+                    if output.next_sequence <= progress:
+                        # Bytes already delivered: an earlier recovery
+                        # attempt's replay of the same range.
+                        return
+                    if output.sequence < progress:
+                        output = _trim_output(output, progress)
+                    elif output.sequence > progress:
+                        if self._last_received_sequence is None:
+                            # The tail of an earlier attempt's replay, still
+                            # in flight when this binding subscribed. Our own
+                            # replay starts exactly at ``progress``; treating
+                            # this as a loss restarted recovery on every
+                            # attempt and never converged (#1426).
+                            return
                         self._terminal_loss = (
                             output.session_id,
                             progress,

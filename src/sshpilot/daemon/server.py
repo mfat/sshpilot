@@ -2103,13 +2103,22 @@ class DaemonServer:
             # one coherent replay/live boundary for the client.
             self._drop_terminal_session_locked(state, session_id)
             state.terminal_continuity_lost.discard(session_id)
-        flags = TerminalFrameFlags.REPLAY
-        if replay.truncated:
-            flags |= TerminalFrameFlags.TRUNCATED
+        # TRUNCATED means bytes before this replay are gone: set it on the
+        # first frame only, and only when the requested start was evicted.
+        # A replay that merely stops short of the live end (one chunk of a
+        # chunked recovery) is not a loss; flagging every frame of it made
+        # the client report a continuity loss per frame, and chunked
+        # recovery restarted on every chunk and never finished (#1426).
+        start_lost = replay.requested_sequence < replay.available_start
         maximum = 64 * 1024
+        first = True
         for sequence, data in replay.chunks:
             for offset in range(0, len(data), maximum):
                 chunk = data[offset : offset + maximum]
+                flags = TerminalFrameFlags.REPLAY
+                if first and start_lost:
+                    flags |= TerminalFrameFlags.TRUNCATED
+                first = False
                 self._queue_terminal_frame(
                     state,
                     TerminalFrame(

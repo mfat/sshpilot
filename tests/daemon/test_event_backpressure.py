@@ -15,7 +15,11 @@ from sshpilot.api.models.interactions import (
 )
 from sshpilot.api.models.common import ClientId
 from sshpilot.api.transport.envelopes import SuccessResponseEnvelope
-from sshpilot.api.transport.terminal_frames import TerminalFrame, TerminalFrameKind
+from sshpilot.api.transport.terminal_frames import (
+    TerminalFrame,
+    TerminalFrameFlags,
+    TerminalFrameKind,
+)
 from sshpilot.api.version import PROTOCOL_VERSION
 from sshpilot.daemon.server import (
     DaemonServer,
@@ -327,6 +331,8 @@ def test_terminal_overflow_preserves_control_and_healthy_peer(tmp_path):
             chunks=((0, b"recovered"),),
             eof=False,
             returned_end=9,
+            requested_sequence=0,
+            available_start=0,
         ),
     )
     assert session_id not in slow.terminal_continuity_lost
@@ -417,3 +423,38 @@ def test_control_and_lifecycle_frames_overtake_terminal_without_reordering_event
         b"event-two",
         b"terminal",
     ]
+
+
+def test_replay_marks_truncation_only_when_its_start_was_evicted(tmp_path):
+    """A chunk that stops short of the live end is not a loss (#1426).
+
+    Every frame of such a chunk used to carry TRUNCATED, which the client
+    reports as continuity loss, so chunked recovery restarted on every chunk.
+    """
+
+    from sshpilot.api.transport.framing import MultiplexedFrameDecoder
+
+    server = DaemonServer(lambda: None, socket_path=tmp_path / "flags.sock")
+    session_id = SessionId("session-flags")
+
+    def flags_of(replay):
+        state = _ClientConnection(SimpleNamespace(fileno=lambda: -1, close=lambda: None))
+        server._queue_replay(state, session_id, replay)
+        decoder = MultiplexedFrameDecoder()
+        frames = []
+        for outbound in state.output:
+            frames.extend(decoder.feed(outbound.data))
+        return [bool(frame.flags & TerminalFrameFlags.TRUNCATED) for frame in frames]
+
+    big = b"z" * (200 * 1024)  # several 64 KiB frames
+    short_of_live = SimpleNamespace(
+        truncated=True, chunks=((1000, big),), eof=False,
+        returned_end=1000 + len(big), requested_sequence=1000, available_start=0,
+    )
+    assert flags_of(short_of_live) == [False] * 4
+
+    evicted_start = SimpleNamespace(
+        truncated=True, chunks=((5000, big),), eof=False,
+        returned_end=5000 + len(big), requested_sequence=10, available_start=5000,
+    )
+    assert flags_of(evicted_start) == [True, False, False, False]

@@ -352,3 +352,40 @@ def test_acknowledgements_for_unknown_attachments_are_ignored(daemon_factory):
     finally:
         client.close()
         other.close()
+
+
+def test_a_replay_chunk_short_of_live_reports_no_continuity_loss(daemon_factory):
+    """Chunked replay through the real client and server (#1426).
+
+    Recovery replays 512 KiB at a time. Each chunk that stopped short of the
+    live end used to arrive flagged TRUNCATED on every frame, and the client
+    reported a continuity loss for each, restarting recovery forever.
+    """
+
+    from sshpilot.api.models.terminal import ReplayRequest
+
+    script = (
+        "import os,tty;tty.setraw(0);"
+        "os.write(1,b'r'*(1536*1024));os.write(1,b'END');os.read(0,1)"
+    )
+    server, _manager = daemon_factory(session_runner=_runner(script))
+    client = DaemonClient(socket_path=server.socket_path)
+    collector = _Collector()
+    try:
+        opened, attached, _subscription = _open(client, collector, flow_control=False)
+        assert _wait_until(lambda: collector.data().endswith(b"END"))
+        losses_before = list(collector.losses)
+
+        chunk = client.replay_terminal(
+            ReplayRequest(
+                session_id=opened.id,
+                attachment_id=attached.attachment.id,
+                after_sequence=0,
+                max_bytes=512 * 1024,
+            )
+        )
+        assert chunk.truncated is True  # more remains: this is one chunk
+        time.sleep(0.5)
+        assert collector.losses == losses_before
+    finally:
+        client.close()
