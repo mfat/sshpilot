@@ -198,6 +198,7 @@ def test_lost_destination_fails_that_service_and_leaves_no_partial_file():
     assert runtime.get_service(b).state is SftpServiceState.FAILED
     assert runtime.get_service(a).state is SftpServiceState.READY
     assert "/f" not in destination.files
+    assert destination.staging_files() == []
 
 
 def test_two_sessions_on_one_server_copy_through_the_source_session():
@@ -426,7 +427,7 @@ def test_move_to_another_server_never_renames():
     ))
 
     assert done.state is OperationState.SUCCEEDED, done.failure
-    assert source.rename_calls == [] and destination.rename_calls == []
+    assert source.move_renames == [] and destination.move_renames == []
     assert destination.files["/srv/tree/a.txt"] == b"hello"
 
 
@@ -442,7 +443,7 @@ def test_move_between_two_panes_on_one_server_is_a_rename():
     ))
 
     assert done.state is OperationState.SUCCEEDED, done.failure
-    assert source.rename_calls == [("/tree", "/srv/tree")]
+    assert source.move_renames == [("/tree", "/srv/tree")]
     assert source.files["/srv/tree/sub/b.txt"] == b"world!"
     assert "/tree" not in source.dirs
 

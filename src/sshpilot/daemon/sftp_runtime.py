@@ -33,6 +33,7 @@ import stat as stat_module
 import subprocess
 import threading
 import time
+import uuid
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -653,6 +654,13 @@ def _validate_path(value: Any, field_name: str = "remote path") -> str:
 
 # Bytes a remote-to-remote copy holds at once when the server cannot copy for it.
 _COPY_BLOCK = 1024 * 1024
+
+
+def _staging_path(destination: str) -> str:
+    """A hidden sibling of *destination*, unique to one copy, that the copy
+    writes before publishing it under the real name."""
+    directory, name = posixpath.split(destination)
+    return posixpath.join(directory, f".{name}.sshpilot-{uuid.uuid4().hex}.part")
 
 
 def _server_side_copy(client: Any, source_file: Any, destination_file: Any) -> bool:
@@ -2128,33 +2136,43 @@ class SftpServiceRuntime:
         ) -> None:
             """Copy one file; *size* (a single-file copy) turns on byte progress.
 
-            The destination is created exclusively: a file that appeared there
-            since the checks (another client, a refused rename) is never
-            truncated, and on failure only a file this copy created is removed.
+            The bytes go to a staging sibling with a name unique to this copy,
+            created exclusively, and are published under *destination_path*
+            with a plain SFTP RENAME, which never replaces a file. A file that
+            appears at the destination meanwhile (another client) is never
+            truncated, replaced or removed: cleanup only ever touches the
+            staging name.
             """
             nonlocal copied, pending_files
             if cancel is not None and cancel():
                 raise OperationCancelled()
+            staging = _staging_path(destination_path)
             created = False
             try:
                 with client.open(source_path, "rb") as source_file:
-                    destination_file = destination_client.open(destination_path, "xb")
+                    staging_file = destination_client.open(staging, "xb")
                     created = True
-                    with destination_file:
-                        _copy_bytes(source_file, destination_file, size)
-            except BaseException as exc:
+                    with staging_file:
+                        _copy_bytes(source_file, staging_file, size)
+                if cancel is not None and cancel():
+                    raise OperationCancelled()
+                try:
+                    destination_client.rename(staging, destination_path)
+                except Exception as exc:
+                    if (
+                        isinstance(_unwrap_destination_error(exc), sftp_proto.SFTPError)
+                        and _path_exists(destination_path)
+                    ):
+                        # Another client took the name during the copy.
+                        raise _exists_error() from exc
+                    raise
+                created = False
+            except BaseException:
                 if created:
                     try:
-                        destination_client.remove(destination_path)
+                        destination_client.remove(staging)
                     except Exception:
-                        pass
-                elif (
-                    destination_path == destination
-                    and not isinstance(exc, OperationCancelled)
-                    and _destination_exists()
-                ):
-                    # The exclusive open lost a race for the name.
-                    raise _exists_error() from exc
+                        logger.debug("Could not remove staging file %s", staging, exc_info=True)
                 raise
             copied += 1
             _report_copy_progress()
@@ -2213,9 +2231,12 @@ class SftpServiceRuntime:
             return True
 
         def _destination_exists() -> bool:
+            return _path_exists(destination)
+
+        def _path_exists(path: str) -> bool:
             """lstat, never stat: a symlink there, dangling or not, is taken."""
             try:
-                destination_client.lstat(destination)
+                destination_client.lstat(path)
             except Exception as exc:
                 missing = _unwrap_destination_error(exc)
                 if (

@@ -33,6 +33,10 @@ from sshpilot.sftp import protocol as sftp_proto
 OWNER = ClientId("client:owner")
 
 
+def _is_staging(path):
+    return ".sshpilot-" in posixpath.basename(path) and path.endswith(".part")
+
+
 class _FileHandle:
     def __init__(self, fs, path, mode):
         self._fs = fs
@@ -88,8 +92,9 @@ class _FsClient:
         self.links = set()
         self.link_targets = {}
         self.rename_calls = []
-        # An SFTP status code to refuse every rename with, as a server does
-        # across filesystems; None renames.
+        # An SFTP status code to refuse a move's rename with, as a server does
+        # across filesystems; None renames. Publishing a staged copy (a
+        # sibling in the same folder) still renames.
         self.rename_error = None
 
     def _attr(self, path, *, follow=False):
@@ -166,7 +171,7 @@ class _FsClient:
     def rename(self, old, new):
         """Plain SFTP RENAME: never replaces an existing destination."""
         self.rename_calls.append((old, new))
-        if self.rename_error is not None:
+        if self.rename_error is not None and not _is_staging(old):
             raise sftp_proto.SFTPError(self.rename_error)
         if not (old in self.files or old in self.dirs or old in self.links):
             raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE)
@@ -186,6 +191,14 @@ class _FsClient:
         self.link_targets = {_moved(k): v for k, v in self.link_targets.items()}
         self._unregister_child(old)
         self._register_child(new)
+
+    @property
+    def move_renames(self):
+        """Renames other than publishing a staged copy."""
+        return [call for call in self.rename_calls if not _is_staging(call[0])]
+
+    def staging_files(self):
+        return [path for path in self.files if _is_staging(path)]
 
     def add_dir(self, path, children=()):
         self.dirs.setdefault(path, set()).update(children)
@@ -425,7 +438,7 @@ def test_move_tree_on_one_server_is_a_rename():
     )
     done = _await_terminal(ops, started.operation_id)
     assert done.state is OperationState.SUCCEEDED, done.failure
-    assert fs.rename_calls == [("/tree", "/destination")]
+    assert fs.move_renames == [("/tree", "/destination")]
     assert opened == []
     assert fs.files["/destination/sub/b.txt"] == b"world!"
     assert "/tree" not in fs.dirs
@@ -442,7 +455,7 @@ def test_single_file_move_on_one_server_is_a_rename():
     )
     done = _await_terminal(ops, started.operation_id)
     assert done.state is OperationState.SUCCEEDED, done.failure
-    assert fs.rename_calls == [("/big", "/moved")]
+    assert fs.move_renames == [("/big", "/moved")]
     assert fs.files == {"/moved": content}
 
 
@@ -455,7 +468,7 @@ def test_copy_on_one_server_never_renames():
     )
     done = _await_terminal(ops, started.operation_id)
     assert done.state is OperationState.SUCCEEDED, done.failure
-    assert fs.rename_calls == []
+    assert fs.move_renames == []
     assert fs.files["/tree/a.txt"] == b"hello"
 
 
@@ -471,7 +484,7 @@ def test_move_with_an_existing_destination_is_refused_before_any_rename():
     )
     done = _await_terminal(ops, started.operation_id)
     assert done.state is OperationState.FAILED
-    assert fs.rename_calls == []
+    assert fs.move_renames == []
     assert fs.files["/tree/a.txt"] == b"hello"
 
 
@@ -633,6 +646,7 @@ def test_cancelling_a_single_file_copy_leaves_no_partial_file():
     done = _await_terminal(ops, summary_started.operation_id)
     assert done.state is OperationState.CANCELLED
     assert "/copy" not in fs.files
+    assert fs.staging_files() == []
     assert len(reads) < 5  # stopped between blocks, not after the whole file
 
 
@@ -684,15 +698,15 @@ def test_destination_created_between_check_and_rename_is_never_replaced():
 
 def test_destination_created_before_the_fallback_copy_is_never_truncated():
     """The rename is refused for another reason (another filesystem), and
-    the name is taken just before the copy opens it: the exclusive open
-    fails, and the file is neither truncated nor removed."""
+    the name is taken as the copy starts: publishing the copy is refused,
+    and their file is neither truncated nor removed."""
     fs = _single_file_client(1024)
     content = fs.files["/big"]
     fs.rename_error = sftp_proto.FX_FAILURE
     real_open = fs.open
 
     def _raced_open(path, mode):
-        if path == "/moved" and mode != "rb" and "/moved" not in fs.files:
+        if mode != "rb" and "/moved" not in fs.files:
             fs.add_file("/moved", b"theirs")
         return real_open(path, mode)
 
@@ -724,6 +738,7 @@ def test_failed_fallback_copy_removes_only_the_file_it_created():
 
     assert done.state is OperationState.FAILED
     assert "/moved" not in fs.files
+    assert fs.staging_files() == []
     assert fs.files["/big"] == content
 
 
@@ -739,5 +754,84 @@ def test_dangling_symlink_destination_is_refused():
 
     assert done.state is OperationState.FAILED
     assert done.failure.code is SftpFailureCode.DESTINATION_ALREADY_EXISTS
-    assert fs.rename_calls == []
+    assert fs.move_renames == []
     assert "/moved" in fs.links and "/moved" not in fs.files
+
+
+def _copy_while_another_client_replaces_the_destination(*, cancel, move=False, fail=False):
+    """A multi-block copy; on the second block another client puts its own
+    file at the destination, then the copy is cancelled, fails or finishes."""
+    fs = _single_file_client(5 * 1024 * 1024)
+    content = fs.files["/big"]
+    if move:
+        fs.rename_error = sftp_proto.FX_FAILURE  # another filesystem: copy
+    runtime, ops, summary = _make_runtime(fs)
+    started = {}
+    reads = []
+    original_open = fs.open
+
+    def _open(path, mode):
+        handle = original_open(path, mode)
+        if mode == "rb":
+            original_read = handle.read
+
+            def _read(size=None):
+                reads.append(size)
+                if len(reads) == 2:
+                    fs.add_file("/copy", b"theirs")
+                    if cancel:
+                        ops.cancel_operation(started["id"])
+                if fail and len(reads) == 3:
+                    raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE)
+                return original_read(size)
+
+            handle.read = _read
+        return handle
+
+    fs.open = _open
+    summary_started = runtime.start_copy(
+        SftpCopyRequest(summary.id, "/big", "/copy", move=move, as_operation=True),
+        client_id=OWNER,
+    )
+    started["id"] = summary_started.operation_id
+    done = _await_terminal(ops, summary_started.operation_id)
+    return fs, content, done
+
+
+def test_cancelled_copy_keeps_a_file_another_client_put_at_the_destination():
+    fs, content, done = _copy_while_another_client_replaces_the_destination(cancel=True)
+
+    assert done.state is OperationState.CANCELLED
+    assert fs.files["/copy"] == b"theirs"
+    assert fs.files["/big"] == content
+    assert fs.staging_files() == []
+
+
+def test_failed_copy_keeps_a_file_another_client_put_at_the_destination():
+    fs, content, done = _copy_while_another_client_replaces_the_destination(
+        cancel=False, fail=True
+    )
+
+    assert done.state is OperationState.FAILED
+    assert fs.files["/copy"] == b"theirs"
+    assert fs.staging_files() == []
+
+
+def test_finished_copy_is_not_published_over_a_file_another_client_put_there():
+    fs, content, done = _copy_while_another_client_replaces_the_destination(cancel=False)
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DESTINATION_ALREADY_EXISTS
+    assert fs.files["/copy"] == b"theirs"
+    assert fs.staging_files() == []
+
+
+def test_cancelled_move_keeps_both_the_source_and_their_file():
+    fs, content, done = _copy_while_another_client_replaces_the_destination(
+        cancel=True, move=True
+    )
+
+    assert done.state is OperationState.CANCELLED
+    assert fs.files["/copy"] == b"theirs"
+    assert fs.files["/big"] == content
+    assert fs.staging_files() == []
