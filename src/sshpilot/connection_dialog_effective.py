@@ -128,6 +128,13 @@ class ConnectionDialogEffectiveMixin:
             max(0, int(delay)), self._run_effective_refresh
         )
 
+    def effective_settled(self) -> bool:
+        """No question to OpenSSH is waiting or on its way: every page shows
+        the answer for the form as it is (what a user sees after a pause)."""
+        if getattr(self, "_effective_refresh_timer", 0):
+            return False
+        return getattr(self, "_effective_answered", 0) == getattr(self, "_effective_serial", 0)
+
     def _cancel_effective_refresh(self) -> None:
         pending = getattr(self, "_effective_refresh_timer", 0)
         if pending and GLib is not None:
@@ -211,6 +218,7 @@ class ConnectionDialogEffectiveMixin:
         def apply(result):
             if current():
                 self._take_editor_answer(result, auth_lines)
+                self._effective_answered = serial
             return False
 
         def worker():

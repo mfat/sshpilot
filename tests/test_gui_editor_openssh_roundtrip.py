@@ -137,6 +137,9 @@ def _open_editor(gui, nickname):
 
 
 def _save(dialog):
+    # As a user saves: after OpenSSH has answered the last edit. An answer
+    # arriving between an edit and Save once dropped the edit from the save.
+    assert _pump(dialog.effective_settled, seconds=10), "OpenSSH never answered the edit"
     dialog.on_save_clicked()
     assert _pump(lambda: not dialog.get_visible()), "Save did not complete"
 
