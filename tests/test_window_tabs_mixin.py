@@ -56,6 +56,7 @@ _TAB_METHODS = (
     "_on_tabmenu_layout_default",
     "_on_tabmenu_layout_compact",
     "_on_tabmenu_fm_new_window",
+    "move_file_manager_tab_to_window",
     "_launch_external_file_manager",
     "_on_tabmenu_rdp_detach",
     "_on_tabmenu_hide_left_pane",
@@ -881,3 +882,62 @@ def test_pane_menu_runs_tab_handler_on_the_pane_terminal():
     assert seen == [(None, terminal)]
     # The override ends with the action; the tab menu targets tabs again.
     assert stub._tab_menu_target()[0] is Stub._tab_menu_page
+
+
+def test_open_in_new_window_moves_the_file_manager_instead_of_reconnecting(monkeypatch):
+    """The tab's file manager takes its content back into its own window;
+    the tab closes without tearing the file manager down."""
+    from sshpilot import window_tabs
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    monkeypatch.setattr(window_tabs.GObject, "signal_lookup", lambda *a: 1)
+    monkeypatch.setattr(
+        window_tabs.GObject, "signal_handlers_disconnect_matched", lambda *a: 0
+    )
+    calls = []
+
+    class Controller:
+        def reclaim_from_embedding(self, **kwargs):
+            calls.append(("reclaim", kwargs, embed._controller))
+
+    controller = Controller()
+
+    class Embed:
+        _controller = controller
+
+        def get_width(self):
+            return 900
+
+        def get_height(self):
+            return 600
+
+        def clear_terminal_panel(self):
+            calls.append(("clear-terminals",))
+
+    embed = Embed()
+    page = types.SimpleNamespace(get_title=lambda: "oracle Files")
+
+    class Stub(WindowTabsMixin):
+        def __init__(self):
+            self._internal_file_manager_windows = [controller]
+            self.tab_view = types.SimpleNamespace(
+                close_page=lambda closing: calls.append(("close", closing, embed._controller))
+            )
+
+        def _track_internal_file_manager_window(self, window, *, widget=None):
+            calls.append(("track", window, widget))
+
+        def _launch_external_file_manager(self, _connection):  # pragma: no cover
+            raise AssertionError("must not open a second connection")
+
+    stub = Stub()
+    assert stub.move_file_manager_tab_to_window(page, embed) is True
+
+    assert calls[0] == ("clear-terminals",)
+    assert calls[1] == (
+        "reclaim", {"title": "oracle Files", "width": 900, "height": 600}, None
+    )
+    assert calls[2] == ("track", controller, None)
+    # The tab closes only after the controller was released from it.
+    assert calls[3] == ("close", page, None)
+    assert stub._internal_file_manager_windows == []

@@ -967,6 +967,61 @@ class FileManagerWindow(Adw.Window):
             )
         return content
 
+    def reclaim_from_embedding(
+        self, *, title: str = "", width: int = 0, height: int = 0
+    ) -> None:
+        """Take the content back from a tab and show it in this window.
+
+        The reverse of :meth:`detach_for_embedding`: both panes, their
+        connections, the clipboard and running transfers carry on as they
+        are; nothing reconnects. The caller has already removed any terminal
+        panels and released the tab so closing it does not tear this down.
+        """
+        content = getattr(self, "_toolbar_view", None)
+        if content is None:
+            return
+        parent = content.get_parent()
+        if parent is not None:
+            if isinstance(parent, Gtk.Box):
+                parent.remove(content)
+            elif isinstance(parent, Gtk.Paned):
+                if parent.get_start_child() is content:
+                    parent.set_start_child(None)
+                else:
+                    parent.set_end_child(None)
+            else:
+                content.unparent()
+
+        self._embedded_mode = False
+        self._embedded_parent = None
+        try:
+            self.set_decorated(True)
+        except Exception:  # pragma: no cover - defensive
+            pass
+        header_bar = getattr(self, "_header_bar", None)
+        if header_bar is not None:
+            header_bar.set_show_start_title_buttons(True)
+            header_bar.set_show_end_title_buttons(True)
+            header_bar.set_visible(True)
+        content.remove_css_class("embedded")
+        self.set_content(content)
+        if title:
+            self.set_title(title)
+        if width > 0 and height > 0:
+            self.set_default_size(width, height)
+
+        # Back among the application's windows (embedding removed it), so it
+        # keeps the app alive and closes like any window.
+        app = Gtk.Application.get_default()
+        if app is not None:
+            try:
+                app.add_window(self)
+            except Exception:
+                logger.debug("Could not register the file manager window", exc_info=True)
+        # No tab around it any more: no terminal panels to toggle.
+        self._sync_pane_roles()
+        self.present()
+
     def enable_embedding_mode(self) -> None:
         """Adjust the window chrome for embedded usage."""
 

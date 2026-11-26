@@ -1005,30 +1005,53 @@ class WindowTabsMixin:
         self._set_tab_file_manager_single_pane(False)
 
     def _on_tabmenu_fm_new_window(self, action, param=None):
+        """Move the right-clicked file manager tab into a window of its own.
+
+        The tab's file manager is itself a window whose content was lent to
+        the tab; it takes the content back, so both panes, their connections
+        and running transfers carry on without reconnecting.
+        """
         try:
             page, child = self._tab_menu_target()
             embed = self._file_manager_embed_for_child(child)
-            if embed is None:
+            if embed is None or page is None:
                 return
-            controller = getattr(embed, '_controller', None)
-            conn = getattr(controller, '_connection', None) if controller else None
-            if conn is None:
-                logger.debug("File manager tab has no connection for new window")
-                return
-
-            def _launch():
-                self._launch_external_file_manager(conn)
-
-            # A locked session-backed vault has no stored credential for the
-            # daemon to hand off, so unlock it first the same way opening the
-            # file manager does (TerminalManager._maybe_unlock_secrets_then) -
-            # otherwise the daemon falls back to a raw host-password prompt.
-            terminal_manager = getattr(self, "terminal_manager", None)
-            if terminal_manager is not None and terminal_manager._maybe_unlock_secrets_then(_launch):
-                return
-            _launch()
+            self.move_file_manager_tab_to_window(page, embed)
         except Exception as exc:
-            logger.error("Tab file manager new window failed: %s", exc)
+            logger.error("Opening the file manager in a new window failed: %s", exc)
+
+    def move_file_manager_tab_to_window(self, page, embed) -> bool:
+        controller = getattr(embed, '_controller', None)
+        reclaim = getattr(controller, 'reclaim_from_embedding', None)
+        if not callable(reclaim):
+            return False
+        width, height = embed.get_width(), embed.get_height()
+        title = page.get_title() or ''
+
+        # Terminals below the manager belong to this window's terminal
+        # machinery; end them like a tab close would.
+        clear_panel = getattr(embed, 'clear_terminal_panel', None)
+        if callable(clear_panel):
+            clear_panel()
+        # Release the controller before the tab closes: the embed's destroy
+        # handlers and the tab-close teardown would otherwise close its
+        # connections and destroy it.
+        try:
+            destroy_id = GObject.signal_lookup('destroy', Gtk.Widget.__gtype__)
+            GObject.signal_handlers_disconnect_matched(
+                embed, GObject.SignalMatchType.ID, destroy_id, 0, None, None, None)
+        except Exception:
+            logger.debug('Could not disconnect FM embed destroy handlers', exc_info=True)
+        embed._controller = None
+        try:
+            self._internal_file_manager_windows.remove(controller)
+        except (AttributeError, ValueError):
+            pass
+
+        reclaim(title=title, width=width, height=height)
+        self._track_internal_file_manager_window(controller)
+        self.tab_view.close_page(page)
+        return True
 
     def _on_tabmenu_rdp_detach(self, action, param=None):
         try:
