@@ -435,7 +435,7 @@ class FilePane(Gtk.Box):
             _("Remote") if label.lower() == "remote" else
             _("Local") if label.lower() == "local" else label
         )
-        self.append(self.toolbar)
+        # The toolbar joins the file list in one card, built below.
 
         self._is_remote = label.lower() == "remote"
         self._window: Optional["FileManagerWindow"] = None
@@ -574,24 +574,32 @@ class FilePane(Gtk.Box):
         content_overlay = Gtk.Overlay()
         content_overlay.set_child(self._stack)
 
-        # Rounded-corner card framing the browser area: `card` supplies the
-        # radius/shadow, `view` the content-surface colors (its rule follows
-        # .card in the Adwaita stylesheet, so the view background wins).
-        # overflow=HIDDEN clips the scrolled content to the corners.
-        _ensure_browser_card_css()
-        content_overlay.add_css_class("card")
-        content_overlay.add_css_class("view")
-        # `frame` draws a 1px border following the card's rounded corners.
-        content_overlay.add_css_class("frame")
-        content_overlay.add_css_class("fm-browser-card")
-        content_overlay.set_overflow(Gtk.Overflow.HIDDEN)
-        content_overlay.set_margin_top(2)
-        content_overlay.set_margin_bottom(2)
-        content_overlay.set_margin_start(8)
-        content_overlay.set_margin_end(8)
-
+        content_overlay.set_vexpand(True)
         overlay.set_child(content_overlay)
-        self.append(overlay)
+        overlay.set_vexpand(True)
+
+        # One rounded card per pane: the toolbar on top, a hairline, then the
+        # file list. `card` supplies the radius/shadow, `view` the content-
+        # surface colors (its rule follows .card in the Adwaita stylesheet,
+        # so the view background wins), `frame` a 1px border following the
+        # corners; overflow=HIDDEN clips the scrolled content to them.
+        _ensure_browser_card_css()
+        pane_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        pane_card.add_css_class("card")
+        pane_card.add_css_class("view")
+        pane_card.add_css_class("frame")
+        pane_card.add_css_class("fm-browser-card")
+        pane_card.set_overflow(Gtk.Overflow.HIDDEN)
+        pane_card.set_vexpand(True)
+        pane_card.set_margin_top(8)
+        pane_card.set_margin_bottom(2)
+        pane_card.set_margin_start(8)
+        pane_card.set_margin_end(8)
+        pane_card.append(self.toolbar)
+        pane_card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        pane_card.append(overlay)
+        self._pane_card = pane_card
+        self.append(pane_card)
 
         # Add drop target for file operations - use string type for better compatibility
         drop_target = Gtk.DropTarget.new(type=GObject.TYPE_STRING, actions=Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
@@ -758,7 +766,6 @@ class FilePane(Gtk.Box):
 
         # Connect to view-changed signal from toolbar
         self.toolbar.connect("view-changed", self._on_view_toggle)
-        self.toolbar.connect("show-hidden-toggled", self._on_toolbar_show_hidden_toggled)
         self.toolbar.connect("zoom-changed", self._on_toolbar_zoom_changed)
         self.toolbar.path_entry.connect("activate", self._on_path_entry)
         # Wire navigation buttons
@@ -781,7 +788,6 @@ class FilePane(Gtk.Box):
         self._held_removals: Dict[str, Set[str]] = {}
         self._raw_entries: List[FileEntry] = []
         self._show_hidden = False
-        self.toolbar.set_show_hidden_state(self._show_hidden)
         self._sort_key = "name"  # Default sort by name
         self._sort_descending = False  # Default ascending order
 
@@ -1080,9 +1086,6 @@ class FilePane(Gtk.Box):
         self._update_view_button_icon()
         # Each view has its own zoom; show this one's on the slider.
         self._sync_zoom_slider()
-
-    def _on_toolbar_show_hidden_toggled(self, _toolbar, show_hidden: bool) -> None:
-        self.set_show_hidden(show_hidden)
 
     def _on_toolbar_zoom_changed(self, _toolbar, level: int) -> None:
         self.set_icon_level(self._zoom_view(), level)
@@ -1961,6 +1964,16 @@ class FilePane(Gtk.Box):
         self._menu_actions["sort-direction-asc"].connect("activate", lambda *_: self._on_sort_direction(False))
         self._menu_actions["sort-direction-desc"].connect("activate", lambda *_: self._on_sort_direction(True))
         
+        # View menu: Show Hidden Files, a check item (Ctrl+H toggles it too).
+        show_hidden = Gio.SimpleAction.new_stateful(
+            "show-hidden", None, GLib.Variant.new_boolean(bool(self._show_hidden))
+        )
+        show_hidden.connect(
+            "change-state",
+            lambda _action, value: self.set_show_hidden(bool(value.get_boolean())),
+        )
+        self._menu_actions["show-hidden"] = show_hidden
+
         # Add actions to action group
         for action in self._menu_actions.values():
             self._menu_action_group.add_action(action)
@@ -2511,12 +2524,21 @@ class FilePane(Gtk.Box):
     def set_show_hidden(self, show_hidden: bool, *, preserve_selection: bool = True) -> None:
         """Update the hidden file visibility state and refresh entries."""
 
-        self.toolbar.set_show_hidden_state(show_hidden)
+        self._sync_show_hidden_action(show_hidden)
         if self._show_hidden == show_hidden:
             return
 
         self._show_hidden = show_hidden
         self._apply_entry_filter(preserve_selection=preserve_selection)
+
+    def _sync_show_hidden_action(self, show_hidden: bool) -> None:
+        """Keep the view menu's Show Hidden Files check in step."""
+        action = getattr(self, "_menu_actions", {}).get("show-hidden")
+        if action is None:
+            return
+        state = action.get_state()
+        if state is None or state.get_boolean() != bool(show_hidden):
+            action.set_state(GLib.Variant.new_boolean(bool(show_hidden)))
 
     def _on_menu_open(self) -> None:
         selected = self._get_selected_indices()

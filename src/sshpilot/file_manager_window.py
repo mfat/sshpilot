@@ -268,8 +268,8 @@ class FileManagerWindow(Adw.Window):
             border-radius: 8px;
         }
         
-        /* Pane toolbars are framed as Adwaita cards (see PaneToolbar); no
-           forced background/border here so the card styling shows through. */
+        /* Each pane's toolbar and file list share one Adwaita card (see
+           FilePane); no forced background/border here so it shows through. */
 
         /* Pane divider styling */
         paned {

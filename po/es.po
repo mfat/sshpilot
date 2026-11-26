@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 10:06+0330\n"
+"POT-Creation-Date: 2026-11-26 10:13+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -121,9 +121,9 @@ msgstr "¿Conexiones abiertas?"
 #: src/sshpilot/connection_dialog_port_forwarding.py:239
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
-#: src/sshpilot/file_manager/pane.py:1011
-#: src/sshpilot/file_manager/pane.py:2783
-#: src/sshpilot/file_manager/pane.py:3444
+#: src/sshpilot/file_manager/pane.py:1017
+#: src/sshpilot/file_manager/pane.py:2805
+#: src/sshpilot/file_manager/pane.py:3466
 #: src/sshpilot/file_manager/progress_dialog.py:312
 #: src/sshpilot/file_manager_window.py:1847
 #: src/sshpilot/file_manager_window.py:2179
@@ -220,8 +220,8 @@ msgstr "No se pudo abrir la ventana Copiar clave.{error}"
 #: src/sshpilot/actions.py:522 src/sshpilot/actions.py:916
 #: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:6197
 #: src/sshpilot/daemon_quit_policy.py:535 src/sshpilot/file_manager/pane.py:58
-#: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2784
-#: src/sshpilot/file_manager/pane.py:3204
+#: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2806
+#: src/sshpilot/file_manager/pane.py:3226
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:648 src/sshpilot/preferences.py:4132
 #: src/sshpilot/preferences.py:4255 src/sshpilot/preferences.py:4667
@@ -292,8 +292,8 @@ msgstr "¿Seguro que desea eliminar los {count} grupos vacíos seleccionados?"
 
 #: src/sshpilot/actions.py:707 src/sshpilot/actions.py:1107
 #: src/sshpilot/actions.py:1162 src/sshpilot/authorized_keys_window.py:428
-#: src/sshpilot/command_blocks.py:2400 src/sshpilot/file_manager/pane.py:697
-#: src/sshpilot/file_manager/pane.py:2269
+#: src/sshpilot/command_blocks.py:2400 src/sshpilot/file_manager/pane.py:705
+#: src/sshpilot/file_manager/pane.py:2282
 #: src/sshpilot/file_manager_window.py:2408
 #: src/sshpilot/login_profile_dialogs.py:860
 #: src/sshpilot/login_profile_dialogs.py:870
@@ -419,7 +419,7 @@ msgstr "Sesión abierta"
 msgid "Select a session to open:"
 msgstr "Seleccione una sesión para abrir:"
 
-#: src/sshpilot/actions.py:944 src/sshpilot/file_manager/pane.py:2251
+#: src/sshpilot/actions.py:944 src/sshpilot/file_manager/pane.py:2264
 #: src/sshpilot/preferences.py:2178
 msgid "Open"
 msgstr "Abierto"
@@ -462,7 +462,7 @@ msgid "Pin to start page"
 msgstr "Anclar a la página de inicio"
 
 #: src/sshpilot/actions.py:1099 src/sshpilot/actions.py:1130
-#: src/sshpilot/file_manager/pane.py:691
+#: src/sshpilot/file_manager/pane.py:699
 #: src/sshpilot/file_manager_window.py:2328
 msgid "Rename"
 msgstr "Rebautizar"
@@ -498,9 +498,9 @@ msgstr "Estás ejecutando la última versión."
 msgid "SSH Pilot {version} is available!"
 msgstr "¡SSH Pilot {version} está disponible!"
 
-#: src/sshpilot/actions.py:1242 src/sshpilot/file_manager/pane.py:655
-#: src/sshpilot/file_manager/pane.py:2256
-#: src/sshpilot/file_manager/pane.py:3447 src/sshpilot/scp_window.py:432
+#: src/sshpilot/actions.py:1242 src/sshpilot/file_manager/pane.py:663
+#: src/sshpilot/file_manager/pane.py:2269
+#: src/sshpilot/file_manager/pane.py:3469 src/sshpilot/scp_window.py:432
 #: src/sshpilot/resources/ui/scp_download_window.ui:31
 msgid "Download"
 msgstr "Descargar"
@@ -703,7 +703,7 @@ msgid "Error loading authorized_keys"
 msgstr "Error al cargar claves_autorizadas"
 
 #: src/sshpilot/authorized_keys_window.py:293
-#: src/sshpilot/file_manager/pane.py:3239
+#: src/sshpilot/file_manager/pane.py:3261
 #: src/sshpilot/file_manager_window.py:483 src/sshpilot/rdp_tab.py:159
 #: src/sshpilot/rdp_tab.py:245 src/sshpilot/rdp_tab.py:469
 #: src/sshpilot/scp_window.py:1009 src/sshpilot/scp_window.py:1106
@@ -1477,7 +1477,7 @@ msgstr "Etiquetas (separadas por comas)"
 msgid "(No folder)"
 msgstr "(Sin carpeta)"
 
-#: src/sshpilot/command_blocks.py:975 src/sshpilot/file_manager/pane.py:2896
+#: src/sshpilot/command_blocks.py:975 src/sshpilot/file_manager/pane.py:2918
 #: src/sshpilot/file_manager/properties_dialog.py:35
 #: src/sshpilot/window_dialogs.py:1211
 msgid "Folder"
@@ -1626,8 +1626,8 @@ msgstr "No hay conexiones en el grupo."
 msgid "No connections in group can run commands"
 msgstr "No hay conexiones en el grupo."
 
-#: src/sshpilot/command_blocks.py:2364 src/sshpilot/file_manager/pane.py:685
-#: src/sshpilot/file_manager/pane.py:2253
+#: src/sshpilot/command_blocks.py:2364 src/sshpilot/file_manager/pane.py:693
+#: src/sshpilot/file_manager/pane.py:2266
 #: src/sshpilot/login_profile_dialogs.py:1053 src/sshpilot/macos_menubar.py:76
 #: src/sshpilot/sidebar.py:5250
 msgid "Edit"
@@ -1687,13 +1687,13 @@ msgstr "Dominio"
 #. Radio buttons for startup behavior
 #: src/sshpilot/command_progress_dialog.py:153
 #: src/sshpilot/command_progress_dialog.py:167
-#: src/sshpilot/file_manager/pane.py:737 src/sshpilot/file_manager/pane.py:2557
+#: src/sshpilot/file_manager/pane.py:745 src/sshpilot/file_manager/pane.py:2579
 #: src/sshpilot/preferences.py:1529
 msgid "Show Terminal"
 msgstr "Mostrar terminal"
 
 #: src/sshpilot/command_progress_dialog.py:167
-#: src/sshpilot/file_manager/pane.py:2557
+#: src/sshpilot/file_manager/pane.py:2579
 msgid "Hide Terminal"
 msgstr "Ocultar terminal"
 
@@ -3173,7 +3173,7 @@ msgid "Dynamic"
 msgstr "Dinámica"
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:198
-#: src/sshpilot/file_manager/pane_controls.py:148
+#: src/sshpilot/file_manager/pane_controls.py:139
 msgid "Type"
 msgstr "Tipo"
 
@@ -3677,7 +3677,7 @@ msgstr ""
 "La conexión no se abrió en modo heredado."
 
 #: src/sshpilot/file_manager/format_utils.py:17
-#: src/sshpilot/file_manager/pane.py:3087
+#: src/sshpilot/file_manager/pane.py:3109
 #, python-brace-format
 msgid "{count} item"
 msgid_plural "{count} items"
@@ -3693,12 +3693,12 @@ msgstr[1] "Artículos{count}"
 msgid "Retry"
 msgstr "Reintentar"
 
-#: src/sshpilot/file_manager/pane.py:661 src/sshpilot/scp_window.py:424
+#: src/sshpilot/file_manager/pane.py:669 src/sshpilot/scp_window.py:424
 #: src/sshpilot/scp_window.py:1143
 msgid "Upload"
 msgstr "Subir"
 
-#: src/sshpilot/file_manager/pane.py:667 src/sshpilot/file_manager/pane.py:2262
+#: src/sshpilot/file_manager/pane.py:675 src/sshpilot/file_manager/pane.py:2275
 #: src/sshpilot/key_sources.py:275 src/sshpilot/macos_menubar.py:72
 #: src/sshpilot/terminal.py:1252 src/sshpilot/terminal.py:3642
 #: src/sshpilot/window_dialogs.py:3598
@@ -3706,40 +3706,40 @@ msgstr "Subir"
 msgid "Copy"
 msgstr "Copiar"
 
-#: src/sshpilot/file_manager/pane.py:673 src/sshpilot/file_manager/pane.py:2261
+#: src/sshpilot/file_manager/pane.py:681 src/sshpilot/file_manager/pane.py:2274
 #: src/sshpilot/macos_menubar.py:71
 msgid "Cut"
 msgstr "Cortar"
 
-#: src/sshpilot/file_manager/pane.py:679 src/sshpilot/file_manager/pane.py:2229
+#: src/sshpilot/file_manager/pane.py:687 src/sshpilot/file_manager/pane.py:2242
 #: src/sshpilot/macos_menubar.py:73
 msgid "Paste"
 msgstr "Pasta"
 
-#: src/sshpilot/file_manager/pane.py:712 src/sshpilot/file_manager/pane.py:718
-#: src/sshpilot/file_manager/pane.py:4094
+#: src/sshpilot/file_manager/pane.py:720 src/sshpilot/file_manager/pane.py:726
+#: src/sshpilot/file_manager/pane.py:4116
 msgid "Request Access"
 msgstr "Solicitar acceso"
 
-#: src/sshpilot/file_manager/pane.py:1006
+#: src/sshpilot/file_manager/pane.py:1012
 msgid "Select Items Matching"
 msgstr "Seleccionar elementos coincidentes"
 
-#: src/sshpilot/file_manager/pane.py:1008
+#: src/sshpilot/file_manager/pane.py:1014
 msgid "Pattern, e.g. *.txt"
 msgstr "Patrón, p. ej. *.txt"
 
-#: src/sshpilot/file_manager/pane.py:1012
+#: src/sshpilot/file_manager/pane.py:1018
 #: src/sshpilot/resources/ui/monospace_font_dialog.ui:34
 msgid "Select"
 msgstr "Seleccionar"
 
-#: src/sshpilot/file_manager/pane.py:1021
+#: src/sshpilot/file_manager/pane.py:1027
 msgid "No items match"
 msgstr "Próximo partido"
 
-#: src/sshpilot/file_manager/pane.py:1152
-#: src/sshpilot/file_manager/pane_controls.py:145
+#: src/sshpilot/file_manager/pane.py:1155
+#: src/sshpilot/file_manager/pane_controls.py:136
 #: src/sshpilot/login_profile_dialogs.py:221
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:183
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:331
@@ -3748,129 +3748,129 @@ msgstr "Próximo partido"
 msgid "Name"
 msgstr "Nombre"
 
-#: src/sshpilot/file_manager/pane.py:1154
-#: src/sshpilot/file_manager/pane_controls.py:146
+#: src/sshpilot/file_manager/pane.py:1157
+#: src/sshpilot/file_manager/pane_controls.py:137
 msgid "Size"
 msgstr "Tamaño"
 
-#: src/sshpilot/file_manager/pane.py:1157
-#: src/sshpilot/file_manager/pane_controls.py:147
+#: src/sshpilot/file_manager/pane.py:1160
+#: src/sshpilot/file_manager/pane_controls.py:138
 #: src/sshpilot/file_manager/properties_dialog.py:464
 msgid "Modified"
 msgstr "Modificado"
 
-#: src/sshpilot/file_manager/pane.py:2235
+#: src/sshpilot/file_manager/pane.py:2248
 #: src/sshpilot/file_manager_window.py:2175
 #: src/sshpilot/file_manager_window.py:2177
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:12
 msgid "New Folder"
 msgstr "Nueva carpeta"
 
-#: src/sshpilot/file_manager/pane.py:2236
+#: src/sshpilot/file_manager/pane.py:2249
 #: src/sshpilot/file_manager_window.py:2236
 msgid "New File"
 msgstr "Nueva carpeta"
 
-#: src/sshpilot/file_manager/pane.py:2239
+#: src/sshpilot/file_manager/pane.py:2252
 msgid "Open in Terminal"
 msgstr "Abrir en terminal"
 
-#: src/sshpilot/file_manager/pane.py:2244 src/sshpilot/macos_menubar.py:74
+#: src/sshpilot/file_manager/pane.py:2257 src/sshpilot/macos_menubar.py:74
 msgid "Select All"
 msgstr "Seleccionar todo"
 
-#: src/sshpilot/file_manager/pane.py:2257
+#: src/sshpilot/file_manager/pane.py:2270
 msgid "Upload…"
 msgstr "Subiendo…"
 
-#: src/sshpilot/file_manager/pane.py:2268 src/sshpilot/split_view.py:489
+#: src/sshpilot/file_manager/pane.py:2281 src/sshpilot/split_view.py:489
 msgid "Rename…"
 msgstr "Cambiar nombre de etiqueta…"
 
-#: src/sshpilot/file_manager/pane.py:2272
+#: src/sshpilot/file_manager/pane.py:2285
 msgid "Copy Location"
 msgstr "Copiar en la selección"
 
-#: src/sshpilot/file_manager/pane.py:2273
+#: src/sshpilot/file_manager/pane.py:2286
 msgid "Properties…"
 msgstr "Propiedades"
 
-#: src/sshpilot/file_manager/pane.py:2481
+#: src/sshpilot/file_manager/pane.py:2494
 msgid "Select at least one item first"
 msgstr "¡Seleccione un servidor primero!"
 
-#: src/sshpilot/file_manager/pane.py:2484
+#: src/sshpilot/file_manager/pane.py:2497
 msgid "Select a single item to rename"
 msgstr "Seleccione un elemento para descargar."
 
-#: src/sshpilot/file_manager/pane.py:2545
+#: src/sshpilot/file_manager/pane.py:2567
 msgid "Location copied"
 msgstr "Registros copiados"
 
-#: src/sshpilot/file_manager/pane.py:2641
+#: src/sshpilot/file_manager/pane.py:2663
 msgid "Select items to download first"
 msgstr "Seleccione un elemento para descargar."
 
-#: src/sshpilot/file_manager/pane.py:2650
+#: src/sshpilot/file_manager/pane.py:2672
 msgid "Select items to upload first"
 msgstr "Seleccionar archivos para cargar"
 
-#: src/sshpilot/file_manager/pane.py:2691
-#: src/sshpilot/file_manager/pane.py:2743
+#: src/sshpilot/file_manager/pane.py:2713
+#: src/sshpilot/file_manager/pane.py:2765
 msgid "File manager is not available"
 msgstr "Administrador de archivos no disponible"
 
-#: src/sshpilot/file_manager/pane.py:2696
-#: src/sshpilot/file_manager/pane.py:2748
+#: src/sshpilot/file_manager/pane.py:2718
+#: src/sshpilot/file_manager/pane.py:2770
 #: src/sshpilot/file_manager_window.py:2743
 msgid "Local pane is unavailable"
 msgstr "El panel local no está disponible"
 
-#: src/sshpilot/file_manager/pane.py:2708
+#: src/sshpilot/file_manager/pane.py:2730
 msgid "Remote pane is unavailable"
 msgstr "El panel remoto no está disponible"
 
-#: src/sshpilot/file_manager/pane.py:2713
+#: src/sshpilot/file_manager/pane.py:2735
 msgid "Select items in the local pane to upload"
 msgstr "Seleccionar archivos para cargar"
 
-#: src/sshpilot/file_manager/pane.py:2728
+#: src/sshpilot/file_manager/pane.py:2750
 #, python-brace-format
 msgid "Uploading {name}…"
 msgstr "Subiendo {name}…"
 
-#: src/sshpilot/file_manager/pane.py:2731
+#: src/sshpilot/file_manager/pane.py:2753
 #, python-brace-format
 msgid "Uploading {count} item…"
 msgid_plural "Uploading {count} items…"
 msgstr[0] "Subiendo {count} elemento…"
 msgstr[1] "Subiendo {count} elementos…"
 
-#: src/sshpilot/file_manager/pane.py:2738
+#: src/sshpilot/file_manager/pane.py:2760
 msgid "Select items to download"
 msgstr "Seleccione un elemento para descargar."
 
-#: src/sshpilot/file_manager/pane.py:2759
+#: src/sshpilot/file_manager/pane.py:2781
 msgid "Local destination is not accessible"
 msgstr "Destino local"
 
-#: src/sshpilot/file_manager/pane.py:2768
+#: src/sshpilot/file_manager/pane.py:2790
 #, python-brace-format
 msgid "Downloading {name}…"
 msgstr "Descargando {name}…"
 
-#: src/sshpilot/file_manager/pane.py:2771
+#: src/sshpilot/file_manager/pane.py:2793
 #, python-brace-format
 msgid "Downloading {count} item…"
 msgid_plural "Downloading {count} items…"
 msgstr[0] "Descargando {count} elemento…"
 msgstr[1] "Descargando {count} elementos…"
 
-#: src/sshpilot/file_manager/pane.py:2780
+#: src/sshpilot/file_manager/pane.py:2802
 msgid "Request Folder Access"
 msgstr "Solicitar acceso"
 
-#: src/sshpilot/file_manager/pane.py:2781
+#: src/sshpilot/file_manager/pane.py:2803
 msgid ""
 "You are using the app in a sandbox. Please grant access to your home folder "
 "to use the File Manager."
@@ -3878,161 +3878,161 @@ msgstr ""
 "Está usando la aplicación en un entorno aislado. Conceda acceso a su carpeta "
 "personal para usar el Administrador de archivos."
 
-#: src/sshpilot/file_manager/pane.py:2810
+#: src/sshpilot/file_manager/pane.py:2832
 msgid "Select Folder to Grant Access"
 msgstr "Seleccione la carpeta para otorgar acceso"
 
-#: src/sshpilot/file_manager/pane.py:2835
-#: src/sshpilot/file_manager/pane.py:2846
+#: src/sshpilot/file_manager/pane.py:2857
+#: src/sshpilot/file_manager/pane.py:2868
 #, python-brace-format
 msgid "Access granted to: {path}"
 msgstr "Acceso concedido a: {path}"
 
-#: src/sshpilot/file_manager/pane.py:2896 src/sshpilot/macos_menubar.py:64
+#: src/sshpilot/file_manager/pane.py:2918 src/sshpilot/macos_menubar.py:64
 msgid "File"
 msgstr "Archivo"
 
-#: src/sshpilot/file_manager/pane.py:2906
+#: src/sshpilot/file_manager/pane.py:2928
 #: src/sshpilot/machine_info_dialog.py:367
 #: src/sshpilot/machine_info_dialog.py:375
 #: src/sshpilot/machine_info_dialog.py:2650
 msgid "Unknown"
 msgstr "Desconocido"
 
-#: src/sshpilot/file_manager/pane.py:2920
+#: src/sshpilot/file_manager/pane.py:2942
 msgid "No file selected"
 msgstr "Ningún servidor seleccionado"
 
-#: src/sshpilot/file_manager/pane.py:2924
+#: src/sshpilot/file_manager/pane.py:2946
 msgid "Cannot edit directories"
 msgstr "Elija directorio de datos"
 
-#: src/sshpilot/file_manager/pane.py:2930
+#: src/sshpilot/file_manager/pane.py:2952
 msgid "Cannot edit file - window not available"
 msgstr "No se puede editar el archivo: ventana no disponible"
 
-#: src/sshpilot/file_manager/pane.py:2941
+#: src/sshpilot/file_manager/pane.py:2963
 msgid "Cannot edit file - connection not available"
 msgstr "Conexión con el demonio no disponible."
 
-#: src/sshpilot/file_manager/pane.py:2972
-#: src/sshpilot/file_manager/pane.py:2991
+#: src/sshpilot/file_manager/pane.py:2994
+#: src/sshpilot/file_manager/pane.py:3013
 #, python-brace-format
 msgid "Failed to open editor: {error}"
 msgstr "No se pudo conectar:{error}"
 
-#: src/sshpilot/file_manager/pane.py:3056
+#: src/sshpilot/file_manager/pane.py:3078
 msgid "Current directory is not accessible"
 msgstr "El directorio actual no es accesible"
 
-#: src/sshpilot/file_manager/pane.py:3060
+#: src/sshpilot/file_manager/pane.py:3082
 msgid "Unable to get directory properties"
 msgstr "No se pueden obtener las propiedades del directorio"
 
-#: src/sshpilot/file_manager/pane.py:3098
-#: src/sshpilot/file_manager/pane.py:3168
+#: src/sshpilot/file_manager/pane.py:3120
+#: src/sshpilot/file_manager/pane.py:3190
 #, python-brace-format
 msgid "Failed to show properties: {error}"
 msgstr "No se pudo guardar el archivo:{error}"
 
-#: src/sshpilot/file_manager/pane.py:3118
+#: src/sshpilot/file_manager/pane.py:3140
 #: src/sshpilot/file_manager_window.py:2079 src/sshpilot/window_dialogs.py:2830
 msgid "Nothing selected"
 msgstr "Nada seleccionado"
 
-#: src/sshpilot/file_manager/pane.py:3124
+#: src/sshpilot/file_manager/pane.py:3146
 msgid "Cannot show properties - window not available"
 msgstr "No se pueden mostrar las propiedades: ventana no disponible"
 
-#: src/sshpilot/file_manager/pane.py:3187
+#: src/sshpilot/file_manager/pane.py:3209
 #, python-brace-format
 msgid "{name} Properties"
 msgstr "Propiedades de {name}"
 
-#: src/sshpilot/file_manager/pane.py:3187
+#: src/sshpilot/file_manager/pane.py:3209
 #: src/sshpilot/resources/ui/properties_dialog.ui:10
 #: src/sshpilot/resources/ui/properties_dialog.ui:19
 msgid "Properties"
 msgstr "Propiedades"
 
-#: src/sshpilot/file_manager/pane.py:3189
+#: src/sshpilot/file_manager/pane.py:3211
 #, python-brace-format
 msgid "Name: {value}"
 msgstr "Nombre: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3190
+#: src/sshpilot/file_manager/pane.py:3212
 #, python-brace-format
 msgid "Type: {value}"
 msgstr "Tipo: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3191
+#: src/sshpilot/file_manager/pane.py:3213
 #, python-brace-format
 msgid "Size: {value}"
 msgstr "Tamaño: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3192
+#: src/sshpilot/file_manager/pane.py:3214
 #, python-brace-format
 msgid "Modified: {value}"
 msgstr "Modificado: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3193
+#: src/sshpilot/file_manager/pane.py:3215
 #, python-brace-format
 msgid "Location: {value}"
 msgstr "Ubicación: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3228
+#: src/sshpilot/file_manager/pane.py:3250
 msgid "Failed to load directory"
 msgstr "No se pudo cargar el directorio"
 
-#: src/sshpilot/file_manager/pane.py:3432
+#: src/sshpilot/file_manager/pane.py:3454
 #, python-brace-format
 msgid "Could not open {name}"
 msgstr "No se pudo abrir {name}"
 
-#: src/sshpilot/file_manager/pane.py:3440
+#: src/sshpilot/file_manager/pane.py:3462
 msgid "Download the file to this computer or open it in the editor?"
 msgstr "¿Descargar el archivo a este equipo o abrirlo en el editor?"
 
-#: src/sshpilot/file_manager/pane.py:3442
+#: src/sshpilot/file_manager/pane.py:3464
 msgid "Download the file to this computer?"
 msgstr "¿Descargar el archivo a este equipo?"
 
-#: src/sshpilot/file_manager/pane.py:3446
+#: src/sshpilot/file_manager/pane.py:3468
 msgid "Edit as Text"
 msgstr "Editar como texto"
 
-#: src/sshpilot/file_manager/pane.py:3707
-#: src/sshpilot/file_manager/pane.py:3724
-#: src/sshpilot/file_manager/pane.py:3730
-#: src/sshpilot/file_manager/pane.py:3739
-#: src/sshpilot/file_manager/pane.py:3759
+#: src/sshpilot/file_manager/pane.py:3729
+#: src/sshpilot/file_manager/pane.py:3746
+#: src/sshpilot/file_manager/pane.py:3752
+#: src/sshpilot/file_manager/pane.py:3761
+#: src/sshpilot/file_manager/pane.py:3781
 msgid "Dragged item is no longer available"
 msgstr "La conexión guardada para esta sesión ya no está disponible"
 
-#: src/sshpilot/file_manager/pane.py:3875
+#: src/sshpilot/file_manager/pane.py:3897
 msgid "Upload failed: Invalid window context"
 msgstr "Error en la subida: contexto de ventana no válido"
 
-#: src/sshpilot/file_manager/pane.py:3908
-#: src/sshpilot/file_manager/pane.py:3915
+#: src/sshpilot/file_manager/pane.py:3930
+#: src/sshpilot/file_manager/pane.py:3937
 #: src/sshpilot/file_manager_window.py:2706
 #: src/sshpilot/file_manager_window.py:2722 src/sshpilot/text_editor.py:1539
 #, python-brace-format
 msgid "Upload failed: {error}"
 msgstr "Error de carga:{error}"
 
-#: src/sshpilot/file_manager/pane.py:3938
+#: src/sshpilot/file_manager/pane.py:3960
 msgid "Download failed: Invalid window context"
 msgstr "Error en la descarga: contexto de ventana no válido"
 
-#: src/sshpilot/file_manager/pane.py:3969
-#: src/sshpilot/file_manager/pane.py:3977
+#: src/sshpilot/file_manager/pane.py:3991
+#: src/sshpilot/file_manager/pane.py:3999
 #: src/sshpilot/file_manager_window.py:2801
 #, python-brace-format
 msgid "Download failed: {error}"
 msgstr "Error de carga:{error}"
 
-#: src/sshpilot/file_manager/pane.py:4092
+#: src/sshpilot/file_manager/pane.py:4114
 msgid "No access to this folder. Use Request Access to open it."
 msgstr "No hay acceso a esta carpeta. Use «Solicitar acceso» para abrirla."
 
@@ -4040,48 +4040,44 @@ msgstr "No hay acceso a esta carpeta. Use «Solicitar acceso» para abrirla."
 msgid "Forward"
 msgstr "Agente directo"
 
-#: src/sshpilot/file_manager/pane_controls.py:139
-#: src/sshpilot/file_manager/pane_controls.py:181
+#: src/sshpilot/file_manager/pane_controls.py:118
+#: src/sshpilot/file_manager/pane_controls.py:172
 msgid "Icon Size"
 msgstr "Tamaño del icono"
 
-#: src/sshpilot/file_manager/pane_controls.py:149
+#: src/sshpilot/file_manager/pane_controls.py:127
+msgid "Show Hidden Files"
+msgstr "Mostrar/Ocultar barra lateral"
+
+#: src/sshpilot/file_manager/pane_controls.py:140
 msgid "Sort by"
 msgstr "Ordenar por"
 
-#: src/sshpilot/file_manager/pane_controls.py:151
+#: src/sshpilot/file_manager/pane_controls.py:142
 msgid "Ascending"
 msgstr "Ascendente"
 
-#: src/sshpilot/file_manager/pane_controls.py:152
+#: src/sshpilot/file_manager/pane_controls.py:143
 msgid "Descending"
 msgstr "Descendente"
 
-#: src/sshpilot/file_manager/pane_controls.py:153
+#: src/sshpilot/file_manager/pane_controls.py:144
 msgid "Order"
 msgstr "Orden"
 
 #. Tooltip text is parsed as Pango markup; escape the ampersand or
 #. use a plain word to avoid "entity did not end with a semicolon".
-#: src/sshpilot/file_manager/pane_controls.py:164
-msgid "Adjust icon size and sort order"
-msgstr "Ajustar el tamaño de los iconos y el orden de clasificación"
+#: src/sshpilot/file_manager/pane_controls.py:155
+msgid "View options"
+msgstr "Opciones de vista"
 
-#: src/sshpilot/file_manager/pane_controls.py:247
+#: src/sshpilot/file_manager/pane_controls.py:238
 msgid "Grid View"
 msgstr "Vista dividida"
 
-#: src/sshpilot/file_manager/pane_controls.py:248
+#: src/sshpilot/file_manager/pane_controls.py:239
 msgid "List View"
 msgstr "Vista dividida"
-
-#: src/sshpilot/file_manager/pane_controls.py:284
-msgid "Hide Hidden Files"
-msgstr "Ocultar archivos ocultos"
-
-#: src/sshpilot/file_manager/pane_controls.py:284
-msgid "Show Hidden Files"
-msgstr "Mostrar/Ocultar barra lateral"
 
 #: src/sshpilot/file_manager/progress_dialog.py:88
 msgid "the server"
@@ -19019,6 +19015,12 @@ msgstr "{view} (cambios sin guardar)"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · desactivado"
+
+#~ msgid "Adjust icon size and sort order"
+#~ msgstr "Ajustar el tamaño de los iconos y el orden de clasificación"
+
+#~ msgid "Hide Hidden Files"
+#~ msgstr "Ocultar archivos ocultos"
 
 #~ msgid "Hide Local Pane"
 #~ msgstr "Ocultar panel local"
