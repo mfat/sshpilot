@@ -41,6 +41,7 @@ from .ssh_config_answer import (  # noqa: E402
 )
 from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap, block_category  # noqa: E402
 from .ssh_option_list import OPENSSH_KEYWORDS  # noqa: E402
+from .route_strip import FlowLayout  # noqa: E402
 
 
 class AnswerView(ConfigAnswer):
@@ -472,6 +473,30 @@ def _boxed_list() -> Gtk.ListBox:
 _KIND_CLASSES = ("connection", "pattern", "match_rule", "all_hosts")
 
 
+class _WrapBox(Gtk.Widget):
+    """Children left to right at their own width, wrapping like words."""
+
+    __gtype_name__ = "SshpilotAdvcfgWrapBox"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_layout_manager(FlowLayout())
+
+    def append(self, child: Gtk.Widget) -> None:
+        child.set_parent(self)
+
+    def remove_all(self) -> None:
+        child = self.get_first_child()
+        while child is not None:
+            following = child.get_next_sibling()
+            child.unparent()
+            child = following
+
+    def do_dispose(self) -> None:
+        self.remove_all()
+        Gtk.Widget.do_dispose(self)
+
+
 def _card_tile(icon: str, title: str) -> tuple:
     """A tile of the title card: ``(tile, content box, severity dot)``."""
     tile = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -623,12 +648,14 @@ class StructuredView(Gtk.Box):
         self.applies_label.add_css_class("dim-label")
         self.applies_label.set_ellipsize(Pango.EllipsizeMode.END)
         content.append(self.applies_label)
-        # The flow box needs the tile width to measure its wrapped height.
-        self.applies_chips = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,
-                                         max_children_per_line=12)
-        self.applies_chips.set_column_spacing(6)
-        self.applies_chips.set_row_spacing(6)
+        # The hosts wrap like words, each a plain button at its own width (a
+        # FlowBox lines them up in columns and hovers a cell wider than the
+        # button).
+        self.applies_chips = _WrapBox()
+        self.applies_chips.set_margin_top(6)            # clear of the heading
         content.append(self.applies_chips)
+        #: Every host shown, not only the first few.
+        self._applies_all = False
         self.tiles.append(self.applies_box)
         # Problems: shown only when there are some; a click shows the first.
         self.problems_tile, content, self.problems_dot = _card_tile(
@@ -1023,27 +1050,32 @@ class StructuredView(Gtk.Box):
         self.applies_label.set_label(text)
         self.applies_label.set_visible(bool(text))
         shown = tuple(hosts or ())
-        if getattr(self, "_applies", None) == (hosts is None, shown):
+        state = (hosts is None, shown)
+        if getattr(self, "_applies", None) != state:
+            self._applies_all = False                # a new block starts folded
+        elif getattr(self, "_applies_drawn_all", None) == self._applies_all:
             return
-        self._applies = (hosts is None, shown)
+        self._applies = state
+        self._applies_drawn_all = self._applies_all
         self.applies_chips.set_visible(bool(shown))
-        child = self.applies_chips.get_first_child()
-        while child is not None:
-            following = child.get_next_sibling()
-            self.applies_chips.remove(child)
-            child = following
-        for name in shown[:self._APPLIES_SHOWN]:
-            # A plain button with the theme's own look: no custom styling,
-            # which drew unreadable pills under some bundled themes (AppImage).
-            chip = Gtk.Button(label=name, halign=Gtk.Align.START,
-                              tooltip_text=messages.show_host_block(name))
+        self.applies_chips.remove_all()
+        folded = len(shown) > self._APPLIES_SHOWN and not self._applies_all
+        for name in shown[:self._APPLIES_SHOWN] if folded else shown:
+            chip = Gtk.Button(label=name, tooltip_text=messages.show_host_block(name))
             chip.connect("clicked", lambda *_a, n=name: self.controller.follow_host(n))
             self.applies_chips.append(chip)
         if len(shown) > self._APPLIES_SHOWN:
-            rest = shown[self._APPLIES_SHOWN:]
-            more = Gtk.Label(label=f"+{len(rest)}", halign=Gtk.Align.START, tooltip_text=", ".join(rest))
-            more.add_css_class("dim-label")
-            self.applies_chips.append(more)
+            label = (messages.more_hosts(len(shown) - self._APPLIES_SHOWN) if folded
+                     else messages.fewer_hosts())
+            toggle = Gtk.Button(label=label)
+            toggle.add_css_class("flat")
+            toggle.connect("clicked", lambda *_a: self._toggle_applies(block, hosts))
+            self.applies_chips.append(toggle)
+            self.applies_more = toggle
+
+    def _toggle_applies(self, block, hosts) -> None:
+        self._applies_all = not self._applies_all
+        self._show_applies(block, hosts)
 
     # -- gestures ----------------------------------------------------------------
 

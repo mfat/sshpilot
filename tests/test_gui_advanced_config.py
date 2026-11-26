@@ -269,9 +269,8 @@ def _applies(win):
         return [] if "none of the hosts" in structured.applies_label.get_label() else None
     names, child = [], structured.applies_chips.get_first_child()
     while child is not None:
-        inner = child.get_child()
-        if isinstance(inner, type(structured.duplicate_button)):
-            names.append(inner.get_label())
+        if child is not getattr(structured, "applies_more", None):
+            names.append(child.get_label())
         child = child.get_next_sibling()
     return names
 
@@ -1146,9 +1145,10 @@ def test_wildcard_host_chips_fit_inside_the_applies_to_tile(gtk, tmp_path):
         _pick(win, "Host *")
         view = win.structured
         assert _pump(lambda: _applies(win) == hosts[:8]
-                     and view.applies_chips.get_child_at_index(8).get_height() > 0)
+                     and _children(view.applies_chips)[8].get_height() > 0)
         chips = _children(view.applies_chips)
-        assert chips[-1].get_child().get_label() == "+13"
+        assert chips[-1] is view.applies_more
+        assert chips[-1].get_label() == "13 more hosts"
         bounds = []
         for child in chips:
             found, rect = child.compute_bounds(view.applies_box)
@@ -1157,6 +1157,15 @@ def test_wildcard_host_chips_fit_inside_the_applies_to_tile(gtk, tmp_path):
             assert rect.get_y() + rect.get_height() <= view.applies_box.get_height() + 1
         assert bounds[0].get_y() == bounds[1].get_y()
         assert bounds[-1].get_y() > bounds[0].get_y()
+        # Each button only as wide as its name: the second starts right
+        # after the first, not a column further on.
+        assert bounds[1].get_x() - (bounds[0].get_x() + bounds[0].get_width()) <= 8
+
+        view.applies_more.emit("clicked")                   # every host, then back
+        assert _pump(lambda: _applies(win) == hosts)
+        assert view.applies_more.get_label() == "Show Less"
+        view.applies_more.emit("clicked")
+        assert _pump(lambda: _applies(win) == hosts[:8])
     finally:
         _close(win)
 
@@ -1188,7 +1197,7 @@ def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
 
         _pick(win, "Host *.prod")                            # a chip shows that host
         assert _pump(lambda: _applies(win) == ["a.prod", "b.prod"])
-        structured.applies_chips.get_child_at_index(1).get_child().emit("clicked")
+        _children(structured.applies_chips)[1].emit("clicked")
         assert _pump(lambda: win.selected_uid == b.uid)
 
         _pick(win, "Host a.prod")                            # a host: the usual answer

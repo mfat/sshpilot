@@ -127,6 +127,16 @@ def applies_to_none() -> str:
     return _("Applies to none of the hosts this configuration names.")
 
 
+def more_hosts(count: int) -> str:
+    """The button that shows the rest of the hosts a block applies to."""
+    return ngettext("{count} more host", "{count} more hosts", count).format(count=count)
+
+
+def fewer_hosts() -> str:
+    """The button that folds the hosts a block applies to back up."""
+    return _("Show Less")
+
+
 def show_host_block(host: str) -> str:
     """The tooltip of a host a pattern block applies to: a link to it."""
     return _("Show the block of {host}").format(host=host)
