@@ -35,6 +35,8 @@ _TICK_MS = 250
 _MINIMUM_SECONDS = 2.0
 _REMOVE_FINISHED_SECONDS = 3
 _ATTENTION_MS = 2000
+# The least the ring shows while a transfer runs.
+_MINIMUM_ARC = 0.06
 
 _css_installed = False
 
@@ -102,10 +104,12 @@ def _draw_ring(cr, width: float, height: float, fraction: float, colour, line: f
     cr.set_source_rgba(colour.red, colour.green, colour.blue, colour.alpha * 0.25)
     cr.arc(0, 0, radius, 0, 2 * math.pi)
     cr.stroke()
-    if fraction > 0:
-        cr.set_source_rgba(colour.red, colour.green, colour.blue, colour.alpha)
-        cr.arc(0, 0, radius, start, start + fraction * 2 * math.pi)
-        cr.stroke()
+    # Never an empty ring: the first percent of a large transfer would read
+    # as nothing happening.
+    shown = max(fraction, _MINIMUM_ARC)
+    cr.set_source_rgba(colour.red, colour.green, colour.blue, colour.alpha)
+    cr.arc(0, 0, radius, start, start + shown * 2 * math.pi)
+    cr.stroke()
 
 
 def progress_ring_icon(fraction: float, colour, scale: int = 1):

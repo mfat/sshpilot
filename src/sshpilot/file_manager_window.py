@@ -4364,9 +4364,11 @@ class FileManagerWindow(Adw.Window):
             else:
                 from .file_manager.transfer_indicator import progress_ring_icon
 
-                indicator = self._transfer_indicator
+                # The tab's own text colour, not the file manager toolbar's:
+                # that bar can be dark while the tabs are light.
+                tab_view = page.get_child().get_ancestor(Adw.TabView)
                 icon = progress_ring_icon(
-                    fraction, indicator.get_color(), indicator.get_scale_factor()
+                    fraction, tab_view.get_color(), tab_view.get_scale_factor()
                 )
             page.set_loading(state == "running" and fraction is None)
             page.set_indicator_icon(icon)
