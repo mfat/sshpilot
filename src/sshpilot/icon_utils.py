@@ -57,6 +57,7 @@ _ICON_RESOURCE_MAP = {
     'view-conceal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-conceal-symbolic.svg',
     'view-reveal-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-reveal-symbolic.svg',
     'view-dual-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-dual-symbolic.svg',
+    'view-single-pane-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-single-pane-symbolic.svg',
     'split-pane-close-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/split-pane-close-symbolic.svg',
     'split-pane-unsplit-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/split-pane-unsplit-symbolic.svg',
     'view-fullscreen-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/view-fullscreen-symbolic.svg',

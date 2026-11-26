@@ -114,6 +114,26 @@ def _sftp_session_ready(manager) -> bool:
     return getattr(manager, "_sftp", None) is not None
 
 
+_layout_bar_css_installed = False
+
+
+def _ensure_layout_bar_css() -> None:
+    """Round the OSD layout bar like the pane cards below it."""
+    global _layout_bar_css_installed
+    if _layout_bar_css_installed:
+        return
+    try:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b".fm-layout-bar { border-radius: 12px; }")
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        _layout_bar_css_installed = True
+    except Exception:  # pragma: no cover - headless/test doubles
+        logger.debug("Layout bar CSS install failed", exc_info=True)
+
+
 # Global registry to track live file manager windows. Used to ensure
 # managers are cleaned up even if the application does not hold references.
 _file_manager_windows_registry: weakref.WeakSet = weakref.WeakSet()
@@ -347,7 +367,7 @@ class FileManagerWindow(Adw.Window):
         panes.set_end_child(self._right_overlay)
         self._install_remote_host_button()
         self._install_left_location_button()
-        self._install_single_pane_toggle()
+        self._install_layout_bar()
         self._install_single_pane_shortcut()
 
         # Seed each pane with the persisted list and grid zoom levels. Each pane
@@ -1046,30 +1066,94 @@ class FileManagerWindow(Adw.Window):
 
     _SINGLE_PANE_KEY = "file_manager.single_pane"
 
-    def _install_single_pane_toggle(self) -> None:
-        """A toggle in the right pane's toolbar that hides the left pane.
+    def _install_layout_bar(self) -> None:
+        """A full-width OSD toolbar above the panes, holding the one/two pane
+        switch as a segmented pair (#1356).
 
-        It lives in the pane toolbar, not the header bar: a file manager
-        opened as a tab hides its header bar, and the button with it (#1356).
-        A new file manager starts as Settings says (file_manager.single_pane);
-        the toggle, F3 and the tab menu change only this one, as in Dolphin.
+        It sits in the content, not the header bar, which a file manager
+        opened as a tab hides. A new file manager starts as Settings says
+        (file_manager.single_pane); this switch, F3 and the tab menu change
+        only this one, as in Dolphin.
         """
-        toolbar = getattr(self._right_pane, "toolbar", None)
-        label = getattr(toolbar, "_pane_label", None)
-        parent = label.get_parent() if label is not None else None
-        if parent is None:
+        _ensure_layout_bar_css()
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        bar.add_css_class("osd")
+        bar.add_css_class("toolbar")
+        bar.add_css_class("fm-layout-bar")
+        bar.set_margin_top(8)
+        bar.set_margin_start(8)
+        bar.set_margin_end(8)
+
+        shortcut = Gtk.accelerator_get_label(Gdk.KEY_F3, Gdk.ModifierType(0))
+        one_tip = _("Show One Pane ({shortcut})").format(shortcut=shortcut)
+        two_tip = _("Show Both Panes ({shortcut})").format(shortcut=shortcut)
+        self._syncing_layout = False
+        group = None
+        if hasattr(Adw, "ToggleGroup") and hasattr(Adw, "Toggle"):
+            # libadwaita 1.7+; the README's floor is 1.5 (Ubuntu 24.04).
+            try:
+                group = Adw.ToggleGroup()
+                for name, icon, tip in (
+                    ("one", "view-single-pane-symbolic", one_tip),
+                    ("two", "view-dual-symbolic", two_tip),
+                ):
+                    group.add(Adw.Toggle(name=name, icon_name=icon, tooltip=tip))
+                group.connect("notify::active-name", self._on_layout_group_changed)
+            except AttributeError:
+                group = None
+        if group is not None:
+            self._layout_toggle = group
+            bar.append(group)
+        else:
+            # libadwaita before 1.7: linked radio-style toggle buttons.
+            from sshpilot import icon_utils
+            linked = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            linked.add_css_class("linked")
+            one = Gtk.ToggleButton()
+            two = Gtk.ToggleButton()
+            two.set_group(one)
+            for button, icon, tip in ((one, "view-single-pane-symbolic", one_tip),
+                                      (two, "view-dual-symbolic", two_tip)):
+                icon_utils.set_button_icon(button, icon)
+                button.set_tooltip_text(tip)
+                linked.append(button)
+            one.connect("toggled", self._on_layout_buttons_changed)
+            self._layout_toggle = (one, two)
+            bar.append(linked)
+
+        # The bar and the panes share the toast overlay's child.
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._toast_overlay.set_child(None)
+        content.append(bar)
+        self.panes.set_vexpand(True)
+        content.append(self.panes)
+        self._toast_overlay.set_child(content)
+        self._layout_bar = bar
+
+        self._single_pane = self._load_single_pane_preference()
+        self._apply_single_pane(self._single_pane)
+
+    def _on_layout_group_changed(self, group, _pspec) -> None:
+        if not self._syncing_layout:
+            self.set_single_pane(group.get_active_name() == "one")
+
+    def _on_layout_buttons_changed(self, one_button) -> None:
+        if not self._syncing_layout:
+            self.set_single_pane(bool(one_button.get_active()))
+
+    def _sync_layout_toggle(self, single: bool) -> None:
+        control = self.__dict__.get("_layout_toggle")
+        if control is None:
             return
-        toggle = Gtk.ToggleButton()
-        from sshpilot import icon_utils
-        icon_utils.set_button_icon(toggle, "view-dual-symbolic")
-        toggle.add_css_class("flat")
-        toggle.set_valign(Gtk.Align.CENTER)
-        parent.insert_child_after(toggle, None)
-        self._single_pane_toggle = toggle
-        single = self._load_single_pane_preference()
-        toggle.set_active(single)
-        self._apply_single_pane(single)
-        toggle.connect("toggled", self._on_single_pane_toggled)
+        self._syncing_layout = True
+        try:
+            if isinstance(control, tuple):
+                one, two = control
+                (one if single else two).set_active(True)
+            else:
+                control.set_active_name("one" if single else "two")
+        finally:
+            self._syncing_layout = False
 
     def _settings(self):
         config = getattr(self, "config", None)
@@ -1092,13 +1176,7 @@ class FileManagerWindow(Adw.Window):
 
     def _apply_single_pane(self, single: bool) -> None:
         self._left_pane.set_visible(not single)
-        toggle = getattr(self, "_single_pane_toggle", None)
-        if toggle is not None:
-            shortcut = Gtk.accelerator_get_label(Gdk.KEY_F3, Gdk.ModifierType(0))
-            toggle.set_tooltip_text(
-                (_("Show Both Panes ({shortcut})") if single
-                 else _("Show One Pane ({shortcut})")).format(shortcut=shortcut)
-            )
+        self._sync_layout_toggle(single)
 
     def _install_single_pane_shortcut(self) -> None:
         """F3 shows or hides the left pane, as in Dolphin.
@@ -1122,23 +1200,17 @@ class FileManagerWindow(Adw.Window):
 
     def is_single_pane(self) -> bool:
         """True while the left pane is hidden."""
-        toggle = self.__dict__.get("_single_pane_toggle")
-        if toggle is not None:
-            return bool(toggle.get_active())
+        single = self.__dict__.get("_single_pane")
+        if single is not None:
+            return bool(single)
         return not self._left_pane.get_visible()
 
     def set_single_pane(self, single: bool) -> None:
-        """Hide or show the left pane, as the toolbar toggle does; the tab
-        menu and F3 come through here. Settings is left as it is."""
-        toggle = self.__dict__.get("_single_pane_toggle")
-        if toggle is not None:
-            # Its "toggled" handler applies and saves the choice.
-            toggle.set_active(bool(single))
-        else:
-            self._apply_single_pane(bool(single))
-
-    def _on_single_pane_toggled(self, toggle: Gtk.ToggleButton) -> None:
-        self._apply_single_pane(bool(toggle.get_active()))
+        """Hide or show the left pane; the layout switch, F3 and the tab
+        menu all come through here. Settings is left as it is."""
+        single = bool(single)
+        self._single_pane = single
+        self._apply_single_pane(single)
 
     # -- which pane is where ---------------------------------------------
 

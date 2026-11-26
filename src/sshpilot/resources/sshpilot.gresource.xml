@@ -103,6 +103,7 @@
     <file alias="vertical-arrows-long-symbolic.svg">icons/scalable/actions/vertical-arrows-long-symbolic.svg</file>
     <file alias="view-conceal-symbolic.svg">icons/scalable/actions/view-conceal-symbolic.svg</file>
     <file alias="view-dual-symbolic.svg">icons/scalable/actions/view-dual-symbolic.svg</file>
+    <file alias="view-single-pane-symbolic.svg">icons/scalable/actions/view-single-pane-symbolic.svg</file>
     <file alias="view-grid-symbolic.svg">icons/scalable/actions/view-grid-symbolic.svg</file>
     <file alias="view-list-symbolic.svg">icons/scalable/actions/view-list-symbolic.svg</file>
     <file alias="view-pin-symbolic.svg">icons/scalable/actions/view-pin-symbolic.svg</file>

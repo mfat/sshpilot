@@ -138,35 +138,63 @@ def test_paste_between_two_server_panes_copies_through_the_daemon():
     window._manager.copy_remote.assert_not_called()
 
 
-def test_single_pane_switch_drives_the_toolbar_toggle():
-    """The tab menu and F3 go through the toggle, which applies and saves."""
+def test_f3_and_the_menu_move_the_layout_switch_with_them():
+    """F3 and the tab menu go through set_single_pane, which hides the left
+    pane and keeps the OSD bar's segmented switch in step."""
     window_module = _module()
     window = _window(window_module)
-    toggle = MagicMock()
-    toggle.get_active.return_value = False
-    window._single_pane_toggle = toggle
+    group = MagicMock()
+    window._layout_toggle = group
+    window._syncing_layout = False
+    window._single_pane = False
 
     assert window.is_single_pane() is False
     assert window._toggle_single_pane() is True
-    toggle.set_active.assert_called_once_with(True)
 
+    assert window.is_single_pane() is True
+    window._left_pane.set_visible.assert_called_with(False)
+    group.set_active_name.assert_called_once_with("one")
+    # Syncing the switch must not loop back into another toggle.
+    assert window._syncing_layout is False
+
+
+def test_picking_a_segment_switches_the_layout():
+    window_module = _module()
+    window = _window(window_module)
+    window._layout_toggle = MagicMock()
+    window._syncing_layout = False
+    window._single_pane = False
+
+    window._on_layout_group_changed(
+        SimpleNamespace(get_active_name=lambda: "one"), None
+    )
+    assert window.is_single_pane() is True
+    window._on_layout_group_changed(
+        SimpleNamespace(get_active_name=lambda: "two"), None
+    )
+    assert window.is_single_pane() is False
+
+    # While the window itself moves the switch, its signal is ignored.
+    window._syncing_layout = True
+    window._on_layout_group_changed(
+        SimpleNamespace(get_active_name=lambda: "one"), None
+    )
+    assert window.is_single_pane() is False
 
 def test_toggling_the_pane_leaves_the_setting_alone():
-    """Settings decides how a file manager starts; the toggle, F3 and the
+    """Settings decides how a file manager starts; the switch, F3 and the
     tab menu change only the one in front of you (as in Dolphin)."""
     window_module = _module()
     window = _window(window_module)
     settings = MagicMock()
     window.config = settings
-    toggle = MagicMock()
-    toggle.get_active.return_value = True
-    window._single_pane_toggle = toggle
+    window._layout_toggle = None
+    window._syncing_layout = False
 
-    window._on_single_pane_toggled(toggle)
+    window.set_single_pane(True)
 
     window._left_pane.set_visible.assert_called_with(False)
     settings.set_setting.assert_not_called()
-
 
 def test_a_new_file_manager_starts_as_settings_say():
     window_module = _module()
