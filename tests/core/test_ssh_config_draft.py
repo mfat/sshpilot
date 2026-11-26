@@ -86,7 +86,7 @@ def test_isolated_draft_matches_the_saved_launch(tmp_path):
         """)
     context = DraftContext(str(root), isolated=True, overrides=OVERRIDES)
     evaluation = evaluate_draft(_request(draft), context, root.read_text())
-    assert evaluation.evaluated
+    assert evaluation.evaluated, evaluation.errors
     assert evaluation.system_config == ""          # -F: no system-wide file
 
     root.write_text(draft)                         # save
@@ -407,9 +407,10 @@ def test_a_superseded_evaluation_stops_and_leaves_nothing_running(tmp_path):
             DraftContext(str(root), isolated=True), "", flag.is_set,
         )
     assert time.monotonic() - started < 5
-    time.sleep(0.3)
-    running = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
-    assert command not in [line.strip() for line in running.splitlines()]
+    if os.name != "nt":  # no ps on Windows; there taskkill /T ends the tree
+        time.sleep(0.3)
+        running = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
+        assert command not in [line.strip() for line in running.splitlines()]
 
 
 def test_one_evaluation_has_one_time_budget(tmp_path, monkeypatch):
@@ -565,7 +566,8 @@ def test_an_included_file_s_draft_is_read_where_the_root_reads_it(tmp_path):
     root, inc, text, _deep = _included_tree(tmp_path)
     draft = text.replace("Port 2200", "Port 2201")
     evaluation = _included(root, inc, draft, "a.prod")
-    assert evaluation.evaluated and evaluation.matched_blocks == (2,)
+    assert evaluation.evaluated, evaluation.errors
+    assert evaluation.matched_blocks == (2,)
     assert _states(evaluation) == {
         1: State.APPLIED, 3: State.SHADOWED, 4: State.APPLIED,
         5: State.INCLUDE, 7: State.INACTIVE,
@@ -582,7 +584,8 @@ def test_an_included_file_the_root_does_not_read_for_the_host_does_nothing(tmp_p
     is not read, whatever its own Host lines say."""
     root, inc, text, _deep = _included_tree(tmp_path)
     evaluation = _included(root, inc, text, "b")
-    assert evaluation.evaluated and evaluation.matched_blocks == ()
+    assert evaluation.evaluated, evaluation.errors
+    assert evaluation.matched_blocks == ()
     assert set(_states(evaluation).values()) == {SshConfigDraftLineState.INACTIVE}
 
 
@@ -590,6 +593,7 @@ def test_a_file_included_by_an_included_file(tmp_path):
     State = SshConfigDraftLineState
     root, _inc, _text, deep = _included_tree(tmp_path)
     evaluation = _included(root, deep, "ForwardAgent yes\nUser deepuser\n", "a.prod")
+    assert evaluation.evaluated, evaluation.errors
     assert _states(evaluation) == {1: State.APPLIED, 2: State.SHADOWED}
 
     rejected = _included(root, deep, "ForwardAgent yes\nBogusOption 1\n", "a.prod")

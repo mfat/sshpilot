@@ -434,8 +434,16 @@ def _stop(process: "subprocess.Popen") -> None:
         if os.name != "nt":
             os.killpg(process.pid, signal.SIGKILL)
         else:
+            # Windows has no process groups to kill: ending ssh leaves what
+            # a Match exec started running, holding the draft's folder.
+            # taskkill /T ends the whole tree.
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5, check=False, **hidden_console_kwargs(),
+            )
             process.kill()
-    except (OSError, ProcessLookupError):
+    except (OSError, ProcessLookupError, subprocess.SubprocessError):
         pass
     try:
         process.communicate(timeout=2)
@@ -597,7 +605,11 @@ def evaluate_draft(
             pending_exec=pending, forced=forced_values, **base
         )
 
-    with tempfile.TemporaryDirectory(prefix="sshpilot-config-draft-") as directory:
+    # A file still open on Windows (a Match exec command that outlived ssh)
+    # must not turn a finished evaluation into an error.
+    with tempfile.TemporaryDirectory(
+        prefix="sshpilot-config-draft-", ignore_cleanup_errors=True
+    ) as directory:
         system_copy = _system_copy(system, directory) if system else None
         context_files = {os.path.abspath(system_copy): system} if system_copy else {}
         draft_file = os.path.join(directory, "config")
