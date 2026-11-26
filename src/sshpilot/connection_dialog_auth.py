@@ -990,10 +990,9 @@ def method_caption(
     (e.g. "OpenSSH uses no from line 1 (global options)"), when known.
     """
     if overruled is not None and reason:
-        # Translators: {reason} says what decides instead, e.g. "OpenSSH
-        # uses no from line 1 (global options)".
-        return (_("Checked, but not tried: {reason}") if overruled
-                else _("Unchecked, but tried: {reason}")).format(reason=reason)
+        # Advanced Configuration's sentence alone; the row's tag says it
+        # has no effect.
+        return reason
     if overruled is True and by_order:
         return _("Checked, but not tried: an earlier setting leaves it out of the order")
     if overruled is True:

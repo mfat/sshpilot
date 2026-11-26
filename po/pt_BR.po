@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 20:59+0330\n"
+"POT-Creation-Date: 2026-11-26 21:04+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -117,7 +117,7 @@ msgstr "Abrir conexões?"
 #: src/sshpilot/bitwarden_setup.py:852 src/sshpilot/bitwarden_setup.py:956
 #: src/sshpilot/bitwarden_setup.py:1345 src/sshpilot/bitwarden_setup.py:1366
 #: src/sshpilot/command_blocks.py:1994
-#: src/sshpilot/connection_dialog_auth.py:1415
+#: src/sshpilot/connection_dialog_auth.py:1414
 #: src/sshpilot/connection_dialog_port_forwarding.py:240
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
@@ -1793,7 +1793,7 @@ msgstr "Adicionado"
 
 #: src/sshpilot/connection_dialog.py:1250
 #: src/sshpilot/connection_dialog.py:1400
-#: src/sshpilot/connection_dialog_auth.py:1416
+#: src/sshpilot/connection_dialog_auth.py:1415
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:360
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:489
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:207
@@ -2726,43 +2726,31 @@ msgstr "Chaves (publickey)"
 msgid "Keyboard-interactive (PAM, one-time codes)"
 msgstr "Teclado interativo (PAM, códigos de uso único)"
 
-#. Translators: {reason} says what decides instead, e.g. "OpenSSH
-#. uses no from line 1 (global options)".
-#: src/sshpilot/connection_dialog_auth.py:995
-#, python-brace-format
-msgid "Checked, but not tried: {reason}"
-msgstr "Marcado, mas não é tentado: {reason}"
-
-#: src/sshpilot/connection_dialog_auth.py:996
-#, python-brace-format
-msgid "Unchecked, but tried: {reason}"
-msgstr "Desmarcado, mas é tentado: {reason}"
-
-#: src/sshpilot/connection_dialog_auth.py:998
+#: src/sshpilot/connection_dialog_auth.py:997
 msgid "Checked, but not tried: an earlier setting leaves it out of the order"
 msgstr ""
 "Marcado, mas não é tentado: uma configuração anterior o deixa fora da ordem"
 
-#: src/sshpilot/connection_dialog_auth.py:1000
+#: src/sshpilot/connection_dialog_auth.py:999
 msgid "Checked, but not tried: an earlier setting turns it off"
 msgstr "Marcado, mas não é tentado: uma configuração anterior o desativa"
 
-#: src/sshpilot/connection_dialog_auth.py:1002
+#: src/sshpilot/connection_dialog_auth.py:1001
 msgid "Unchecked, but tried: an earlier setting decides"
 msgstr "Desmarcado, mas é tentado: uma configuração anterior decide"
 
 #. {value} is the authored value, e.g. host-bound.
-#: src/sshpilot/connection_dialog_auth.py:1006
+#: src/sshpilot/connection_dialog_auth.py:1005
 #, python-brace-format
 msgid "Enabled in this profile ({value})"
 msgstr "Ativado neste perfil ({value})"
 
-#: src/sshpilot/connection_dialog_auth.py:1007
+#: src/sshpilot/connection_dialog_auth.py:1006
 #, python-brace-format
 msgid "Enabled for this host ({value})"
 msgstr "Ativado para este host ({value})"
 
-#: src/sshpilot/connection_dialog_auth.py:1125
+#: src/sshpilot/connection_dialog_auth.py:1124
 msgid ""
 "Lines this profile sets replace a linked connection's own; what it leaves "
 "unset stays the connection's. Methods are tried from the top; unchecked "
@@ -2772,57 +2760,57 @@ msgstr ""
 "vinculada; o que ele deixa sem definir continua sendo da conexão. Os métodos "
 "são tentados de cima para baixo; métodos desmarcados são omitidos."
 
-#: src/sshpilot/connection_dialog_auth.py:1129
+#: src/sshpilot/connection_dialog_auth.py:1128
 msgid "Methods are tried from the top. Unchecked methods are left out."
 msgstr ""
 "Os métodos são tentados de cima para baixo. Métodos desmarcados são omitidos."
 
 #. One row that folds the method list away: most hosts never change
 #. it, so the header says what will be tried and the rows wait inside.
-#: src/sshpilot/connection_dialog_auth.py:1134
+#: src/sshpilot/connection_dialog_auth.py:1133
 msgid "Authentication methods"
 msgstr "Métodos de autenticação"
 
-#: src/sshpilot/connection_dialog_auth.py:1139 src/sshpilot/preferences.py:1739
+#: src/sshpilot/connection_dialog_auth.py:1138 src/sshpilot/preferences.py:1739
 #: src/sshpilot/preferences.py:3073 src/sshpilot/preferences.py:6392
 msgid "Reset"
 msgstr "Redefinir"
 
-#: src/sshpilot/connection_dialog_auth.py:1143
-#: src/sshpilot/connection_dialog_auth.py:1538
+#: src/sshpilot/connection_dialog_auth.py:1142
+#: src/sshpilot/connection_dialog_auth.py:1537
 msgid "Leave the order to each linked connection"
 msgstr "Deixar a ordem para cada conexão vinculada"
 
-#: src/sshpilot/connection_dialog_auth.py:1144
-#: src/sshpilot/connection_dialog_auth.py:1539
+#: src/sshpilot/connection_dialog_auth.py:1143
+#: src/sshpilot/connection_dialog_auth.py:1538
 msgid "Use authentication order set by OpenSSH configuration"
 msgstr "Usar a ordem de autenticação definida pela configuração do OpenSSH"
 
-#: src/sshpilot/connection_dialog_auth.py:1178
+#: src/sshpilot/connection_dialog_auth.py:1177
 msgid "OpenSSH will try:"
 msgstr "O OpenSSH vai tentar:"
 
-#: src/sshpilot/connection_dialog_auth.py:1230
+#: src/sshpilot/connection_dialog_auth.py:1229
 msgid "Move up"
 msgstr "Mover para cima"
 
-#: src/sshpilot/connection_dialog_auth.py:1231
+#: src/sshpilot/connection_dialog_auth.py:1230
 msgid "Move down"
 msgstr "Mover para baixo"
 
-#: src/sshpilot/connection_dialog_auth.py:1232
+#: src/sshpilot/connection_dialog_auth.py:1231
 msgid "Move to top"
 msgstr "Mover para o início"
 
-#: src/sshpilot/connection_dialog_auth.py:1236
+#: src/sshpilot/connection_dialog_auth.py:1235
 msgid "Method options"
 msgstr "Opções do método"
 
-#: src/sshpilot/connection_dialog_auth.py:1408
+#: src/sshpilot/connection_dialog_auth.py:1407
 msgid "Remove the custom authentication order?"
 msgstr "Remover a ordem de autenticação personalizada?"
 
-#: src/sshpilot/connection_dialog_auth.py:1410
+#: src/sshpilot/connection_dialog_auth.py:1409
 msgid ""
 "This will remove your custom authentication order from the SSH configuration "
 "when you save. The host then uses the order it inherits."
@@ -2830,43 +2818,43 @@ msgstr ""
 "Isso removerá sua ordem de autenticação personalizada da configuração SSH ao "
 "salvar. O host passará a usar a ordem herdada."
 
-#: src/sshpilot/connection_dialog_auth.py:1513
+#: src/sshpilot/connection_dialog_auth.py:1512
 msgid "Not known to this dialog; kept as written."
 msgstr "Desconhecido para esta caixa de diálogo; mantido como está escrito."
 
-#: src/sshpilot/connection_dialog_auth.py:1548
-#: src/sshpilot/connection_dialog_auth.py:1565
-#: src/sshpilot/connection_dialog_auth.py:1686
+#: src/sshpilot/connection_dialog_auth.py:1547
+#: src/sshpilot/connection_dialog_auth.py:1564
+#: src/sshpilot/connection_dialog_auth.py:1685
 #: src/sshpilot/connection_dialog_effective.py:58
 msgid "Shown once OpenSSH has read the configuration."
 msgstr "Exibido quando o OpenSSH tiver lido a configuração."
 
-#: src/sshpilot/connection_dialog_auth.py:1561
-#: src/sshpilot/connection_dialog_auth.py:1684
+#: src/sshpilot/connection_dialog_auth.py:1560
+#: src/sshpilot/connection_dialog_auth.py:1683
 #: src/sshpilot/connection_dialog_effective.py:53
 msgid "Unknown: OpenSSH could not read the configuration."
 msgstr "Desconhecido: o OpenSSH não conseguiu ler a configuração."
 
-#: src/sshpilot/connection_dialog_auth.py:1569
+#: src/sshpilot/connection_dialog_auth.py:1568
 msgid "No method: the login cannot succeed."
 msgstr "Nenhum método: o login não pode ter sucesso."
 
 #. {method} is an OpenSSH method name, e.g. gssapi-with-mic.
-#: src/sshpilot/connection_dialog_auth.py:1577
+#: src/sshpilot/connection_dialog_auth.py:1576
 #, python-brace-format
 msgid "{method} (unknown if enabled)"
 msgstr "{method} (não se sabe se está ativado)"
 
-#: src/sshpilot/connection_dialog_auth.py:1690
+#: src/sshpilot/connection_dialog_auth.py:1689
 msgid "At least one method must stay checked."
 msgstr "Pelo menos um método deve permanecer marcado."
 
 #. Listed in the order, but its switch is off.
-#: src/sshpilot/connection_dialog_auth.py:1693
+#: src/sshpilot/connection_dialog_auth.py:1692
 msgid "Not tried: it is turned off. Check it to turn it on."
 msgstr "Não é tentado: está desativado. Marque-o para ativá-lo."
 
-#: src/sshpilot/connection_dialog_auth.py:1695
+#: src/sshpilot/connection_dialog_auth.py:1694
 msgid "Not tried. Check it to add it to the login order at this place."
 msgstr "Não é tentado. Marque-o para adicioná-lo à ordem de login neste lugar."
 
@@ -19060,6 +19048,14 @@ msgstr "{view} (alterações não salvas)"
 #, python-brace-format
 msgid "{kind} · off"
 msgstr "{kind} · desativado"
+
+#, python-brace-format
+#~ msgid "Checked, but not tried: {reason}"
+#~ msgstr "Marcado, mas não é tentado: {reason}"
+
+#, python-brace-format
+#~ msgid "Unchecked, but tried: {reason}"
+#~ msgstr "Desmarcado, mas é tentado: {reason}"
 
 #~ msgid "Set for This Host"
 #~ msgstr "Definir para este host"

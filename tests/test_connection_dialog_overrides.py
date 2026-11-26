@@ -343,12 +343,9 @@ def test_a_method_caption_names_what_decides_when_known():
     from sshpilot.connection_dialog_auth import method_caption
 
     reason = "OpenSSH uses no from line 1 (global options)"
-    assert method_caption("", False, True, False, reason) == (
-        "Checked, but not tried: " + reason
-    )
-    assert method_caption("", False, False, True, reason) == (
-        "Unchecked, but tried: " + reason
-    )
+    # The window's sentence alone, either way.
+    assert method_caption("", False, True, False, reason) == reason
+    assert method_caption("", False, False, True, reason) == reason
     # Agreeing rows say nothing, whatever the reason.
     assert method_caption("", False, None, False, reason) == ""
 
