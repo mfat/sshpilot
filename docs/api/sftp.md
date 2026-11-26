@@ -36,6 +36,12 @@ reports byte progress and can be cancelled between blocks (not during a
 server-side `copy-data`). A cancelled or failed single-file copy leaves no
 partial destination. Both report as `sftp_copy_tree`.
 
+`SftpCopyRequest.destination_service_id` copies to a second SFTP service the
+same client owns, such as another server, and always runs as an operation. The
+daemon streams between the two sessions, or, when both services are on one
+connection, copies through the source session so the server can copy for
+itself. A failure on the receiving side is that service's failure.
+
 The generic `ServiceFailure` contract was not changed by the SFTP migration.
 Native SCP has its own strict `ScpFailure` contract; unrelated service
 summaries retain `ServiceFailure`.

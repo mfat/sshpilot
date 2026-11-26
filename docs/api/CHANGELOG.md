@@ -5,6 +5,19 @@ notes remain separate.
 
 ## Unreleased
 
+- `SftpCopyRequest` gains `destination_service_id`: the copy (or move) lands
+  on that second SFTP service, owned by the same client, while the source
+  stays on `service_id`. Such a copy always runs as an `sftp_copy_tree`
+  operation (`runs_as_operation`), so `sftp_copy` returns an
+  `OperationSummary`. Another server receives the bytes through its own
+  session; two services on the same connection copy through the source
+  session alone, so the server's `copy-data` still applies. The folder-into-
+  itself check applies only on one server. An existing destination fails
+  with `destination_already_exists`; a failure on the receiving side is
+  reported against the destination service (its lost connection fails that
+  service, not the source). The field is sent only when set, so other copies
+  are unchanged on the wire. The API implementation version is 0.119;
+  Protocol remains 1.0.
 - Terminal output flow control (capability `terminal.flow_control`):
   `AttachSessionRequest` gains `flow_control` (sent only when true, so older
   daemons are unaffected), and `acknowledge_terminal_output` sends a new

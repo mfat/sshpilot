@@ -812,12 +812,20 @@ class DaemonSftpManager(GObject.GObject):
         *,
         recursive: bool = False,
         move: bool = False,
+        destination_manager: Optional["DaemonSftpManager"] = None,
     ) -> Future:
+        """Copy or move *source* to *destination* on this server, or, with
+        *destination_manager*, to the server that manager is connected to."""
         future: Future = Future()
         source = self._expand(source)
-        destination = self._expand(destination)
+        destination_service_id = None
         try:
             self._require_ready_service_id()
+            if destination_manager is not None and destination_manager is not self:
+                destination_service_id = destination_manager._require_ready_service_id()
+                destination = destination_manager._expand(destination)
+            else:
+                destination = self._expand(destination)
         except OSError as exc:
             future.set_exception(exc)
             return future
@@ -840,6 +848,12 @@ class DaemonSftpManager(GObject.GObject):
                 resolved = _localized_direct_error(resolved)
             self._safe_set(future, exc=resolved)
 
+        # Named only for a copy to another service, so the plain call keeps
+        # its shape for every other caller of the controller.
+        extra = (
+            {"destination_service_id": destination_service_id}
+            if destination_service_id is not None else {}
+        )
         self._sftp_controller.copy(
             source,
             destination,
@@ -850,6 +864,7 @@ class DaemonSftpManager(GObject.GObject):
             on_error=_on_error,
             on_operation_started=on_operation_started,
             on_progress=on_progress,
+            **extra,
         )
         return future
 

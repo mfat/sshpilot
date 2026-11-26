@@ -519,6 +519,7 @@ class DaemonSftpServiceController:
         recursive: bool = False,
         move: bool = False,
         as_operation: bool = False,
+        destination_service_id: Optional[SftpServiceId] = None,
         on_success: Callable[[object], None],
         on_error: Callable[[BaseException], None],
         on_operation_started: Optional[Callable[[OperationId], None]] = None,
@@ -529,6 +530,8 @@ class DaemonSftpServiceController:
         Recursive copies always run as daemon operations; ``as_operation``
         does the same for a single file, so a large copy reports progress and
         can be cancelled instead of outlasting the request timeout.
+        ``destination_service_id`` lands the copy on another SFTP service
+        (another server); such a copy is always an operation.
         """
         service_id = self._ready_service_id_or_error(on_error)
         if service_id is None:
@@ -540,6 +543,7 @@ class DaemonSftpServiceController:
             recursive=recursive,
             move=move,
             as_operation=as_operation,
+            destination_service_id=destination_service_id,
         )
 
         def _op():

@@ -5448,6 +5448,8 @@ def sftp_copy_request_to_wire(request: SftpCopyRequest) -> Dict[str, Any]:
     # Sent only when set, so a plain copy stays readable by older daemons.
     if request.as_operation:
         wire["as_operation"] = True
+    if request.destination_service_id is not None:
+        wire["destination_service_id"] = request.destination_service_id
     return wire
 
 
@@ -5455,9 +5457,10 @@ def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
     data = _strict_fields(
         value,
         required={"service_id", "source_path", "destination_path"},
-        optional={"recursive", "move", "as_operation"},
+        optional={"recursive", "move", "as_operation", "destination_service_id"},
         context="SFTP copy request",
     )
+    destination_service_id = data.get("destination_service_id")
     return SftpCopyRequest(
         service_id=_sftp_service_id(data["service_id"], "SFTP service id"),
         source_path=_text(data["source_path"], "SFTP copy source path"),
@@ -5465,6 +5468,10 @@ def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
         recursive=_boolean(data.get("recursive", False), "SFTP copy recursive"),
         move=_boolean(data.get("move", False), "SFTP copy move"),
         as_operation=_boolean(data.get("as_operation", False), "SFTP copy as operation"),
+        destination_service_id=(
+            None if destination_service_id is None
+            else _sftp_service_id(destination_service_id, "SFTP destination service id")
+        ),
     )
 
 

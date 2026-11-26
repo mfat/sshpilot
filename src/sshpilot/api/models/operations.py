@@ -752,7 +752,12 @@ class SftpRenameRequest:
 
 @dataclass(frozen=True)
 class SftpCopyRequest:
-    """Copy or move a remote SFTP path within one service."""
+    """Copy or move a remote SFTP path within one service, or to another.
+
+    ``destination_service_id`` names a second SFTP service (another server,
+    or another session on the same one) that receives the copy; the source
+    paths stay on ``service_id``. Such a copy always runs as an operation.
+    """
 
     service_id: SftpServiceId
     source_path: str
@@ -763,14 +768,17 @@ class SftpCopyRequest:
     # an OperationSummary), as recursive copies always do. The plain request
     # waits for the whole copy, which a large file can outlast.
     as_operation: bool = False
+    destination_service_id: Optional[SftpServiceId] = None
 
     def __post_init__(self) -> None:
         require_identifier(self.service_id, "SFTP service id")
+        if self.destination_service_id is not None:
+            require_identifier(self.destination_service_id, "SFTP destination service id")
         if not self.source_path or not self.destination_path:
             raise ValueError("SFTP copy paths must not be empty")
         if "\x00" in self.source_path or "\x00" in self.destination_path:
             raise ValueError("SFTP copy paths must not contain NUL")
-        if self.source_path == self.destination_path:
+        if self.source_path == self.destination_path and not self.crosses_services:
             raise ValueError("SFTP copy source and destination must differ")
         if (
             type(self.recursive) is not bool
@@ -780,8 +788,16 @@ class SftpCopyRequest:
             raise TypeError("SFTP copy flags must be booleans")
 
     @property
+    def crosses_services(self) -> bool:
+        """True when the copy lands on a service other than its source."""
+        return (
+            self.destination_service_id is not None
+            and self.destination_service_id != self.service_id
+        )
+
+    @property
     def runs_as_operation(self) -> bool:
-        return self.recursive or self.as_operation
+        return self.recursive or self.as_operation or self.crosses_services
 
 
 @dataclass(frozen=True)

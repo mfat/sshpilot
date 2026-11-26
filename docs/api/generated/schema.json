@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.118",
+  "api_implementation_version": "0.119",
   "client_method_contract": {
     "acknowledge_terminal_output": {
       "capability": "terminal.flow_control",
@@ -8961,6 +8961,13 @@
           "required": false,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "destination_service_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SftpServiceId]"
         }
       ],
       "status": "Implemented"

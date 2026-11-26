@@ -79,12 +79,18 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
     _RENDER_INTERVAL_MS = 250
     _SPEED_WINDOW_SECONDS = 5.0
 
-    def __init__(self, parent=None, operation_type="transfer", host_label=None):
+    def __init__(self, parent=None, operation_type="transfer", host_label=None,
+                 destination_host_label=None):
         self.operation_type = operation_type
         self.total_files = 0
         self._host_label = (
             safe_display_text(str(host_label).strip()) if host_label else ""
         ) or _("the server")
+        # A copy or move between two servers (#1356) names where it lands.
+        self._destination_host_label = (
+            safe_display_text(str(destination_host_label).strip())
+            if destination_host_label else ""
+        ) or self._host_label
         title = self._running_heading()
         body = self._route_summary()
 
@@ -156,16 +162,29 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             return ngettext(
                 "Uploading {count} File", "Uploading {count} Files", count
             ).format(count=count)
-        titles = {
-            "copy": _("Copying on Server"),
-            "move": _("Moving on Server"),
-            "delete": _("Deleting Files"),
-        }
+        if self._between_servers():
+            titles = {
+                "copy": _("Copying Between Servers"),
+                "move": _("Moving Between Servers"),
+            }
+        else:
+            titles = {
+                "copy": _("Copying on Server"),
+                "move": _("Moving on Server"),
+                "delete": _("Deleting Files"),
+            }
         return titles.get(self.operation_type, _("Transferring Files"))
+
+    def _between_servers(self) -> bool:
+        return self._destination_host_label != self._host_label
 
     def _route_summary(self) -> str:
         """One line naming where the data goes, e.g. "From US to this computer"."""
         host = self._host_label
+        if self._between_servers():
+            return _("From {source} to {destination}").format(
+                source=host, destination=self._destination_host_label
+            )
         if self.operation_type in _LOCAL_DESTINATION_OPERATIONS:
             return _("From {host} to this computer").format(host=host)
         if self.operation_type in _LOCAL_SOURCE_OPERATIONS:
@@ -278,7 +297,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self.dest_row, self.dest_label = self._route_row(
             "computer-symbolic" if local_dest else "network-server-symbolic",
             _("To this computer") if local_dest
-            else _("To {host}").format(host=host),
+            else _("To {host}").format(host=self._destination_host_label),
         )
 
         # Compact Cancel / Done (+ optional Show in Files). Not Adw responses

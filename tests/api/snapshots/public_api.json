@@ -15,7 +15,7 @@
     "TerminalSubscription",
     "ValidationReason"
   ],
-  "api_implementation_version": "0.118",
+  "api_implementation_version": "0.119",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -5234,7 +5234,8 @@
       "destination_path",
       "recursive",
       "move",
-      "as_operation"
+      "as_operation",
+      "destination_service_id"
     ],
     "SftpCreateFileRequest": [
       "service_id",

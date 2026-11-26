@@ -5473,7 +5473,11 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** Copy or move a remote SFTP path within one service.
+**Purpose:** Copy or move a remote SFTP path within one service, or to another.
+
+``destination_service_id`` names a second SFTP service (another server,
+or another session on the same one) that receives the copy; the source
+paths stay on ``service_id``. Such a copy always runs as an operation.
 
 **Related methods:** `sftp_copy`
 **Related events:** None
@@ -5486,6 +5490,7 @@ Synthetic representation:
 | `recursive` | `bool` | No | `false` | No |
 | `move` | `bool` | No | `false` | No |
 | `as_operation` | `bool` | No | `false` | No |
+| `destination_service_id` | `Optional[SftpServiceId]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -5493,6 +5498,7 @@ Synthetic representation:
 {
   "as_operation": false,
   "destination_path": {},
+  "destination_service_id": null,
   "move": false,
   "recursive": false,
   "service_id": {},

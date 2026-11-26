@@ -697,6 +697,8 @@ class FilePane(Gtk.Box):
             _("Delete"),
             lambda _button: self._emit_entry_operation("delete"),
         )
+        self._download_button = download_button
+        self._upload_button = upload_button
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
         edit_button.set_visible(False)  # Initially hidden, shown when text file is selected
@@ -2251,8 +2253,9 @@ class FilePane(Gtk.Box):
                 _item(_("Edit"), "edit")
                 if single is not None and not single.is_dir
                 and _is_editable_as_text(single.name) else None,
-                _item(_("Download"), "download") if self._is_remote
-                else _item(_("Upload…"), "upload"),
+                _item(_("Download"), "download") if self._download_available()
+                else _item(_("Upload…"), "upload") if not self._is_remote
+                else None,
             )
             _section(
                 _item(_("Cut"), "cut", "<Primary>x"),
@@ -2436,7 +2439,8 @@ class FilePane(Gtk.Box):
         # For context menu, actions are always enabled since menu items are shown/hidden dynamically
         can_paste = bool(getattr(self, "_can_paste", False))
 
-        _set_enabled("download", self._is_remote and has_selection)
+        can_download = self._download_available()
+        _set_enabled("download", can_download and has_selection)
         _set_enabled("upload", (not self._is_remote) and has_selection)
         _set_enabled("copy", has_selection)
         _set_enabled("cut", has_selection)
@@ -2457,7 +2461,7 @@ class FilePane(Gtk.Box):
         # new_folder is available in context menu only now
 
         # Action bar buttons still use the old logic
-        _set_button("download", self._is_remote and has_selection)
+        _set_button("download", can_download and has_selection)
         _set_button("upload", (not self._is_remote) and has_selection)
         _set_button("copy", has_selection)
         _set_button("cut", has_selection)
@@ -2579,8 +2583,58 @@ class FilePane(Gtk.Box):
     def _on_menu_select_all(self) -> None:
         self._selection_model.select_all()
 
-    def _on_menu_download(self) -> None:
+    def _download_available(self) -> bool:
+        """Download needs this computer in the other pane."""
         if not self._is_remote:
+            return False
+        try:
+            window = self._get_file_manager_window()
+        except Exception:
+            window = None
+        local_pane = getattr(window, "_local_pane", None)
+        if callable(local_pane):
+            return local_pane() is not None
+        return True
+
+    def set_remote(self, is_remote: bool) -> None:
+        """Switch what this pane browses: a server, or this computer.
+
+        The file manager does this when the left pane's location changes; the
+        listing itself follows from the next load.
+        """
+        is_remote = bool(is_remote)
+        if is_remote == self._is_remote:
+            return
+        self._is_remote = is_remote
+        access = getattr(self, "_request_access_button", None)
+        if access is not None:
+            if is_remote:
+                self._request_access_was_visible = access.get_visible()
+                access.set_visible(False)
+            else:
+                access.set_visible(getattr(self, "_request_access_was_visible", True))
+        self._entries = []
+        self._current_path = "/"
+        self.refresh_transfer_actions()
+
+    def refresh_transfer_actions(self) -> None:
+        """Show Upload on this computer's pane, and Download on a server pane
+        whose partner is this computer."""
+        upload = getattr(self, "_upload_button", None)
+        if upload is not None:
+            upload.set_visible(not self._is_remote)
+        download = getattr(self, "_download_button", None)
+        if download is not None:
+            download.set_visible(self._download_available())
+        update = getattr(self, "_update_menu_state", None)
+        if callable(update):
+            try:
+                update()
+            except Exception:
+                logger.debug("Could not refresh pane actions", exc_info=True)
+
+    def _on_menu_download(self) -> None:
+        if not self._download_available():
             return
         entries = self.get_selected_entries()
         if not entries:
@@ -2637,7 +2691,7 @@ class FilePane(Gtk.Box):
             self.show_toast(_("File manager is not available"))
             return
 
-        local_pane = getattr(window, "_left_pane", None)
+        local_pane = window._local_pane()
         if not isinstance(local_pane, FilePane):
             self.show_toast(_("Local pane is unavailable"))
             return
@@ -2689,7 +2743,7 @@ class FilePane(Gtk.Box):
             self.show_toast(_("File manager is not available"))
             return
 
-        local_pane = getattr(window, "_left_pane", None)
+        local_pane = window._local_pane()
         if local_pane is None:
             self.show_toast(_("Local pane is unavailable"))
             return
@@ -2878,7 +2932,11 @@ class FilePane(Gtk.Box):
         
         if self._is_remote:
             # Remote file editing
-            sftp_manager = getattr(window, '_manager', None)
+            manager_for = getattr(window, "_manager_for", None)
+            sftp_manager = (
+                manager_for(self) if callable(manager_for)
+                else getattr(window, '_manager', None)
+            )
             if sftp_manager is None:
                 self.show_toast(_("Cannot edit file - connection not available"))
                 return
@@ -3073,7 +3131,11 @@ class FilePane(Gtk.Box):
             if self._is_remote:
                 file_manager_window = self._get_file_manager_window()
                 if file_manager_window is not None:
-                    sftp_manager = getattr(file_manager_window, '_manager', None)
+                    manager_for = getattr(file_manager_window, "_manager_for", None)
+                    sftp_manager = (
+                        manager_for(self) if callable(manager_for)
+                        else getattr(file_manager_window, '_manager', None)
+                    )
                     logger.debug(f"FilePane: Getting SFTP manager for properties dialog: is_remote={self._is_remote}, file_manager_window={file_manager_window}, manager={sftp_manager}")
                 else:
                     logger.debug(f"FilePane: Could not find FileManagerWindow for remote pane")
@@ -3720,7 +3782,27 @@ class FilePane(Gtk.Box):
         elif not self._is_remote and source_pane._is_remote:
             # Remote to local - download
             logger.debug("Starting download operation")
-            self._handle_download_from_drag(resolved_items, target_folder)
+            self._handle_download_from_drag(resolved_items, target_folder, source_pane)
+        elif self._is_remote and source_pane._is_remote and source_pane is not self:
+            # Server to server (#1356): each pane browses a server of its own,
+            # or the same one in two places.
+            window = self._get_file_manager_window()
+            if not isinstance(window, _file_manager_window_cls()):
+                logger.debug("Drop rejected: file manager window unavailable")
+                return False
+            entries = [entry for _source_file_path, entry in resolved_items]
+            destination = self._current_path
+            if target_folder is not None:
+                destination = posixpath.join(self._current_path, target_folder.name)
+            move = not self._drag_copy_modifier_pressed(drop_target)
+            window._perform_pane_to_pane_remote_operation(
+                entries,
+                getattr(source_pane, "_current_path", "") or "/",
+                destination,
+                move,
+                source_pane=source_pane,
+                destination_pane=self,
+            )
         elif source_pane == self:
             if target_folder is None:
                 logger.debug("Drop rejected: no target folder within the same pane")
@@ -3737,7 +3819,8 @@ class FilePane(Gtk.Box):
                 # behave exactly like cut/paste within the remote pane.
                 destination = posixpath.join(self._current_path, target_folder.name)
                 window._perform_remote_clipboard_operation(
-                    entries, self._current_path, destination, move
+                    entries, self._current_path, destination, move,
+                    **({"pane": self} if self is getattr(window, "_left_pane", None) else {}),
                 )
             else:
                 # Local to local (same pane)
@@ -3792,6 +3875,7 @@ class FilePane(Gtk.Box):
                     window._start_transfer_batch(
                         "upload",
                         items,
+                        remote_pane=self,
                         refresh_remote=self,
                         highlight_name=(
                             None if target_folder is not None
@@ -3801,7 +3885,9 @@ class FilePane(Gtk.Box):
                 except Exception as e:
                     self.show_toast(_("Upload failed: {error}").format(error=e))
 
-            window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
+            window._check_file_conflicts(
+                files_to_transfer, "upload", _proceed_with_upload, remote_pane=self
+            )
 
         except Exception as e:
             self.show_toast(_("Upload failed: {error}").format(error=e))
@@ -3810,6 +3896,7 @@ class FilePane(Gtk.Box):
         self,
         items: List[Tuple[str, FileEntry]],
         target_folder: Optional[FileEntry] = None,
+        source_pane: Optional["FilePane"] = None,
     ) -> None:
         """Handle download operation from drag and drop.
 
@@ -3849,6 +3936,7 @@ class FilePane(Gtk.Box):
                     window._start_transfer_batch(
                         "download",
                         items,
+                        remote_pane=source_pane,
                         refresh_local_path=str(self._current_path),
                         highlight_name=(
                             None if target_folder is not None
@@ -3858,7 +3946,10 @@ class FilePane(Gtk.Box):
                 except Exception as e:
                     self.show_toast(_("Download failed: {error}").format(error=e))
 
-            window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
+            window._check_file_conflicts(
+                files_to_transfer, "download", _proceed_with_download,
+                remote_pane=source_pane,
+            )
 
         except Exception as e:
             self.show_toast(_("Download failed: {error}").format(error=e))
