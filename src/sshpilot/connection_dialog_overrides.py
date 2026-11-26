@@ -118,14 +118,15 @@ def _normalized(keyword: str, value: str) -> str:
 
 
 def row_mark(
-    row_name: str, keyword: str, answer
+    row_name: str, keyword: str, answer, *, empty: bool = False
 ) -> Tuple[Optional[str], str, str, str]:
     """``(kind, tag, note, style)`` for one editor row from OpenSSH's answer.
 
     *kind* is :data:`OVERRIDDEN`, :data:`REJECTED`, :data:`GLOBAL` or None;
     *tag* the short text beside the row (Advanced Configuration's), *note*
     what OpenSSH uses instead and from where, *style* the tag's colour
-    (Advanced Configuration's for the same state).
+    (Advanced Configuration's for the same state). *empty*: a text row
+    the user left empty, which shows the value it gets in its tag.
     """
     from .connection_dialog_answer import NO_EFFECT, OVERRIDDEN as SETTINGS, REJECTED as BAD
     from .gtk import advanced_config_messages as messages
@@ -160,6 +161,15 @@ def row_mark(
     # the inherited value themselves; a switch or a selector shows a state
     # of its own, so the block that decides another one is named.
     used = answer.used(keyword)
+    # An entry row cannot show a placeholder (libadwaita draws it over the
+    # title), so an empty text row's tag says what it gets.
+    if empty and used and row_name in TEXT_ROWS:
+        # Translators: an empty field and what OpenSSH uses for it, e.g.
+        # "Not set (22, OpenSSH default)" or "Not set (alice, from Host *)".
+        tag = _("Not set ({value}, {source})").format(
+            value=used, source=answer.source_text(keyword)
+        )
+        return GLOBAL, tag, answer.inherited_note(keyword), "muted"
     if not used or answer.is_default(keyword) or row_name in AUTH_ROWS:
         return None, "", "", ""
     shown = SWITCH_OFF_VALUE.get(row_name)
@@ -256,7 +266,10 @@ class ConnectionDialogOverridesMixin:
             if row is None:
                 continue
             try:
-                kind, tag, note, style = row_mark(row_name, keyword, answer)
+                empty = row_name in TEXT_ROWS and not row.get_text().strip()
+                kind, tag, note, style = row_mark(
+                    row_name, keyword, answer, empty=empty
+                )
                 self._mark_row_override(row_name, row, kind, tag, note, style)
             except Exception:
                 logger.debug("Could not mark %s", row_name, exc_info=True)

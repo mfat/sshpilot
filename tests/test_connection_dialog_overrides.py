@@ -150,6 +150,19 @@ def test_a_default_needs_no_mark(tmp_path):
 
 
 @needs_ssh
+def test_an_emptied_text_field_shows_the_value_it_gets_in_its_tag(tmp_path):
+    # Entry rows cannot show a placeholder cleanly, so the tag carries it.
+    answer = _answer(tmp_path, HOST + "\nHost *\n    User shared\n")
+    kind, tag, note, style = row_mark("port_row", "Port", answer, empty=True)
+    assert (kind, tag, style) == (GLOBAL, "Not set (22, OpenSSH default)", "muted")
+    assert note == "OpenSSH default: 22"
+    kind, tag, _note, _style = row_mark("username_row", "User", answer, empty=True)
+    assert tag == "Not set (shared, from Host *)"
+    # Not for switches or selectors, whose state shows a value of its own.
+    assert row_mark("x11_row", "ForwardX11", answer, empty=True)[0] is None
+
+
+@needs_ssh
 def test_a_switch_that_is_off_is_pointed_out_only_when_the_value_differs(tmp_path):
     on = _answer(tmp_path / "on", HOST + "\nHost *\n    ForwardX11 yes\n")
     assert row_mark("x11_row", "ForwardX11", on)[0] == GLOBAL

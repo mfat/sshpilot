@@ -131,18 +131,6 @@ def _entry_row_text(row):
     return None
 
 
-def _set_inherited_hint(row, value):
-    """The value an empty row inherits, as its placeholder (shown while the
-    empty row has focus); cleared with ''."""
-    text = _entry_row_text(row)
-    if text is None:
-        return
-    try:
-        text.set_placeholder_text(value or None)
-    except Exception:
-        logger.debug("Could not set an inherited hint", exc_info=True)
-
-
 def _set_entry_row_hint(row, placeholder="", *, digits=False, max_length=0):
     text = _entry_row_text(row)
     if text is None:
@@ -2828,7 +2816,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 continue
             showing = row_name in handlers
             if answer.sets(directive) and not showing:
-                _set_inherited_hint(row, '')
                 continue
             value = self._fillable_effective_value(ssh_key, answer.used(ssh_key))
             if row_name == 'hostname_row' and value in aliases:
@@ -2857,7 +2844,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     self._show_inherited_value(row_name, row, value)
                     filled = True
                 else:
-                    _set_inherited_hint(row, value)
+                    # The row's tag shows the value (row_mark, empty=True).
                     self._set_row_inherited_note(row, answer.inherited_note(ssh_key))
             except Exception:
                 logger.debug("Could not show inherited value for %s", row_name, exc_info=True)
