@@ -153,3 +153,111 @@ def test_cleanup_closes_every_open_dialog(load_file_manager_window, monkeypatch)
 
     assert all(dialog.closed for dialog in window.created)
     assert window._transfer_dialogs == [] and window._aggregate_dialog is None
+
+
+class _BackgroundDialog(_Dialog):
+    """As the real dialog: closing a running transfer's details only hides
+    them, and the dialog knows its own futures."""
+
+    def __init__(self, operation_type, total_files):
+        super().__init__(operation_type, total_files)
+        self._futures = []
+
+    def set_future(self, future):
+        if future not in self._futures:
+            self._futures.append(future)
+
+    def close(self):
+        self.closed = True
+
+    def is_reusable(self):
+        return not (self.is_cancelled or self.completions)
+
+    def mark_cancelled(self):
+        self.is_cancelled = True
+
+
+def _background_window(window_module, monkeypatch):
+    window = _window(window_module, monkeypatch)
+
+    def _present(operation_type, *, total_files, filename, **_panes):
+        dialog = _BackgroundDialog(operation_type, total_files)
+        window.created.append(dialog)
+        return dialog
+
+    window._present_progress_dialog = _present
+    return window
+
+
+def test_replaced_transfer_still_reports_success(load_file_manager_window, monkeypatch):
+    """A copy still running when another kind of operation takes the dialog
+    slot must finish in its own dialog, not show as running for good."""
+    window_module = load_file_manager_window()
+    window = _background_window(window_module, monkeypatch)
+    copies = [Future(), Future()]
+    for future in copies:
+        window._show_progress_dialog("copy", "big", future, total_files=2)
+    move = Future()
+    window._show_progress_dialog("move", "other", move, total_files=1)
+    copy_dialog, move_dialog = window.created
+
+    copies[0].set_result(None)
+    assert copy_dialog.completions == []
+    copies[1].set_result(None)
+
+    assert copy_dialog.completions == [(True, None)]
+    assert copy_dialog.files_completed == 2
+    assert move_dialog.completions == [] and move_dialog.files_completed == 0
+
+    move.set_result(None)
+    assert move_dialog.completions == [(True, None)]
+
+
+def test_replaced_transfer_still_reports_failure(load_file_manager_window, monkeypatch):
+    window_module = load_file_manager_window()
+    window = _background_window(window_module, monkeypatch)
+    copies = [Future(), Future()]
+    for future in copies:
+        window._show_progress_dialog("copy", "big", future, total_files=2)
+    window._show_progress_dialog("move", "other", Future(), total_files=1)
+    copy_dialog, move_dialog = window.created
+
+    copies[0].set_result(None)
+    copies[1].set_exception(OSError("disk full"))
+
+    assert len(copy_dialog.completions) == 1
+    success, message = copy_dialog.completions[0]
+    assert success is False and "1 of 2" in message
+    assert move_dialog.completions == []
+
+
+def test_replaced_transfer_on_another_server_reports_too(load_file_manager_window, monkeypatch):
+    """The same kind of operation on a second server also gets its own dialog."""
+    window_module = load_file_manager_window()
+    window = _background_window(window_module, monkeypatch)
+    first = Future()
+    window._show_progress_dialog("copy", "a", first, total_files=1)
+    other = _Manager()
+    second = Future()
+    window._show_progress_dialog("copy", "b", second, total_files=1, manager=other)
+    first_dialog, second_dialog = window.created
+
+    # The first transfer's listeners are gone: it no longer feeds the new dialog.
+    assert window._manager.handlers == {}
+
+    first.set_exception(OSError("gone"))
+    assert first_dialog.completions == [(False, "gone")]
+    assert second_dialog.completions == []
+
+
+def test_replaced_transfer_cancel_is_not_a_failure(load_file_manager_window, monkeypatch):
+    window_module = load_file_manager_window()
+    window = _background_window(window_module, monkeypatch)
+    copy = Future()
+    window._show_progress_dialog("copy", "big", copy, total_files=1)
+    window._show_progress_dialog("move", "other", Future(), total_files=1)
+    copy_dialog = window.created[0]
+
+    copy.set_exception(window_module.TransferCancelledException("cancelled"))
+
+    assert copy_dialog.is_cancelled and copy_dialog.completions == []

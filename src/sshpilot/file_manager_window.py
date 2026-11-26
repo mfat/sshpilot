@@ -3278,13 +3278,16 @@ class FileManagerWindow(Adw.Window):
 
         future.add_done_callback(_on_done)
 
-    def _complete_delete_progress(self, future_result: Future) -> None:
+    def _complete_delete_progress(self, future_result: Future, dialog=None) -> None:
         """Drive delete completion UI from a remove / remove_many future.
 
         ``remove_many`` resolves with ``(failures, completed)`` even on cancel,
         so a bare ``exception()`` check would always report success.
+        *dialog* is the delete's own dialog when a newer operation has
+        replaced it as the current one.
         """
-        dialog = self._aggregate_dialog
+        if dialog is None:
+            dialog = self._aggregate_dialog
         if dialog is None or dialog.is_cancelled or getattr(dialog, "_closed", False):
             return
         try:
@@ -4047,6 +4050,69 @@ class FileManagerWindow(Adw.Window):
             size /= 1024
         return f"{size:.1f} TB"
 
+    def _finish_replaced_transfer(self, dialog, future_result: Future, filename: str) -> None:
+        """Settle one future of a transfer whose dialog is no longer current.
+
+        Starting another kind of operation (or one on another server) while
+        a copy, move or delete runs gives the new one the window's dialog
+        slot; the older transfer carries on in the background. Its outcome
+        is worked out from the dialog's own futures, since the window's
+        bookkeeping now belongs to the newer transfer.
+        """
+        if future_result.cancelled():
+            return
+        if dialog.operation_type == "delete":
+            self._complete_delete_progress(future_result, dialog)
+            return
+        exception = future_result.exception()
+        if isinstance(exception, TransferCancelledException):
+            # The daemon confirmed the cancel: the backend reports that as
+            # an error.
+            dialog.mark_cancelled()
+            return
+        if dialog.is_cancelled:
+            return
+        failed = getattr(dialog, "_failed_files", None)
+        if exception is not None:
+            logger.error("Transfer failed for %s: %s", filename, exception)
+            if failed is not None:
+                failed.append((filename, str(exception)))
+        else:
+            dialog.increment_file_count()
+        if any(f is not None and not f.done() for f in getattr(dialog, "_futures", [])):
+            return
+        if not failed:
+            if exception is None:
+                dialog.show_completion(success=True)
+            else:
+                dialog.show_completion(success=False, error_message=str(exception))
+            return
+        total = dialog.total_files
+        if len(failed) >= total:
+            dialog.show_completion(success=False, error_message=failed[0][1])
+            return
+        dialog.show_completion(
+            success=False,
+            error_message=ngettext(
+                "{count} of {total} file could not be transferred",
+                "{count} of {total} files could not be transferred",
+                total,
+            ).format(count=len(failed), total=total),
+        )
+
+    def _disconnect_progress_handlers(self) -> None:
+        """Stop listening for the transfer that had the dialog slot."""
+        manager = self.__dict__.get("_progress_manager")
+        for name in ("_progress_handler_id", "_progress_bytes_handler_id"):
+            handler_id = self.__dict__.get(name)
+            if handler_id and manager is not None:
+                try:
+                    manager.disconnect(handler_id)
+                except (TypeError, RuntimeError, AttributeError):
+                    pass
+            setattr(self, name, None)
+        self._progress_manager = None
+
     def _reset_batch_progress_state(self) -> None:
         self._batch_expected: Dict[str, Optional[int]] = {}
         self._batch_active_bytes: Dict[str, Tuple[int, int]] = {}
@@ -4485,13 +4551,14 @@ class FileManagerWindow(Adw.Window):
         # The dialog this transfer belongs to. A later transfer may have its
         # own by the time this one ends.
         owner_dialog = self._aggregate_dialog
+        owner_filename = filename
 
         # Only connect progress signal handler when creating a new dialog
         # When reusing, the handler is already connected
         if not reuse_dialog:
-            # Store references for cleanup
-            self._progress_handler_id = None
-            self._progress_bytes_handler_id = None
+            # A transfer this one replaced must not keep feeding its
+            # progress into the new dialog.
+            self._disconnect_progress_handlers()
             self._active_futures = []  # Track all active futures for multi-file transfers
             self._future_to_filename = {}  # Map futures to filenames for progress tracking
             self._reset_batch_progress_state()
@@ -4623,14 +4690,13 @@ class FileManagerWindow(Adw.Window):
 
                 # Update dialog to show completion
                 if owner_dialog is not None and self._aggregate_dialog is not owner_dialog:
-                    # Its dialog was retired (cancelled or dismissed) and a
-                    # newer transfer has its own: that one is not ours to
-                    # mark. Only confirm our own cancel.
+                    # A newer transfer has its own dialog: that one is not
+                    # ours to mark. Ours still has to hear how this ended,
+                    # or it shows as running for good.
                     try:
-                        if not future_result.cancelled() and isinstance(
-                            future_result.exception(), TransferCancelledException
-                        ):
-                            owner_dialog.mark_cancelled()
+                        self._finish_replaced_transfer(
+                            owner_dialog, future_result, owner_filename
+                        )
                     except (CancelledError, AttributeError, RuntimeError, GLib.Error):
                         pass
                 elif self._aggregate_dialog:
