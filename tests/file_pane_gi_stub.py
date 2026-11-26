@@ -201,6 +201,7 @@ def _install_gi_stub(monkeypatch):
         SUPER_MASK=1 << 2,
         SHIFT_MASK=1 << 3,
     )
+    gdk_module.DragAction = types.SimpleNamespace(COPY=1 << 0, MOVE=1 << 1)
     gdk_module.keyval_to_unicode = lambda value: value
 
 
