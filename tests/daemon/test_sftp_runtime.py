@@ -326,7 +326,7 @@ def test_remote_copy_uses_server_side_copy_and_falls_back(copy_error):
     # The server copies into a staging sibling, published as /copy.txt.
     [(copied_from, staged)] = client.copy_data_calls
     assert copied_from == "/source.txt"
-    assert staged.startswith("/.copy.txt.sshpilot-") and staged.endswith(".part")
+    assert staged.startswith("/.sshpilot-") and staged.endswith(".part")
     assert set(client.files) == {"/source.txt", "/copy.txt"}
     assert client.files["/copy.txt"] == b"payload"
 

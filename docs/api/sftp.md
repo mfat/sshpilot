@@ -36,8 +36,9 @@ reports byte progress and can be cancelled between blocks (not during a
 server-side `copy-data`). A cancelled or failed single-file copy leaves no
 partial destination. Both report as `sftp_copy_tree`.
 
-Every copied file is written to a hidden sibling unique to that copy
-(`.<name>.sshpilot-<id>.part`), created exclusively, and published under its
+Every copied file is written to a hidden sibling unique to that copy,
+`.sshpilot-<id>.part` (a fixed length whatever the file is called, so a
+255-byte name still copies), created exclusively, and published under its
 name with a plain SFTP `RENAME`, which never replaces a file. A file another
 client puts at the destination meanwhile is never truncated, replaced or
 removed: the copy fails as `destination_already_exists`, and cleanup only

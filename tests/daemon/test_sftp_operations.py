@@ -96,6 +96,8 @@ class _FsClient:
         # across filesystems; None renames. Publishing a staged copy (a
         # sibling in the same folder) still renames.
         self.rename_error = None
+        # Bytes a name may have, as a filesystem's NAME_MAX; None is no limit.
+        self.name_max = None
 
     def _attr(self, path, *, follow=False):
         if follow and path in self.link_targets:
@@ -155,7 +157,15 @@ class _FsClient:
         self.dirs.pop(path, None)
         self._unregister_child(path)
 
+    def _check_name(self, path):
+        if self.name_max is not None and (
+            len(posixpath.basename(path).encode()) > self.name_max
+        ):
+            # ENAMETOOLONG, which OpenSSH's sftp-server answers as a failure.
+            raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE)
+
     def mkdir(self, path):
+        self._check_name(path)
         self.dirs.setdefault(path, set())
         self._register_child(path)
 
@@ -166,11 +176,14 @@ class _FsClient:
             self.dirs[parent].add(name)
 
     def open(self, path, mode):
+        if mode != "rb":
+            self._check_name(path)
         return _FileHandle(self, path, mode)
 
     def rename(self, old, new):
         """Plain SFTP RENAME: never replaces an existing destination."""
         self.rename_calls.append((old, new))
+        self._check_name(new)
         if self.rename_error is not None and not _is_staging(old):
             raise sftp_proto.SFTPError(self.rename_error)
         if not (old in self.files or old in self.dirs or old in self.links):
@@ -834,4 +847,58 @@ def test_cancelled_move_keeps_both_the_source_and_their_file():
     assert done.state is OperationState.CANCELLED
     assert fs.files["/copy"] == b"theirs"
     assert fs.files["/big"] == content
+    assert fs.staging_files() == []
+
+
+_LONGEST_NAME = "n" * 251 + ".txt"  # 255 bytes, the usual NAME_MAX
+
+
+def test_copy_of_a_file_with_a_255_byte_name_succeeds():
+    """The staging sibling has a fixed-length name: one built from the
+    file's own name would exceed NAME_MAX and the copy would fail."""
+    assert len(_LONGEST_NAME.encode()) == 255
+    fs = _FsClient()
+    fs.name_max = 255
+    fs.add_dir("/", {"src", "dst"})
+    fs.add_dir("/src", {_LONGEST_NAME})
+    fs.add_dir("/dst", set())
+    fs.add_file("/src/" + _LONGEST_NAME, b"payload")
+    runtime, ops, summary = _make_runtime(fs)
+
+    started = runtime.start_copy(
+        SftpCopyRequest(
+            summary.id, "/src/" + _LONGEST_NAME, "/dst/" + _LONGEST_NAME,
+            as_operation=True,
+        ),
+        client_id=OWNER,
+    )
+    done = _await_terminal(ops, started.operation_id)
+
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert fs.files["/dst/" + _LONGEST_NAME] == b"payload"
+    assert fs.staging_files() == []
+
+
+def test_move_falling_back_to_copy_with_a_255_byte_name_succeeds():
+    fs = _FsClient()
+    fs.name_max = 255
+    fs.rename_error = sftp_proto.FX_FAILURE  # another filesystem: copy
+    fs.add_dir("/", {"src", "dst"})
+    fs.add_dir("/src", {"tree"})
+    fs.add_dir("/src/tree", {_LONGEST_NAME})
+    fs.add_dir("/dst", set())
+    fs.add_file("/src/tree/" + _LONGEST_NAME, b"payload")
+    runtime, ops, summary = _make_runtime(fs)
+
+    started = runtime.start_copy(
+        SftpCopyRequest(
+            summary.id, "/src/tree", "/dst/tree", recursive=True, move=True,
+        ),
+        client_id=OWNER,
+    )
+    done = _await_terminal(ops, started.operation_id)
+
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert fs.files["/dst/tree/" + _LONGEST_NAME] == b"payload"
+    assert "/src/tree/" + _LONGEST_NAME not in fs.files
     assert fs.staging_files() == []

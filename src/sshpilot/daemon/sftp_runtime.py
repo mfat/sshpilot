@@ -658,9 +658,14 @@ _COPY_BLOCK = 1024 * 1024
 
 def _staging_path(destination: str) -> str:
     """A hidden sibling of *destination*, unique to one copy, that the copy
-    writes before publishing it under the real name."""
-    directory, name = posixpath.split(destination)
-    return posixpath.join(directory, f".{name}.sshpilot-{uuid.uuid4().hex}.part")
+    writes before publishing it under the real name.
+
+    The name has a fixed length (47 bytes) and never includes the
+    destination's own: a valid 255-byte name must still copy on a
+    filesystem that limits a name to 255 bytes.
+    """
+    directory = posixpath.dirname(destination)
+    return posixpath.join(directory, f".sshpilot-{uuid.uuid4().hex}.part")
 
 
 def _server_side_copy(client: Any, source_file: Any, destination_file: Any) -> bool:
