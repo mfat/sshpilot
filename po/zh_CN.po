@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 10:13+0330\n"
+"POT-Creation-Date: 2026-11-26 10:34+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -117,16 +117,16 @@ msgstr "打开连接？"
 #: src/sshpilot/connection_dialog_port_forwarding.py:239
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
-#: src/sshpilot/file_manager/pane.py:1017
-#: src/sshpilot/file_manager/pane.py:2805
-#: src/sshpilot/file_manager/pane.py:3466
+#: src/sshpilot/file_manager/pane.py:1028
+#: src/sshpilot/file_manager/pane.py:2859
+#: src/sshpilot/file_manager/pane.py:3520
 #: src/sshpilot/file_manager/progress_dialog.py:312
-#: src/sshpilot/file_manager_window.py:1847
-#: src/sshpilot/file_manager_window.py:2179
-#: src/sshpilot/file_manager_window.py:2240
-#: src/sshpilot/file_manager_window.py:2327
-#: src/sshpilot/file_manager_window.py:2407
-#: src/sshpilot/file_manager_window.py:3271 src/sshpilot/key_sources.py:274
+#: src/sshpilot/file_manager_window.py:1919
+#: src/sshpilot/file_manager_window.py:2251
+#: src/sshpilot/file_manager_window.py:2312
+#: src/sshpilot/file_manager_window.py:2399
+#: src/sshpilot/file_manager_window.py:2479
+#: src/sshpilot/file_manager_window.py:3343 src/sshpilot/key_sources.py:274
 #: src/sshpilot/login_profile_dialogs.py:92
 #: src/sshpilot/login_profile_dialogs.py:162
 #: src/sshpilot/login_profile_dialogs.py:600
@@ -219,8 +219,8 @@ msgstr ""
 #: src/sshpilot/actions.py:522 src/sshpilot/actions.py:916
 #: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:6197
 #: src/sshpilot/daemon_quit_policy.py:535 src/sshpilot/file_manager/pane.py:58
-#: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2806
-#: src/sshpilot/file_manager/pane.py:3226
+#: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2860
+#: src/sshpilot/file_manager/pane.py:3280
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:648 src/sshpilot/preferences.py:4132
 #: src/sshpilot/preferences.py:4255 src/sshpilot/preferences.py:4667
@@ -291,8 +291,8 @@ msgstr "您确定要删除所选的 {count} 个空分组吗？"
 #: src/sshpilot/actions.py:707 src/sshpilot/actions.py:1107
 #: src/sshpilot/actions.py:1162 src/sshpilot/authorized_keys_window.py:428
 #: src/sshpilot/command_blocks.py:2400 src/sshpilot/file_manager/pane.py:705
-#: src/sshpilot/file_manager/pane.py:2282
-#: src/sshpilot/file_manager_window.py:2408
+#: src/sshpilot/file_manager/pane.py:2295
+#: src/sshpilot/file_manager_window.py:2480
 #: src/sshpilot/login_profile_dialogs.py:860
 #: src/sshpilot/login_profile_dialogs.py:870
 #: src/sshpilot/login_profile_dialogs.py:1058 src/sshpilot/sidebar.py:5347
@@ -408,7 +408,7 @@ msgstr "打开会话"
 msgid "Select a session to open:"
 msgstr "选择要打开的会话："
 
-#: src/sshpilot/actions.py:944 src/sshpilot/file_manager/pane.py:2264
+#: src/sshpilot/actions.py:944 src/sshpilot/file_manager/pane.py:2276
 #: src/sshpilot/preferences.py:2178
 msgid "Open"
 msgstr "打开"
@@ -449,7 +449,7 @@ msgstr "固定到起始页"
 
 #: src/sshpilot/actions.py:1099 src/sshpilot/actions.py:1130
 #: src/sshpilot/file_manager/pane.py:699
-#: src/sshpilot/file_manager_window.py:2328
+#: src/sshpilot/file_manager_window.py:2400
 msgid "Rename"
 msgstr "重命名"
 
@@ -485,8 +485,8 @@ msgid "SSH Pilot {version} is available!"
 msgstr "SSH Pilot {version} 现已可用！"
 
 #: src/sshpilot/actions.py:1242 src/sshpilot/file_manager/pane.py:663
-#: src/sshpilot/file_manager/pane.py:2269
-#: src/sshpilot/file_manager/pane.py:3469 src/sshpilot/scp_window.py:432
+#: src/sshpilot/file_manager/pane.py:2281
+#: src/sshpilot/file_manager/pane.py:3523 src/sshpilot/scp_window.py:432
 #: src/sshpilot/resources/ui/scp_download_window.ui:31
 msgid "Download"
 msgstr "下载"
@@ -683,8 +683,8 @@ msgid "Error loading authorized_keys"
 msgstr "加载 authorized_keys 出错"
 
 #: src/sshpilot/authorized_keys_window.py:293
-#: src/sshpilot/file_manager/pane.py:3261
-#: src/sshpilot/file_manager_window.py:483 src/sshpilot/rdp_tab.py:159
+#: src/sshpilot/file_manager/pane.py:3315
+#: src/sshpilot/file_manager_window.py:503 src/sshpilot/rdp_tab.py:159
 #: src/sshpilot/rdp_tab.py:245 src/sshpilot/rdp_tab.py:469
 #: src/sshpilot/scp_window.py:1009 src/sshpilot/scp_window.py:1106
 msgid "Connecting…"
@@ -696,8 +696,8 @@ msgid "Failed to connect: {error}"
 msgstr "连接失败：{error}"
 
 #: src/sshpilot/authorized_keys_window.py:307
-#: src/sshpilot/file_manager_window.py:1344
-#: src/sshpilot/file_manager_window.py:1394 src/sshpilot/sidebar.py:2789
+#: src/sshpilot/file_manager_window.py:1416
+#: src/sshpilot/file_manager_window.py:1466 src/sshpilot/sidebar.py:2789
 msgid "Connection failed"
 msgstr "连接失败"
 
@@ -1438,7 +1438,7 @@ msgstr "标签（逗号分隔）"
 msgid "(No folder)"
 msgstr "（无文件夹）"
 
-#: src/sshpilot/command_blocks.py:975 src/sshpilot/file_manager/pane.py:2918
+#: src/sshpilot/command_blocks.py:975 src/sshpilot/file_manager/pane.py:2972
 #: src/sshpilot/file_manager/properties_dialog.py:35
 #: src/sshpilot/window_dialogs.py:1211
 msgid "Folder"
@@ -1586,7 +1586,7 @@ msgid "No connections in group can run commands"
 msgstr "分组中无连接"
 
 #: src/sshpilot/command_blocks.py:2364 src/sshpilot/file_manager/pane.py:693
-#: src/sshpilot/file_manager/pane.py:2266
+#: src/sshpilot/file_manager/pane.py:2278
 #: src/sshpilot/login_profile_dialogs.py:1053 src/sshpilot/macos_menubar.py:76
 #: src/sshpilot/sidebar.py:5250
 msgid "Edit"
@@ -1646,13 +1646,13 @@ msgstr "命令"
 #. Radio buttons for startup behavior
 #: src/sshpilot/command_progress_dialog.py:153
 #: src/sshpilot/command_progress_dialog.py:167
-#: src/sshpilot/file_manager/pane.py:745 src/sshpilot/file_manager/pane.py:2579
+#: src/sshpilot/file_manager/pane.py:756 src/sshpilot/file_manager/pane.py:2595
 #: src/sshpilot/preferences.py:1529
 msgid "Show Terminal"
 msgstr "显示终端"
 
 #: src/sshpilot/command_progress_dialog.py:167
-#: src/sshpilot/file_manager/pane.py:2579
+#: src/sshpilot/file_manager/pane.py:2595
 msgid "Hide Terminal"
 msgstr "隐藏终端"
 
@@ -3042,7 +3042,7 @@ msgstr "端口转发规则编辑器"
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:194
 #: src/sshpilot/file_manager/pane.py:436
-#: src/sshpilot/file_manager_window.py:559 src/sshpilot/forward_rule_row.py:90
+#: src/sshpilot/file_manager_window.py:579 src/sshpilot/forward_rule_row.py:90
 #: src/sshpilot/plugins/builtin/docker_manager/__init__.py:50
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:769
 #: src/sshpilot/preferences.py:3235
@@ -3465,15 +3465,15 @@ msgid "Delete failed"
 msgstr "移除失败"
 
 #: src/sshpilot/daemon_sftp_backend.py:1122
-#: src/sshpilot/file_manager_window.py:3773
-#: src/sshpilot/file_manager_window.py:3963
+#: src/sshpilot/file_manager_window.py:3845
+#: src/sshpilot/file_manager_window.py:4035
 #, python-brace-format
 msgid "Transferred {done} of {total}"
 msgstr "{done} / {total} 个文件"
 
 #: src/sshpilot/daemon_sftp_backend.py:1131
-#: src/sshpilot/file_manager_window.py:3778
-#: src/sshpilot/file_manager_window.py:3969
+#: src/sshpilot/file_manager_window.py:3850
+#: src/sshpilot/file_manager_window.py:4041
 #, python-brace-format
 msgid "Transferred {size}"
 msgstr "已传输 {size}"
@@ -3560,7 +3560,7 @@ msgstr ""
 "未在传统模式下打开连接。"
 
 #: src/sshpilot/file_manager/format_utils.py:17
-#: src/sshpilot/file_manager/pane.py:3109
+#: src/sshpilot/file_manager/pane.py:3163
 #, python-brace-format
 msgid "{count} item"
 msgid_plural "{count} items"
@@ -3580,7 +3580,7 @@ msgstr "重试"
 msgid "Upload"
 msgstr "上传"
 
-#: src/sshpilot/file_manager/pane.py:675 src/sshpilot/file_manager/pane.py:2275
+#: src/sshpilot/file_manager/pane.py:675 src/sshpilot/file_manager/pane.py:2288
 #: src/sshpilot/key_sources.py:275 src/sshpilot/macos_menubar.py:72
 #: src/sshpilot/terminal.py:1252 src/sshpilot/terminal.py:3642
 #: src/sshpilot/window_dialogs.py:3598
@@ -3588,39 +3588,43 @@ msgstr "上传"
 msgid "Copy"
 msgstr "复制"
 
-#: src/sshpilot/file_manager/pane.py:681 src/sshpilot/file_manager/pane.py:2274
+#: src/sshpilot/file_manager/pane.py:681 src/sshpilot/file_manager/pane.py:2287
 #: src/sshpilot/macos_menubar.py:71
 msgid "Cut"
 msgstr "剪切"
 
-#: src/sshpilot/file_manager/pane.py:687 src/sshpilot/file_manager/pane.py:2242
+#: src/sshpilot/file_manager/pane.py:687 src/sshpilot/file_manager/pane.py:2254
 #: src/sshpilot/macos_menubar.py:73
 msgid "Paste"
 msgstr "粘贴"
 
-#: src/sshpilot/file_manager/pane.py:720 src/sshpilot/file_manager/pane.py:726
-#: src/sshpilot/file_manager/pane.py:4116
+#: src/sshpilot/file_manager/pane.py:713 src/sshpilot/file_manager/pane.py:2283
+msgid "Copy to Other Pane"
+msgstr "复制到另一个窗格"
+
+#: src/sshpilot/file_manager/pane.py:730 src/sshpilot/file_manager/pane.py:736
+#: src/sshpilot/file_manager/pane.py:4170
 msgid "Request Access"
 msgstr "请求访问权限"
 
-#: src/sshpilot/file_manager/pane.py:1012
+#: src/sshpilot/file_manager/pane.py:1023
 msgid "Select Items Matching"
 msgstr "选择匹配的项"
 
-#: src/sshpilot/file_manager/pane.py:1014
+#: src/sshpilot/file_manager/pane.py:1025
 msgid "Pattern, e.g. *.txt"
 msgstr "模式，例如 *.txt"
 
-#: src/sshpilot/file_manager/pane.py:1018
+#: src/sshpilot/file_manager/pane.py:1029
 #: src/sshpilot/resources/ui/monospace_font_dialog.ui:34
 msgid "Select"
 msgstr "选择"
 
-#: src/sshpilot/file_manager/pane.py:1027
+#: src/sshpilot/file_manager/pane.py:1038
 msgid "No items match"
 msgstr "下一个匹配项"
 
-#: src/sshpilot/file_manager/pane.py:1155
+#: src/sshpilot/file_manager/pane.py:1166
 #: src/sshpilot/file_manager/pane_controls.py:136
 #: src/sshpilot/login_profile_dialogs.py:221
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:183
@@ -3630,287 +3634,291 @@ msgstr "下一个匹配项"
 msgid "Name"
 msgstr "名称"
 
-#: src/sshpilot/file_manager/pane.py:1157
+#: src/sshpilot/file_manager/pane.py:1168
 #: src/sshpilot/file_manager/pane_controls.py:137
 msgid "Size"
 msgstr "大小"
 
-#: src/sshpilot/file_manager/pane.py:1160
+#: src/sshpilot/file_manager/pane.py:1171
 #: src/sshpilot/file_manager/pane_controls.py:138
 #: src/sshpilot/file_manager/properties_dialog.py:464
 msgid "Modified"
 msgstr "修改时间"
 
-#: src/sshpilot/file_manager/pane.py:2248
-#: src/sshpilot/file_manager_window.py:2175
-#: src/sshpilot/file_manager_window.py:2177
+#: src/sshpilot/file_manager/pane.py:2260
+#: src/sshpilot/file_manager_window.py:2247
+#: src/sshpilot/file_manager_window.py:2249
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:12
 msgid "New Folder"
 msgstr "新建文件夹"
 
-#: src/sshpilot/file_manager/pane.py:2249
-#: src/sshpilot/file_manager_window.py:2236
+#: src/sshpilot/file_manager/pane.py:2261
+#: src/sshpilot/file_manager_window.py:2308
 msgid "New File"
 msgstr "新建文件夹"
 
-#: src/sshpilot/file_manager/pane.py:2252
+#: src/sshpilot/file_manager/pane.py:2264
 msgid "Open in Terminal"
 msgstr "在终端中打开"
 
-#: src/sshpilot/file_manager/pane.py:2257 src/sshpilot/macos_menubar.py:74
+#: src/sshpilot/file_manager/pane.py:2269 src/sshpilot/macos_menubar.py:74
 msgid "Select All"
 msgstr "全选"
 
-#: src/sshpilot/file_manager/pane.py:2270
+#: src/sshpilot/file_manager/pane.py:2282
 msgid "Upload…"
 msgstr "正在上传…"
 
-#: src/sshpilot/file_manager/pane.py:2281 src/sshpilot/split_view.py:489
+#: src/sshpilot/file_manager/pane.py:2294 src/sshpilot/split_view.py:489
 msgid "Rename…"
 msgstr "重命名标签…"
 
-#: src/sshpilot/file_manager/pane.py:2285
+#: src/sshpilot/file_manager/pane.py:2298
 msgid "Copy Location"
 msgstr "选中时复制"
 
-#: src/sshpilot/file_manager/pane.py:2286
+#: src/sshpilot/file_manager/pane.py:2299
 msgid "Properties…"
 msgstr "属性"
 
-#: src/sshpilot/file_manager/pane.py:2494
+#: src/sshpilot/file_manager/pane.py:2510
 msgid "Select at least one item first"
 msgstr "请先选择一台服务器！"
 
-#: src/sshpilot/file_manager/pane.py:2497
+#: src/sshpilot/file_manager/pane.py:2513
 msgid "Select a single item to rename"
 msgstr "选择要下载的项目。"
 
-#: src/sshpilot/file_manager/pane.py:2567
+#: src/sshpilot/file_manager/pane.py:2583
 msgid "Location copied"
 msgstr "日志已复制"
 
-#: src/sshpilot/file_manager/pane.py:2663
+#: src/sshpilot/file_manager/pane.py:2656
+msgid "Select items to copy first"
+msgstr "请先选择要复制的项目"
+
+#: src/sshpilot/file_manager/pane.py:2717
 msgid "Select items to download first"
 msgstr "选择要下载的项目。"
 
-#: src/sshpilot/file_manager/pane.py:2672
+#: src/sshpilot/file_manager/pane.py:2726
 msgid "Select items to upload first"
 msgstr "选择要上传的文件"
 
-#: src/sshpilot/file_manager/pane.py:2713
-#: src/sshpilot/file_manager/pane.py:2765
+#: src/sshpilot/file_manager/pane.py:2767
+#: src/sshpilot/file_manager/pane.py:2819
 msgid "File manager is not available"
 msgstr "文件管理器不可用"
 
-#: src/sshpilot/file_manager/pane.py:2718
-#: src/sshpilot/file_manager/pane.py:2770
-#: src/sshpilot/file_manager_window.py:2743
+#: src/sshpilot/file_manager/pane.py:2772
+#: src/sshpilot/file_manager/pane.py:2824
+#: src/sshpilot/file_manager_window.py:2815
 msgid "Local pane is unavailable"
 msgstr "本地窗格不可用"
 
-#: src/sshpilot/file_manager/pane.py:2730
+#: src/sshpilot/file_manager/pane.py:2784
 msgid "Remote pane is unavailable"
 msgstr "远程窗格不可用"
 
-#: src/sshpilot/file_manager/pane.py:2735
+#: src/sshpilot/file_manager/pane.py:2789
 msgid "Select items in the local pane to upload"
 msgstr "选择要上传的文件"
 
-#: src/sshpilot/file_manager/pane.py:2750
+#: src/sshpilot/file_manager/pane.py:2804
 #, python-brace-format
 msgid "Uploading {name}…"
 msgstr "正在上传 {name}…"
 
-#: src/sshpilot/file_manager/pane.py:2753
+#: src/sshpilot/file_manager/pane.py:2807
 #, python-brace-format
 msgid "Uploading {count} item…"
 msgid_plural "Uploading {count} items…"
 msgstr[0] "正在上传 {count} 个项目…"
 
-#: src/sshpilot/file_manager/pane.py:2760
+#: src/sshpilot/file_manager/pane.py:2814
 msgid "Select items to download"
 msgstr "选择要下载的项目。"
 
-#: src/sshpilot/file_manager/pane.py:2781
+#: src/sshpilot/file_manager/pane.py:2835
 msgid "Local destination is not accessible"
 msgstr "本地目标"
 
-#: src/sshpilot/file_manager/pane.py:2790
+#: src/sshpilot/file_manager/pane.py:2844
 #, python-brace-format
 msgid "Downloading {name}…"
 msgstr "正在下载 {name}…"
 
-#: src/sshpilot/file_manager/pane.py:2793
+#: src/sshpilot/file_manager/pane.py:2847
 #, python-brace-format
 msgid "Downloading {count} item…"
 msgid_plural "Downloading {count} items…"
 msgstr[0] "正在下载 {count} 个项目…"
 
-#: src/sshpilot/file_manager/pane.py:2802
+#: src/sshpilot/file_manager/pane.py:2856
 msgid "Request Folder Access"
 msgstr "请求访问权限"
 
-#: src/sshpilot/file_manager/pane.py:2803
+#: src/sshpilot/file_manager/pane.py:2857
 msgid ""
 "You are using the app in a sandbox. Please grant access to your home folder "
 "to use the File Manager."
 msgstr "您正在沙盒中运行此应用。请授予对主文件夹的访问权限以使用文件管理器。"
 
-#: src/sshpilot/file_manager/pane.py:2832
+#: src/sshpilot/file_manager/pane.py:2886
 msgid "Select Folder to Grant Access"
 msgstr "选择要授予访问权限的文件夹"
 
-#: src/sshpilot/file_manager/pane.py:2857
-#: src/sshpilot/file_manager/pane.py:2868
+#: src/sshpilot/file_manager/pane.py:2911
+#: src/sshpilot/file_manager/pane.py:2922
 #, python-brace-format
 msgid "Access granted to: {path}"
 msgstr "已授予访问权限：{path}"
 
-#: src/sshpilot/file_manager/pane.py:2918 src/sshpilot/macos_menubar.py:64
+#: src/sshpilot/file_manager/pane.py:2972 src/sshpilot/macos_menubar.py:64
 msgid "File"
 msgstr "文件"
 
-#: src/sshpilot/file_manager/pane.py:2928
+#: src/sshpilot/file_manager/pane.py:2982
 #: src/sshpilot/machine_info_dialog.py:367
 #: src/sshpilot/machine_info_dialog.py:375
 #: src/sshpilot/machine_info_dialog.py:2650
 msgid "Unknown"
 msgstr "未知"
 
-#: src/sshpilot/file_manager/pane.py:2942
+#: src/sshpilot/file_manager/pane.py:2996
 msgid "No file selected"
 msgstr "未选择服务器"
 
-#: src/sshpilot/file_manager/pane.py:2946
+#: src/sshpilot/file_manager/pane.py:3000
 msgid "Cannot edit directories"
 msgstr "选择数据目录"
 
-#: src/sshpilot/file_manager/pane.py:2952
+#: src/sshpilot/file_manager/pane.py:3006
 msgid "Cannot edit file - window not available"
 msgstr "无法编辑文件 - 窗口不可用"
 
-#: src/sshpilot/file_manager/pane.py:2963
+#: src/sshpilot/file_manager/pane.py:3017
 msgid "Cannot edit file - connection not available"
 msgstr "守护进程连接不可用。"
 
-#: src/sshpilot/file_manager/pane.py:2994
-#: src/sshpilot/file_manager/pane.py:3013
+#: src/sshpilot/file_manager/pane.py:3048
+#: src/sshpilot/file_manager/pane.py:3067
 #, python-brace-format
 msgid "Failed to open editor: {error}"
 msgstr "连接失败：{error}"
 
-#: src/sshpilot/file_manager/pane.py:3078
+#: src/sshpilot/file_manager/pane.py:3132
 msgid "Current directory is not accessible"
 msgstr "当前目录不可访问"
 
-#: src/sshpilot/file_manager/pane.py:3082
+#: src/sshpilot/file_manager/pane.py:3136
 msgid "Unable to get directory properties"
 msgstr "无法获取目录属性"
 
-#: src/sshpilot/file_manager/pane.py:3120
-#: src/sshpilot/file_manager/pane.py:3190
+#: src/sshpilot/file_manager/pane.py:3174
+#: src/sshpilot/file_manager/pane.py:3244
 #, python-brace-format
 msgid "Failed to show properties: {error}"
 msgstr "保存文件失败：{error}"
 
-#: src/sshpilot/file_manager/pane.py:3140
-#: src/sshpilot/file_manager_window.py:2079 src/sshpilot/window_dialogs.py:2830
+#: src/sshpilot/file_manager/pane.py:3194
+#: src/sshpilot/file_manager_window.py:2151 src/sshpilot/window_dialogs.py:2830
 msgid "Nothing selected"
 msgstr "未选择任何内容"
 
-#: src/sshpilot/file_manager/pane.py:3146
+#: src/sshpilot/file_manager/pane.py:3200
 msgid "Cannot show properties - window not available"
 msgstr "无法显示属性 - 窗口不可用"
 
-#: src/sshpilot/file_manager/pane.py:3209
+#: src/sshpilot/file_manager/pane.py:3263
 #, python-brace-format
 msgid "{name} Properties"
 msgstr "{name} 属性"
 
-#: src/sshpilot/file_manager/pane.py:3209
+#: src/sshpilot/file_manager/pane.py:3263
 #: src/sshpilot/resources/ui/properties_dialog.ui:10
 #: src/sshpilot/resources/ui/properties_dialog.ui:19
 msgid "Properties"
 msgstr "属性"
 
-#: src/sshpilot/file_manager/pane.py:3211
+#: src/sshpilot/file_manager/pane.py:3265
 #, python-brace-format
 msgid "Name: {value}"
 msgstr "名称：{value}"
 
-#: src/sshpilot/file_manager/pane.py:3212
+#: src/sshpilot/file_manager/pane.py:3266
 #, python-brace-format
 msgid "Type: {value}"
 msgstr "类型：{value}"
 
-#: src/sshpilot/file_manager/pane.py:3213
+#: src/sshpilot/file_manager/pane.py:3267
 #, python-brace-format
 msgid "Size: {value}"
 msgstr "大小：{value}"
 
-#: src/sshpilot/file_manager/pane.py:3214
+#: src/sshpilot/file_manager/pane.py:3268
 #, python-brace-format
 msgid "Modified: {value}"
 msgstr "修改时间：{value}"
 
-#: src/sshpilot/file_manager/pane.py:3215
+#: src/sshpilot/file_manager/pane.py:3269
 #, python-brace-format
 msgid "Location: {value}"
 msgstr "位置：{value}"
 
-#: src/sshpilot/file_manager/pane.py:3250
+#: src/sshpilot/file_manager/pane.py:3304
 msgid "Failed to load directory"
 msgstr "加载目录失败"
 
-#: src/sshpilot/file_manager/pane.py:3454
+#: src/sshpilot/file_manager/pane.py:3508
 #, python-brace-format
 msgid "Could not open {name}"
 msgstr "无法打开 {name}"
 
-#: src/sshpilot/file_manager/pane.py:3462
+#: src/sshpilot/file_manager/pane.py:3516
 msgid "Download the file to this computer or open it in the editor?"
 msgstr "将文件下载到此计算机，还是在编辑器中打开？"
 
-#: src/sshpilot/file_manager/pane.py:3464
+#: src/sshpilot/file_manager/pane.py:3518
 msgid "Download the file to this computer?"
 msgstr "将文件下载到此计算机？"
 
-#: src/sshpilot/file_manager/pane.py:3468
+#: src/sshpilot/file_manager/pane.py:3522
 msgid "Edit as Text"
 msgstr "以文本方式编辑"
 
-#: src/sshpilot/file_manager/pane.py:3729
-#: src/sshpilot/file_manager/pane.py:3746
-#: src/sshpilot/file_manager/pane.py:3752
-#: src/sshpilot/file_manager/pane.py:3761
-#: src/sshpilot/file_manager/pane.py:3781
+#: src/sshpilot/file_manager/pane.py:3783
+#: src/sshpilot/file_manager/pane.py:3800
+#: src/sshpilot/file_manager/pane.py:3806
+#: src/sshpilot/file_manager/pane.py:3815
+#: src/sshpilot/file_manager/pane.py:3835
 msgid "Dragged item is no longer available"
 msgstr "此会话保存的连接已不可用"
 
-#: src/sshpilot/file_manager/pane.py:3897
+#: src/sshpilot/file_manager/pane.py:3951
 msgid "Upload failed: Invalid window context"
 msgstr "上传失败：无效的窗口上下文"
 
-#: src/sshpilot/file_manager/pane.py:3930
-#: src/sshpilot/file_manager/pane.py:3937
-#: src/sshpilot/file_manager_window.py:2706
-#: src/sshpilot/file_manager_window.py:2722 src/sshpilot/text_editor.py:1539
+#: src/sshpilot/file_manager/pane.py:3984
+#: src/sshpilot/file_manager/pane.py:3991
+#: src/sshpilot/file_manager_window.py:2778
+#: src/sshpilot/file_manager_window.py:2794 src/sshpilot/text_editor.py:1539
 #, python-brace-format
 msgid "Upload failed: {error}"
 msgstr "上传失败：{error}"
 
-#: src/sshpilot/file_manager/pane.py:3960
+#: src/sshpilot/file_manager/pane.py:4014
 msgid "Download failed: Invalid window context"
 msgstr "下载失败：无效的窗口上下文"
 
-#: src/sshpilot/file_manager/pane.py:3991
-#: src/sshpilot/file_manager/pane.py:3999
-#: src/sshpilot/file_manager_window.py:2801
+#: src/sshpilot/file_manager/pane.py:4045
+#: src/sshpilot/file_manager/pane.py:4053
+#: src/sshpilot/file_manager_window.py:2873
 #, python-brace-format
 msgid "Download failed: {error}"
 msgstr "上传失败：{error}"
 
-#: src/sshpilot/file_manager/pane.py:4114
+#: src/sshpilot/file_manager/pane.py:4168
 msgid "No access to this folder. Use Request Access to open it."
 msgstr "无权访问此文件夹。请使用“请求访问权限”打开它。"
 
@@ -4327,340 +4335,340 @@ msgstr "设置自定义权限"
 msgid "Could not change the permissions of “{name}”: {error}"
 msgstr "无法更改“{name}”的权限：{error}"
 
-#: src/sshpilot/file_manager_window.py:421
-#: src/sshpilot/file_manager_window.py:641
+#: src/sshpilot/file_manager_window.py:441
+#: src/sshpilot/file_manager_window.py:661
 #, python-brace-format
 msgid "Failed to load local home: {error}"
 msgstr "加载失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:490
-#: src/sshpilot/file_manager_window.py:674 src/sshpilot/sidebar.py:2783
+#: src/sshpilot/file_manager_window.py:510
+#: src/sshpilot/file_manager_window.py:694 src/sshpilot/sidebar.py:2783
 #, python-brace-format
 msgid "Connecting to {host}…"
 msgstr "正在连接到 {host}…"
 
-#: src/sshpilot/file_manager_window.py:560
+#: src/sshpilot/file_manager_window.py:580
 msgid "Choose what this pane shows"
 msgstr "选择此窗格显示的内容"
 
-#: src/sshpilot/file_manager_window.py:593
+#: src/sshpilot/file_manager_window.py:613
 msgid "This Computer"
 msgstr "本机"
 
-#: src/sshpilot/file_manager_window.py:594
+#: src/sshpilot/file_manager_window.py:614
 msgid "Browse local files"
 msgstr "浏览本地文件"
 
-#: src/sshpilot/file_manager_window.py:607
-#: src/sshpilot/file_manager_window.py:895
+#: src/sshpilot/file_manager_window.py:627
+#: src/sshpilot/file_manager_window.py:915
 msgid "Connection has no host"
 msgstr "连接无主机"
 
-#: src/sshpilot/file_manager_window.py:772
+#: src/sshpilot/file_manager_window.py:792
 msgid "Choose remote host"
 msgstr "选择远程主机"
 
-#: src/sshpilot/file_manager_window.py:798
-#: src/sshpilot/file_manager_window.py:872 src/sshpilot/split_view.py:711
+#: src/sshpilot/file_manager_window.py:818
+#: src/sshpilot/file_manager_window.py:892 src/sshpilot/split_view.py:711
 msgid "Select host"
 msgstr "选择主机"
 
-#: src/sshpilot/file_manager_window.py:811
+#: src/sshpilot/file_manager_window.py:831
 msgid "No connections available"
 msgstr "无可用连接"
 
-#: src/sshpilot/file_manager_window.py:867
+#: src/sshpilot/file_manager_window.py:887
 msgid "No server selected"
 msgstr "未选择服务器"
 
-#: src/sshpilot/file_manager_window.py:1099
-#, python-brace-format
-msgid "Show Both Panes ({shortcut})"
-msgstr "显示两个窗格（{shortcut}）"
-
-#: src/sshpilot/file_manager_window.py:1100
+#: src/sshpilot/file_manager_window.py:1088
 #, python-brace-format
 msgid "Show One Pane ({shortcut})"
 msgstr "仅显示一个窗格（{shortcut}）"
 
-#: src/sshpilot/file_manager_window.py:1216
-#: src/sshpilot/file_manager_window.py:1234
+#: src/sshpilot/file_manager_window.py:1089
+#, python-brace-format
+msgid "Show Both Panes ({shortcut})"
+msgstr "显示两个窗格（{shortcut}）"
+
+#: src/sshpilot/file_manager_window.py:1288
+#: src/sshpilot/file_manager_window.py:1306
 msgid "Connected — loading files…"
 msgstr "正在连接…"
 
-#: src/sshpilot/file_manager_window.py:1232
+#: src/sshpilot/file_manager_window.py:1304
 msgid "Connected"
 msgstr "已断开连接"
 
-#: src/sshpilot/file_manager_window.py:1262
+#: src/sshpilot/file_manager_window.py:1334
 #, python-brace-format
 msgid "File operation failed: {error}"
 msgstr "上传失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:1263
+#: src/sshpilot/file_manager_window.py:1335
 msgid "File operation failed"
 msgstr "生成密钥失败"
 
-#: src/sshpilot/file_manager_window.py:1343
-#: src/sshpilot/file_manager_window.py:1393
+#: src/sshpilot/file_manager_window.py:1415
+#: src/sshpilot/file_manager_window.py:1465
 #, python-brace-format
 msgid "Connection failed: {error}"
 msgstr "连接失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:1535
+#: src/sshpilot/file_manager_window.py:1607
 msgid "Directory refreshed"
 msgstr "目录"
 
-#: src/sshpilot/file_manager_window.py:1577
+#: src/sshpilot/file_manager_window.py:1649
 #, python-brace-format
 msgid "Not a directory: {path}"
 msgstr "不是目录：{path}"
 
-#: src/sshpilot/file_manager_window.py:1605
+#: src/sshpilot/file_manager_window.py:1677
 msgid "Directory reloaded"
 msgstr "目录"
 
-#: src/sshpilot/file_manager_window.py:1612
 #: src/sshpilot/file_manager_window.py:1684
+#: src/sshpilot/file_manager_window.py:1756
 #, python-brace-format
 msgid "Failed to load directory: {error}"
 msgstr "加载失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:1723
+#: src/sshpilot/file_manager_window.py:1795
 msgid "Loading directory…"
 msgstr "工作目录"
 
-#: src/sshpilot/file_manager_window.py:1802
-#: src/sshpilot/file_manager_window.py:1811
-#: src/sshpilot/file_manager_window.py:1827
-#: src/sshpilot/file_manager_window.py:1865
-#: src/sshpilot/file_manager_window.py:1957
-#: src/sshpilot/file_manager_window.py:1974
+#: src/sshpilot/file_manager_window.py:1874
+#: src/sshpilot/file_manager_window.py:1883
+#: src/sshpilot/file_manager_window.py:1899
+#: src/sshpilot/file_manager_window.py:1937
+#: src/sshpilot/file_manager_window.py:2029
+#: src/sshpilot/file_manager_window.py:2046
 msgid "Connection lost. Please reconnect and try again."
 msgstr "重新连接到 SSH Pilot 守护进程并重试。"
 
-#: src/sshpilot/file_manager_window.py:1816
+#: src/sshpilot/file_manager_window.py:1888
 #, python-brace-format
 msgid "Connection error: {error}"
 msgstr "连接错误：{error}"
 
-#: src/sshpilot/file_manager_window.py:1836
+#: src/sshpilot/file_manager_window.py:1908
 #, python-brace-format
 msgid "'{filename}' already exists in the destination folder."
 msgstr "“{filename}”已存在于目标文件夹中。"
 
-#: src/sshpilot/file_manager_window.py:1839
+#: src/sshpilot/file_manager_window.py:1911
 #, python-brace-format
 msgid "{count} of {total} file already exists in the destination folder."
 msgid_plural ""
 "{count} of {total} files already exist in the destination folder."
 msgstr[0] "{total} 个文件中有 {count} 个已存在于目标文件夹中。"
 
-#: src/sshpilot/file_manager_window.py:1844
+#: src/sshpilot/file_manager_window.py:1916
 msgid "File Already Exists"
 msgid_plural "Files Already Exist"
 msgstr[0] "文件已存在"
 
-#: src/sshpilot/file_manager_window.py:1848
+#: src/sshpilot/file_manager_window.py:1920
 msgid "Skip Existing"
 msgstr "跳过已有文件"
 
-#: src/sshpilot/file_manager_window.py:1849 src/sshpilot/text_editor.py:491
+#: src/sshpilot/file_manager_window.py:1921 src/sshpilot/text_editor.py:491
 msgid "Replace All"
 msgstr "全部替换"
 
-#: src/sshpilot/file_manager_window.py:1877
+#: src/sshpilot/file_manager_window.py:1949
 #, python-brace-format
 msgid "Skipped existing file: {filename}"
 msgstr "已跳过现有文件：{filename}"
 
-#: src/sshpilot/file_manager_window.py:1880
+#: src/sshpilot/file_manager_window.py:1952
 #, python-brace-format
 msgid "Skipped {count} existing file"
 msgid_plural "Skipped {count} existing files"
 msgstr[0] "已跳过 {count} 个现有文件"
 
-#: src/sshpilot/file_manager_window.py:2041
-#: src/sshpilot/file_manager_window.py:2059
+#: src/sshpilot/file_manager_window.py:2113
+#: src/sshpilot/file_manager_window.py:2131
 msgid "Terminal is not available"
 msgstr "终端不可用"
 
-#: src/sshpilot/file_manager_window.py:2102
+#: src/sshpilot/file_manager_window.py:2174
 #, python-brace-format
 msgid "Cut {name}"
 msgstr "标签：{name}"
 
-#: src/sshpilot/file_manager_window.py:2102
+#: src/sshpilot/file_manager_window.py:2174
 #, python-brace-format
 msgid "Copied {name}"
 msgstr "已复制 {name}"
 
-#: src/sshpilot/file_manager_window.py:2106
+#: src/sshpilot/file_manager_window.py:2178
 #, python-brace-format
 msgid "Cut {count} item"
 msgid_plural "Cut {count} items"
 msgstr[0] "已剪切 {count} 个项目"
 
-#: src/sshpilot/file_manager_window.py:2108
-#: src/sshpilot/file_manager_window.py:3375
+#: src/sshpilot/file_manager_window.py:2180
+#: src/sshpilot/file_manager_window.py:3447
 #, python-brace-format
 msgid "Copied {count} item"
 msgid_plural "Copied {count} items"
 msgstr[0] "已复制 {count} 个项目"
 
-#: src/sshpilot/file_manager_window.py:2114
+#: src/sshpilot/file_manager_window.py:2186
 msgid "Clipboard is empty"
 msgstr "（日志为空）"
 
-#: src/sshpilot/file_manager_window.py:2146
+#: src/sshpilot/file_manager_window.py:2218
 msgid "Paste target is unavailable"
 msgstr "安全存储不可用。"
 
-#: src/sshpilot/file_manager_window.py:2175
+#: src/sshpilot/file_manager_window.py:2247
 msgid "Enter a name for the new folder"
 msgstr "输入新分组的名称："
 
-#: src/sshpilot/file_manager_window.py:2180
-#: src/sshpilot/file_manager_window.py:2241
+#: src/sshpilot/file_manager_window.py:2252
+#: src/sshpilot/file_manager_window.py:2313
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:312
 #: src/sshpilot/window_dialogs.py:3382
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:25
 msgid "Create"
 msgstr "创建"
 
-#: src/sshpilot/file_manager_window.py:2198
+#: src/sshpilot/file_manager_window.py:2270
 msgid "Folder already exists"
 msgstr "文件已存在"
 
-#: src/sshpilot/file_manager_window.py:2200
+#: src/sshpilot/file_manager_window.py:2272
 #, python-brace-format
 msgid "Failed to create folder: {error}"
 msgstr "创建分组失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2236
+#: src/sshpilot/file_manager_window.py:2308
 msgid "Enter a name for the new file"
 msgstr "输入新分组的名称："
 
-#: src/sshpilot/file_manager_window.py:2257
-#: src/sshpilot/file_manager_window.py:2272 src/sshpilot/preferences.py:4286
+#: src/sshpilot/file_manager_window.py:2329
+#: src/sshpilot/file_manager_window.py:2344 src/sshpilot/preferences.py:4286
 msgid "File already exists"
 msgstr "文件已存在"
 
-#: src/sshpilot/file_manager_window.py:2259
-#: src/sshpilot/file_manager_window.py:2275
+#: src/sshpilot/file_manager_window.py:2331
+#: src/sshpilot/file_manager_window.py:2347
 #, python-brace-format
 msgid "Failed to create file: {error}"
 msgstr "保存文件失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2322
+#: src/sshpilot/file_manager_window.py:2394
 msgid "Rename Item"
 msgstr "重命名"
 
-#: src/sshpilot/file_manager_window.py:2322
+#: src/sshpilot/file_manager_window.py:2394
 #, python-brace-format
 msgid "Enter a new name for {name}"
 msgstr "输入“{name}”的新名称。"
 
-#: src/sshpilot/file_manager_window.py:2338
+#: src/sshpilot/file_manager_window.py:2410
 msgid "Name cannot be empty"
 msgstr "名称不能为空"
 
-#: src/sshpilot/file_manager_window.py:2349
+#: src/sshpilot/file_manager_window.py:2421
 #, python-brace-format
 msgid "Failed to rename item: {error}"
 msgstr "重命名标签失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2351
+#: src/sshpilot/file_manager_window.py:2423
 #, python-brace-format
 msgid "Renamed to {name}"
 msgstr "终端：{name}"
 
-#: src/sshpilot/file_manager_window.py:2368
+#: src/sshpilot/file_manager_window.py:2440
 #, python-brace-format
 msgid "Renaming to {name}…"
 msgstr "正在重命名为 {name}…"
 
-#: src/sshpilot/file_manager_window.py:2400
+#: src/sshpilot/file_manager_window.py:2472
 #, python-brace-format
 msgid "Delete {name}?"
 msgstr "删除 {name}？"
 
-#: src/sshpilot/file_manager_window.py:2402
+#: src/sshpilot/file_manager_window.py:2474
 #, python-brace-format
 msgid "Delete {count} item?"
 msgid_plural "Delete {count} items?"
 msgstr[0] "删除 {count} 个项目？"
 
-#: src/sshpilot/file_manager_window.py:2404
+#: src/sshpilot/file_manager_window.py:2476
 msgid "Delete Item"
 msgid_plural "Delete Items"
 msgstr[0] "删除项目"
 
-#: src/sshpilot/file_manager_window.py:2430
+#: src/sshpilot/file_manager_window.py:2502
 #, python-brace-format
 msgid "{name} no longer exists"
 msgstr "{name} 不再存在"
 
-#: src/sshpilot/file_manager_window.py:2432
-#: src/sshpilot/file_manager_window.py:2494
-#: src/sshpilot/file_manager_window.py:2527
+#: src/sshpilot/file_manager_window.py:2504
+#: src/sshpilot/file_manager_window.py:2566
+#: src/sshpilot/file_manager_window.py:2599
 #, python-brace-format
 msgid "Failed to delete {name}: {error}"
 msgstr "删除 {name} 失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2436
-#: src/sshpilot/file_manager_window.py:3068
+#: src/sshpilot/file_manager_window.py:2508
+#: src/sshpilot/file_manager_window.py:3140
 #, python-brace-format
 msgid "Deleted {count} item"
 msgid_plural "Deleted {count} items"
 msgstr[0] "已删除 {count} 个项目"
 
-#: src/sshpilot/file_manager_window.py:2480
-#: src/sshpilot/file_manager_window.py:2565
+#: src/sshpilot/file_manager_window.py:2552
+#: src/sshpilot/file_manager_window.py:2637
 #, python-brace-format
 msgid "Failed to delete {count} items: {error}"
 msgstr "删除 {count} 个项目失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:2491
-#: src/sshpilot/file_manager_window.py:3012
+#: src/sshpilot/file_manager_window.py:2563
+#: src/sshpilot/file_manager_window.py:3084
 msgid "Delete was cancelled"
 msgstr "解密已取消"
 
-#: src/sshpilot/file_manager_window.py:2658
+#: src/sshpilot/file_manager_window.py:2730
 msgid "No files selected for upload"
 msgstr "选择要上传的文件"
 
-#: src/sshpilot/file_manager_window.py:2673
+#: src/sshpilot/file_manager_window.py:2745
 msgid "Selected items are not accessible"
 msgstr "选择要授予访问权限的文件夹"
 
-#: src/sshpilot/file_manager_window.py:2676
+#: src/sshpilot/file_manager_window.py:2748
 #, python-brace-format
 msgid "Skipping inaccessible items: {name}"
 msgstr "正在跳过不可访问的项目：{name}"
 
-#: src/sshpilot/file_manager_window.py:2693
+#: src/sshpilot/file_manager_window.py:2765
 msgid "Upload failed: Connection lost"
 msgstr "上传失败：连接断开"
 
-#: src/sshpilot/file_manager_window.py:2701
+#: src/sshpilot/file_manager_window.py:2773
 msgid "Upload failed: Connection closed. Please reconnect."
 msgstr "上传失败：连接已关闭。请重新连接。"
 
-#: src/sshpilot/file_manager_window.py:2769
+#: src/sshpilot/file_manager_window.py:2841
 msgid "Invalid download request"
 msgstr "无效的下载请求"
 
 #. All files failed
-#: src/sshpilot/file_manager_window.py:3000
-#: src/sshpilot/file_manager_window.py:3022
-#: src/sshpilot/file_manager_window.py:3025
-#: src/sshpilot/file_manager_window.py:4283 src/sshpilot/window.py:1529
+#: src/sshpilot/file_manager_window.py:3072
+#: src/sshpilot/file_manager_window.py:3094
+#: src/sshpilot/file_manager_window.py:3097
+#: src/sshpilot/file_manager_window.py:4355 src/sshpilot/window.py:1529
 #: src/sshpilot/window_dialogs.py:2020
 msgid "Unknown error"
 msgstr "未知错误"
 
-#: src/sshpilot/file_manager_window.py:3031
+#: src/sshpilot/file_manager_window.py:3103
 #, python-brace-format
 msgid "{count} of {total} item failed"
 msgid_plural "{count} of {total} items failed"
@@ -4669,71 +4677,71 @@ msgstr[0] "{total} 个项目中有 {count} 个失败"
 #. Try to reconnect and then refresh
 #. The connection should be automatically re-established on next operation
 #. For now, just show a message and let user manually refresh
-#: src/sshpilot/file_manager_window.py:3156
+#: src/sshpilot/file_manager_window.py:3228
 msgid "Connection closed. Please refresh manually."
 msgstr "连接已关闭。请手动刷新。"
 
-#: src/sshpilot/file_manager_window.py:3159
-#: src/sshpilot/file_manager_window.py:3168
+#: src/sshpilot/file_manager_window.py:3231
+#: src/sshpilot/file_manager_window.py:3240
 #, python-brace-format
 msgid "Refresh failed: {error}"
 msgstr "保存失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:3265
+#: src/sshpilot/file_manager_window.py:3337
 msgid "You cannot move a folder into itself."
 msgstr "无法将目录复制到其自身内部"
 
-#: src/sshpilot/file_manager_window.py:3267
+#: src/sshpilot/file_manager_window.py:3339
 msgid "You cannot copy a folder into itself."
 msgstr "无法将目录复制到其自身内部"
 
-#: src/sshpilot/file_manager_window.py:3269
+#: src/sshpilot/file_manager_window.py:3341
 msgid "The destination folder is inside the source folder."
 msgstr "目标文件夹位于源文件夹内。"
 
-#: src/sshpilot/file_manager_window.py:3273
+#: src/sshpilot/file_manager_window.py:3345
 msgid "Skip"
 msgstr "跳过"
 
-#: src/sshpilot/file_manager_window.py:3275
+#: src/sshpilot/file_manager_window.py:3347
 msgid "Skip All"
 msgstr "全部跳过"
 
-#: src/sshpilot/file_manager_window.py:3350
-#: src/sshpilot/file_manager_window.py:3356
+#: src/sshpilot/file_manager_window.py:3422
+#: src/sshpilot/file_manager_window.py:3428
 #, python-brace-format
 msgid "{name} already exists"
 msgstr "{name} 已存在"
 
-#: src/sshpilot/file_manager_window.py:3372
+#: src/sshpilot/file_manager_window.py:3444
 #, python-brace-format
 msgid "Moved {count} item"
 msgid_plural "Moved {count} items"
 msgstr[0] "已移动 {count} 个项目"
 
-#: src/sshpilot/file_manager_window.py:3382
+#: src/sshpilot/file_manager_window.py:3454
 #, python-brace-format
 msgid "Local copy or move failed: {error}"
 msgstr "保存失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:3413
-#: src/sshpilot/file_manager_window.py:3486
-#: src/sshpilot/file_manager_window.py:3588
-#: src/sshpilot/file_manager_window.py:3923
+#: src/sshpilot/file_manager_window.py:3485
+#: src/sshpilot/file_manager_window.py:3558
+#: src/sshpilot/file_manager_window.py:3660
+#: src/sshpilot/file_manager_window.py:3995
 msgid "Remote connection unavailable"
 msgstr "守护进程连接不可用。"
 
-#: src/sshpilot/file_manager_window.py:3562
+#: src/sshpilot/file_manager_window.py:3634
 msgid "Files are no longer available"
 msgstr "文件管理器不可用"
 
-#: src/sshpilot/file_manager_window.py:3666
+#: src/sshpilot/file_manager_window.py:3738
 #, python-brace-format
 msgid "Failed to remove {name}: {error}"
 msgstr "移除 {name} 失败：{error}"
 
-#: src/sshpilot/file_manager_window.py:4020
-#: src/sshpilot/file_manager_window.py:4289
+#: src/sshpilot/file_manager_window.py:4092
+#: src/sshpilot/file_manager_window.py:4361
 #, python-brace-format
 msgid "{count} of {total} file could not be transferred"
 msgid_plural "{count} of {total} files could not be transferred"

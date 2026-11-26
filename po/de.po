@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 10:13+0330\n"
+"POT-Creation-Date: 2026-11-26 10:34+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -122,16 +122,16 @@ msgstr "Verbindungen öffnen?"
 #: src/sshpilot/connection_dialog_port_forwarding.py:239
 #: src/sshpilot/daemon_interaction_dialogs.py:524
 #: src/sshpilot/daemon_quit_policy.py:628
-#: src/sshpilot/file_manager/pane.py:1017
-#: src/sshpilot/file_manager/pane.py:2805
-#: src/sshpilot/file_manager/pane.py:3466
+#: src/sshpilot/file_manager/pane.py:1028
+#: src/sshpilot/file_manager/pane.py:2859
+#: src/sshpilot/file_manager/pane.py:3520
 #: src/sshpilot/file_manager/progress_dialog.py:312
-#: src/sshpilot/file_manager_window.py:1847
-#: src/sshpilot/file_manager_window.py:2179
-#: src/sshpilot/file_manager_window.py:2240
-#: src/sshpilot/file_manager_window.py:2327
-#: src/sshpilot/file_manager_window.py:2407
-#: src/sshpilot/file_manager_window.py:3271 src/sshpilot/key_sources.py:274
+#: src/sshpilot/file_manager_window.py:1919
+#: src/sshpilot/file_manager_window.py:2251
+#: src/sshpilot/file_manager_window.py:2312
+#: src/sshpilot/file_manager_window.py:2399
+#: src/sshpilot/file_manager_window.py:2479
+#: src/sshpilot/file_manager_window.py:3343 src/sshpilot/key_sources.py:274
 #: src/sshpilot/login_profile_dialogs.py:92
 #: src/sshpilot/login_profile_dialogs.py:162
 #: src/sshpilot/login_profile_dialogs.py:600
@@ -224,8 +224,8 @@ msgstr ""
 #: src/sshpilot/actions.py:522 src/sshpilot/actions.py:916
 #: src/sshpilot/actions.py:1185 src/sshpilot/connection_dialog.py:6197
 #: src/sshpilot/daemon_quit_policy.py:535 src/sshpilot/file_manager/pane.py:58
-#: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2806
-#: src/sshpilot/file_manager/pane.py:3226
+#: src/sshpilot/file_manager/pane.py:67 src/sshpilot/file_manager/pane.py:2860
+#: src/sshpilot/file_manager/pane.py:3280
 #: src/sshpilot/known_hosts_editor.py:311
 #: src/sshpilot/login_profile_dialogs.py:648 src/sshpilot/preferences.py:4132
 #: src/sshpilot/preferences.py:4255 src/sshpilot/preferences.py:4667
@@ -300,8 +300,8 @@ msgstr ""
 #: src/sshpilot/actions.py:707 src/sshpilot/actions.py:1107
 #: src/sshpilot/actions.py:1162 src/sshpilot/authorized_keys_window.py:428
 #: src/sshpilot/command_blocks.py:2400 src/sshpilot/file_manager/pane.py:705
-#: src/sshpilot/file_manager/pane.py:2282
-#: src/sshpilot/file_manager_window.py:2408
+#: src/sshpilot/file_manager/pane.py:2295
+#: src/sshpilot/file_manager_window.py:2480
 #: src/sshpilot/login_profile_dialogs.py:860
 #: src/sshpilot/login_profile_dialogs.py:870
 #: src/sshpilot/login_profile_dialogs.py:1058 src/sshpilot/sidebar.py:5347
@@ -427,7 +427,7 @@ msgstr "Sitzung öffnen"
 msgid "Select a session to open:"
 msgstr "Wählen Sie eine Sitzung zum Öffnen aus:"
 
-#: src/sshpilot/actions.py:944 src/sshpilot/file_manager/pane.py:2264
+#: src/sshpilot/actions.py:944 src/sshpilot/file_manager/pane.py:2276
 #: src/sshpilot/preferences.py:2178
 msgid "Open"
 msgstr "Öffnen"
@@ -471,7 +471,7 @@ msgstr "An Startseite anheften"
 
 #: src/sshpilot/actions.py:1099 src/sshpilot/actions.py:1130
 #: src/sshpilot/file_manager/pane.py:699
-#: src/sshpilot/file_manager_window.py:2328
+#: src/sshpilot/file_manager_window.py:2400
 msgid "Rename"
 msgstr "Umbenennen"
 
@@ -507,8 +507,8 @@ msgid "SSH Pilot {version} is available!"
 msgstr "SSH-Pilot {version} ist verfügbar!"
 
 #: src/sshpilot/actions.py:1242 src/sshpilot/file_manager/pane.py:663
-#: src/sshpilot/file_manager/pane.py:2269
-#: src/sshpilot/file_manager/pane.py:3469 src/sshpilot/scp_window.py:432
+#: src/sshpilot/file_manager/pane.py:2281
+#: src/sshpilot/file_manager/pane.py:3523 src/sshpilot/scp_window.py:432
 #: src/sshpilot/resources/ui/scp_download_window.ui:31
 msgid "Download"
 msgstr "Herunterladen"
@@ -713,8 +713,8 @@ msgid "Error loading authorized_keys"
 msgstr "Fehler beim Laden von authorized_keys"
 
 #: src/sshpilot/authorized_keys_window.py:293
-#: src/sshpilot/file_manager/pane.py:3261
-#: src/sshpilot/file_manager_window.py:483 src/sshpilot/rdp_tab.py:159
+#: src/sshpilot/file_manager/pane.py:3315
+#: src/sshpilot/file_manager_window.py:503 src/sshpilot/rdp_tab.py:159
 #: src/sshpilot/rdp_tab.py:245 src/sshpilot/rdp_tab.py:469
 #: src/sshpilot/scp_window.py:1009 src/sshpilot/scp_window.py:1106
 msgid "Connecting…"
@@ -726,8 +726,8 @@ msgid "Failed to connect: {error}"
 msgstr "Verbindung fehlgeschlagen: {error}"
 
 #: src/sshpilot/authorized_keys_window.py:307
-#: src/sshpilot/file_manager_window.py:1344
-#: src/sshpilot/file_manager_window.py:1394 src/sshpilot/sidebar.py:2789
+#: src/sshpilot/file_manager_window.py:1416
+#: src/sshpilot/file_manager_window.py:1466 src/sshpilot/sidebar.py:2789
 msgid "Connection failed"
 msgstr "Verbindung fehlgeschlagen"
 
@@ -1514,7 +1514,7 @@ msgstr "Tags (durch Komma getrennt)"
 msgid "(No folder)"
 msgstr "(Kein Ordner)"
 
-#: src/sshpilot/command_blocks.py:975 src/sshpilot/file_manager/pane.py:2918
+#: src/sshpilot/command_blocks.py:975 src/sshpilot/file_manager/pane.py:2972
 #: src/sshpilot/file_manager/properties_dialog.py:35
 #: src/sshpilot/window_dialogs.py:1211
 msgid "Folder"
@@ -1666,7 +1666,7 @@ msgid "No connections in group can run commands"
 msgstr "Keine Verbindungen in der Gruppe"
 
 #: src/sshpilot/command_blocks.py:2364 src/sshpilot/file_manager/pane.py:693
-#: src/sshpilot/file_manager/pane.py:2266
+#: src/sshpilot/file_manager/pane.py:2278
 #: src/sshpilot/login_profile_dialogs.py:1053 src/sshpilot/macos_menubar.py:76
 #: src/sshpilot/sidebar.py:5250
 msgid "Edit"
@@ -1726,13 +1726,13 @@ msgstr "Befehl"
 #. Radio buttons for startup behavior
 #: src/sshpilot/command_progress_dialog.py:153
 #: src/sshpilot/command_progress_dialog.py:167
-#: src/sshpilot/file_manager/pane.py:745 src/sshpilot/file_manager/pane.py:2579
+#: src/sshpilot/file_manager/pane.py:756 src/sshpilot/file_manager/pane.py:2595
 #: src/sshpilot/preferences.py:1529
 msgid "Show Terminal"
 msgstr "Terminal anzeigen"
 
 #: src/sshpilot/command_progress_dialog.py:167
-#: src/sshpilot/file_manager/pane.py:2579
+#: src/sshpilot/file_manager/pane.py:2595
 msgid "Hide Terminal"
 msgstr "Terminal ausblenden"
 
@@ -3208,7 +3208,7 @@ msgstr "Editor für Portweiterleitungsregeln"
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:194
 #: src/sshpilot/file_manager/pane.py:436
-#: src/sshpilot/file_manager_window.py:559 src/sshpilot/forward_rule_row.py:90
+#: src/sshpilot/file_manager_window.py:579 src/sshpilot/forward_rule_row.py:90
 #: src/sshpilot/plugins/builtin/docker_manager/__init__.py:50
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:769
 #: src/sshpilot/preferences.py:3235
@@ -3632,15 +3632,15 @@ msgid "Delete failed"
 msgstr "Das Löschen ist fehlgeschlagen"
 
 #: src/sshpilot/daemon_sftp_backend.py:1122
-#: src/sshpilot/file_manager_window.py:3773
-#: src/sshpilot/file_manager_window.py:3963
+#: src/sshpilot/file_manager_window.py:3845
+#: src/sshpilot/file_manager_window.py:4035
 #, python-brace-format
 msgid "Transferred {done} of {total}"
 msgstr "{done} von {total} übertragen"
 
 #: src/sshpilot/daemon_sftp_backend.py:1131
-#: src/sshpilot/file_manager_window.py:3778
-#: src/sshpilot/file_manager_window.py:3969
+#: src/sshpilot/file_manager_window.py:3850
+#: src/sshpilot/file_manager_window.py:4041
 #, python-brace-format
 msgid "Transferred {size}"
 msgstr "Übertragen {size}"
@@ -3730,7 +3730,7 @@ msgstr ""
 "Die Verbindung wurde nicht im Legacy-Modus geöffnet."
 
 #: src/sshpilot/file_manager/format_utils.py:17
-#: src/sshpilot/file_manager/pane.py:3109
+#: src/sshpilot/file_manager/pane.py:3163
 #, python-brace-format
 msgid "{count} item"
 msgid_plural "{count} items"
@@ -3751,7 +3751,7 @@ msgstr "Erneut versuchen"
 msgid "Upload"
 msgstr "Hochladen"
 
-#: src/sshpilot/file_manager/pane.py:675 src/sshpilot/file_manager/pane.py:2275
+#: src/sshpilot/file_manager/pane.py:675 src/sshpilot/file_manager/pane.py:2288
 #: src/sshpilot/key_sources.py:275 src/sshpilot/macos_menubar.py:72
 #: src/sshpilot/terminal.py:1252 src/sshpilot/terminal.py:3642
 #: src/sshpilot/window_dialogs.py:3598
@@ -3759,39 +3759,43 @@ msgstr "Hochladen"
 msgid "Copy"
 msgstr "Kopieren"
 
-#: src/sshpilot/file_manager/pane.py:681 src/sshpilot/file_manager/pane.py:2274
+#: src/sshpilot/file_manager/pane.py:681 src/sshpilot/file_manager/pane.py:2287
 #: src/sshpilot/macos_menubar.py:71
 msgid "Cut"
 msgstr "Ausschneiden"
 
-#: src/sshpilot/file_manager/pane.py:687 src/sshpilot/file_manager/pane.py:2242
+#: src/sshpilot/file_manager/pane.py:687 src/sshpilot/file_manager/pane.py:2254
 #: src/sshpilot/macos_menubar.py:73
 msgid "Paste"
 msgstr "Einfügen"
 
-#: src/sshpilot/file_manager/pane.py:720 src/sshpilot/file_manager/pane.py:726
-#: src/sshpilot/file_manager/pane.py:4116
+#: src/sshpilot/file_manager/pane.py:713 src/sshpilot/file_manager/pane.py:2283
+msgid "Copy to Other Pane"
+msgstr "In anderen Bereich kopieren"
+
+#: src/sshpilot/file_manager/pane.py:730 src/sshpilot/file_manager/pane.py:736
+#: src/sshpilot/file_manager/pane.py:4170
 msgid "Request Access"
 msgstr "Zugriff anfordern"
 
-#: src/sshpilot/file_manager/pane.py:1012
+#: src/sshpilot/file_manager/pane.py:1023
 msgid "Select Items Matching"
 msgstr "Wählen Sie „Übereinstimmende Elemente“ aus"
 
-#: src/sshpilot/file_manager/pane.py:1014
+#: src/sshpilot/file_manager/pane.py:1025
 msgid "Pattern, e.g. *.txt"
 msgstr "Muster, z.B. *.txt"
 
-#: src/sshpilot/file_manager/pane.py:1018
+#: src/sshpilot/file_manager/pane.py:1029
 #: src/sshpilot/resources/ui/monospace_font_dialog.ui:34
 msgid "Select"
 msgstr "Auswählen"
 
-#: src/sshpilot/file_manager/pane.py:1027
+#: src/sshpilot/file_manager/pane.py:1038
 msgid "No items match"
 msgstr "Es stimmen keine Artikel überein"
 
-#: src/sshpilot/file_manager/pane.py:1155
+#: src/sshpilot/file_manager/pane.py:1166
 #: src/sshpilot/file_manager/pane_controls.py:136
 #: src/sshpilot/login_profile_dialogs.py:221
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:183
@@ -3801,129 +3805,133 @@ msgstr "Es stimmen keine Artikel überein"
 msgid "Name"
 msgstr "Name"
 
-#: src/sshpilot/file_manager/pane.py:1157
+#: src/sshpilot/file_manager/pane.py:1168
 #: src/sshpilot/file_manager/pane_controls.py:137
 msgid "Size"
 msgstr "Größe"
 
-#: src/sshpilot/file_manager/pane.py:1160
+#: src/sshpilot/file_manager/pane.py:1171
 #: src/sshpilot/file_manager/pane_controls.py:138
 #: src/sshpilot/file_manager/properties_dialog.py:464
 msgid "Modified"
 msgstr "Geändert"
 
-#: src/sshpilot/file_manager/pane.py:2248
-#: src/sshpilot/file_manager_window.py:2175
-#: src/sshpilot/file_manager_window.py:2177
+#: src/sshpilot/file_manager/pane.py:2260
+#: src/sshpilot/file_manager_window.py:2247
+#: src/sshpilot/file_manager_window.py:2249
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:12
 msgid "New Folder"
 msgstr "Neuer Ordner"
 
-#: src/sshpilot/file_manager/pane.py:2249
-#: src/sshpilot/file_manager_window.py:2236
+#: src/sshpilot/file_manager/pane.py:2261
+#: src/sshpilot/file_manager_window.py:2308
 msgid "New File"
 msgstr "Neue Datei"
 
-#: src/sshpilot/file_manager/pane.py:2252
+#: src/sshpilot/file_manager/pane.py:2264
 msgid "Open in Terminal"
 msgstr "Im Terminal öffnen"
 
-#: src/sshpilot/file_manager/pane.py:2257 src/sshpilot/macos_menubar.py:74
+#: src/sshpilot/file_manager/pane.py:2269 src/sshpilot/macos_menubar.py:74
 msgid "Select All"
 msgstr "Alles auswählen"
 
-#: src/sshpilot/file_manager/pane.py:2270
+#: src/sshpilot/file_manager/pane.py:2282
 msgid "Upload…"
 msgstr "Hochladen…"
 
-#: src/sshpilot/file_manager/pane.py:2281 src/sshpilot/split_view.py:489
+#: src/sshpilot/file_manager/pane.py:2294 src/sshpilot/split_view.py:489
 msgid "Rename…"
 msgstr "Umbenennen…"
 
-#: src/sshpilot/file_manager/pane.py:2285
+#: src/sshpilot/file_manager/pane.py:2298
 msgid "Copy Location"
 msgstr "Standort kopieren"
 
-#: src/sshpilot/file_manager/pane.py:2286
+#: src/sshpilot/file_manager/pane.py:2299
 msgid "Properties…"
 msgstr "Eigenschaften…"
 
-#: src/sshpilot/file_manager/pane.py:2494
+#: src/sshpilot/file_manager/pane.py:2510
 msgid "Select at least one item first"
 msgstr "Wählen Sie zunächst mindestens ein Element aus"
 
-#: src/sshpilot/file_manager/pane.py:2497
+#: src/sshpilot/file_manager/pane.py:2513
 msgid "Select a single item to rename"
 msgstr "Wählen Sie ein einzelnes Element zum Umbenennen aus"
 
-#: src/sshpilot/file_manager/pane.py:2567
+#: src/sshpilot/file_manager/pane.py:2583
 msgid "Location copied"
 msgstr "Standort kopiert"
 
-#: src/sshpilot/file_manager/pane.py:2663
+#: src/sshpilot/file_manager/pane.py:2656
+msgid "Select items to copy first"
+msgstr "Wählen Sie zuerst Elemente zum Kopieren aus"
+
+#: src/sshpilot/file_manager/pane.py:2717
 msgid "Select items to download first"
 msgstr "Wählen Sie zuerst die herunterzuladenden Elemente aus"
 
-#: src/sshpilot/file_manager/pane.py:2672
+#: src/sshpilot/file_manager/pane.py:2726
 msgid "Select items to upload first"
 msgstr "Wählen Sie zuerst die hochzuladenden Elemente aus"
 
-#: src/sshpilot/file_manager/pane.py:2713
-#: src/sshpilot/file_manager/pane.py:2765
+#: src/sshpilot/file_manager/pane.py:2767
+#: src/sshpilot/file_manager/pane.py:2819
 msgid "File manager is not available"
 msgstr "Der Dateimanager ist nicht verfügbar"
 
-#: src/sshpilot/file_manager/pane.py:2718
-#: src/sshpilot/file_manager/pane.py:2770
-#: src/sshpilot/file_manager_window.py:2743
+#: src/sshpilot/file_manager/pane.py:2772
+#: src/sshpilot/file_manager/pane.py:2824
+#: src/sshpilot/file_manager_window.py:2815
 msgid "Local pane is unavailable"
 msgstr "Der lokale Bereich ist nicht verfügbar"
 
-#: src/sshpilot/file_manager/pane.py:2730
+#: src/sshpilot/file_manager/pane.py:2784
 msgid "Remote pane is unavailable"
 msgstr "Der Remote-Bereich ist nicht verfügbar"
 
-#: src/sshpilot/file_manager/pane.py:2735
+#: src/sshpilot/file_manager/pane.py:2789
 msgid "Select items in the local pane to upload"
 msgstr "Wählen Sie im lokalen Bereich Elemente zum Hochladen aus"
 
-#: src/sshpilot/file_manager/pane.py:2750
+#: src/sshpilot/file_manager/pane.py:2804
 #, python-brace-format
 msgid "Uploading {name}…"
 msgstr "{name} wird hochgeladen…"
 
-#: src/sshpilot/file_manager/pane.py:2753
+#: src/sshpilot/file_manager/pane.py:2807
 #, python-brace-format
 msgid "Uploading {count} item…"
 msgid_plural "Uploading {count} items…"
 msgstr[0] "{count} Artikel wird hochgeladen…"
 msgstr[1] "{count} Artikel werden hochgeladen…"
 
-#: src/sshpilot/file_manager/pane.py:2760
+#: src/sshpilot/file_manager/pane.py:2814
 msgid "Select items to download"
 msgstr "Wählen Sie Elemente zum Herunterladen aus"
 
-#: src/sshpilot/file_manager/pane.py:2781
+#: src/sshpilot/file_manager/pane.py:2835
 msgid "Local destination is not accessible"
 msgstr "Das lokale Ziel ist nicht zugänglich"
 
-#: src/sshpilot/file_manager/pane.py:2790
+#: src/sshpilot/file_manager/pane.py:2844
 #, python-brace-format
 msgid "Downloading {name}…"
 msgstr "{name} wird heruntergeladen…"
 
-#: src/sshpilot/file_manager/pane.py:2793
+#: src/sshpilot/file_manager/pane.py:2847
 #, python-brace-format
 msgid "Downloading {count} item…"
 msgid_plural "Downloading {count} items…"
 msgstr[0] "{count} Artikel wird heruntergeladen…"
 msgstr[1] "{count} Artikel werden heruntergeladen…"
 
-#: src/sshpilot/file_manager/pane.py:2802
+#: src/sshpilot/file_manager/pane.py:2856
 msgid "Request Folder Access"
 msgstr "Ordnerzugriff anfordern"
 
-#: src/sshpilot/file_manager/pane.py:2803
+#: src/sshpilot/file_manager/pane.py:2857
 msgid ""
 "You are using the app in a sandbox. Please grant access to your home folder "
 "to use the File Manager."
@@ -3931,161 +3939,161 @@ msgstr ""
 "Sie verwenden die App in einer Sandbox. Bitte gewähren Sie Zugriff auf Ihren "
 "Home-Ordner, um den Dateimanager verwenden zu können."
 
-#: src/sshpilot/file_manager/pane.py:2832
+#: src/sshpilot/file_manager/pane.py:2886
 msgid "Select Folder to Grant Access"
 msgstr "Ordner auswählen, um Zugriff zu gewähren"
 
-#: src/sshpilot/file_manager/pane.py:2857
-#: src/sshpilot/file_manager/pane.py:2868
+#: src/sshpilot/file_manager/pane.py:2911
+#: src/sshpilot/file_manager/pane.py:2922
 #, python-brace-format
 msgid "Access granted to: {path}"
 msgstr "Zugriff gewährt für: {path}"
 
-#: src/sshpilot/file_manager/pane.py:2918 src/sshpilot/macos_menubar.py:64
+#: src/sshpilot/file_manager/pane.py:2972 src/sshpilot/macos_menubar.py:64
 msgid "File"
 msgstr "Datei"
 
-#: src/sshpilot/file_manager/pane.py:2928
+#: src/sshpilot/file_manager/pane.py:2982
 #: src/sshpilot/machine_info_dialog.py:367
 #: src/sshpilot/machine_info_dialog.py:375
 #: src/sshpilot/machine_info_dialog.py:2650
 msgid "Unknown"
 msgstr "Unbekannt"
 
-#: src/sshpilot/file_manager/pane.py:2942
+#: src/sshpilot/file_manager/pane.py:2996
 msgid "No file selected"
 msgstr "Keine Datei ausgewählt"
 
-#: src/sshpilot/file_manager/pane.py:2946
+#: src/sshpilot/file_manager/pane.py:3000
 msgid "Cannot edit directories"
 msgstr "Verzeichnisse können nicht bearbeitet werden"
 
-#: src/sshpilot/file_manager/pane.py:2952
+#: src/sshpilot/file_manager/pane.py:3006
 msgid "Cannot edit file - window not available"
 msgstr "Datei kann nicht bearbeitet werden – Fenster nicht verfügbar"
 
-#: src/sshpilot/file_manager/pane.py:2963
+#: src/sshpilot/file_manager/pane.py:3017
 msgid "Cannot edit file - connection not available"
 msgstr "Datei kann nicht bearbeitet werden – Verbindung nicht verfügbar"
 
-#: src/sshpilot/file_manager/pane.py:2994
-#: src/sshpilot/file_manager/pane.py:3013
+#: src/sshpilot/file_manager/pane.py:3048
+#: src/sshpilot/file_manager/pane.py:3067
 #, python-brace-format
 msgid "Failed to open editor: {error}"
 msgstr "Editor konnte nicht geöffnet werden: {error}"
 
-#: src/sshpilot/file_manager/pane.py:3078
+#: src/sshpilot/file_manager/pane.py:3132
 msgid "Current directory is not accessible"
 msgstr "Auf das aktuelle Verzeichnis kann nicht zugegriffen werden"
 
-#: src/sshpilot/file_manager/pane.py:3082
+#: src/sshpilot/file_manager/pane.py:3136
 msgid "Unable to get directory properties"
 msgstr "Verzeichniseigenschaften können nicht abgerufen werden"
 
-#: src/sshpilot/file_manager/pane.py:3120
-#: src/sshpilot/file_manager/pane.py:3190
+#: src/sshpilot/file_manager/pane.py:3174
+#: src/sshpilot/file_manager/pane.py:3244
 #, python-brace-format
 msgid "Failed to show properties: {error}"
 msgstr "Eigenschaften konnten nicht angezeigt werden: {error}"
 
-#: src/sshpilot/file_manager/pane.py:3140
-#: src/sshpilot/file_manager_window.py:2079 src/sshpilot/window_dialogs.py:2830
+#: src/sshpilot/file_manager/pane.py:3194
+#: src/sshpilot/file_manager_window.py:2151 src/sshpilot/window_dialogs.py:2830
 msgid "Nothing selected"
 msgstr "Nichts ausgewählt"
 
-#: src/sshpilot/file_manager/pane.py:3146
+#: src/sshpilot/file_manager/pane.py:3200
 msgid "Cannot show properties - window not available"
 msgstr "Eigenschaften können nicht angezeigt werden – Fenster nicht verfügbar"
 
-#: src/sshpilot/file_manager/pane.py:3209
+#: src/sshpilot/file_manager/pane.py:3263
 #, python-brace-format
 msgid "{name} Properties"
 msgstr "{name} Eigenschaften"
 
-#: src/sshpilot/file_manager/pane.py:3209
+#: src/sshpilot/file_manager/pane.py:3263
 #: src/sshpilot/resources/ui/properties_dialog.ui:10
 #: src/sshpilot/resources/ui/properties_dialog.ui:19
 msgid "Properties"
 msgstr "Eigenschaften"
 
-#: src/sshpilot/file_manager/pane.py:3211
+#: src/sshpilot/file_manager/pane.py:3265
 #, python-brace-format
 msgid "Name: {value}"
 msgstr "Name: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3212
+#: src/sshpilot/file_manager/pane.py:3266
 #, python-brace-format
 msgid "Type: {value}"
 msgstr "Typ: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3213
+#: src/sshpilot/file_manager/pane.py:3267
 #, python-brace-format
 msgid "Size: {value}"
 msgstr "Größe: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3214
+#: src/sshpilot/file_manager/pane.py:3268
 #, python-brace-format
 msgid "Modified: {value}"
 msgstr "Geändert: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3215
+#: src/sshpilot/file_manager/pane.py:3269
 #, python-brace-format
 msgid "Location: {value}"
 msgstr "Standort: {value}"
 
-#: src/sshpilot/file_manager/pane.py:3250
+#: src/sshpilot/file_manager/pane.py:3304
 msgid "Failed to load directory"
 msgstr "Das Verzeichnis konnte nicht geladen werden"
 
-#: src/sshpilot/file_manager/pane.py:3454
+#: src/sshpilot/file_manager/pane.py:3508
 #, python-brace-format
 msgid "Could not open {name}"
 msgstr "{name} konnte nicht geöffnet werden"
 
-#: src/sshpilot/file_manager/pane.py:3462
+#: src/sshpilot/file_manager/pane.py:3516
 msgid "Download the file to this computer or open it in the editor?"
 msgstr "Die Datei auf diesen Computer herunterladen oder im Editor öffnen?"
 
-#: src/sshpilot/file_manager/pane.py:3464
+#: src/sshpilot/file_manager/pane.py:3518
 msgid "Download the file to this computer?"
 msgstr "Die Datei auf diesen Computer herunterladen?"
 
-#: src/sshpilot/file_manager/pane.py:3468
+#: src/sshpilot/file_manager/pane.py:3522
 msgid "Edit as Text"
 msgstr "Als Text bearbeiten"
 
-#: src/sshpilot/file_manager/pane.py:3729
-#: src/sshpilot/file_manager/pane.py:3746
-#: src/sshpilot/file_manager/pane.py:3752
-#: src/sshpilot/file_manager/pane.py:3761
-#: src/sshpilot/file_manager/pane.py:3781
+#: src/sshpilot/file_manager/pane.py:3783
+#: src/sshpilot/file_manager/pane.py:3800
+#: src/sshpilot/file_manager/pane.py:3806
+#: src/sshpilot/file_manager/pane.py:3815
+#: src/sshpilot/file_manager/pane.py:3835
 msgid "Dragged item is no longer available"
 msgstr "Das gezogene Element ist nicht mehr verfügbar"
 
-#: src/sshpilot/file_manager/pane.py:3897
+#: src/sshpilot/file_manager/pane.py:3951
 msgid "Upload failed: Invalid window context"
 msgstr "Hochladen fehlgeschlagen: Ungültiger Fensterkontext"
 
-#: src/sshpilot/file_manager/pane.py:3930
-#: src/sshpilot/file_manager/pane.py:3937
-#: src/sshpilot/file_manager_window.py:2706
-#: src/sshpilot/file_manager_window.py:2722 src/sshpilot/text_editor.py:1539
+#: src/sshpilot/file_manager/pane.py:3984
+#: src/sshpilot/file_manager/pane.py:3991
+#: src/sshpilot/file_manager_window.py:2778
+#: src/sshpilot/file_manager_window.py:2794 src/sshpilot/text_editor.py:1539
 #, python-brace-format
 msgid "Upload failed: {error}"
 msgstr "Hochladen fehlgeschlagen: {error}"
 
-#: src/sshpilot/file_manager/pane.py:3960
+#: src/sshpilot/file_manager/pane.py:4014
 msgid "Download failed: Invalid window context"
 msgstr "Download fehlgeschlagen: Ungültiger Fensterkontext"
 
-#: src/sshpilot/file_manager/pane.py:3991
-#: src/sshpilot/file_manager/pane.py:3999
-#: src/sshpilot/file_manager_window.py:2801
+#: src/sshpilot/file_manager/pane.py:4045
+#: src/sshpilot/file_manager/pane.py:4053
+#: src/sshpilot/file_manager_window.py:2873
 #, python-brace-format
 msgid "Download failed: {error}"
 msgstr "Download fehlgeschlagen: {error}"
 
-#: src/sshpilot/file_manager/pane.py:4114
+#: src/sshpilot/file_manager/pane.py:4168
 msgid "No access to this folder. Use Request Access to open it."
 msgstr ""
 "Kein Zugriff auf diesen Ordner. Verwenden Sie „Zugriff anfordern“, um ihn zu "
@@ -4514,131 +4522,131 @@ msgstr "Benutzerdefinierte Zugriffsrechte festlegen"
 msgid "Could not change the permissions of “{name}”: {error}"
 msgstr "Die Zugriffsrechte von »{name}« konnten nicht geändert werden: {error}"
 
-#: src/sshpilot/file_manager_window.py:421
-#: src/sshpilot/file_manager_window.py:641
+#: src/sshpilot/file_manager_window.py:441
+#: src/sshpilot/file_manager_window.py:661
 #, python-brace-format
 msgid "Failed to load local home: {error}"
 msgstr "Lokales Zuhause konnte nicht geladen werden: {error}"
 
-#: src/sshpilot/file_manager_window.py:490
-#: src/sshpilot/file_manager_window.py:674 src/sshpilot/sidebar.py:2783
+#: src/sshpilot/file_manager_window.py:510
+#: src/sshpilot/file_manager_window.py:694 src/sshpilot/sidebar.py:2783
 #, python-brace-format
 msgid "Connecting to {host}…"
 msgstr "Verbindung zu {host} wird hergestellt…"
 
-#: src/sshpilot/file_manager_window.py:560
+#: src/sshpilot/file_manager_window.py:580
 msgid "Choose what this pane shows"
 msgstr "Festlegen, was dieser Bereich anzeigt"
 
-#: src/sshpilot/file_manager_window.py:593
+#: src/sshpilot/file_manager_window.py:613
 msgid "This Computer"
 msgstr "Dieser Computer"
 
-#: src/sshpilot/file_manager_window.py:594
+#: src/sshpilot/file_manager_window.py:614
 msgid "Browse local files"
 msgstr "Lokale Dateien anzeigen"
 
-#: src/sshpilot/file_manager_window.py:607
-#: src/sshpilot/file_manager_window.py:895
+#: src/sshpilot/file_manager_window.py:627
+#: src/sshpilot/file_manager_window.py:915
 msgid "Connection has no host"
 msgstr "Verbindung hat keinen Host"
 
-#: src/sshpilot/file_manager_window.py:772
+#: src/sshpilot/file_manager_window.py:792
 msgid "Choose remote host"
 msgstr "Entfernten Host auswählen"
 
-#: src/sshpilot/file_manager_window.py:798
-#: src/sshpilot/file_manager_window.py:872 src/sshpilot/split_view.py:711
+#: src/sshpilot/file_manager_window.py:818
+#: src/sshpilot/file_manager_window.py:892 src/sshpilot/split_view.py:711
 msgid "Select host"
 msgstr "Host auswählen"
 
-#: src/sshpilot/file_manager_window.py:811
+#: src/sshpilot/file_manager_window.py:831
 msgid "No connections available"
 msgstr "Keine Verbindungen verfügbar"
 
-#: src/sshpilot/file_manager_window.py:867
+#: src/sshpilot/file_manager_window.py:887
 msgid "No server selected"
 msgstr "Kein Server ausgewählt"
 
-#: src/sshpilot/file_manager_window.py:1099
-#, python-brace-format
-msgid "Show Both Panes ({shortcut})"
-msgstr "Beide Bereiche anzeigen ({shortcut})"
-
-#: src/sshpilot/file_manager_window.py:1100
+#: src/sshpilot/file_manager_window.py:1088
 #, python-brace-format
 msgid "Show One Pane ({shortcut})"
 msgstr "Nur einen Bereich anzeigen ({shortcut})"
 
-#: src/sshpilot/file_manager_window.py:1216
-#: src/sshpilot/file_manager_window.py:1234
+#: src/sshpilot/file_manager_window.py:1089
+#, python-brace-format
+msgid "Show Both Panes ({shortcut})"
+msgstr "Beide Bereiche anzeigen ({shortcut})"
+
+#: src/sshpilot/file_manager_window.py:1288
+#: src/sshpilot/file_manager_window.py:1306
 msgid "Connected — loading files…"
 msgstr "Verbunden – Dateien werden geladen…"
 
-#: src/sshpilot/file_manager_window.py:1232
+#: src/sshpilot/file_manager_window.py:1304
 msgid "Connected"
 msgstr "Verbunden"
 
-#: src/sshpilot/file_manager_window.py:1262
+#: src/sshpilot/file_manager_window.py:1334
 #, python-brace-format
 msgid "File operation failed: {error}"
 msgstr "Dateivorgang fehlgeschlagen: {error}"
 
-#: src/sshpilot/file_manager_window.py:1263
+#: src/sshpilot/file_manager_window.py:1335
 msgid "File operation failed"
 msgstr "Der Dateivorgang ist fehlgeschlagen"
 
-#: src/sshpilot/file_manager_window.py:1343
-#: src/sshpilot/file_manager_window.py:1393
+#: src/sshpilot/file_manager_window.py:1415
+#: src/sshpilot/file_manager_window.py:1465
 #, python-brace-format
 msgid "Connection failed: {error}"
 msgstr "Verbindung fehlgeschlagen: {error}"
 
-#: src/sshpilot/file_manager_window.py:1535
+#: src/sshpilot/file_manager_window.py:1607
 msgid "Directory refreshed"
 msgstr "Verzeichnis aktualisiert"
 
-#: src/sshpilot/file_manager_window.py:1577
+#: src/sshpilot/file_manager_window.py:1649
 #, python-brace-format
 msgid "Not a directory: {path}"
 msgstr "Kein Verzeichnis: {path}"
 
-#: src/sshpilot/file_manager_window.py:1605
+#: src/sshpilot/file_manager_window.py:1677
 msgid "Directory reloaded"
 msgstr "Verzeichnis neu geladen"
 
-#: src/sshpilot/file_manager_window.py:1612
 #: src/sshpilot/file_manager_window.py:1684
+#: src/sshpilot/file_manager_window.py:1756
 #, python-brace-format
 msgid "Failed to load directory: {error}"
 msgstr "Verzeichnis konnte nicht geladen werden: {error}"
 
-#: src/sshpilot/file_manager_window.py:1723
+#: src/sshpilot/file_manager_window.py:1795
 msgid "Loading directory…"
 msgstr "Verzeichnis wird geladen…"
 
-#: src/sshpilot/file_manager_window.py:1802
-#: src/sshpilot/file_manager_window.py:1811
-#: src/sshpilot/file_manager_window.py:1827
-#: src/sshpilot/file_manager_window.py:1865
-#: src/sshpilot/file_manager_window.py:1957
-#: src/sshpilot/file_manager_window.py:1974
+#: src/sshpilot/file_manager_window.py:1874
+#: src/sshpilot/file_manager_window.py:1883
+#: src/sshpilot/file_manager_window.py:1899
+#: src/sshpilot/file_manager_window.py:1937
+#: src/sshpilot/file_manager_window.py:2029
+#: src/sshpilot/file_manager_window.py:2046
 msgid "Connection lost. Please reconnect and try again."
 msgstr ""
 "Verbindung verloren. Bitte stellen Sie die Verbindung wieder her und "
 "versuchen Sie es erneut."
 
-#: src/sshpilot/file_manager_window.py:1816
+#: src/sshpilot/file_manager_window.py:1888
 #, python-brace-format
 msgid "Connection error: {error}"
 msgstr "Verbindungsfehler: {error}"
 
-#: src/sshpilot/file_manager_window.py:1836
+#: src/sshpilot/file_manager_window.py:1908
 #, python-brace-format
 msgid "'{filename}' already exists in the destination folder."
 msgstr "„{filename}“ existiert bereits im Zielordner."
 
-#: src/sshpilot/file_manager_window.py:1839
+#: src/sshpilot/file_manager_window.py:1911
 #, python-brace-format
 msgid "{count} of {total} file already exists in the destination folder."
 msgid_plural ""
@@ -4646,220 +4654,220 @@ msgid_plural ""
 msgstr[0] "{count} der Datei {total} ist bereits im Zielordner vorhanden."
 msgstr[1] "{count} von {total} Dateien sind bereits im Zielordner vorhanden."
 
-#: src/sshpilot/file_manager_window.py:1844
+#: src/sshpilot/file_manager_window.py:1916
 msgid "File Already Exists"
 msgid_plural "Files Already Exist"
 msgstr[0] "Datei existiert bereits"
 msgstr[1] "Dateien sind bereits vorhanden"
 
-#: src/sshpilot/file_manager_window.py:1848
+#: src/sshpilot/file_manager_window.py:1920
 msgid "Skip Existing"
 msgstr "Vorhandene überspringen"
 
-#: src/sshpilot/file_manager_window.py:1849 src/sshpilot/text_editor.py:491
+#: src/sshpilot/file_manager_window.py:1921 src/sshpilot/text_editor.py:491
 msgid "Replace All"
 msgstr "Alle ersetzen"
 
-#: src/sshpilot/file_manager_window.py:1877
+#: src/sshpilot/file_manager_window.py:1949
 #, python-brace-format
 msgid "Skipped existing file: {filename}"
 msgstr "Vorhandene Datei übersprungen: {filename}"
 
-#: src/sshpilot/file_manager_window.py:1880
+#: src/sshpilot/file_manager_window.py:1952
 #, python-brace-format
 msgid "Skipped {count} existing file"
 msgid_plural "Skipped {count} existing files"
 msgstr[0] "{count} vorhandene Datei übersprungen"
 msgstr[1] "{count} vorhandene Dateien wurden übersprungen"
 
-#: src/sshpilot/file_manager_window.py:2041
-#: src/sshpilot/file_manager_window.py:2059
+#: src/sshpilot/file_manager_window.py:2113
+#: src/sshpilot/file_manager_window.py:2131
 msgid "Terminal is not available"
 msgstr "Terminal ist nicht verfügbar"
 
-#: src/sshpilot/file_manager_window.py:2102
+#: src/sshpilot/file_manager_window.py:2174
 #, python-brace-format
 msgid "Cut {name}"
 msgstr "Schneiden {name}"
 
-#: src/sshpilot/file_manager_window.py:2102
+#: src/sshpilot/file_manager_window.py:2174
 #, python-brace-format
 msgid "Copied {name}"
 msgstr "Kopiert {name}"
 
-#: src/sshpilot/file_manager_window.py:2106
+#: src/sshpilot/file_manager_window.py:2178
 #, python-brace-format
 msgid "Cut {count} item"
 msgid_plural "Cut {count} items"
 msgstr[0] "{count} Element ausschneiden"
 msgstr[1] "Schneiden Sie {count} Artikel aus"
 
-#: src/sshpilot/file_manager_window.py:2108
-#: src/sshpilot/file_manager_window.py:3375
+#: src/sshpilot/file_manager_window.py:2180
+#: src/sshpilot/file_manager_window.py:3447
 #, python-brace-format
 msgid "Copied {count} item"
 msgid_plural "Copied {count} items"
 msgstr[0] "{count} Element kopiert"
 msgstr[1] "{count} Elemente kopiert"
 
-#: src/sshpilot/file_manager_window.py:2114
+#: src/sshpilot/file_manager_window.py:2186
 msgid "Clipboard is empty"
 msgstr "Die Zwischenablage ist leer"
 
-#: src/sshpilot/file_manager_window.py:2146
+#: src/sshpilot/file_manager_window.py:2218
 msgid "Paste target is unavailable"
 msgstr "Ziel einfügen ist nicht verfügbar"
 
-#: src/sshpilot/file_manager_window.py:2175
+#: src/sshpilot/file_manager_window.py:2247
 msgid "Enter a name for the new folder"
 msgstr "Geben Sie einen Namen für den neuen Ordner ein"
 
-#: src/sshpilot/file_manager_window.py:2180
-#: src/sshpilot/file_manager_window.py:2241
+#: src/sshpilot/file_manager_window.py:2252
+#: src/sshpilot/file_manager_window.py:2313
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:312
 #: src/sshpilot/window_dialogs.py:3382
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:25
 msgid "Create"
 msgstr "Erstellen"
 
-#: src/sshpilot/file_manager_window.py:2198
+#: src/sshpilot/file_manager_window.py:2270
 msgid "Folder already exists"
 msgstr "Der Ordner existiert bereits"
 
-#: src/sshpilot/file_manager_window.py:2200
+#: src/sshpilot/file_manager_window.py:2272
 #, python-brace-format
 msgid "Failed to create folder: {error}"
 msgstr "Ordner konnte nicht erstellt werden: {error}"
 
-#: src/sshpilot/file_manager_window.py:2236
+#: src/sshpilot/file_manager_window.py:2308
 msgid "Enter a name for the new file"
 msgstr "Geben Sie einen Namen für die neue Datei ein"
 
-#: src/sshpilot/file_manager_window.py:2257
-#: src/sshpilot/file_manager_window.py:2272 src/sshpilot/preferences.py:4286
+#: src/sshpilot/file_manager_window.py:2329
+#: src/sshpilot/file_manager_window.py:2344 src/sshpilot/preferences.py:4286
 msgid "File already exists"
 msgstr "Datei existiert bereits"
 
-#: src/sshpilot/file_manager_window.py:2259
-#: src/sshpilot/file_manager_window.py:2275
+#: src/sshpilot/file_manager_window.py:2331
+#: src/sshpilot/file_manager_window.py:2347
 #, python-brace-format
 msgid "Failed to create file: {error}"
 msgstr "Datei konnte nicht erstellt werden: {error}"
 
-#: src/sshpilot/file_manager_window.py:2322
+#: src/sshpilot/file_manager_window.py:2394
 msgid "Rename Item"
 msgstr "Element umbenennen"
 
-#: src/sshpilot/file_manager_window.py:2322
+#: src/sshpilot/file_manager_window.py:2394
 #, python-brace-format
 msgid "Enter a new name for {name}"
 msgstr "Geben Sie einen neuen Namen für {name} ein."
 
-#: src/sshpilot/file_manager_window.py:2338
+#: src/sshpilot/file_manager_window.py:2410
 msgid "Name cannot be empty"
 msgstr "Der Name darf nicht leer sein"
 
-#: src/sshpilot/file_manager_window.py:2349
+#: src/sshpilot/file_manager_window.py:2421
 #, python-brace-format
 msgid "Failed to rename item: {error}"
 msgstr "Element konnte nicht umbenannt werden: {error}"
 
-#: src/sshpilot/file_manager_window.py:2351
+#: src/sshpilot/file_manager_window.py:2423
 #, python-brace-format
 msgid "Renamed to {name}"
 msgstr "Umbenannt in {name}"
 
-#: src/sshpilot/file_manager_window.py:2368
+#: src/sshpilot/file_manager_window.py:2440
 #, python-brace-format
 msgid "Renaming to {name}…"
 msgstr "Umbenennung in {name}…"
 
-#: src/sshpilot/file_manager_window.py:2400
+#: src/sshpilot/file_manager_window.py:2472
 #, python-brace-format
 msgid "Delete {name}?"
 msgstr "{name} löschen?"
 
-#: src/sshpilot/file_manager_window.py:2402
+#: src/sshpilot/file_manager_window.py:2474
 #, python-brace-format
 msgid "Delete {count} item?"
 msgid_plural "Delete {count} items?"
 msgstr[0] "{count} Element löschen?"
 msgstr[1] "{count} Elemente löschen?"
 
-#: src/sshpilot/file_manager_window.py:2404
+#: src/sshpilot/file_manager_window.py:2476
 msgid "Delete Item"
 msgid_plural "Delete Items"
 msgstr[0] "Artikel löschen"
 msgstr[1] "Elemente löschen"
 
-#: src/sshpilot/file_manager_window.py:2430
+#: src/sshpilot/file_manager_window.py:2502
 #, python-brace-format
 msgid "{name} no longer exists"
 msgstr "{name} existiert nicht mehr"
 
-#: src/sshpilot/file_manager_window.py:2432
-#: src/sshpilot/file_manager_window.py:2494
-#: src/sshpilot/file_manager_window.py:2527
+#: src/sshpilot/file_manager_window.py:2504
+#: src/sshpilot/file_manager_window.py:2566
+#: src/sshpilot/file_manager_window.py:2599
 #, python-brace-format
 msgid "Failed to delete {name}: {error}"
 msgstr "Fehler beim Löschen von {name}: {error}"
 
-#: src/sshpilot/file_manager_window.py:2436
-#: src/sshpilot/file_manager_window.py:3068
+#: src/sshpilot/file_manager_window.py:2508
+#: src/sshpilot/file_manager_window.py:3140
 #, python-brace-format
 msgid "Deleted {count} item"
 msgid_plural "Deleted {count} items"
 msgstr[0] "{count} Element gelöscht"
 msgstr[1] "{count} Elemente gelöscht"
 
-#: src/sshpilot/file_manager_window.py:2480
-#: src/sshpilot/file_manager_window.py:2565
+#: src/sshpilot/file_manager_window.py:2552
+#: src/sshpilot/file_manager_window.py:2637
 #, python-brace-format
 msgid "Failed to delete {count} items: {error}"
 msgstr "Fehler beim Löschen von {count} Elementen: {error}"
 
-#: src/sshpilot/file_manager_window.py:2491
-#: src/sshpilot/file_manager_window.py:3012
+#: src/sshpilot/file_manager_window.py:2563
+#: src/sshpilot/file_manager_window.py:3084
 msgid "Delete was cancelled"
 msgstr "Der Löschvorgang wurde abgebrochen"
 
-#: src/sshpilot/file_manager_window.py:2658
+#: src/sshpilot/file_manager_window.py:2730
 msgid "No files selected for upload"
 msgstr "Keine Dateien zum Hochladen ausgewählt"
 
-#: src/sshpilot/file_manager_window.py:2673
+#: src/sshpilot/file_manager_window.py:2745
 msgid "Selected items are not accessible"
 msgstr "Ausgewählte Elemente sind nicht zugänglich"
 
-#: src/sshpilot/file_manager_window.py:2676
+#: src/sshpilot/file_manager_window.py:2748
 #, python-brace-format
 msgid "Skipping inaccessible items: {name}"
 msgstr "Unzugängliche Elemente überspringen: {name}"
 
-#: src/sshpilot/file_manager_window.py:2693
+#: src/sshpilot/file_manager_window.py:2765
 msgid "Upload failed: Connection lost"
 msgstr "Hochladen fehlgeschlagen: Verbindung verloren"
 
-#: src/sshpilot/file_manager_window.py:2701
+#: src/sshpilot/file_manager_window.py:2773
 msgid "Upload failed: Connection closed. Please reconnect."
 msgstr ""
 "Hochladen fehlgeschlagen: Verbindung geschlossen. Bitte stellen Sie die "
 "Verbindung wieder her."
 
-#: src/sshpilot/file_manager_window.py:2769
+#: src/sshpilot/file_manager_window.py:2841
 msgid "Invalid download request"
 msgstr "Ungültige Download-Anfrage"
 
 #. All files failed
-#: src/sshpilot/file_manager_window.py:3000
-#: src/sshpilot/file_manager_window.py:3022
-#: src/sshpilot/file_manager_window.py:3025
-#: src/sshpilot/file_manager_window.py:4283 src/sshpilot/window.py:1529
+#: src/sshpilot/file_manager_window.py:3072
+#: src/sshpilot/file_manager_window.py:3094
+#: src/sshpilot/file_manager_window.py:3097
+#: src/sshpilot/file_manager_window.py:4355 src/sshpilot/window.py:1529
 #: src/sshpilot/window_dialogs.py:2020
 msgid "Unknown error"
 msgstr "Unbekannter Fehler"
 
-#: src/sshpilot/file_manager_window.py:3031
+#: src/sshpilot/file_manager_window.py:3103
 #, python-brace-format
 msgid "{count} of {total} item failed"
 msgid_plural "{count} of {total} items failed"
@@ -4869,72 +4877,72 @@ msgstr[1] "{count} von {total} Elementen sind fehlgeschlagen"
 #. Try to reconnect and then refresh
 #. The connection should be automatically re-established on next operation
 #. For now, just show a message and let user manually refresh
-#: src/sshpilot/file_manager_window.py:3156
+#: src/sshpilot/file_manager_window.py:3228
 msgid "Connection closed. Please refresh manually."
 msgstr "Verbindung geschlossen. Bitte aktualisieren Sie manuell."
 
-#: src/sshpilot/file_manager_window.py:3159
-#: src/sshpilot/file_manager_window.py:3168
+#: src/sshpilot/file_manager_window.py:3231
+#: src/sshpilot/file_manager_window.py:3240
 #, python-brace-format
 msgid "Refresh failed: {error}"
 msgstr "Aktualisierung fehlgeschlagen: {error}"
 
-#: src/sshpilot/file_manager_window.py:3265
+#: src/sshpilot/file_manager_window.py:3337
 msgid "You cannot move a folder into itself."
 msgstr "Sie können einen Ordner nicht in sich selbst verschieben."
 
-#: src/sshpilot/file_manager_window.py:3267
+#: src/sshpilot/file_manager_window.py:3339
 msgid "You cannot copy a folder into itself."
 msgstr "Sie können einen Ordner nicht in sich selbst kopieren."
 
-#: src/sshpilot/file_manager_window.py:3269
+#: src/sshpilot/file_manager_window.py:3341
 msgid "The destination folder is inside the source folder."
 msgstr "Der Zielordner befindet sich im Quellordner."
 
-#: src/sshpilot/file_manager_window.py:3273
+#: src/sshpilot/file_manager_window.py:3345
 msgid "Skip"
 msgstr "Überspringen"
 
-#: src/sshpilot/file_manager_window.py:3275
+#: src/sshpilot/file_manager_window.py:3347
 msgid "Skip All"
 msgstr "Alles überspringen"
 
-#: src/sshpilot/file_manager_window.py:3350
-#: src/sshpilot/file_manager_window.py:3356
+#: src/sshpilot/file_manager_window.py:3422
+#: src/sshpilot/file_manager_window.py:3428
 #, python-brace-format
 msgid "{name} already exists"
 msgstr "{name} existiert bereits"
 
-#: src/sshpilot/file_manager_window.py:3372
+#: src/sshpilot/file_manager_window.py:3444
 #, python-brace-format
 msgid "Moved {count} item"
 msgid_plural "Moved {count} items"
 msgstr[0] "{count} Element verschoben"
 msgstr[1] "{count} Elemente verschoben"
 
-#: src/sshpilot/file_manager_window.py:3382
+#: src/sshpilot/file_manager_window.py:3454
 #, python-brace-format
 msgid "Local copy or move failed: {error}"
 msgstr "Lokales Kopieren oder Verschieben fehlgeschlagen: {error}"
 
-#: src/sshpilot/file_manager_window.py:3413
-#: src/sshpilot/file_manager_window.py:3486
-#: src/sshpilot/file_manager_window.py:3588
-#: src/sshpilot/file_manager_window.py:3923
+#: src/sshpilot/file_manager_window.py:3485
+#: src/sshpilot/file_manager_window.py:3558
+#: src/sshpilot/file_manager_window.py:3660
+#: src/sshpilot/file_manager_window.py:3995
 msgid "Remote connection unavailable"
 msgstr "Remote-Verbindung nicht verfügbar"
 
-#: src/sshpilot/file_manager_window.py:3562
+#: src/sshpilot/file_manager_window.py:3634
 msgid "Files are no longer available"
 msgstr "Dateien sind nicht mehr verfügbar"
 
-#: src/sshpilot/file_manager_window.py:3666
+#: src/sshpilot/file_manager_window.py:3738
 #, python-brace-format
 msgid "Failed to remove {name}: {error}"
 msgstr "Fehler beim Entfernen von {name}: {error}"
 
-#: src/sshpilot/file_manager_window.py:4020
-#: src/sshpilot/file_manager_window.py:4289
+#: src/sshpilot/file_manager_window.py:4092
+#: src/sshpilot/file_manager_window.py:4361
 #, python-brace-format
 msgid "{count} of {total} file could not be transferred"
 msgid_plural "{count} of {total} files could not be transferred"

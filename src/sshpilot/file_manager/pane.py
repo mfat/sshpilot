@@ -631,8 +631,8 @@ class FilePane(Gtk.Box):
             from sshpilot import icon_utils
             button = Gtk.Button()
             
-            # Only upload and download buttons get text labels
-            if name in ["upload", "download"]:
+            # Only the transfer buttons get text labels
+            if name in ["upload", "download", "copy_to_other"]:
                 # ButtonContent only supports set_icon_name, but we want bundled icons
                 # So we'll use an Image widget with a label
                 image = icon_utils.new_image_from_icon_name(icon_name)
@@ -705,8 +705,18 @@ class FilePane(Gtk.Box):
             _("Delete"),
             lambda _button: self._emit_entry_operation("delete"),
         )
+        # With a server in each pane, the transfer to the other side is a
+        # copy between servers: neither Upload nor Download (#1356).
+        copy_to_other_button = _create_action_button(
+            "copy_to_other",
+            "document-send-symbolic",
+            _("Copy to Other Pane"),
+            lambda _button: self._on_copy_to_other_clicked(),
+        )
         self._download_button = download_button
         self._upload_button = upload_button
+        self._copy_to_other_button = copy_to_other_button
+        copy_to_other_button.set_visible(False)
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
         edit_button.set_visible(False)  # Initially hidden, shown when text file is selected
@@ -736,6 +746,7 @@ class FilePane(Gtk.Box):
 
         action_bar.pack_start(upload_button)
         action_bar.pack_start(download_button)
+        action_bar.pack_start(copy_to_other_button)
         if request_access_button:
             action_bar.pack_start(request_access_button)
         # Shows or hides the terminal below this pane; hidden until the file
@@ -2076,6 +2087,7 @@ class FilePane(Gtk.Box):
         _add_action("select_all", self._on_menu_select_all)
         _add_action("download", self._on_menu_download)
         _add_action("upload", self._on_menu_upload)
+        _add_action("copy_to_other", self._on_copy_to_other_clicked)
         _add_action("edit", self._on_menu_edit)
         _add_action("copy", lambda: self._emit_entry_operation("copy"))
         _add_action("cut", lambda: self._emit_entry_operation("cut"))
@@ -2268,7 +2280,8 @@ class FilePane(Gtk.Box):
                 and _is_editable_as_text(single.name) else None,
                 _item(_("Download"), "download") if self._download_available()
                 else _item(_("Upload…"), "upload") if not self._is_remote
-                else None,
+                else _item(_("Copy to Other Pane"), "copy_to_other")
+                if self._copy_to_other_available() else None,
             )
             _section(
                 _item(_("Cut"), "cut", "<Primary>x"),
@@ -2454,6 +2467,8 @@ class FilePane(Gtk.Box):
 
         can_download = self._download_available()
         _set_enabled("download", can_download and has_selection)
+        can_copy_to_other = self._copy_to_other_available()
+        _set_enabled("copy_to_other", can_copy_to_other and has_selection)
         _set_enabled("upload", (not self._is_remote) and has_selection)
         _set_enabled("copy", has_selection)
         _set_enabled("cut", has_selection)
@@ -2475,6 +2490,7 @@ class FilePane(Gtk.Box):
 
         # Action bar buttons still use the old logic
         _set_button("download", can_download and has_selection)
+        _set_button("copy_to_other", can_copy_to_other and has_selection)
         _set_button("upload", (not self._is_remote) and has_selection)
         _set_button("copy", has_selection)
         _set_button("cut", has_selection)
@@ -2618,6 +2634,41 @@ class FilePane(Gtk.Box):
             return local_pane() is not None
         return True
 
+    def _copy_to_other_available(self) -> bool:
+        """Copy to Other Pane: this pane and the other both show a server."""
+        if not self._is_remote:
+            return False
+        try:
+            window = self._get_file_manager_window()
+        except Exception:
+            window = None
+        local_pane = getattr(window, "_local_pane", None)
+        if not callable(local_pane) or local_pane() is not None:
+            return False
+        partner = getattr(self, "_partner_pane", None)
+        return partner is not None and bool(getattr(partner, "_is_remote", False))
+
+    def _on_copy_to_other_clicked(self) -> None:
+        """Copy the selection into the folder the other pane shows, from one
+        server to the other (or within one, when both panes show it)."""
+        entries = self.get_selected_entries()
+        if not entries:
+            self.show_toast(_("Select items to copy first"))
+            return
+        if not self._copy_to_other_available():
+            return
+        window = self._get_file_manager_window()
+        partner = self._partner_pane
+        destination = getattr(partner, "_current_path", "") or "/"
+        window._perform_pane_to_pane_remote_operation(
+            entries,
+            self._current_path or "/",
+            destination,
+            False,
+            source_pane=self,
+            destination_pane=partner,
+        )
+
     def set_remote(self, is_remote: bool) -> None:
         """Switch what this pane browses: a server, or this computer.
 
@@ -2648,6 +2699,9 @@ class FilePane(Gtk.Box):
         download = getattr(self, "_download_button", None)
         if download is not None:
             download.set_visible(self._download_available())
+        copy_to_other = getattr(self, "_copy_to_other_button", None)
+        if copy_to_other is not None:
+            copy_to_other.set_visible(self._copy_to_other_available())
         update = getattr(self, "_update_menu_state", None)
         if callable(update):
             try:
