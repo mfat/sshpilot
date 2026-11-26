@@ -663,7 +663,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
 
         # What the host gets for the options it does not set: another
         # block, another file, or Settings ▸ SSH Options decide them.
-        # Read-only; "Set for This Host" copies one into the rows above.
+        # Read-only: adding the option above gives the host its own value.
         self.inherited_group = Adw.PreferencesGroup(
             title=_("Inherited Options"),
             description=_(
@@ -713,15 +713,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
             source = pill(where, "muted")
             source.set_tooltip_text(where)
             row.add_suffix(source)
-            adopt = Gtk.Button.new_from_icon_name("list-add-symbolic")
-            adopt.add_css_class("flat")
-            adopt.set_valign(Gtk.Align.CENTER)
-            adopt.set_tooltip_text(_("Set for This Host"))
-            adopt.update_property([Gtk.AccessibleProperty.LABEL], [_("Set for This Host")])
-            adopt.connect(
-                "clicked", lambda _b, k=keyword, v=value: self.set_option(k, v)
-            )
-            row.add_suffix(adopt)
             self.inherited_group.add(row)
             self._inherited_rows.append(row)
         self.inherited_group.set_visible(bool(found))
