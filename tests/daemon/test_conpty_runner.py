@@ -179,3 +179,74 @@ def test_runner_delivers_output_left_after_a_full_read(monkeypatch):
         pty.exit(0)
     finally:
         runner.close()
+
+
+def test_paused_runner_stops_reading_and_resumes_without_new_output(monkeypatch):
+    """Flow control: a pause holds delivery; resume drains what is buffered."""
+
+    monkeypatch.setattr(
+        "sshpilot.daemon.conpty_runner._resolve_executable",
+        lambda command, env: "C:/Windows/System32/OpenSSH/ssh.exe",
+    )
+    runner = ConPtySessionProcessRunner(
+        lambda spec: (["ssh", "host"], {"PATH": os.defpath}),
+        pty_factory=StallingPty,
+    )
+    received = []
+    first = threading.Event()
+    complete = threading.Event()
+    frame = "x" * 5000  # five full reads
+    handle_box = {}
+
+    def on_output(data):
+        received.append(data)
+        if len(received) == 1:
+            # What the session runtime does once the frontend is too far behind.
+            handle_box["handle"].pause_output()
+            first.set()
+        if len(b"".join(received)) == len(frame):
+            complete.set()
+
+    try:
+        handle = runner.start(_spec(), lambda info: None, on_output, lambda: None)
+        handle_box["handle"] = handle
+        pty = FakePty.instances[-1]
+        pty.emit(frame)
+        assert first.wait(5)
+        assert not complete.wait(0.3)
+        assert len(b"".join(received)) == 1000  # nothing read while paused
+
+        assert handle.write(b"\x03")  # input still reaches a paused console
+        assert pty.written == ["\x03"]
+
+        handle.resume_output()  # the console writes nothing further
+        assert complete.wait(5), f"stalled after {len(b''.join(received))} bytes"
+        assert b"".join(received) == frame.encode()
+        pty.exit(0)
+    finally:
+        runner.close()
+
+
+def test_exit_releases_a_paused_runner(monkeypatch):
+    monkeypatch.setattr(
+        "sshpilot.daemon.conpty_runner._resolve_executable",
+        lambda command, env: "C:/Windows/System32/OpenSSH/ssh.exe",
+    )
+    runner = ConPtySessionProcessRunner(
+        lambda spec: (["ssh", "host"], {"PATH": os.defpath}),
+        pty_factory=FakePty,
+    )
+    output, exited, eof = [], threading.Event(), threading.Event()
+    try:
+        handle = runner.start(
+            _spec(), lambda info: exited.set(), output.append, eof.set
+        )
+        pty = FakePty.instances[-1]
+        handle.pause_output()
+        pty.emit("tail\r\n")
+        pty.exit(0)
+        assert exited.wait(5)
+        assert eof.wait(5)
+        assert b"".join(output) == b"tail\r\n"
+    finally:
+        runner.close()

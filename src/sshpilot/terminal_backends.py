@@ -1314,7 +1314,11 @@ class VTETerminalBackend:
         self.vte.select_all()
 
     def reset(self, clear_scrollback: bool, clear_screen: bool) -> None:
-        self.vte.reset(clear_scrollback, clear_screen)
+        # vte.reset(clear_tabstops, clear_history) always resets the parser
+        # and never erases the visible screen by itself.
+        self.vte.reset(False, clear_scrollback)
+        if clear_screen:
+            self.vte.feed(b"\x1b[2J\x1b[H")
 
     def set_font_scale(self, scale: float) -> None:
         self.vte.set_font_scale(scale)

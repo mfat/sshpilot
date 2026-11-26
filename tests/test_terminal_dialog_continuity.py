@@ -103,6 +103,9 @@ def test_normal_dialog_bytes_remain_identical_at_every_frontend_boundary():
     )
     controller._replay_catchup_target = None
     controller._notify_state_changed = lambda: None
+    # No display barrier: this controller does not use daemon flow control.
+    controller._display_barrier = None
+    controller._ack_barrier_pending = False
 
     def widget_output(data):
         TerminalWidget._on_daemon_output(widget, data)

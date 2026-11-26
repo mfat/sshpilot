@@ -107,8 +107,10 @@ def test_daemon_continuity_marker_feeds_backend_when_vte_is_none():
 
     assert len(fed) == 1
     assert b"no longer available" in fed[0]
+    # The session continues after a gap (#1426): the parser is reset but the
+    # scrollback and screen shown so far are kept.
     assert events == [
-        ("reset", False, True),
+        ("reset", False, False),
         ("feed", fed[0]),
     ]
 

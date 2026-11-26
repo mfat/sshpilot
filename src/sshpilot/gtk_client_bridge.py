@@ -94,6 +94,10 @@ class GtkClientBridge:
             max_workers=DEFAULT_TERMINAL_BULK_INPUT_WORKERS,
             thread_name_prefix="sshpilot-terminal-bulk-input",
         )
+        self._terminal_ack_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="sshpilot-terminal-ack",
+        )
         self._terminal_input_slots = threading.BoundedSemaphore(
             max_pending_terminal_inputs
         )
@@ -227,6 +231,28 @@ class GtkClientBridge:
 
         return self._submit_on(
             self._terminal_bulk_input_executor,
+            operation,
+            on_success=on_success,
+            on_error=on_error,
+            on_discard=None,
+        )
+
+    def submit_terminal_ack(
+        self,
+        operation: Callable[[], T],
+        *,
+        on_success: Callable[[T], None],
+        on_error: Callable[[BaseException], None],
+    ) -> GtkClientRequest:
+        """Send flow-control acknowledgements on their own worker.
+
+        The daemon holds a session's output until its frontend acknowledges,
+        so an acknowledgement must not queue behind a slow request on the
+        shared API worker or behind terminal input.
+        """
+
+        return self._submit_on(
+            self._terminal_ack_executor,
             operation,
             on_success=on_success,
             on_error=on_error,
@@ -381,6 +407,7 @@ class GtkClientBridge:
         self._interaction_executor.shutdown(wait=wait, cancel_futures=True)
         self._terminal_input_executor.shutdown(wait=wait, cancel_futures=True)
         self._terminal_bulk_input_executor.shutdown(wait=wait, cancel_futures=True)
+        self._terminal_ack_executor.shutdown(wait=wait, cancel_futures=True)
         if wait and wait_timeout > 0:
             # ThreadPoolExecutor has no join timeout; a short sleep gives
             # cancelled workers a bounded chance to exit without hanging tests.
@@ -395,6 +422,7 @@ class GtkClientBridge:
                         *getattr(self._interaction_executor, "_threads", ()),
                         *getattr(self._terminal_input_executor, "_threads", ()),
                         *getattr(self._terminal_bulk_input_executor, "_threads", ()),
+                        *getattr(self._terminal_ack_executor, "_threads", ()),
                     )
                 ):
                     break

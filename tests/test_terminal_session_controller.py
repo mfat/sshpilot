@@ -1140,3 +1140,55 @@ def test_reattach_past_evicted_output_continues_instead_of_failing(mock_client):
     request = mock_client.replay_terminal.call_args.args[0]
     assert request.after_sequence == 700
     assert request.attachment_id == AttachmentId("new-attachment")
+
+
+def test_reattach_past_evicted_output_sends_input_typed_meanwhile(mock_client):
+    """Keys typed while the attachment was missing are not left queued."""
+
+    controller, bridge, _losses = _recovering_controller(mock_client)
+    controller._tab_state.input_owner = True
+    result = Mock()
+    result.attachment = AttachmentInfo(
+        id=AttachmentId("new-attachment"),
+        session_id=SessionId("test-session"),
+        client_id="client",
+        input_owner=True,
+    )
+    result.replay_truncated = True
+    result.available_start = 700
+    result.live_sequence = 900
+    mock_client.attach_session.return_value = result
+    mock_client.replay_terminal.return_value = _replay_result(700, 900, truncated=False)
+
+    controller._begin_output_recovery(reattach=True)
+    controller.send_input(b"ls\r")  # no attachment yet: held
+    assert list(controller._recovery_input) == [b"ls\r"]
+    bridge.complete_all()
+
+    assert not controller._recovery_input
+    sent = [call.args[0] for call in mock_client.send_terminal_input.call_args_list]
+    assert [(item.attachment_id, item.data) for item in sent] == [
+        (AttachmentId("new-attachment"), b"ls\r")
+    ]
+
+
+def test_acks_use_the_bridge_ack_lane_when_it_has_one(mock_client):
+    controller, bridge, waiters = _flow_controller(mock_client)
+    _active(controller)
+    lanes = []
+    shared = bridge.submit
+
+    def submit_terminal_ack(operation, *, on_success, on_error):
+        lanes.append("ack")
+        return shared(operation, on_success=on_success, on_error=on_error)
+
+    bridge.submit_terminal_ack = submit_terminal_ack
+    bridge.submit = lambda *args, **kwargs: lanes.append("api")
+
+    controller._handle_output(_live(0, 10))
+    waiters.pop()()
+    bridge.submit = shared
+    bridge.complete_all()
+
+    assert lanes == ["ack"]
+    assert _acked(mock_client) == [10]

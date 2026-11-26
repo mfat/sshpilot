@@ -7,6 +7,7 @@ every byte delivered in order.
 """
 
 import os
+import signal
 import sys
 import threading
 import time
@@ -14,6 +15,7 @@ import time
 from sshpilot.api import DaemonClient
 from sshpilot.api.models.sessions import (
     AttachSessionRequest,
+    CloseSessionRequest,
     DetachSessionRequest,
     OpenSessionRequest,
     SessionState,
@@ -387,5 +389,45 @@ def test_a_replay_chunk_short_of_live_reports_no_continuity_loss(daemon_factory)
         assert chunk.truncated is True  # more remains: this is one chunk
         time.sleep(0.5)
         assert collector.losses == losses_before
+    finally:
+        client.close()
+
+
+def test_closing_a_paused_session_ends_it(daemon_factory):
+    server, _manager = daemon_factory(session_runner=_runner(_ENDLESS_SCRIPT))
+    client = DaemonClient(socket_path=server.socket_path)
+    collector = _Collector()
+    try:
+        opened, _attached, _subscription = _open(client, collector)
+        assert _wait_until(lambda: collector.received >= FLOW_CONTROL_HIGH_BYTES)
+        assert _wait_until(lambda: _stalls(collector))
+
+        client.close_session(CloseSessionRequest(session_id=opened.id))
+
+        assert _wait_until(lambda: _session_ended(client, opened.id))
+    finally:
+        client.close()
+
+
+def test_child_exit_drains_a_paused_session_to_eof(daemon_factory, tmp_path):
+    """The child dies while reads are paused; no acknowledgement ever comes."""
+
+    pid_file = tmp_path / "child.pid"
+    script = (
+        f"import os\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+        "while True: os.write(1, b'y' * 65536)\n"
+    )
+    server, _manager = daemon_factory(session_runner=_runner(script))
+    client = DaemonClient(socket_path=server.socket_path)
+    collector = _Collector()
+    try:
+        opened, _attached, _subscription = _open(client, collector)
+        assert _wait_until(lambda: collector.received >= FLOW_CONTROL_HIGH_BYTES)
+        assert _wait_until(lambda: _stalls(collector))
+
+        os.kill(int(pid_file.read_text()), signal.SIGKILL)
+
+        assert collector.eof.wait(_WAIT_TIMEOUT)
+        assert _wait_until(lambda: _session_ended(client, opened.id))
     finally:
         client.close()

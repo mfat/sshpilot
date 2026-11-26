@@ -11,7 +11,9 @@ DEFAULT_GLOBAL_REPLAY_BYTES = 32 * 1024 * 1024
 # Flow control (#1426): stop reading a session's PTY while its input owner's
 # flow-controlled attachment has more than HIGH bytes it has not displayed, and
 # read again once it is within LOW. HIGH stays below the per-session replay
-# ring so anything a slow frontend still loses can be replayed.
+# ring so what a slow frontend still loses can normally be replayed (the
+# daemon-wide replay budget may trim a ring further when many sessions are
+# busy; the frontend then continues past the gap).
 FLOW_CONTROL_HIGH_BYTES = 1024 * 1024
 FLOW_CONTROL_LOW_BYTES = 256 * 1024
 

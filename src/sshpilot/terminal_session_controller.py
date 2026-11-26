@@ -1002,8 +1002,13 @@ class DaemonTerminalSessionController:
                 self._submit_display_ack()
 
         self._ack_in_flight = True
+        # Not the shared API worker: a slow request there would hold the
+        # acknowledgement and, with it, the paused session's output.
+        submit = getattr(self._bridge, "submit_terminal_ack", None)
+        if not callable(submit):
+            submit = self._bridge.submit
         try:
-            self._bridge.submit(
+            submit(
                 lambda: client.acknowledge_terminal_output(request),
                 on_success=lambda _result: finished(),
                 on_error=finished,
@@ -1281,6 +1286,7 @@ class DaemonTerminalSessionController:
         if result.replay_truncated or result.available_start > safe_sequence:
             # This binding expects safe_sequence; continue from the oldest
             # retained byte on a fresh one, through the new attachment.
+            self._flush_recovery_input()
             self._skip_lost_output(result.available_start)
             return
         self._validate_and_resume_recovery(binding, result.live_sequence)

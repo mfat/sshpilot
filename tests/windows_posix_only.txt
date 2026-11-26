@@ -10,6 +10,7 @@ collect:tests/daemon/test_password_auth_container.py  # path separators
 collect:tests/daemon/test_pty_runner_frozen.py  # path separators
 collect:tests/daemon/test_sftp_non_utf8_names.py  # platform default encoding
 collect:tests/daemon/test_sftp_resolve_ids.py  # path separators
+collect:tests/daemon/test_terminal_flow_control.py  # POSIX-only API (PTY runner: fcntl, termios)
 collect:tests/daemon/test_terminal_stream.py  # path separators
 collect:tests/integration/test_ssh_readiness_openssh.py  # path separators
 collect:tests/integration/test_temporary_openssh_fixture.py  # path separators

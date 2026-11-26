@@ -2171,12 +2171,13 @@ class TerminalWidget(Gtk.Box):
         try:
             # A known-good terminal prefix may end in the middle of an escape
             # sequence.  Reset the emulator parser before displaying local
-            # text; the damaged remote stream is permanently halted by the
-            # binding and must never resume in this parser state.
-            self.backend.reset(False, True)
+            # text. The session usually continues after this (#1426), so the
+            # scrollback and screen shown so far are kept: only the parser
+            # state is discarded.
+            self.backend.reset(False, False)
             self._highlighter.reset()
-            marker = b"\r\n[Earlier terminal output is no longer available]\r\n"
-            self._feed_display(marker)
+            marker = _("[Earlier terminal output is no longer available]")
+            self._feed_display(b"\r\n" + marker.encode("utf-8") + b"\r\n")
         except Exception as e:
             logger.error(f"Failed to feed continuity loss marker: {e}")
 

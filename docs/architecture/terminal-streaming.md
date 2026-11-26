@@ -134,11 +134,15 @@ which over SSH closes the channel window and slows the remote program (#1426).
   has processed the bytes: `Vte.Terminal.feed()` merely queues them, so the
   widget waits for a `PRIORITY_LOW` idle, which VTE's own parsing and GTK's
   redraw run ahead of (the xterm.js backend uses its write callbacks). One
-  acknowledgement is in flight per tab; newer ones replace older ones.
+  acknowledgement is in flight per tab; newer ones replace older ones. They
+  are sent on `GtkClientBridge.submit_terminal_ack`'s own worker, never the
+  shared API worker, so a slow request cannot hold a session's output.
 - `SessionRuntime` pauses reads while the input owner's flow-controlled
   attachment is more than `FLOW_CONTROL_HIGH_BYTES` (1 MiB) behind the live
   sequence and resumes within `FLOW_CONTROL_LOW_BYTES` (256 KiB). HIGH stays
-  below the 2 MiB replay ring, so anything still lost can be replayed.
+  below the 2 MiB replay ring, so what is still lost can normally be replayed;
+  the daemon-wide replay budget may trim a ring further when many sessions
+  are busy, and the frontend then continues past the gap (below).
 - A pause stops reads only; input (Ctrl+C) and resize still reach the PTY.
   Detach, peer disconnect, input-ownership change, child exit and any
   transition out of STARTING/RUNNING resume reads, so a stalled or crashed
@@ -163,9 +167,10 @@ otherwise truncation is visible. Healthy peers and other sessions continue.
 The GTK controller recovers in 512 KiB replay chunks and only accepts live
 output after the chunk that reaches the live end. When the ring no longer
 covers the gap (on replay, or on a reattach after a transport swap), it shows
-"[Earlier terminal output is no longer available]", resets the emulator's
-parser and continues from the oldest retained byte; the view never fails for
-lost output alone. A recovery binding ignores replay frames that belong to a
+"[Earlier terminal output is no longer available]" (translated), resets the
+emulator's parser while keeping the scrollback and screen shown so far, and
+continues from the oldest retained byte; the view never fails for lost output
+alone. A recovery binding ignores replay frames that belong to a
 superseded attempt (ahead of its start before its own replay begins) and trims
 overlap, so overlapping attempts cannot restart each other.
 

@@ -389,3 +389,36 @@ def test_recovery_binding_trims_overlap_and_still_reports_a_real_gap():
     finally:
         binding.close()
         bridge.shutdown()
+
+
+def test_terminal_ack_lane_is_not_held_by_a_slow_api_request():
+    """A paused session waits on its ack; a slow request must not delay it."""
+
+    dispatches = queue.Queue()
+    api_started = threading.Event()
+    release_api = threading.Event()
+    acked = threading.Event()
+    bridge = GtkClientBridge(
+        dispatcher=lambda callback, *args: dispatches.put((callback, args))
+    )
+
+    def _slow_request():
+        api_started.set()
+        assert release_api.wait(2)
+
+    try:
+        bridge.submit(
+            _slow_request,
+            on_success=lambda _result: None,
+            on_error=lambda _error: None,
+        )
+        assert api_started.wait(1)
+        bridge.submit_terminal_ack(
+            acked.set,
+            on_success=lambda _result: None,
+            on_error=lambda _error: None,
+        )
+        assert acked.wait(1)
+    finally:
+        release_api.set()
+        bridge.shutdown()
