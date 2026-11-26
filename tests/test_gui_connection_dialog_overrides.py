@@ -182,8 +182,9 @@ def test_dialog_marks_a_field_an_earlier_block_beats(gui):
     _pump(lambda: _state(dialog.username_row) == "overridden")
 
     assert _tag(dialog.username_row) == "No effect"
-    assert dialog.username_row.get_tooltip_text() == (
-        "OpenSSH uses deploy from line 2 (Host *)"
+    # The note follows the field's own check ("Valid username").
+    assert dialog.username_row.get_tooltip_text().endswith(
+        "\nOpenSSH uses deploy from line 2 (Host *)"
     )
     assert dialog._override_banner.get_revealed()
     # Advanced Configuration's own sentence for the same line.
@@ -203,7 +204,8 @@ def test_dialog_marks_a_field_an_earlier_block_beats(gui):
     # Cleared, the field sets nothing and names the block that decides.
     dialog.username_row.set_text("")
     _pump(lambda: _state(dialog.username_row) == "global")
-    assert _tag(dialog.username_row) == "from Host *"
+    # Emptied: the tag says what the row gets, as a placeholder cannot.
+    assert _tag(dialog.username_row) == "Not set (deploy, from Host *)"
     assert not dialog._override_banner.get_revealed()
 
 

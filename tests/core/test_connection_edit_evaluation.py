@@ -162,6 +162,21 @@ def test_without_own_answers_what_the_host_inherits_for_those_keywords(tmp_path)
     assert inherited["compression"] == "no"           # other own lines stay
 
 
+def test_without_own_is_what_the_configuration_gives_not_settings(tmp_path):
+    """The editor's checkboxes show what the configuration gives a host
+    that sets no login line; Settings' forced value is reported apart."""
+    service, _repo, _root = _service(
+        tmp_path,
+        "Host h\n    HostName 192.0.2.1\n\nHost *\n    PreferredAuthentications password,publickey\n",
+    )
+    service._forced_ssh_option_args = lambda: ("-o", "PreferredAuthentications=publickey")
+    result = service.evaluate_connection_edit(EvaluateConnectionEditRequest(
+        connection_id="h", without_own=("preferredauthentications",),
+    ))
+    assert _values(result.evaluation)["preferredauthentications"] == "publickey"
+    assert _values(result.without_own)["preferredauthentications"] == "password,publickey"
+
+
 def test_a_shared_host_line_is_evaluated_without_the_save_s_permission(tmp_path):
     service, _repo, _root = _service(
         tmp_path, "Host h other\n    HostName 192.0.2.1\n",

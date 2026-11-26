@@ -2186,7 +2186,9 @@ block is appended where a create appends it.
 
 ``without_own`` names keywords (lower case) to answer a second
 question for: the same text with the host's own lines for those
-keywords left out, which is what the host inherits for them.
+keywords left out, and without the options Settings ▸ SSH Options
+force, which is what the host inherits for them from the
+configuration.
 
 **Related methods:** `evaluate_connection_edit`
 **Related events:** None

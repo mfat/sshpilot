@@ -1711,6 +1711,17 @@ class ConnectionApplicationService:
                 ErrorCode.INVALID_REQUEST,
                 "An SSH config draft request is required",
             )
+        return self._evaluate_draft(request, cancelled)
+
+    def _evaluate_draft(
+        self,
+        request: EvaluateSshConfigDraftRequest,
+        cancelled: Optional[Callable[[], bool]] = None,
+        *,
+        with_settings: bool = True,
+    ) -> SshConfigDraftEvaluation:
+        """:meth:`evaluate_ssh_config_draft`, checked. *with_settings*: pass
+        the options Settings ▸ SSH Options force, as a launch does."""
         from .ssh_config_draft import (
             DraftContext,
             DraftEvaluationCancelled,
@@ -1735,7 +1746,7 @@ class ConnectionApplicationService:
         context = DraftContext(
             root_path=str(self._repository.root_config_path),
             isolated=bool(self._repository.ssh_config_isolated),
-            overrides=tuple(self._forced_ssh_option_args()),
+            overrides=tuple(self._forced_ssh_option_args()) if with_settings else (),
             target_path=target_path,
         )
         try:
@@ -1830,17 +1841,20 @@ class ConnectionApplicationService:
             for line, keyword, value in own_option_lines(rendered.text, host)
         )
 
-        def evaluate(text: str):
-            return self.evaluate_ssh_config_draft(
+        def evaluate(text: str, with_settings: bool = True):
+            return self._evaluate_draft(
                 EvaluateSshConfigDraftRequest(text=text, host=host, file=file),
-                cancelled,
+                cancelled, with_settings=with_settings,
             )
 
         evaluation = evaluate(rendered.text)
         without = None
         if request.without_own:
+            # What the configuration gives the host for those keywords:
+            # without its own lines, and without Settings ▸ SSH Options,
+            # whose values the first answer already reports as forced.
             reduced = without_own_lines(rendered.text, host, request.without_own)
-            without = evaluation if reduced == rendered.text else evaluate(reduced)
+            without = evaluate(reduced, with_settings=False)
         return ConnectionEditEvaluation(
             host=host, file=file, text=rendered.text, own_lines=own,
             evaluation=evaluation, without_own=without,

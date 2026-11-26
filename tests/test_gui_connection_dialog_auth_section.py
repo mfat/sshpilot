@@ -126,24 +126,29 @@ def test_an_overruled_method_is_announced_by_the_line_while_the_list_is_folded(g
     # earlier block beats: checked, but not tried.
     check.set_active(True)
     assert "PasswordAuthentication yes" in section.policy.to_lines()
+    # The mark comes with OpenSSH's answer for the edit.
+    _pump(lambda: dialog.auth_password_row._sshpilot_override_state == OVERRIDDEN)
     assert dialog.auth_password_row._sshpilot_override_state == OVERRIDDEN
     assert dialog._override_banner.get_revealed()
 
-    # The row with the mark is inside the folded list. What the banner's
-    # "marked below" points at is the line under it.
+    # The row with the mark is inside the folded list: the line under it
+    # says the same while the list is closed.
     assert not dialog.auth_order_row.get_expanded()
     assert section.preview.get_visible()
     assert section.effective_row.has_css_class("error")
     assert "password" in dialog.auth_order_row.get_subtitle()
     assert "password" not in section.effective_row.get_subtitle()
     tip = section.effective_row.get_tooltip_markup()
-    # It names the row, then gives that row's own note.
-    assert tip.startswith(f"<b>{dialog.auth_password_row.get_title()}</b>\n")
-    assert "PasswordAuthentication" in tip and "Host *" in tip
-    assert "line 2" in tip
+    # It names the row, then gives that row's own note, in Advanced
+    # Configuration's words.
+    assert tip == (
+        f"<b>{dialog.auth_password_row.get_title()}</b>\n"
+        "OpenSSH uses no from line 2 (Host *)"
+    )
 
     # Unchecking removes the line set here: nothing is overruled any more.
     check.set_active(False)
+    _pump(lambda: not dialog._override_banner.get_revealed())
     assert not section.preview.get_visible()
     assert not section.effective_row.has_css_class("error")
     assert section.effective_row.get_tooltip_markup() is None
@@ -155,12 +160,15 @@ def test_an_order_an_earlier_block_beats_is_named_in_the_line(gtk):
     section = dialog.auth_policy
     dialog.auth_password_row._check.set_active(True)
     assert section.policy.order == ["publickey", "password"]
+    _pump(lambda: section.preview.get_visible())
     assert section.preview.get_visible()
     assert section.effective_row.has_css_class("error")
     assert section.effective_row.get_subtitle() == "publickey"
-    tip = section.effective_row.get_tooltip_markup()
-    assert tip.startswith(f"<b>{dialog.auth_order_row.get_title()}</b>\n")
-    assert "PreferredAuthentications" in tip
+    # The row the order leaves out, with the order line that decides.
+    assert section.effective_row.get_tooltip_markup() == (
+        f"<b>{dialog.auth_password_row.get_title()}</b>\n"
+        "OpenSSH uses publickey from line 2 (Host *)"
+    )
 
 
 def test_settings_forcing_the_order_is_named_in_the_line_too(gtk):
@@ -169,12 +177,16 @@ def test_settings_forcing_the_order_is_named_in_the_line_too(gtk):
     _pump(lambda: bool(getattr(getattr(dialog, "_editor_answer", None), "forced", None)))
     dialog.auth_password_row._actions.activate_action("top", None)
     assert section.policy.order[0] == "password"
+    _pump(lambda: section.preview.get_visible())
     assert section.preview.get_visible()
     assert section.effective_row.has_css_class("error")
     assert section.effective_row.get_subtitle() == "publickey"
-    tip = section.effective_row.get_tooltip_markup()
-    assert tip.startswith(f"<b>{dialog.auth_order_row.get_title()}</b>\n")
-    assert "Settings" in tip
+    # Every row Settings' order overrules is named (keyboard-interactive,
+    # tried by default, is left out too).
+    assert section.effective_row.get_tooltip_markup().startswith(
+        f"<b>{dialog.auth_password_row.get_title()}</b>\n"
+        "Settings ▸ SSH Options use publickey"
+    )
 
 
 # -- a linked login profile ----------------------------------------------------------
