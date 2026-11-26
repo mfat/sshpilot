@@ -1,3 +1,18 @@
+sshpilot (6.5.1-1) unstable; urgency=medium
+
+  * Release v6.5.1.
+  * Added Advanced Configuration Manager, a complete sshconfig
+    management and diagnostic suite
+  * Redesigned connection dialogs, with better layout and visual maps
+    for jump hosts and port forwards
+  * Added background transfer to file manager - transfers will no longer
+    lock the UI
+  * Added options to use the file manager in single-pane or dual-pane
+    mode
+  * Added remote-to-remote transfer support to file manager
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 26 Nov 2026 10:56:32 +0000
+
 sshpilot (6.5.0-1) unstable; urgency=medium
 
   * Release v6.5.0.
