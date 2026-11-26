@@ -1076,10 +1076,33 @@ class WindowTabsMixin:
             return False
         fmw.confirm_cancel_transfers(
             self, count,
-            on_confirm=lambda: tab_view.close_page_finish(page, True),
+            on_confirm=lambda: self._close_tab_after_transfers_confirmed(tab_view, page),
             on_keep=lambda: tab_view.close_page_finish(page, False),
         )
         return True
+
+    def _close_tab_after_transfers_confirmed(self, tab_view, page) -> None:
+        """Close a tab whose transfers question was answered with "close".
+
+        That answer stands for the close as a whole, so nothing more is
+        asked, but the tab ends as the ordinary close ends it: a terminal
+        is disconnected and a split view's panes are cleaned up before the
+        page goes (on_tab_detached does the bookkeeping and the start tab).
+        """
+        child = page.get_child() if hasattr(page, 'get_child') else None
+        try:
+            from .split_view import SplitViewTab
+            if isinstance(child, SplitViewTab):
+                child.cleanup_all()
+            elif (
+                child is not None
+                and child in getattr(self, 'terminal_to_connection', {})
+                and hasattr(child, 'disconnect')
+            ):
+                child.disconnect()
+        except Exception:
+            logger.debug('Ending the tab before its close failed', exc_info=True)
+        tab_view.close_page_finish(page, True)
 
     def _confirm_file_manager_window_close(self, window) -> bool:
         """The detached file manager window's close: same question."""

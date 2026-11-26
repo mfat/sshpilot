@@ -328,9 +328,53 @@ def test_move_cleanup_never_deletes_on_a_server_the_pane_switched_to():
     )
 
     server_a.reset_mock()
+    toasts = []
+    pane.show_toast = lambda text, *a, **k: toasts.append(text)
+    window_module.GLib.idle_add = lambda fn, *a: fn(*a)
     switched = Future()
     window._schedule_remote_move_cleanup(switched, "/var/www", pane)
+    window._schedule_remote_move_cleanup(switched, "/var/log", pane)
     window._manager = server_b
     switched.set_result(None)
     server_a.remove.assert_not_called()
     server_b.remove.assert_not_called()
+    # Said once for the transfer, not once per item.
+    assert len(toasts) == 1
+
+
+def test_move_cleanup_survives_a_reconnect_to_the_same_server():
+    """Reconnecting gives the pane a new connection to the same server:
+    the move still completes, through the connection the pane has now."""
+    from concurrent.futures import Future
+
+    window_module = _module()
+    window = _window(window_module)
+    pane = window._right_pane
+    before, after = MagicMock(), MagicMock()
+    before._connection_id = after._connection_id = "conn-a"
+    window._manager = before
+    window._attach_refresh = lambda *a, **k: None
+
+    done = Future()
+    window._schedule_remote_move_cleanup(done, "/var/www", pane)
+    window._manager = after
+    done.set_result(None)
+
+    before.remove.assert_not_called()
+    after.remove.assert_called_once_with(
+        "/var/www", recursive=True, report_progress=False
+    )
+
+
+def test_a_pane_leaving_a_server_waits_only_for_that_servers_transfers():
+    window_module = _module()
+    window = _window(window_module)
+    here, elsewhere = _Transfer(), _Transfer()
+    server_a, server_b = MagicMock(), MagicMock()
+    window._note_transfer_backends(here, server_a)
+    window._note_transfer_backends(elsewhere, server_b)
+    untagged = _Transfer()
+    window._running_transfers = lambda: [here, elsewhere, untagged]
+
+    assert window._pending_transfer_futures(server_a) == [here.future, untagged.future]
+    assert len(window._pending_transfer_futures()) == 3

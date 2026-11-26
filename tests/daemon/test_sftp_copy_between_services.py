@@ -294,3 +294,55 @@ def test_two_connections_to_one_machine_refuse_a_folder_into_itself():
     assert "/tree/sub/copy" not in fs.dirs
     assert set(fs.dirs) == set(before_dirs)
     assert fs.files == before_files
+
+
+def _aliased(fs):
+    """``/alias`` is a link to ``/tree``: the same folder under another name."""
+    fs.add_dir("/alias", {"sub"})
+    fs.add_dir("/alias/sub", set())
+    fs.realpath = lambda path: (
+        "/tree" + path[len("/alias"):] if path.startswith("/alias") else path
+    )
+    return fs
+
+
+def test_one_server_refuses_a_folder_into_itself_through_a_link():
+    """As text ``/alias/sub/copy`` is not inside ``/tree``; resolved, it is."""
+    fs = _aliased(_tree_client())
+    runtime, ops, a, b = _two_services(fs, _Untouchable(), same_connection=True)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, "/tree", "/alias/sub/copy", recursive=True, destination_service_id=b,
+    ))
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF
+    assert "/alias/sub/copy" not in fs.dirs
+
+
+def test_two_connections_refuse_a_folder_into_itself_through_a_link():
+    fs = _aliased(_tree_client())
+    runtime, ops, a, b = _two_services(fs, fs)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, "/tree", "/alias/sub/copy", recursive=True, destination_service_id=b,
+    ))
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF
+    assert "/alias/sub/copy" not in fs.dirs
+
+
+def test_two_connections_to_one_machine_still_copy_elsewhere():
+    """The same machine through two connections is fine as long as the copy
+    lands outside the folder being copied."""
+    fs = _tree_client()
+    fs.add_dir("/srv", set())
+    runtime, ops, a, b = _two_services(fs, fs)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, "/tree", "/srv/tree", recursive=True, destination_service_id=b,
+    ))
+
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert fs.files["/srv/tree/sub/b.txt"] == b"world!"

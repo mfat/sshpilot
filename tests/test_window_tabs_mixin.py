@@ -1103,6 +1103,22 @@ def test_closing_a_file_manager_tab_with_running_transfers_asks_first(monkeypatc
     kw["on_confirm"]()
     assert finished == [False, True]
 
+    # Confirming ends the tab as the ordinary close does: its terminal is
+    # disconnected before the page goes.
+    disconnected = []
+    terminal = types.SimpleNamespace(disconnect=lambda: disconnected.append(True))
+    stub.terminal_to_connection = {}
+    stub._close_tab_after_transfers_confirmed(
+        view, types.SimpleNamespace(get_child=lambda: terminal)
+    )
+    assert not disconnected  # not a tracked terminal: nothing to end
+    stub.terminal_to_connection = _IdentityMap(terminal)
+    stub._close_tab_after_transfers_confirmed(
+        view, types.SimpleNamespace(get_child=lambda: terminal)
+    )
+    assert disconnected == [True]
+    assert finished == [False, True, True, True]
+
     controller.running_transfer_count = lambda: 0
     assert stub._confirm_file_manager_tab_close(view, page) is False
     monkeypatch.setattr(fmw, "_quit_confirmed", True)
@@ -1126,3 +1142,13 @@ def test_a_terminal_tab_counts_the_transfers_of_its_files_panel():
     terminal = TerminalWidget.__new__(TerminalWidget)
     assert Stub()._file_manager_running_transfers(terminal) == 3
     assert Stub()._file_manager_running_transfers(None) == 0
+
+
+class _IdentityMap:
+    """Stands in for terminal_to_connection with an unhashable test double."""
+
+    def __init__(self, *members):
+        self._members = members
+
+    def __contains__(self, item):
+        return any(item is member for member in self._members)

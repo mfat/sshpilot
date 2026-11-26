@@ -1607,7 +1607,7 @@ class FileManagerWindow(Adw.Window):
         # but the daemon is still removing its partial file.
         futures = self.__dict__.get("_draining_futures")
         if futures is None:
-            futures = self._pending_transfer_futures()
+            futures = self._pending_transfer_futures(manager)
         futures = [future for future in futures if not future.done()]
 
         def _close() -> None:
@@ -1642,13 +1642,41 @@ class FileManagerWindow(Adw.Window):
 
         GLib.timeout_add(100, _poll)
 
-    def _pending_transfer_futures(self) -> list:
-        return [
-            future
-            for transfer in self._running_transfers()
-            for future in getattr(transfer, "_futures", [])
-            if future is not None and not future.done()
-        ]
+    def _pending_transfer_futures(self, manager=None) -> list:
+        """Futures of the running transfers; with *manager*, only of those
+        that go through that backend (a transfer that does not say which
+        backends it uses counts for all of them)."""
+        futures = []
+        for transfer in self._running_transfers():
+            backends = getattr(transfer, "_sshpilot_backends", None)
+            if (
+                manager is not None
+                and isinstance(backends, list)
+                and not any(backend is manager for backend in backends)
+            ):
+                continue
+            futures.extend(
+                future for future in getattr(transfer, "_futures", [])
+                if future is not None and not future.done()
+            )
+        return futures
+
+    @staticmethod
+    def _note_transfer_backends(transfer, *managers) -> None:
+        """Record which backends *transfer* goes through, so a pane leaving
+        a server waits for the transfers on that server only."""
+        if transfer is None:
+            return
+        try:
+            backends = getattr(transfer, "_sshpilot_backends", None)
+            if not isinstance(backends, list):
+                backends = []
+                transfer._sshpilot_backends = backends
+            for manager in managers:
+                if manager is not None and not any(b is manager for b in backends):
+                    backends.append(manager)
+        except Exception:
+            logger.debug("Could not note a transfer's backends", exc_info=True)
 
     def cancel_running_transfers(self) -> int:
         """Cancel every running transfer; returns how many there were."""
@@ -3793,6 +3821,10 @@ class FileManagerWindow(Adw.Window):
                     source_pane=source_pane,
                     destination_pane=destination_pane,
                 )
+                self._note_transfer_backends(
+                    getattr(self, "_aggregate_dialog", None),
+                    source_manager, destination_manager,
+                )
                 self._attach_refresh(
                     future,
                     refresh_remote=destination_pane,
@@ -3957,14 +3989,32 @@ class FileManagerWindow(Adw.Window):
             manager = source_manager
             if manager is None:
                 return
-            if self._manager_for(target_pane) is not manager:
-                # The pane left that server and its connection is closing:
-                # the originals stay, the move ends as a copy.
-                logger.info(
-                    "Not removing %s after the move: its pane shows another server now",
-                    path,
+            current = self._manager_for(target_pane)
+            if current is not manager:
+                source_id = getattr(manager, "_connection_id", None)
+                same_server = (
+                    current is not None
+                    and isinstance(source_id, str)
+                    and getattr(current, "_connection_id", None) == source_id
                 )
-                return
+                if not same_server:
+                    # The pane left that server and its connection is
+                    # closing: the originals stay, the move ends as a copy.
+                    logger.info(
+                        "Not removing %s after the move: its pane shows another server now",
+                        path,
+                    )
+                    notified = self.__dict__.setdefault("_move_kept_notified", set())
+                    if id(completed) not in notified:
+                        notified.add(id(completed))
+                        GLib.idle_add(
+                            target_pane.show_toast,
+                            _("The originals were not removed: this pane now shows another server"),
+                        )
+                    return
+                # Reconnected to the same server: remove them through the
+                # connection the pane has now.
+                manager = current
             cleanup_future = manager.remove(path, recursive=True, report_progress=False)
             self._attach_refresh(cleanup_future, refresh_remote=target_pane)
 
@@ -4279,6 +4329,7 @@ class FileManagerWindow(Adw.Window):
         self._progress_dialog = dialog
         dialog.set_paths(source, destination)
         dialog.set_future(future)
+        self._note_transfer_backends(dialog, manager)
 
         key = progress_key_for_future(future)
         state = {"focused": 0}
@@ -4426,10 +4477,14 @@ class FileManagerWindow(Adw.Window):
             # leave the dialog stuck on the last registered path.
             self._aggregate_dialog.set_operation_details(total_files=total_files)
             self._aggregate_dialog.set_future(future)
+            self._note_transfer_backends(self._aggregate_dialog, manager)
 
         except Exception as exc:
             logger.error("Error in _show_progress_dialog: %s", exc, exc_info=True)
             return
+        # The dialog this transfer belongs to. A later transfer may have its
+        # own by the time this one ends.
+        owner_dialog = self._aggregate_dialog
 
         # Only connect progress signal handler when creating a new dialog
         # When reusing, the handler is already connected
@@ -4567,7 +4622,18 @@ class FileManagerWindow(Adw.Window):
                     self._progress_manager = None
 
                 # Update dialog to show completion
-                if self._aggregate_dialog:
+                if owner_dialog is not None and self._aggregate_dialog is not owner_dialog:
+                    # Its dialog was retired (cancelled or dismissed) and a
+                    # newer transfer has its own: that one is not ours to
+                    # mark. Only confirm our own cancel.
+                    try:
+                        if not future_result.cancelled() and isinstance(
+                            future_result.exception(), TransferCancelledException
+                        ):
+                            owner_dialog.mark_cancelled()
+                    except (CancelledError, AttributeError, RuntimeError, GLib.Error):
+                        pass
+                elif self._aggregate_dialog:
                     try:
                         # Check if the future was cancelled first
                         if future_result.cancelled():

@@ -2177,14 +2177,30 @@ class SftpServiceRuntime:
                 },
             )
 
+        def _resolves_into_source() -> bool:
+            """Whether the destination lies inside the source once links are
+            resolved (as text alone, ``/home/x`` hides ``/usr/home/x``)."""
+            target = posixpath.normpath(destination)
+            try:
+                real_source = posixpath.normpath(client.realpath(source))
+                real_parent = client.realpath(posixpath.dirname(target) or "/")
+            except Exception:
+                return _remote_path_is_descendant(source, destination)
+            real_target = posixpath.normpath(
+                posixpath.join(real_parent, posixpath.basename(target))
+            )
+            if real_source == "/":
+                return True
+            return real_target == real_source or real_target.startswith(real_source + "/")
+
         def _make_root_unless_inside_source() -> None:
             """Create the destination root of a copy between two connections.
 
             Two saved connections can reach one machine. The destination
-            then lies inside the tree being copied, and the walk would copy
-            the new folder into itself without end. Connection ids cannot
-            tell; the files can: a folder made through the destination that
-            shows up through the source is on the same filesystem.
+            then may lie inside the tree being copied, and the walk would
+            copy the new folder into itself without end. Connection ids
+            cannot tell; the files can: a folder made through the destination
+            that shows up through the source is on the same filesystem.
             """
             try:
                 client.lstat(destination)
@@ -2200,6 +2216,8 @@ class SftpServiceRuntime:
             try:
                 client.lstat(destination)
             except Exception:
+                return
+            if not _resolves_into_source():
                 return
             try:
                 destination_client.rmdir(destination)
@@ -2266,11 +2284,13 @@ class SftpServiceRuntime:
                         SftpFailureCode.RECURSIVE_COPY_REQUIRED,
                         details={"service_id": record.service_id},
                     )
-                if not same_server and _remote_path_is_descendant(source, destination):
+                if same_server:
+                    if _resolves_into_source():
+                        raise _into_itself_error()
+                    _copy_directory(source, destination)
+                else:
                     _make_root_unless_inside_source()
                     _copy_directory(source, destination, made=True)
-                else:
-                    _copy_directory(source, destination)
             else:
                 if request.recursive:
                     raise _SftpSummaryError(
