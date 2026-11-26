@@ -35,6 +35,15 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
+    <release version="6.5.0" date="2026-11-26">
+      <description>
+        <p>Added Advanced Configuration Manager, a complete sshconfig management and diagnostic suite</p>
+        <p>Redesigned connection dialog, with better layout and visual maps for jump hosts and port forwards</p>
+        <p>Added background transfer to file manager - transfers no longer lock the UI</p>
+        <p>Added options to use the file manager in single-pane or dual-pane mode</p>
+        <p>Added remote-to-remote transfer support to file manager</p>
+      </description>
+    </release>
     <release version="6.4.4" date="2026-11-19">
       <description>
         <p>Fixes Windows config conflict scan crashing on missing os.geteuid</p>
