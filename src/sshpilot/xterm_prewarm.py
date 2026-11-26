@@ -198,6 +198,9 @@ class XtermShellPool:
         except TypeError:
             ucm.register_script_message_handler("sshpilotPty")
         ucm.connect("script-message-received::sshpilotPty", cls._dispatch_message)
+        from .appimage_env import prepare_webkit
+
+        prepare_webkit(WebKit)
         webview = WebKit.WebView(user_content_manager=ucm)
         try:
             settings = webview.get_settings()

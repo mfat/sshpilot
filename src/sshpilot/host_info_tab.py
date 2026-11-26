@@ -73,6 +73,9 @@ class HostInfoTab(Gtk.Box):
             self._ucm.register_script_message_handler("hostInfo")
         self._ucm.connect("script-message-received::hostInfo", self._on_script_message)
 
+        from .appimage_env import prepare_webkit
+
+        prepare_webkit(WebKit)
         self._webview = WebKit.WebView(user_content_manager=self._ucm)
         try:
             settings = self._webview.get_settings()

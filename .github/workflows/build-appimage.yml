@@ -54,6 +54,9 @@ jobs:
             dconf-gsettings-backend \
             patchelf \
             file \
+            gcc \
+            libc6-dev \
+            fuse3 \
             wget \
             xvfb \
             dbus-x11 \
@@ -128,6 +131,16 @@ jobs:
       # The real test: start the GUI against a virtual display and confirm the
       # app reports the bundled GTK/VTE stack as usable. The app runs until it
       # is killed, so timeout's 124 is the success case.
+      - name: Verify WebKit runs the AppImage's own helpers, sandboxed
+        # Mounted (a double-click) and extracted (APPIMAGE_EXTRACT_AND_RUN).
+        # Fails unless the xterm.js and Host Info pages render through the
+        # AppImage's WebKit helpers inside bubblewrap -- this runner has a
+        # matching system WebKit, so a page load alone proves nothing.
+        run: |
+          set -eu
+          APPIMAGE=$(ls release-assets/*.AppImage)
+          xvfb-run -a packaging/appimage/test-appimage.sh "$APPIMAGE" mount extract
+
       - name: Verify the bundled GTK stack at runtime
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1

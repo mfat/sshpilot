@@ -21,6 +21,7 @@ except ImportError:  # Windows
 from datetime import datetime
 from typing import Optional
 from .accessibility import set_accessible_name
+from .appimage_env import host_environment
 from .platform_utils import is_flatpak, is_macos, is_windows
 from .platform.process import kill_process_tree, pid_alive
 from .core.settings.defaults import DEFAULT_WHEEL_SCROLL_LINES
@@ -234,10 +235,13 @@ def sanitize_local_shell_env(env):
     emulator prints as text — oh-my-zsh's title update shows up as
     ``echohello`` (issue #1311).
 
-    The input dict is never mutated. Apart from ``TERM``, non-macOS hosts get
-    an unchanged copy.
+    The input dict is never mutated. Apart from ``TERM`` (and, in the
+    AppImage, the host values of what AppRun set), non-macOS hosts get an
+    unchanged copy.
     """
-    sanitized = dict(env)
+    # A shell is the host's program, not ours: inside the AppImage it gets the
+    # environment the AppImage was started with, not the bundled GTK/WebKit one.
+    sanitized = host_environment(env)
     sanitized["TERM"] = "xterm-256color"
     if not is_macos():
         return sanitized

@@ -14,8 +14,10 @@
 #
 # WebKitGTK is the expensive part of that list and the fiddly one: it runs its
 # renderer out of process, so the WebKit*Process helpers and the injected
-# bundle are bundled too and AppRun points WEBKIT_EXEC_PATH /
-# WEBKIT_INJECTED_BUNDLE_PATH at them. It earns its size -- both the
+# bundle are bundled too. Release WebKit builds start the helpers from a path
+# compiled into the library (WEBKIT_EXEC_PATH is developer-only), so step 8c
+# rewrites that path to one relative to AppRun's working directory; AppRun
+# points WEBKIT_INJECTED_BUNDLE_PATH at the bundle. It earns its size -- both the
 # PyXterm.js terminal backend and the Host Info tab are WebKit-only, and an
 # AppImage without it would quietly have fewer features than the .deb.
 #
@@ -364,9 +366,8 @@ done
 
 log "Bundling the WebKitGTK helper processes"
 # WebKitGTK renders out of process: libwebkitgtk itself is only half of it, and
-# a WebView whose helpers cannot be exec'd never finishes loading. The paths
-# are compiled into the library, so AppRun overrides them with WEBKIT_EXEC_PATH
-# and WEBKIT_INJECTED_BUNDLE_PATH.
+# a WebView whose helpers cannot be exec'd never finishes loading. The helper
+# directory is compiled into the library; step 8c relocates it.
 WEBKIT_SRC=$SYS_LIBDIR/webkitgtk-6.0
 [ -d "$WEBKIT_SRC" ] || die "$WEBKIT_SRC missing (install gir1.2-webkit-6.0)"
 WEBKIT_DIR=$LIBDIR/webkitgtk-6.0
@@ -507,9 +508,9 @@ echo "bundled glibc $LIBC_VERSION ($LOADER_NAME)"
 # child the app starts (daemon, askpass, restarts) comes back through here.
 write_libc_wrapper() {
     local wrapper=$1 target=$2 rel_libc rel_target
+    mkdir -p "$(dirname "$wrapper")"
     rel_libc=$(realpath --relative-to="$(dirname "$wrapper")" "$LIBC_DIR")
     rel_target=$(realpath --relative-to="$(dirname "$wrapper")" "$target")
-    mkdir -p "$(dirname "$wrapper")"
     cat > "$wrapper" <<EOF
 #!/bin/sh
 # Runs ${target#"$APPDIR"/} on the C library bundled in ${LIBC_DIR#"$APPDIR"/}.
@@ -522,11 +523,82 @@ EOF
 }
 
 write_libc_wrapper "$APPDIR/usr/bin/python3-bundled-libc" "$APPDIR/usr/bin/python$PY_VER"
-# WebKit exec's its helpers by name from WEBKIT_EXEC_PATH, so a directory of
-# same-named wrappers is all it takes to move them onto the bundled libc.
+# WebKit exec's its helpers as "././webkitgtk-6.0/<name>" (step 8c), relative
+# to the working directory. On an older host AppRun starts the app in
+# bundled-libc-workdir, whose webkitgtk-6.0 holds same-named wrappers that run
+# the real helpers on the bundled libc. Those are static executables, not
+# shell scripts like the wrapper above: WebKit's bubblewrap sandbox mounts no
+# /bin or /usr/bin, so a script's interpreter does not exist where the
+# WebProcess starts (see libc-launcher.c). They find the loader relative to
+# themselves; bubblewrap keeps the working directory, and the app adds the
+# AppDir to the sandbox.
+LAUNCHER_DIR=$LIBDIR/bundled-libc-workdir/webkitgtk-6.0
+mkdir -p "$LAUNCHER_DIR"
 for helper in "${webkit_helpers[@]}"; do
-    write_libc_wrapper "$LIBDIR/webkitgtk-6.0-bundled-libc/$(basename "$helper")" "$helper"
+    launcher=$LAUNCHER_DIR/$(basename "$helper")
+    ${CC:-cc} -static -Os -Wall -Wextra -Werror \
+        -DREL_LIBC="\"$(realpath --relative-to="$LAUNCHER_DIR" "$LIBC_DIR")\"" \
+        -DREL_TARGET="\"$(realpath --relative-to="$LAUNCHER_DIR" "$helper")\"" \
+        -DLOADER_NAME="\"$LOADER_NAME\"" \
+        -o "$launcher" "$SCRIPT_DIR/libc-launcher.c" \
+        || die "cannot build the static WebKit helper launcher (needs a C compiler and libc6-dev)"
+    strip "$launcher"
+    file "$launcher" | grep -q 'statically linked' || die "$launcher is not static"
 done
+
+# --------------------------------------------------------------------------
+# 8c. Point the bundled WebKit at the bundled helpers.
+# --------------------------------------------------------------------------
+log "Relocating the WebKitGTK helper path"
+# Release builds of WebKitGTK exec the helpers from PKGLIBEXECDIR, compiled
+# into the library as an absolute path (/usr/lib/<triplet>/webkitgtk-6.0), and never
+# read WEBKIT_EXEC_PATH. Left alone, the bundled library starts the *host's*
+# helpers: missing on most distros, and a different WebKit version -- whose IPC
+# does not match -- on the rest, which leaves every WebView blank.
+#
+# Rewritten in place to "././webkitgtk-6.0/", NUL-padded to the same length
+# (the approach Wails v3 ships). WebKit uses the string twice: as the exec
+# path, resolved against the working directory AppRun sets, and as a
+# bubblewrap bind destination, resolved against the sandbox root. bwrap can
+# create that top-level destination in its read-only root, where a nested
+# relative path ("./lib/...") makes it fail with "Can't mkdir". Only the exact
+# NUL-terminated string is replaced: the injected-bundle directory shares the
+# prefix and must stay absolute (AppRun overrides it instead).
+WEBKIT_LIB=$(readlink -f "$LIBDIR/libwebkitgtk-6.0.so.4")
+[ -f "$WEBKIT_LIB" ] || die "the bundled libwebkitgtk-6.0.so.4 is missing"
+python3 - "$WEBKIT_LIB" <<'PY'
+import re
+import sys
+
+library = sys.argv[1]
+data = open(library, "rb").read()
+# The whole NUL-delimited string, NUL on both sides: a bare suffix match would
+# rewrite the tail of a longer string (/lib/... inside /usr/lib/... on usrmerge
+# hosts) into a broken path. Taken from the library itself, because the build
+# host's own spelling of its libdir need not be the one compiled in.
+found = set(re.findall(rb"\0(/[^\0]*/webkitgtk-6\.0)\0", data))
+if len(found) != 1:
+    sys.exit("expected one compiled WebKit helper directory in %s, found %r"
+             % (library, sorted(found)))
+helper_dir = found.pop()
+compiled = b"\0" + helper_dir + b"\0"
+relative = b"././webkitgtk-6.0/"
+if data.count(compiled) != 1:
+    sys.exit("expected exactly one %r in %s, found %d"
+             % (helper_dir, library, data.count(compiled)))
+if len(relative) > len(helper_dir):
+    sys.exit("%r is too short to relocate in place" % helper_dir)
+bundle = helper_dir + b"/injected-bundle/\0"
+bundles_before = data.count(bundle)
+data = data.replace(
+    compiled,
+    b"\0" + relative + b"\0" * (len(helper_dir) - len(relative)) + b"\0",
+)
+assert data.count(bundle) == bundles_before, "the injected-bundle path was touched"
+assert data.count(b"\0" + relative + b"\0") == 1
+open(library, "wb").write(data)
+print("relocated %s -> %s" % (helper_dir.decode(), relative.decode()))
+PY
 
 # --------------------------------------------------------------------------
 # 9. Data GTK looks up by path: schemas, icon themes, pixbuf loader cache.
@@ -589,130 +661,9 @@ smoke_test() {
         ${DISPLAY:+DISPLAY="$DISPLAY"} \
         ${XAUTHORITY:+XAUTHORITY="$XAUTHORITY"} \
         bash -c '. "$1"; shift; exec "$SSHPILOT_PYTHON" "$@"' _ "$BUILD_DIR/apprun-env.sh" \
-        - "$APPDIR" < "$BUILD_DIR/smoke-test.py"
+        - "$APPDIR" < "$SCRIPT_DIR/smoke-test.py"
 }
 
-cat > "$BUILD_DIR/smoke-test.py" <<'PY'
-import os
-import subprocess
-import sys
-
-appdir = sys.argv[1]
-assert sys.executable.startswith(appdir), sys.executable
-
-# Which libc.so.6 is really mapped, not which one AppRun meant to pick.
-with open("/proc/self/maps", encoding="utf-8") as maps:
-    libc_paths = {line.split()[-1] for line in maps if line.rstrip().endswith("/libc.so.6")}
-bundled_libc = os.path.join(appdir, "usr", "lib", "libc", "libc.so.6")
-if os.environ["SSHPILOT_APPIMAGE_LIBC"] == "bundled":
-    assert libc_paths == {bundled_libc}, libc_paths
-    # sys.executable is what the app hands its children (daemon, askpass), so
-    # it has to be the wrapper, or they would start on the host's libc again.
-    assert sys.executable.endswith("/python3-bundled-libc"), sys.executable
-else:
-    assert bundled_libc not in libc_paths, libc_paths
-child = subprocess.run(
-    [sys.executable, "-c",
-     "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk"],
-    capture_output=True, text=True,
-)
-assert child.returncode == 0, child.stderr
-
-# Everything below runs under AppRun's environment, so these are AppRun's
-# paths, not ones this test invented.
-for variable, expected in (
-    ("GI_TYPELIB_PATH", "Gtk-4.0.typelib"),
-    ("GSETTINGS_SCHEMA_DIR", "gschemas.compiled"),
-    ("GIO_MODULE_DIR", None),
-    ("WEBKIT_EXEC_PATH", "WebKitWebProcess"),
-    ("WEBKIT_INJECTED_BUNDLE_PATH", "libwebkitgtkinjectedbundle.so"),
-    ("PYXTERMJS_ASSETS_DIR", "xterm.js"),
-):
-    value = os.environ.get(variable)
-    assert value and value.startswith(appdir), "%s=%r" % (variable, value)
-    assert os.path.isdir(value), "%s=%r is not a directory" % (variable, value)
-    if expected:
-        assert os.path.exists(os.path.join(value, expected)), \
-            "%s has no %s" % (variable, expected)
-
-import gi
-
-for namespace, version in (
-    ("Gtk", "4.0"), ("Gdk", "4.0"), ("Adw", "1"), ("Vte", "3.91"),
-    ("GtkSource", "5"), ("Secret", "1"), ("GLibUnix", "2.0"),
-    ("PangoFT2", "1.0"), ("WebKit", "6.0"),
-):
-    gi.require_version(namespace, version)
-from gi.repository import (  # noqa: F401
-    Adw, Gdk, Gio, GLib, Gtk, GtkSource, Secret, Vte, WebKit,
-)
-
-# The dependencies the app imports at runtime.
-import cairo, certifi, cryptography, keyring, psutil, yaml  # noqa: F401,E401
-
-import sshpilot
-from sshpilot.build_config import PKGDATADIR
-
-assert sshpilot.__file__.startswith(appdir), sshpilot.__file__
-gresource = os.path.join(PKGDATADIR, "io.github.mfat.sshpilot.gresource")
-assert os.path.exists(gresource), gresource
-Gio.resources_register(Gio.Resource.load(gresource))
-
-# The app icon is an SVG, so the svg pixbuf loader has to be usable.
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import GdkPixbuf
-
-formats = {fmt.get_name() for fmt in GdkPixbuf.Pixbuf.get_formats()}
-assert "svg" in formats, sorted(formats)
-
-# The xterm.js assets the PyXterm.js backend renders. AppRun's
-# PYXTERMJS_ASSETS_DIR is what keeps this off the host's libjs-xterm.
-from sshpilot.xterm_shell import asset_dir, build_shell_html
-
-assert asset_dir().startswith(appdir), asset_dir()
-assert os.path.isfile(os.path.join(asset_dir(), "xterm.js")), asset_dir()
-shell_html = build_shell_html()
-
-# Importing WebKit only proves the library loads. The renderer runs in a
-# separate process that WebKit exec's from a path compiled in at build time, so
-# the check that matters is whether a real WebView finishes a load -- if
-# WEBKIT_EXEC_PATH is wrong, this hangs until the timeout instead. Needs a
-# display, so it is skipped when there is none (the build still fails on a
-# WebKit that cannot even be imported).
-if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
-    Gtk.init()
-    window = Gtk.Window()
-    webview = WebKit.WebView()
-    window.set_child(webview)
-    window.present()
-
-    outcome = {}
-    loop = GLib.MainLoop()
-
-    def _on_load_changed(_view, event):
-        if event == WebKit.LoadEvent.FINISHED:
-            outcome["loaded"] = True
-            loop.quit()
-
-    def _on_timeout():
-        outcome.setdefault("loaded", False)
-        loop.quit()
-        return False
-
-    webview.connect("load-changed", _on_load_changed)
-    GLib.timeout_add_seconds(90, _on_timeout)
-    webview.load_html(shell_html, "file:///")
-    loop.run()
-    assert outcome.get("loaded"), (
-        "the bundled WebKit never finished loading the xterm.js shell -- "
-        "check WEBKIT_EXEC_PATH and the WebKit*Process helpers"
-    )
-    print("smoke test ok: WebKit rendered the xterm.js shell")
-else:
-    print("smoke test: no display, WebKit checked by import only")
-
-print("smoke test ok: sshpilot %s" % sshpilot.__version__)
-PY
 smoke_test host
 smoke_test bundled
 
