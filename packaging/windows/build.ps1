@@ -48,5 +48,9 @@ if ($Portable) {
     # in the user's profile, as for the installed app.
     $zip = "$root\build\windows\SSHPilot-$version-windows-$arch-portable.zip"
     if (Test-Path $zip) { Remove-Item $zip }
-    Compress-Archive -Path "$root\build\windows\dist\sshPilot" -DestinationPath $zip -CompressionLevel Optimal
+    # tar (bsdtar, in Windows since 10 1803), not Compress-Archive: Windows
+    # PowerShell 5.1's stores paths with backslashes, which other unzip
+    # tools and the zip format do not accept.
+    tar.exe -a -c -f $zip -C "$root\build\windows\dist" sshPilot
+    if ($LASTEXITCODE -ne 0) { throw "zipping the portable build failed" }
 }
