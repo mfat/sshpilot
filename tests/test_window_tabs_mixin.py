@@ -1064,7 +1064,9 @@ def test_window_f3_toggles_the_selected_file_manager_tab():
 def test_window_f3_leaves_terminal_tabs_and_hidden_tabs_alone():
     """Not a file manager tab, or not on screen: F3 is not handled, so it
     carries on to whatever else wants it."""
-    from sshpilot.terminal import TerminalWidget
+    # The class the handler checks against: other tests reload
+    # sshpilot.terminal, after which its TerminalWidget is a different class.
+    from sshpilot.window_tabs import TerminalWidget
 
     controller = _FileManagerController(False)
     terminal = TerminalWidget.__new__(TerminalWidget)
