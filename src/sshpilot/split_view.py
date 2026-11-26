@@ -702,6 +702,9 @@ class SplitPane(Gtk.Box):
         lbl = Gtk.Label(label=_("Drop a connection here"))
         lbl.add_css_class("dim-label")
         lbl.add_css_class("title-3")
+        lbl.set_wrap(True)
+        lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        lbl.set_justify(Gtk.Justification.CENTER)
         inner.append(lbl)
 
         sub = Gtk.Label(label=_("or"))
@@ -1100,6 +1103,12 @@ class SplitViewTab(Gtk.Box):
     MIN_PANE_WIDTH = 200          # minimum width per pane in side-by-side splits (px)
     SCROLL_SPACER_HEIGHT = 600  # extra scroll room below the last row
     ROW_HANDLE_HEIGHT = 6
+    # Bottom bar: narrowest width supported (icon-only layout), the width
+    # below which it goes icon-only until the labelled bar has been measured,
+    # and the room left for the wider drag-time label.
+    STRIP_MIN_WIDTH = 360
+    STRIP_FALLBACK_BREAKPOINT = 900
+    STRIP_BREAKPOINT_SLACK = 40
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -1394,12 +1403,47 @@ class SplitViewTab(Gtk.Box):
         strip.pack_start(self._layout_h_btn)
         strip.pack_start(self._layout_v_btn)
 
+        # Narrow-width stand-in for Default/Compact (#1423): one menu button.
+        size_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        size_popover = Gtk.Popover()
+        size_popover.set_child(size_box)
+        for label, tooltip, callback in (
+            (_("Default"), _("Reset panes to their default size"),
+             self._on_default_clicked),
+            (_("Compact"), _("Reset panes to a smaller size"),
+             lambda: self.reset_all_row_heights(0.3)),
+        ):
+            item = Gtk.Button(label=label)
+            item.add_css_class("flat")
+            item.set_tooltip_text(tooltip)
+            item.connect(
+                "clicked",
+                lambda _b, cb=callback: (size_popover.popdown(), cb()),
+            )
+            size_box.append(item)
+        size_menu_btn = Gtk.MenuButton()
+        size_menu_btn.set_icon_name("view-more-symbolic")
+        size_menu_btn.set_tooltip_text(_("Size"))
+        size_menu_btn.add_css_class("pill")
+        size_menu_btn.set_popover(size_popover)
+        size_menu_btn.set_visible(False)
+        strip.pack_start(size_menu_btn)
+
         add_btn = Gtk.Button(label=_("+ Add Terminal"))
         add_btn.add_css_class("suggested-action")
         add_btn.add_css_class("pill")
         add_btn.connect("clicked", lambda _b: self.add_pane())
         # pack_end places it at the trailing edge — no manual halign/hexpand hack.
         strip.pack_end(add_btn)
+
+        add_icon_btn = Gtk.Button()
+        add_icon_btn.set_icon_name("list-add-symbolic")
+        add_icon_btn.set_tooltip_text(_("Add Terminal"))
+        add_icon_btn.add_css_class("suggested-action")
+        add_icon_btn.add_css_class("pill")
+        add_icon_btn.connect("clicked", lambda _b: self.add_pane())
+        add_icon_btn.set_visible(False)
+        strip.pack_end(add_icon_btn)
 
         self._add_pane_btn = add_btn
         self._add_pane_strip = strip
@@ -1410,7 +1454,66 @@ class SplitViewTab(Gtk.Box):
         dt.connect("drop", self._on_add_pane_drop)
         strip.add_controller(dt)
 
-        return strip
+        # Every tab page counts toward the main window's minimum width, even
+        # in the background, so the labelled bar alone (~800 px) kept the
+        # whole window from fitting a narrow tiling-WM column (#1423). The
+        # breakpoint bin drops that minimum and swaps in an icon-only bar.
+        compact = Adw.Breakpoint.new(
+            Adw.BreakpointCondition.parse(
+                f"max-width: {self.STRIP_FALLBACK_BREAKPOINT}px"
+            )
+        )
+        for widget, wide_visible in (
+            (large_btn, True), (compact_btn, True), (add_btn, True),
+            (size_menu_btn, False), (add_icon_btn, False),
+        ):
+            compact.add_setter(widget, "visible", not wide_visible)
+        # Pill padding makes each icon button ~80 px; round ones fit the
+        # narrow bar. Setters cannot swap style classes, so use the signals.
+        icon_btns = (
+            scroll_top_btn, scroll_bottom_btn, size_menu_btn,
+            self._layout_h_btn, self._layout_v_btn, add_icon_btn,
+        )
+
+        def _restyle(narrow: bool) -> None:
+            for btn in icon_btns:
+                btn.remove_css_class("circular" if not narrow else "pill")
+                btn.add_css_class("circular" if narrow else "pill")
+
+        compact.connect("apply", lambda _bp: _restyle(True))
+        compact.connect("unapply", lambda _bp: _restyle(False))
+        bin_ = Adw.BreakpointBin()
+        bin_.set_hexpand(True)
+        # Height 1 (0 counts as unset): the bar keeps its natural height
+        # and its slide-in reveal.
+        bin_.set_size_request(self.STRIP_MIN_WIDTH, 1)
+        bin_.set_child(strip)
+        bin_.add_breakpoint(compact)
+        bin_.connect(
+            "realize",
+            lambda _w: self._fit_strip_breakpoint(
+                compact, strip, (large_btn, compact_btn, add_btn)),
+        )
+        return bin_
+
+    def _fit_strip_breakpoint(self, breakpoint, strip, wide_only) -> None:
+        """Switch to the icon bar exactly when the labelled bar stops fitting.
+
+        The labels' width depends on the language and font, so measure it
+        once styled rather than guessing a fixed threshold.
+        """
+        if not all(w.get_visible() for w in wide_only):
+            return  # already in the compact layout; keep the fallback
+        try:
+            needed = strip.measure(Gtk.Orientation.HORIZONTAL, -1)[0]
+        except Exception:
+            return
+        if needed <= 0:
+            return
+        # Slack for the "Drop here to add" label shown while dragging.
+        breakpoint.set_condition(Adw.BreakpointCondition.parse(
+            f"max-width: {needed + self.STRIP_BREAKPOINT_SLACK}px"
+        ))
 
     def _on_first_map_reveal_strip(self, *_args) -> None:
         """On the tab's first map, schedule the action bar's animated reveal a
@@ -1493,6 +1596,10 @@ class SplitViewTab(Gtk.Box):
         )
         hint_label.set_halign(Gtk.Align.CENTER)
         hint_label.set_justify(Gtk.Justification.CENTER)
+        # Wrap rather than force the tab (and so the window) wide (#1423).
+        hint_label.set_wrap(True)
+        hint_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        hint_label.set_max_width_chars(80)
         hint_label.add_css_class("dim-label")
         hint_label.add_css_class("monospace")
         hint.append(hint_label)
