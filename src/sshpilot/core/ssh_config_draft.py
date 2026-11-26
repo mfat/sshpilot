@@ -885,3 +885,45 @@ def _walk(
     if system:
         take_file(system)
     return tuple(lines), tuple(winners.values()), tuple(includes)
+
+
+# -- the host's own lines in a rendered file ---------------------------------
+
+
+def own_option_lines(text: str, host: str) -> Tuple[Tuple[int, str, str], ...]:
+    """``(line, keyword, value)`` of every option line of *host*'s own
+    ``Host`` blocks in *text*: the blocks whose ``Host`` line names it
+    literally (a pattern that matches it is another block)."""
+    from ..ssh_config_document import split_host_tokens
+
+    found: List[Tuple[int, str, str]] = []
+    for block in scan_blocks(text):
+        if block.kind != "host":
+            continue
+        try:
+            tokens = split_host_tokens(block.patterns)
+        except Exception:
+            tokens = block.patterns.split()
+        if host not in tokens:
+            continue
+        found.extend((item.line, item.keyword, item.value) for item in block.lines)
+    return tuple(found)
+
+
+def without_own_lines(text: str, host: str, keywords) -> str:
+    """*text* with *host*'s own lines for *keywords* left out: what the host
+    inherits for those keywords. Either spelling of a renamed keyword is
+    one setting."""
+    wanted = {canonical_keyword(keyword) for keyword in keywords}
+    dropped = {
+        line for line, keyword, _value in own_option_lines(text, host)
+        if canonical_keyword(keyword) in wanted
+    }
+    if not dropped:
+        return text
+    return "".join(
+        raw for number, raw in enumerate(
+            split_config_lines(text, keepends=True), start=1
+        )
+        if number not in dropped
+    )

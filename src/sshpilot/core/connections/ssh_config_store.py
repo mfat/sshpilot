@@ -591,6 +591,22 @@ class SshConfigMutationResult:
 
 
 @dataclass(frozen=True)
+class RenderedSshEdit:
+    """The text of the file a create or update would write, not written.
+
+    ``target`` is that file (the root, or the included file the host is
+    declared in); ``connection_id`` the host's name after the edit.
+    """
+
+    target: Path
+    text: str
+    connection_id: str
+    base_revision: str
+    expected_bytes: Optional[bytes]
+    remove_connection_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class PreparedSshMutation:
     """A validated SSH replacement that has not changed durable state."""
 
@@ -980,6 +996,21 @@ class SshConfigStore:
 
     def prepare_create(self, data: Mapping[str, Any]) -> PreparedSshMutation:
         """Prepare a new Host block without touching the SSH config."""
+        rendered = self.render_create(data)
+        return self._prepare_document_replacement(
+            operation="create", target=rendered.target,
+            expected_revision=rendered.base_revision,
+            expected_bytes=rendered.expected_bytes,
+            target_text=rendered.text, connection_id=rendered.connection_id,
+        )
+
+    def render_create(self, data: Mapping[str, Any]) -> "RenderedSshEdit":
+        """The root file as creating this Host block would write it.
+
+        What :meth:`prepare_create` writes, checked the same way, but nothing
+        is prepared for a commit: the editor asks OpenSSH about the text
+        before the user saves.
+        """
         config = self.load()
         payload = dict(data)
         payload.pop("uuid", None)
@@ -999,10 +1030,9 @@ class SshConfigStore:
             text = doc.text()
         else:
             text = _SSH_CONFIG_HEADER + "".join(merged_block_lines(None, payload))
-        return self._prepare_document_replacement(
-            operation="create", target=self._root_path,
-            expected_revision=config.root_revision, expected_bytes=expected,
-            target_text=text, connection_id=nickname,
+        return RenderedSshEdit(
+            target=self._root_path, text=text, connection_id=nickname,
+            base_revision=config.root_revision, expected_bytes=expected,
         )
 
     def prepare_update(
@@ -1021,6 +1051,28 @@ class SshConfigStore:
         the line is then kept as written, so the connection cannot be
         renamed this way (:meth:`prepare_split` gives it a block of its own).
         """
+        rendered = self.render_update(
+            connection_id, data,
+            expected_generation=expected_generation, shared_block=shared_block,
+        )
+        return self._prepare_document_replacement(
+            operation="update", target=rendered.target,
+            expected_revision=rendered.base_revision,
+            expected_bytes=rendered.expected_bytes,
+            target_text=rendered.text, connection_id=rendered.connection_id,
+            remove_connection_id=rendered.remove_connection_id,
+        )
+
+    def render_update(
+        self,
+        connection_id: str,
+        data: Mapping[str, Any],
+        *,
+        expected_generation: Optional[int] = None,
+        shared_block: bool = False,
+    ) -> "RenderedSshEdit":
+        """The file as :meth:`prepare_update` would write it; nothing is
+        prepared for a commit (see :meth:`render_create`)."""
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
@@ -1074,10 +1126,9 @@ class SshConfigStore:
                 details={"refusal": "declaration_changed"},
             )
         doc.nodes = nodes
-        return self._prepare_document_replacement(
-            operation="update", target=target,
-            expected_revision=config.root_revision, expected_bytes=expected,
-            target_text=doc.text(), connection_id=new_name,
+        return RenderedSshEdit(
+            target=target, text=doc.text(), connection_id=new_name,
+            base_revision=config.root_revision, expected_bytes=expected,
             remove_connection_id=connection_id if new_name != connection_id else None,
         )
 

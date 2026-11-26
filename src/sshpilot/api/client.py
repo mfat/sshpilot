@@ -20,6 +20,8 @@ from .models.connections import (
     ConfigConflict,
     ConfigSyntaxError,
     EarlierDirective,
+    ConnectionEditEvaluation,
+    EvaluateConnectionEditRequest,
     EvaluateSshConfigDraftRequest,
     SshConfigDraftEvaluation,
     EffectiveConfigComparison,
@@ -261,6 +263,11 @@ class SshPilotClient(Protocol):
     def evaluate_ssh_config_draft(
         self, request: EvaluateSshConfigDraftRequest
     ) -> SshConfigDraftEvaluation:
+        ...
+
+    def evaluate_connection_edit(
+        self, request: EvaluateConnectionEditRequest
+    ) -> ConnectionEditEvaluation:
         ...
 
     def list_config_conflicts(self) -> Tuple[ConfigConflict, ...]:

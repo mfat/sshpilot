@@ -53,6 +53,7 @@ from ..api.models.connections import (
     AsbruImportResult,
     AuthenticationMethod,
     ConnectionDetails,
+    ConnectionEditEvaluation,
     ConnectionEditorDetails,
     ConnectionId,
     ConnectionMutationResult,
@@ -61,6 +62,7 @@ from ..api.models.connections import (
     ConfigSyntaxError,
     EarlierDirective,
     EffectiveConfigComparison,
+    EvaluateConnectionEditRequest,
     UnsavedHostCheckRequest,
     UnsavedHostCheckResult,
     CreateConnectionRequest,
@@ -105,6 +107,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
     "evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
+    "evaluate_connection_edit": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
     "check_unsaved_host": Capability.CONNECTIONS_READ,
@@ -1743,6 +1746,106 @@ class ConnectionApplicationService:
                 "The SSH config draft evaluation was superseded",
             ) from None
 
+    def evaluate_connection_edit(
+        self,
+        request: EvaluateConnectionEditRequest,
+        cancelled: Optional[Callable[[], bool]] = None,
+    ) -> ConnectionEditEvaluation:
+        """What OpenSSH would use for a connection once an edit is saved.
+
+        The edit is merged into the Host block exactly as
+        :meth:`update_connection` (or :meth:`create_connection`) merges it,
+        and the file it would write is evaluated like a draft
+        (:meth:`evaluate_ssh_config_draft`). Nothing is written. A save the
+        store would refuse comes back as ``refusal``, not as an error: the
+        editor shows it as "not known yet" while the user is still typing.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from ..api.models.connections import (
+            ConnectionEditRefusal,
+            EvaluateSshConfigDraftRequest,
+            SshConfigOwnLine,
+        )
+        from pathlib import Path
+
+        from .ssh_config_draft import own_option_lines, without_own_lines
+
+        if type(request) is not EvaluateConnectionEditRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "A connection edit evaluation request is required",
+            )
+        from .errors import ErrorCode as CoreErrorCode
+
+        refusals = {
+            CoreErrorCode.VALIDATION_ERROR: ConnectionEditRefusal.INVALID,
+            CoreErrorCode.CONNECTION_ALREADY_EXISTS: ConnectionEditRefusal.NAME_TAKEN,
+            CoreErrorCode.CONNECTION_NOT_FOUND: ConnectionEditRefusal.NOT_FOUND,
+            CoreErrorCode.MUTATION_AMBIGUOUS: ConnectionEditRefusal.DECLARATION,
+        }
+        try:
+            if request.create is not None:
+                rendered = self._repository.render_connection_edit(
+                    None, self._build_create_data(request.create)
+                )
+            else:
+                connection_id = ConnectionId(request.connection_id)
+                record = self._repository.get_record(connection_id)
+                if record is None or (record.protocol or "ssh") != "ssh":
+                    return ConnectionEditEvaluation(
+                        refusal=ConnectionEditRefusal.NOT_FOUND
+                    )
+                update = request.update
+                data = (
+                    self._updated_data(record, update)[0] if update is not None
+                    else dict(record.data or {})
+                )
+                rendered = self._repository.render_connection_edit(
+                    connection_id, data,
+                    # The text is the same either way; whether a shared block
+                    # may be edited is the save's question, not this one's.
+                    shared_block=True,
+                )
+        except SshPilotError as error:
+            if error.code is ErrorCode.VALIDATION_FAILED:
+                return ConnectionEditEvaluation(refusal=ConnectionEditRefusal.INVALID)
+            raise
+        except CoreError as error:
+            refusal = refusals.get(error.code, ConnectionEditRefusal.UNREADABLE)
+            logger.debug(
+                "Connection edit not rendered code=%s reason=%s",
+                error.code.value, error.diagnostic_reason,
+            )
+            return ConnectionEditEvaluation(refusal=refusal)
+        except (OSError, UnicodeError):
+            logger.debug("Connection edit not rendered", exc_info=True)
+            return ConnectionEditEvaluation(refusal=ConnectionEditRefusal.UNREADABLE)
+
+        host = rendered.connection_id
+        root = Path(str(self._repository.root_config_path))
+        file = "" if Path(rendered.target) == root else str(rendered.target)
+        own = tuple(
+            SshConfigOwnLine(line=line, key=keyword, value=value)
+            for line, keyword, value in own_option_lines(rendered.text, host)
+        )
+
+        def evaluate(text: str):
+            return self.evaluate_ssh_config_draft(
+                EvaluateSshConfigDraftRequest(text=text, host=host, file=file),
+                cancelled,
+            )
+
+        evaluation = evaluate(rendered.text)
+        without = None
+        if request.without_own:
+            reduced = without_own_lines(rendered.text, host, request.without_own)
+            without = evaluation if reduced == rendered.text else evaluate(reduced)
+        return ConnectionEditEvaluation(
+            host=host, file=file, text=rendered.text, own_lines=own,
+            evaluation=evaluation, without_own=without,
+        )
+
     def open_draft_test_connection(
         self, request: EvaluateSshConfigDraftRequest
     ) -> ConnectionDetails:
@@ -2231,6 +2334,35 @@ class ConnectionApplicationService:
             "errors": errors,
         }
 
+    def _updated_data(
+        self, record, request: UpdateConnectionRequest
+    ) -> Tuple[Dict[str, Any], set]:
+        """*record*'s data with *request* applied, and the fields it names.
+
+        One merge for saving an edit and for evaluating it before the save
+        (:meth:`evaluate_connection_edit`), so both see the same block.
+        """
+        data = dict(record.data or {})
+        compared_fields = set(request.config_patch or {})
+        compared_fields.update(
+            name for name in ("nickname", "hostname", "username", "port")
+            if getattr(request, name) is not None and getattr(request, name) is not UNSET
+        )
+        if request.display_name is not UNSET and request.display_name is not None:
+            data["display_name"] = request.display_name
+            compared_fields.add("display_name")
+        compared_fields.update(request.plugin_data or {})
+        for name in ("nickname", "hostname", "username", "port"):
+            value = getattr(request, name)
+            if value is not None and value is not UNSET:
+                data[name] = value
+        self._apply_explicit_authorship(data, request)
+        if request.config_patch:
+            self._apply_config_patch(data, request.config_patch)
+        if request.plugin_data:
+            data.update(dict(request.plugin_data))
+        return data, compared_fields
+
     def _build_create_data(self, request: CreateConnectionRequest) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "nickname": request.nickname,
@@ -2426,25 +2558,7 @@ class ConnectionApplicationService:
                 display_name=summary.display_name,
             )
         before_data = dict(record.data or {})
-        data = dict(record.data or {})
-        compared_fields = set(request.config_patch or {})
-        compared_fields.update(
-            name for name in ("nickname", "hostname", "username", "port")
-            if getattr(request, name) is not None and getattr(request, name) is not UNSET
-        )
-        if request.display_name is not UNSET and request.display_name is not None:
-            data["display_name"] = request.display_name
-            compared_fields.add("display_name")
-        compared_fields.update(request.plugin_data or {})
-        for name in ("nickname", "hostname", "username", "port"):
-            value = getattr(request, name)
-            if value is not None and value is not UNSET:
-                data[name] = value
-        self._apply_explicit_authorship(data, request)
-        if request.config_patch:
-            self._apply_config_patch(data, request.config_patch)
-        if request.plugin_data:
-            data.update(dict(request.plugin_data))
+        data, compared_fields = self._updated_data(record, request)
         try:
             # Passed only when asked for: a block other hosts share is
             # edited on the caller's word alone.

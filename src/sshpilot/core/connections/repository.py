@@ -616,6 +616,41 @@ class ConnectionRepository:
         with self._lock:
             return self._ssh_store.get_text(file)
 
+    def render_connection_edit(
+        self,
+        connection_id: Optional[str],
+        data: Mapping[str, Any],
+        *,
+        shared_block: bool = False,
+    ):
+        """The file a save of *data* would write, without writing it.
+
+        *connection_id* None: a new connection (a create); otherwise an
+        update of that saved connection. Returns the store's
+        ``RenderedSshEdit``; refuses with the error the save would raise.
+        """
+        with self._lock:
+            payload = dict(data)
+            payload.pop("uuid", None)
+            if connection_id is None:
+                try:
+                    validate_ssh_host_alias(str(payload.get("nickname") or ""))
+                except ValueError as error:
+                    raise CoreError(ErrorCode.VALIDATION_ERROR, str(error)) from error
+                payload.pop("display_name", None)
+                return self._ssh_store.render_create(payload)
+            internal = self._resolve_internal_id_locked(connection_id)
+            self._assert_not_unresolved_locked(internal)
+            new_nick = str(payload.get("nickname") or "").strip()
+            if new_nick:
+                try:
+                    validate_ssh_host_alias(new_nick)
+                except ValueError as error:
+                    raise CoreError(ErrorCode.VALIDATION_ERROR, str(error)) from error
+            return self._ssh_store.render_update(
+                internal, payload, shared_block=shared_block,
+            )
+
     def ssh_config_file_path(self, file: str) -> Path:
         """The path behind a config file name the store gave out; any other
         name is refused."""

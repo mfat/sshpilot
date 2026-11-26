@@ -809,6 +809,51 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: ConnectionEditEvaluation -->
+## `ConnectionEditEvaluation`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** What OpenSSH would use for the edited connection.
+
+``host`` is the name the host has after the edit and ``file`` the file
+its block is written to (empty: the root; else as
+``SshConfigText.files`` lists it), and ``text`` that file as the save
+would write it. ``own_lines`` are the option lines of the host's own
+blocks in it; the line numbers of ``evaluation.lines`` and
+``evaluation.errors`` (with an empty file) refer to the same text. ``without_own`` is the second answer the
+request asked for (``None`` when it asked none).
+
+``refusal`` is set, and both answers are ``None``, when the edit cannot
+be rendered: saving it would be refused for the same reason.
+
+**Related methods:** `evaluate_connection_edit`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `host` | `str` | No | `` | No |
+| `file` | `str` | No | `` | No |
+| `text` | `str` | No | `` | No |
+| `own_lines` | `tuple[SshConfigOwnLine, ...]` | No | `[]` | No |
+| `evaluation` | `SshConfigDraftEvaluation | None` | No | `null` | No |
+| `without_own` | `SshConfigDraftEvaluation | None` | No | `null` | No |
+| `refusal` | `ConnectionEditRefusal | None` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "evaluation": null,
+  "file": "",
+  "host": "",
+  "own_lines": [],
+  "refusal": null,
+  "text": "",
+  "without_own": null
+}
+```
+
 <!-- api-model: ConnectionEditorCapabilities -->
 ## `ConnectionEditorCapabilities`
 
@@ -2120,6 +2165,47 @@ Synthetic representation:
   "error": "<sensitive value omitted>",
   "protocol_version": {},
   "request_id": "request-3"
+}
+```
+
+<!-- api-model: EvaluateConnectionEditRequest -->
+## `EvaluateConnectionEditRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Ask what OpenSSH would use for a connection once an edit is saved.
+
+The daemon renders the file exactly as saving the edit would write it
+(the same merge of the edit into the Host block), writes nothing, and
+evaluates that text as :class:`EvaluateSshConfigDraftRequest` does.
+
+``connection_id`` with no ``update``: the connection as saved.
+``connection_id`` with ``update``: the edit of a saved connection.
+``create`` (no ``connection_id``): a connection not saved yet, whose
+block is appended where a create appends it.
+
+``without_own`` names keywords (lower case) to answer a second
+question for: the same text with the host's own lines for those
+keywords left out, which is what the host inherits for them.
+
+**Related methods:** `evaluate_connection_edit`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `str | None` | No | `null` | No |
+| `update` | `ForwardRef('UpdateConnectionRequest') | None` | No | `null` | No |
+| `create` | `ForwardRef('CreateConnectionRequest') | None` | No | `null` | No |
+| `without_own` | `tuple[str, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": null,
+  "create": null,
+  "update": null,
+  "without_own": []
 }
 ```
 
@@ -6359,6 +6445,33 @@ Synthetic representation:
   "display_name": "example",
   "file": "example",
   "writable": false
+}
+```
+
+<!-- api-model: SshConfigOwnLine -->
+## `SshConfigOwnLine`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One option line of the host's own ``Host`` block in the rendered
+text: its line number, its keyword (lower case) and its value.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `line` | `int` | Yes | — | No |
+| `key` | `str` | Yes | — | No |
+| `value` | `str` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "key": "example",
+  "line": 0,
+  "value": "example"
 }
 ```
 
