@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 11:56+0330\n"
+"POT-Creation-Date: 2026-11-26 12:09+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -125,7 +125,7 @@ msgstr "Abrir conexões?"
 #: src/sshpilot/file_manager/pane.py:2859
 #: src/sshpilot/file_manager/pane.py:3520
 #: src/sshpilot/file_manager/progress_dialog.py:326
-#: src/sshpilot/file_manager/transfer_indicator.py:116
+#: src/sshpilot/file_manager/transfer_indicator.py:220
 #: src/sshpilot/file_manager_window.py:2138
 #: src/sshpilot/file_manager_window.py:2470
 #: src/sshpilot/file_manager_window.py:2531
@@ -4180,207 +4180,214 @@ msgid "To {host}"
 msgstr "Para {host}"
 
 #: src/sshpilot/file_manager/progress_dialog.py:321
-#: src/sshpilot/file_manager/transfer_indicator.py:108
+#: src/sshpilot/file_manager/transfer_indicator.py:212
 #: src/sshpilot/file_manager_window.py:4252 src/sshpilot/scp_window.py:1270
 msgid "Show in Files"
 msgstr "Mostrar painel de arquivos"
 
-#: src/sshpilot/file_manager/progress_dialog.py:544
+#: src/sshpilot/file_manager/progress_dialog.py:545
 #: src/sshpilot/window_dialogs.py:1692 src/sshpilot/window_dialogs.py:1704
 msgid "Done"
 msgstr "Concluído"
 
-#: src/sshpilot/file_manager/progress_dialog.py:668
+#: src/sshpilot/file_manager/progress_dialog.py:669
 #, python-brace-format
 msgid "{done} of {total}"
 msgstr "{done} de {total}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:739
+#: src/sshpilot/file_manager/progress_dialog.py:740
 msgid "Almost done…"
 msgstr "Quase pronto…"
 
-#: src/sshpilot/file_manager/progress_dialog.py:753
+#: src/sshpilot/file_manager/progress_dialog.py:754
 #, python-brace-format
 msgid "{speed:.1f} MB/s"
 msgstr "{speed:.1f} MB/s"
 
-#: src/sshpilot/file_manager/progress_dialog.py:755
+#: src/sshpilot/file_manager/progress_dialog.py:756
 #, python-brace-format
 msgid "{speed:.1f} KB/s"
 msgstr "{speed:.1f} KB/s"
 
-#: src/sshpilot/file_manager/progress_dialog.py:756
+#: src/sshpilot/file_manager/progress_dialog.py:757
 #, python-brace-format
 msgid "{speed} B/s"
 msgstr "{speed} B/s"
 
-#: src/sshpilot/file_manager/progress_dialog.py:801
+#: src/sshpilot/file_manager/progress_dialog.py:802
 #, python-brace-format
 msgid "Item {index} of {total}"
 msgid_plural "Item {index} of {total}"
 msgstr[0] "Item {index} de {total}"
 msgstr[1] "Item {index} de {total}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:805
+#: src/sshpilot/file_manager/progress_dialog.py:806
 #, python-brace-format
 msgid "File {index} of {total}"
 msgid_plural "File {index} of {total}"
 msgstr[0] "Arquivo {index} de {total}"
 msgstr[1] "Arquivo {index} de {total}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:821
+#: src/sshpilot/file_manager/progress_dialog.py:822
 #, python-brace-format
 msgid "{hours}h {minutes}m remaining"
 msgstr "{hours}h {minutes}m restantes"
 
-#: src/sshpilot/file_manager/progress_dialog.py:824
+#: src/sshpilot/file_manager/progress_dialog.py:825
 #, python-brace-format
 msgid "{minutes}m remaining"
 msgstr "{minutes}m restantes"
 
-#: src/sshpilot/file_manager/progress_dialog.py:826
+#: src/sshpilot/file_manager/progress_dialog.py:827
 #, python-brace-format
 msgid "{seconds}s remaining"
 msgstr "{seconds}s restantes"
 
 #. GB
-#: src/sshpilot/file_manager/progress_dialog.py:831
+#: src/sshpilot/file_manager/progress_dialog.py:832
 #, python-brace-format
 msgid "{size:.1f} GB"
 msgstr "{size:.1f} GB"
 
 #. MB
-#: src/sshpilot/file_manager/progress_dialog.py:833
+#: src/sshpilot/file_manager/progress_dialog.py:834
 #, python-brace-format
 msgid "{size:.1f} MB"
 msgstr "{size:.1f} MB"
 
 #. KB
-#: src/sshpilot/file_manager/progress_dialog.py:835
+#: src/sshpilot/file_manager/progress_dialog.py:836
 #, python-brace-format
 msgid "{size:.1f} KB"
 msgstr "{size:.1f} KB"
 
-#: src/sshpilot/file_manager/progress_dialog.py:837
+#: src/sshpilot/file_manager/progress_dialog.py:838
 #, python-brace-format
 msgid "{size} byte"
 msgid_plural "{size} bytes"
 msgstr[0] "{size} livre"
 msgstr[1] "{size} livre"
 
-#: src/sshpilot/file_manager/progress_dialog.py:857
+#: src/sshpilot/file_manager/progress_dialog.py:858
 #, python-brace-format
 msgid "{count} file · {size}"
 msgid_plural "{count} files · {size}"
 msgstr[0] "{count} arquivo · {size}"
 msgstr[1] "{count} arquivos · {size}"
 
-#: src/sshpilot/file_manager/progress_dialog.py:860
+#: src/sshpilot/file_manager/progress_dialog.py:861
 #, python-brace-format
 msgid "Transferred {size} successfully"
 msgstr "{size} transferidos com sucesso"
 
-#: src/sshpilot/file_manager/progress_dialog.py:865
+#: src/sshpilot/file_manager/progress_dialog.py:866
 #, python-brace-format
 msgid "Successfully transferred {count} file"
 msgid_plural "Successfully transferred {count} files"
 msgstr[0] "{count} arquivos transferidos com sucesso"
 msgstr[1] "{count} arquivos transferidos com sucesso"
 
-#: src/sshpilot/file_manager/progress_dialog.py:868
+#: src/sshpilot/file_manager/progress_dialog.py:869
 msgid "Transfer completed successfully"
 msgstr "Transferência concluída com sucesso"
 
-#: src/sshpilot/file_manager/progress_dialog.py:884
+#: src/sshpilot/file_manager/progress_dialog.py:885
 msgid "Download Complete"
 msgstr "Baixar arquivos"
 
-#: src/sshpilot/file_manager/progress_dialog.py:885
+#: src/sshpilot/file_manager/progress_dialog.py:886
 msgid "Upload Complete"
 msgstr "Concluído"
 
-#: src/sshpilot/file_manager/progress_dialog.py:886
+#: src/sshpilot/file_manager/progress_dialog.py:887
 msgid "Copy Complete"
 msgstr "Concluído"
 
-#: src/sshpilot/file_manager/progress_dialog.py:887
+#: src/sshpilot/file_manager/progress_dialog.py:888
 msgid "Move Complete"
 msgstr "Concluído"
 
-#: src/sshpilot/file_manager/progress_dialog.py:888
+#: src/sshpilot/file_manager/progress_dialog.py:889
 msgid "Delete Complete"
 msgstr "Excluir conexão"
 
-#: src/sshpilot/file_manager/progress_dialog.py:891
+#: src/sshpilot/file_manager/progress_dialog.py:892
 #: src/sshpilot/file_manager_window.py:4250
 msgid "Transfer Complete"
 msgstr "Transferência concluída"
 
-#: src/sshpilot/file_manager/progress_dialog.py:897
+#: src/sshpilot/file_manager/progress_dialog.py:898
 #, python-brace-format
 msgid "Successfully deleted {count} item"
 msgid_plural "Successfully deleted {count} items"
 msgstr[0] "{count} arquivos transferidos com sucesso"
 msgstr[1] "{count} arquivos transferidos com sucesso"
 
-#: src/sshpilot/file_manager/progress_dialog.py:902
+#: src/sshpilot/file_manager/progress_dialog.py:903
 msgid "Delete completed successfully"
 msgstr "Transferência concluída com sucesso"
 
-#: src/sshpilot/file_manager/progress_dialog.py:918
+#: src/sshpilot/file_manager/progress_dialog.py:919
 msgid "Delete Failed"
 msgstr "Falha ao duplicar"
 
-#: src/sshpilot/file_manager/progress_dialog.py:919
+#: src/sshpilot/file_manager/progress_dialog.py:920
 msgid "An error occurred while deleting"
 msgstr "Ocorreu um erro durante a transferência"
 
-#: src/sshpilot/file_manager/progress_dialog.py:921
+#: src/sshpilot/file_manager/progress_dialog.py:922
 #: src/sshpilot/file_manager_window.py:4262
 msgid "Transfer Failed"
 msgstr "Falha na transferência"
 
-#: src/sshpilot/file_manager/progress_dialog.py:922
+#: src/sshpilot/file_manager/progress_dialog.py:923
 msgid "An error occurred during transfer"
 msgstr "Ocorreu um erro durante a transferência"
 
-#: src/sshpilot/file_manager/progress_dialog.py:927
+#: src/sshpilot/file_manager/progress_dialog.py:928
 #, python-brace-format
 msgid "Error: {message}"
 msgstr "Erro: {message}"
 
 #. Details button — opens a dialog with the full error report (and Copy).
-#: src/sshpilot/file_manager/transfer_indicator.py:112
+#: src/sshpilot/file_manager/transfer_indicator.py:216
 #: src/sshpilot/file_manager_window.py:4265
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:355
 #: src/sshpilot/terminal.py:614
 msgid "Details"
 msgstr "Detalhes"
 
-#: src/sshpilot/file_manager/transfer_indicator.py:120
+#: src/sshpilot/file_manager/transfer_indicator.py:224
 msgid "Remove From List"
 msgstr "Remover da lista"
 
-#: src/sshpilot/file_manager/transfer_indicator.py:146
+#: src/sshpilot/file_manager/transfer_indicator.py:250
 #: src/sshpilot/scp_window.py:1379
 msgid "Cancelled"
 msgstr "Cancelado"
 
-#: src/sshpilot/file_manager/transfer_indicator.py:219
-#: src/sshpilot/file_manager/transfer_indicator.py:434
+#: src/sshpilot/file_manager/transfer_indicator.py:327
+#: src/sshpilot/file_manager/transfer_indicator.py:567
 msgid "Transfers"
 msgstr "Transferências"
 
-#: src/sshpilot/file_manager/transfer_indicator.py:231
+#: src/sshpilot/file_manager/transfer_indicator.py:339
 msgid "Clear Finished"
 msgstr "Limpar concluídas"
 
-#: src/sshpilot/file_manager/transfer_indicator.py:419
+#: src/sshpilot/file_manager/transfer_indicator.py:535
 #, python-brace-format
 msgid "{count} transfer running"
 msgid_plural "{count} transfers running"
 msgstr[0] "{count} transferência em andamento"
 msgstr[1] "{count} transferências em andamento"
+
+#: src/sshpilot/file_manager/transfer_indicator.py:549
+#, python-brace-format
+msgid "{count} transfer running ({percent}%)"
+msgid_plural "{count} transfers running ({percent}%)"
+msgstr[0] "{count} transferência em andamento ({percent}%)"
+msgstr[1] "{count} transferências em andamento ({percent}%)"
 
 #: src/sshpilot/file_manager/permissions.py:60
 #: src/sshpilot/file_manager/properties_dialog.py:624
@@ -4972,7 +4979,8 @@ msgstr "Falha ao remover {name}: {error}"
 
 #: src/sshpilot/file_manager_window.py:4012
 msgid "The originals were not removed: this pane now shows another server"
-msgstr "Os originais não foram removidos: este painel agora mostra outro servidor"
+msgstr ""
+"Os originais não foram removidos: este painel agora mostra outro servidor"
 
 #: src/sshpilot/file_manager_window.py:4402
 #: src/sshpilot/file_manager_window.py:4685

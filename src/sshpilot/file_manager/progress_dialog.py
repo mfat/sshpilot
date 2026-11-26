@@ -465,6 +465,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             "subtitle": subtitle,
             "detail": detail,
             "fraction": fraction,
+            "total_bytes": max(0, int(self._total_bytes or 0)),
             "error": self._error_message,
             "can_locate": bool(self._locate_path),
         }
