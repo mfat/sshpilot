@@ -105,8 +105,9 @@ def test_dialog_marks_forced_fields_and_reveals_the_banner(gui):
     (row,) = dialog.advanced_tab.option_list.rows()
     assert "15" in row.note_label.get_label()
     assert dialog._override_banner.get_revealed()
-    # Solid error colours from style.css, so it is not missed.
-    assert dialog._override_banner.has_css_class("error")
+    # A plain banner (nothing is wrong), with a way to the deciding lines.
+    assert not dialog._override_banner.has_css_class("error")
+    assert dialog._override_banner.get_button_label() == "Advanced Configuration"
     # Informing only: the value stays, and stays editable.
     assert dialog.username_row.get_text() == "alice"
     assert dialog.username_row.get_sensitive()

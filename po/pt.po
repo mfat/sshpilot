@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 21:44+0330\n"
+"POT-Creation-Date: 2026-11-26 21:55+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -3084,6 +3084,18 @@ msgstr ""
 #: src/sshpilot/ssh_config_answer.py:169
 msgid "No effect"
 msgstr "Sem efeito"
+
+#. A plain banner: nothing is wrong, the connection works; the
+#. fields are marked. The button shows the lines that decide.
+#. The connection's Host block, among the blocks that apply to it.
+#: src/sshpilot/connection_dialog_overrides.py:545
+#: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
+#: src/sshpilot/sidebar.py:5259 src/sshpilot/window.py:4309
+#: src/sshpilot/resources/ui/connection_dialog.ui:120
+#: src/sshpilot/advanced_config_window.py:1998
+#: src/sshpilot/advanced_config_window.py:2011
+msgid "Advanced Configuration"
+msgstr "Configuração avançada"
 
 #: src/sshpilot/connection_dialog_port_forwarding.py:42
 msgid "Listen port must be a number"
@@ -8255,15 +8267,6 @@ msgstr "Gerir ficheiros"
 #: src/sshpilot/window.py:4308 src/sshpilot/window_help.py:59
 msgid "SSH Config Editor"
 msgstr "Editor de configuração SSH"
-
-#. The connection's Host block, among the blocks that apply to it.
-#: src/sshpilot/macos_menubar.py:95 src/sshpilot/shortcut_editor.py:60
-#: src/sshpilot/sidebar.py:5259 src/sshpilot/window.py:4309
-#: src/sshpilot/resources/ui/connection_dialog.ui:120
-#: src/sshpilot/advanced_config_window.py:1998
-#: src/sshpilot/advanced_config_window.py:2011
-msgid "Advanced Configuration"
-msgstr "Configuração avançada"
 
 #: src/sshpilot/macos_menubar.py:96 src/sshpilot/window.py:4310
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:10

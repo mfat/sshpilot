@@ -540,17 +540,16 @@ class ConnectionDialogOverridesMixin:
                 banner.set_use_markup(False)
             except Exception:
                 pass
-            # Solid error colours (style.css): a muted grey banner was easy to
-            # miss above the form.
-            banner.add_css_class("error")
+            # A plain banner: nothing is wrong, the connection works; the
+            # fields are marked. The button shows the lines that decide.
+            banner.set_button_label(_("Advanced Configuration"))
+            banner.connect("button-clicked", self._on_advanced_config_clicked)
             self._override_banner = banner
             try:
                 self.content_mount.prepend(banner)
             except Exception:
                 logger.debug("Could not mount the override banner", exc_info=True)
         if show:
-            # No button: this dialog is modal, so a Settings window opened
-            # from it could not be used until the dialog is closed.
             # Advanced Configuration's own sentences, counts and all: the
             # pages holding the marked fields are flagged in the sidebar.
             from .gtk import advanced_config_messages as messages
