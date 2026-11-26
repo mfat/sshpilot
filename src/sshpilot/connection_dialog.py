@@ -1853,8 +1853,8 @@ class ConnectionDialog(
 
         return [
             ("connection", _("Connection"), general_page),
-            ("routing", _("Routing"), routing_page),
             ("authentication", _("Authentication"), authentication_page),
+            ("routing", _("Routing"), routing_page),
             ("forwarding", _("Port Forwarding"), forwarding_page),
             ("commands", _("Commands"), commands_page),
             ("advanced", _("Extra Options"), advanced_page),
@@ -4586,7 +4586,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     # _apply_protocol_to_ui. The pre-connection command applies to every
     # protocol that dials out (a VPN dial-up for a cluster, a port knock in
     # front of a Mosh host); the knock and Wake-on-LAN also need a host.
-    _SSH_ONLY_PAGES = ("routing", "authentication", "forwarding", "advanced")
+    _SSH_ONLY_PAGES = ("authentication", "routing", "forwarding", "advanced")
     #: Groups on the Commands page that are OpenSSH directives, so they mean
     #: nothing to a protocol sshPilot does not build an ssh command for.
     _SSH_ONLY_GROUPS = ("_ssh_commands_group",)
