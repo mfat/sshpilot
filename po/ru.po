@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 09:38+0330\n"
+"POT-Creation-Date: 2026-11-26 09:55+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -81,8 +81,8 @@ msgstr "{connections} и {subgroups}"
 #: src/sshpilot/actions.py:346 src/sshpilot/actions.py:409
 #: src/sshpilot/shortcut_editor.py:259 src/sshpilot/split_view.py:2321
 #: src/sshpilot/window_help.py:250 src/sshpilot/window_session.py:150
-#: src/sshpilot/window_tabs.py:1589 src/sshpilot/window_tabs.py:1737
-#: src/sshpilot/window_tabs.py:1948
+#: src/sshpilot/window_tabs.py:1643 src/sshpilot/window_tabs.py:1791
+#: src/sshpilot/window_tabs.py:2004
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:1021
 msgid "Split View"
 msgstr "Разделенный вид"
@@ -163,8 +163,8 @@ msgstr "Открыть подключения?"
 #: src/sshpilot/window_dialogs.py:2228 src/sshpilot/window_dialogs.py:2411
 #: src/sshpilot/window_dialogs.py:2495 src/sshpilot/window_dialogs.py:2751
 #: src/sshpilot/window_dialogs.py:2894 src/sshpilot/window_dialogs.py:3200
-#: src/sshpilot/window_dialogs.py:3612 src/sshpilot/window_tabs.py:1206
-#: src/sshpilot/window_tabs.py:1382 src/sshpilot/window_tabs.py:1432
+#: src/sshpilot/window_dialogs.py:3612 src/sshpilot/window_tabs.py:1260
+#: src/sshpilot/window_tabs.py:1436 src/sshpilot/window_tabs.py:1486
 #: src/sshpilot/resources/ui/add_folder_dialog.ui:20
 #: src/sshpilot/resources/ui/authorized_key_entry_dialog.ui:22
 #: src/sshpilot/resources/ui/command_edit_dialog.ui:20
@@ -196,7 +196,7 @@ msgstr "Продолжить"
 msgid "Separate Tabs"
 msgstr "Отдельные вкладки"
 
-#: src/sshpilot/actions.py:473 src/sshpilot/window_tabs.py:1611
+#: src/sshpilot/actions.py:473 src/sshpilot/window_tabs.py:1665
 #, python-brace-format
 msgid "Split View — {name}"
 msgstr "Разделенный вид — {name}"
@@ -553,8 +553,8 @@ msgstr "Ключ безопасности"
 #: src/sshpilot/preferences.py:5393 src/sshpilot/sshcopyid_window.py:678
 #: src/sshpilot/terminal.py:1253 src/sshpilot/window.py:3284
 #: src/sshpilot/window.py:8046 src/sshpilot/window_tabs.py:333
-#: src/sshpilot/window_tabs.py:1207 src/sshpilot/window_tabs.py:1383
-#: src/sshpilot/window_tabs.py:1433
+#: src/sshpilot/window_tabs.py:1261 src/sshpilot/window_tabs.py:1437
+#: src/sshpilot/window_tabs.py:1487
 #: src/sshpilot/resources/ui/scp_transfer_dialog.ui:27
 #: src/sshpilot/resources/ui/sftp_connection_dialog.ui:72
 #: src/sshpilot/advanced_config_window.py:722
@@ -2576,8 +2576,8 @@ msgstr "Устройство"
 #: src/sshpilot/split_view.py:1000 src/sshpilot/split_view.py:1647
 #: src/sshpilot/terminal.py:881 src/sshpilot/terminal.py:3708
 #: src/sshpilot/terminal_manager.py:1067 src/sshpilot/terminal_manager.py:1109
-#: src/sshpilot/terminal_manager.py:1671 src/sshpilot/window_tabs.py:1626
-#: src/sshpilot/window_tabs.py:1724
+#: src/sshpilot/terminal_manager.py:1671 src/sshpilot/window_tabs.py:1680
+#: src/sshpilot/window_tabs.py:1778
 msgid "Terminal"
 msgstr "Терминал"
 
@@ -3577,7 +3577,7 @@ msgstr "Завершить работу SSH Pilot?"
 msgid "Quit"
 msgstr "Завершить"
 
-#: src/sshpilot/daemon_quit_policy.py:642 src/sshpilot/window_tabs.py:1157
+#: src/sshpilot/daemon_quit_policy.py:642 src/sshpilot/window_tabs.py:1211
 msgid "Don't ask me again"
 msgstr "Больше не спрашивать"
 
@@ -3616,14 +3616,14 @@ msgstr "Сбой удаления"
 
 #: src/sshpilot/daemon_sftp_backend.py:1122
 #: src/sshpilot/file_manager_window.py:3777
-#: src/sshpilot/file_manager_window.py:3949
+#: src/sshpilot/file_manager_window.py:3967
 #, python-brace-format
 msgid "Transferred {done} of {total}"
 msgstr "Передано {done} из {total}"
 
 #: src/sshpilot/daemon_sftp_backend.py:1131
 #: src/sshpilot/file_manager_window.py:3782
-#: src/sshpilot/file_manager_window.py:3955
+#: src/sshpilot/file_manager_window.py:3973
 #, python-brace-format
 msgid "Transferred {size}"
 msgstr "Передано {size}"
@@ -4853,7 +4853,7 @@ msgstr "Недопустимый запрос на скачивание"
 #: src/sshpilot/file_manager_window.py:3004
 #: src/sshpilot/file_manager_window.py:3026
 #: src/sshpilot/file_manager_window.py:3029
-#: src/sshpilot/file_manager_window.py:4269 src/sshpilot/window.py:1529
+#: src/sshpilot/file_manager_window.py:4287 src/sshpilot/window.py:1529
 #: src/sshpilot/window_dialogs.py:2020
 msgid "Unknown error"
 msgstr "Неизвестная ошибка"
@@ -4921,7 +4921,7 @@ msgstr "Сбой локального копирования или переме
 #: src/sshpilot/file_manager_window.py:3417
 #: src/sshpilot/file_manager_window.py:3490
 #: src/sshpilot/file_manager_window.py:3592
-#: src/sshpilot/file_manager_window.py:3909
+#: src/sshpilot/file_manager_window.py:3927
 msgid "Remote connection unavailable"
 msgstr "Удалённое подключение недоступно"
 
@@ -4934,8 +4934,8 @@ msgstr "Файлы больше недоступны"
 msgid "Failed to remove {name}: {error}"
 msgstr "Не удалось удалить {name}: {error}"
 
-#: src/sshpilot/file_manager_window.py:4006
-#: src/sshpilot/file_manager_window.py:4275
+#: src/sshpilot/file_manager_window.py:4024
+#: src/sshpilot/file_manager_window.py:4293
 #, python-brace-format
 msgid "{count} of {total} file could not be transferred"
 msgid_plural "{count} of {total} files could not be transferred"
@@ -11747,7 +11747,7 @@ msgstr ""
 msgid "Running a different app version — restart required"
 msgstr "Запущена другая версия приложения — требуется перезапуск"
 
-#: src/sshpilot/preferences.py:4446 src/sshpilot/window_tabs.py:1198
+#: src/sshpilot/preferences.py:4446 src/sshpilot/window_tabs.py:1252
 #, python-brace-format
 msgid "{count} session"
 msgid_plural "{count} sessions"
@@ -12459,7 +12459,7 @@ msgstr "Войти"
 msgid "Enter your credentials for {host}."
 msgstr "Введите учётные данные для {host}."
 
-#: src/sshpilot/rdp_window.py:42
+#: src/sshpilot/detached_tab_window.py:43
 msgid "Move Back to Tab"
 msgstr "Вернуть во вкладку"
 
@@ -16208,7 +16208,7 @@ msgstr "Не удалось выполнить действие «{mode}»: {err
 
 #: src/sshpilot/window_file_manager.py:62
 #: src/sshpilot/window_file_manager.py:82
-#: src/sshpilot/window_file_manager.py:97
+#: src/sshpilot/window_file_manager.py:97 src/sshpilot/window_tabs.py:1032
 msgid "Files"
 msgstr "Файлы"
 
@@ -16222,7 +16222,7 @@ msgstr "Не удалось открыть файловый менеджер: {e
 #: src/sshpilot/window_file_manager.py:84
 #: src/sshpilot/window_file_manager.py:165
 #: src/sshpilot/window_file_manager.py:209
-#: src/sshpilot/window_file_manager.py:242 src/sshpilot/window_tabs.py:1059
+#: src/sshpilot/window_file_manager.py:242 src/sshpilot/window_tabs.py:1113
 msgid "Failed to open file manager"
 msgstr "Не удалось открыть диспетчер файлов"
 
@@ -16231,7 +16231,7 @@ msgstr "Не удалось открыть диспетчер файлов"
 #: src/sshpilot/window_file_manager.py:207
 #: src/sshpilot/window_file_manager.py:240
 #: src/sshpilot/window_file_manager.py:313
-#: src/sshpilot/window_file_manager.py:440 src/sshpilot/window_tabs.py:1051
+#: src/sshpilot/window_file_manager.py:440 src/sshpilot/window_tabs.py:1105
 msgid "Remote Host"
 msgstr "Удаленный хост"
 
@@ -16363,11 +16363,11 @@ msgstr "Закрыть другие вкладки"
 msgid "Close Tabs to the Right"
 msgstr "Закрыть вкладки справа"
 
-#: src/sshpilot/window_tabs.py:1079
+#: src/sshpilot/window_tabs.py:1133
 msgid "Failed to start file manager process"
 msgstr "Не удалось запустить процесс файлового менеджера"
 
-#: src/sshpilot/window_tabs.py:1195
+#: src/sshpilot/window_tabs.py:1249
 #, python-brace-format
 msgid "{count} tab"
 msgid_plural "{count} tabs"
@@ -16375,20 +16375,20 @@ msgstr[0] "{count} вкладка"
 msgstr[1] "{count} вкладки"
 msgstr[2] "{count} вкладок"
 
-#: src/sshpilot/window_tabs.py:1201
+#: src/sshpilot/window_tabs.py:1255
 msgid "Close tabs?"
 msgstr "Закрыть вкладки?"
 
-#: src/sshpilot/window_tabs.py:1203
+#: src/sshpilot/window_tabs.py:1257
 #, python-brace-format
 msgid "This will close {tabs} and disconnect {sessions}. Continue?"
 msgstr "Будет закрыто {tabs} и отключено {sessions}. Продолжить?"
 
-#: src/sshpilot/window_tabs.py:1375
+#: src/sshpilot/window_tabs.py:1429
 msgid "Close split view?"
 msgstr "Закрыть разделенный вид?"
 
-#: src/sshpilot/window_tabs.py:1377
+#: src/sshpilot/window_tabs.py:1431
 #, python-brace-format
 msgid "This will disconnect {n} terminal session. Continue?"
 msgid_plural "This will disconnect {n} terminal sessions. Continue?"
@@ -16396,12 +16396,12 @@ msgstr[0] "Это отключит {n} сеанс терминала. Продо
 msgstr[1] "Это отключит {n} сеанса терминала. Продолжить?"
 msgstr[2] "Это отключит {n} сеансов терминала. Продолжить?"
 
-#: src/sshpilot/window_tabs.py:1425
+#: src/sshpilot/window_tabs.py:1479
 #, python-brace-format
 msgid "Close connection to {name}"
 msgstr "Закрыть подключение к {name}"
 
-#: src/sshpilot/window_tabs.py:1430
+#: src/sshpilot/window_tabs.py:1484
 msgid "Are you sure you want to close this connection?"
 msgstr "Вы действительно хотите закрыть это подключение?"
 

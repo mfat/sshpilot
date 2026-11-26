@@ -748,7 +748,7 @@ class FileManagerWindow(Adw.Window):
         parent). Mirrors the resolution used for the overwrite-conflict dialog;
         Adw dialogs presented against the bare `self` never map when embedded."""
         if self._embedded_parent is not None:
-            return self._embedded_parent
+            return self._embedded_dialog_parent()
         try:
             transient = self.get_transient_for()
             if transient is not None:
@@ -966,61 +966,6 @@ class FileManagerWindow(Adw.Window):
                 can_toggle and self._terminal_side(pane) is not None
             )
         return content
-
-    def reclaim_from_embedding(
-        self, *, title: str = "", width: int = 0, height: int = 0
-    ) -> None:
-        """Take the content back from a tab and show it in this window.
-
-        The reverse of :meth:`detach_for_embedding`: both panes, their
-        connections, the clipboard and running transfers carry on as they
-        are; nothing reconnects. The caller has already removed any terminal
-        panels and released the tab so closing it does not tear this down.
-        """
-        content = getattr(self, "_toolbar_view", None)
-        if content is None:
-            return
-        parent = content.get_parent()
-        if parent is not None:
-            if isinstance(parent, Gtk.Box):
-                parent.remove(content)
-            elif isinstance(parent, Gtk.Paned):
-                if parent.get_start_child() is content:
-                    parent.set_start_child(None)
-                else:
-                    parent.set_end_child(None)
-            else:
-                content.unparent()
-
-        self._embedded_mode = False
-        self._embedded_parent = None
-        try:
-            self.set_decorated(True)
-        except Exception:  # pragma: no cover - defensive
-            pass
-        header_bar = getattr(self, "_header_bar", None)
-        if header_bar is not None:
-            header_bar.set_show_start_title_buttons(True)
-            header_bar.set_show_end_title_buttons(True)
-            header_bar.set_visible(True)
-        content.remove_css_class("embedded")
-        self.set_content(content)
-        if title:
-            self.set_title(title)
-        if width > 0 and height > 0:
-            self.set_default_size(width, height)
-
-        # Back among the application's windows (embedding removed it), so it
-        # keeps the app alive and closes like any window.
-        app = Gtk.Application.get_default()
-        if app is not None:
-            try:
-                app.add_window(self)
-            except Exception:
-                logger.debug("Could not register the file manager window", exc_info=True)
-        # No tab around it any more: no terminal panels to toggle.
-        self._sync_pane_roles()
-        self.present()
 
     def enable_embedding_mode(self) -> None:
         """Adjust the window chrome for embedded usage."""
@@ -1950,8 +1895,8 @@ class FileManagerWindow(Adw.Window):
             try:
                 dialog_parent = self
                 if self._embedded_parent is not None:
-                    # If embedded as a tab, use the parent widget directly
-                    dialog_parent = self._embedded_parent
+                    # Embedded: the window the tab is in now
+                    dialog_parent = self._embedded_dialog_parent()
                 else:
                     # If standalone window, try to get transient parent if any
                     try:
@@ -2645,8 +2590,8 @@ class FileManagerWindow(Adw.Window):
         try:
             dialog_parent = self
             if self._embedded_parent is not None:
-                # If embedded as a tab, use the parent widget directly
-                dialog_parent = self._embedded_parent
+                # Embedded: the window the tab is in now
+                dialog_parent = self._embedded_dialog_parent()
             else:
                 # If standalone window, try to get transient parent if any
                 try:
@@ -3878,9 +3823,27 @@ class FileManagerWindow(Adw.Window):
         self._focus_next_active_batch_transfer(exclude_key=key)
         self._publish_batch_transfer_progress()
 
+    def _embedded_dialog_parent(self) -> Optional[Gtk.Widget]:
+        """Where dialogs go while embedded: the window the tab is in now.
+
+        A file manager tab can move into a window of its own (Open in New
+        Window); its dialogs follow it there instead of opening over the
+        main window. Before the content is rooted, the tab's main window.
+        """
+        if self._embedded_parent is None:
+            return None
+        content = getattr(self, "_toolbar_view", None)
+        try:
+            root = content.get_root() if content is not None else None
+        except Exception:
+            root = None
+        if isinstance(root, Gtk.Window) and root is not self:
+            return root
+        return self._embedded_parent
+
     def _progress_dialog_parent(self) -> Gtk.Widget:
         if self._embedded_parent is not None:
-            return self._embedded_parent
+            return self._embedded_dialog_parent()
         try:
             transient = self.get_transient_for()
             if transient is not None:

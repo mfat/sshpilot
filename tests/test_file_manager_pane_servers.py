@@ -30,6 +30,9 @@ def _window(window_module):
     window._left_pane = MagicMock(name="left")
     window._right_pane = MagicMock(name="right")
     window._manager = MagicMock(name="right-manager")
+    # Some test runs import the window against a stubbed GTK base whose
+    # missing attributes read as callables; pin the ones handlers consult.
+    window._is_disposed = False
     return window
 
 

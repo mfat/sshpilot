@@ -57,6 +57,8 @@ _TAB_METHODS = (
     "_on_tabmenu_layout_compact",
     "_on_tabmenu_fm_new_window",
     "move_file_manager_tab_to_window",
+    "_attach_file_manager_window",
+    "_close_file_manager_window",
     "_launch_external_file_manager",
     "_on_tabmenu_rdp_detach",
     "_on_tabmenu_hide_left_pane",
@@ -884,60 +886,131 @@ def test_pane_menu_runs_tab_handler_on_the_pane_terminal():
     assert stub._tab_menu_target()[0] is Stub._tab_menu_page
 
 
-def test_open_in_new_window_moves_the_file_manager_instead_of_reconnecting(monkeypatch):
-    """The tab's file manager takes its content back into its own window;
-    the tab closes without tearing the file manager down."""
-    from sshpilot import window_tabs
+def _detach_stub(monkeypatch):
+    """A tab mixin with fake tab views and a fake detached window."""
+    from sshpilot import detached_tab_window
     from sshpilot.window_tabs import WindowTabsMixin
 
-    monkeypatch.setattr(window_tabs.GObject, "signal_lookup", lambda *a: 1)
-    monkeypatch.setattr(
-        window_tabs.GObject, "signal_handlers_disconnect_matched", lambda *a: 0
-    )
-    calls = []
+    events = []
 
-    class Controller:
-        def reclaim_from_embedding(self, **kwargs):
-            calls.append(("reclaim", kwargs, embed._controller))
+    class TabView:
+        def __init__(self, name):
+            self.name, self.pages = name, []
 
-    controller = Controller()
+        def transfer_page(self, page, other, position):
+            events.append(("transfer", self.name, other.name, stub.__dict__.get("_transferring_tab_out")))
+            self.pages.remove(page)
+            other.pages.insert(position, page)
 
-    class Embed:
-        _controller = controller
+        def get_selected_page(self):
+            return self.pages[0] if self.pages else None
 
-        def get_width(self):
-            return 900
+        def get_n_pages(self):
+            return len(self.pages)
 
-        def get_height(self):
-            return 600
+        def set_selected_page(self, page):
+            events.append(("select", self.name))
 
-        def clear_terminal_panel(self):
-            calls.append(("clear-terminals",))
+    class Window:
+        def __init__(self, main, title, *, on_move_back, on_close):
+            self.title, self.on_move_back, self.on_close = title, on_move_back, on_close
+            self.tab_view = TabView("detached")
 
-    embed = Embed()
-    page = types.SimpleNamespace(get_title=lambda: "oracle Files")
+        def set_default_size(self, w, h):
+            self.size = (w, h)
+
+        def present(self):
+            events.append(("present", self.title))
+
+    monkeypatch.setattr(detached_tab_window, "DetachedTabWindow", Window)
 
     class Stub(WindowTabsMixin):
         def __init__(self):
-            self._internal_file_manager_windows = [controller]
-            self.tab_view = types.SimpleNamespace(
-                close_page=lambda closing: calls.append(("close", closing, embed._controller))
-            )
+            self.tab_view = TabView("main")
 
-        def _track_internal_file_manager_window(self, window, *, widget=None):
-            calls.append(("track", window, widget))
+        def connect(self, *_a):
+            return 1
+
+        def present(self):
+            events.append(("present", "main"))
+
+        def show_tab_view(self):
+            pass
 
         def _launch_external_file_manager(self, _connection):  # pragma: no cover
             raise AssertionError("must not open a second connection")
 
     stub = Stub()
-    assert stub.move_file_manager_tab_to_window(page, embed) is True
+    return stub, events
 
-    assert calls[0] == ("clear-terminals",)
-    assert calls[1] == (
-        "reclaim", {"title": "oracle Files", "width": 900, "height": 600}, None
+
+def test_open_in_new_window_moves_the_tab_page_and_back(monkeypatch):
+    """The page moves between tab views, as a detached RDP tab does: the
+    file manager, its connections and terminal panels carry on."""
+    stub, events = _detach_stub(monkeypatch)
+    embed = types.SimpleNamespace(get_width=lambda: 900, get_height=lambda: 600)
+    page = types.SimpleNamespace(get_title=lambda: "oracle Files", get_child=lambda: embed)
+    stub.tab_view.pages.append(page)
+
+    assert stub.move_file_manager_tab_to_window(page, embed) is True
+    window = stub._file_manager_windows[0]
+    # Moved, not closed: on_tab_detached sees the flag and leaves it alive.
+    assert events[0] == ("transfer", "main", "detached", True)
+    assert stub._transferring_tab_out is False
+    assert window.tab_view.pages == [page] and window.title == "oracle Files"
+    assert window.size == (900, 647)
+
+    window.on_move_back(window)
+    assert stub.tab_view.pages == [page]
+    assert stub._file_manager_windows == []
+    assert ("select", "main") in events
+
+
+def test_closing_the_detached_window_ends_the_file_manager(monkeypatch):
+    stub, _events = _detach_stub(monkeypatch)
+    torn = []
+    embed = types.SimpleNamespace(
+        get_width=lambda: 0, get_height=lambda: 0,
+        clear_terminal_panel=lambda: torn.append("terminals"),
     )
-    assert calls[2] == ("track", controller, None)
-    # The tab closes only after the controller was released from it.
-    assert calls[3] == ("close", page, None)
-    assert stub._internal_file_manager_windows == []
+    page = types.SimpleNamespace(get_title=lambda: "", get_child=lambda: embed)
+    stub.tab_view.pages.append(page)
+    stub._file_manager_embeds_for_child = lambda child: [child] if child is embed else []
+    stub._teardown_file_manager_embed = lambda e: torn.append(("teardown", e))
+
+    stub.move_file_manager_tab_to_window(page, embed)
+    window = stub._file_manager_windows[0]
+    assert window.title  # untitled tabs still get a window title
+    window.on_close(window)
+
+    assert torn == ["terminals", ("teardown", embed)]
+    assert stub._file_manager_windows == []
+
+
+def test_tab_detach_keeps_a_transferred_file_manager_alive(monkeypatch):
+    """on_tab_detached tears down file managers of closed tabs, not of a tab
+    moving into its own window."""
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    torn = []
+
+    class Stub(WindowTabsMixin):
+        _transferring_tab_out = True
+
+        def _is_start_tab_page(self, _page):
+            return False
+
+        def _update_command_snippets_button_visibility(self):
+            pass
+
+        def _update_tab_button_visibility(self):
+            pass
+
+        def has_user_tabs(self):
+            return True
+
+        def _teardown_file_manager_embed(self, embed):  # pragma: no cover
+            torn.append(embed)
+
+    Stub().on_tab_detached(None, types.SimpleNamespace(get_child=lambda: object()), 0)
+    assert torn == []

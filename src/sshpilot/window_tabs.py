@@ -1005,12 +1005,8 @@ class WindowTabsMixin:
         self._set_tab_file_manager_single_pane(False)
 
     def _on_tabmenu_fm_new_window(self, action, param=None):
-        """Move the right-clicked file manager tab into a window of its own.
-
-        The tab's file manager is itself a window whose content was lent to
-        the tab; it takes the content back, so both panes, their connections
-        and running transfers carry on without reconnecting.
-        """
+        """Move the right-clicked file manager tab into a window of its own
+        (see move_file_manager_tab_to_window)."""
         try:
             page, child = self._tab_menu_target()
             embed = self._file_manager_embed_for_child(child)
@@ -1021,37 +1017,72 @@ class WindowTabsMixin:
             logger.error("Opening the file manager in a new window failed: %s", exc)
 
     def move_file_manager_tab_to_window(self, page, embed) -> bool:
-        controller = getattr(embed, '_controller', None)
-        reclaim = getattr(controller, 'reclaim_from_embedding', None)
-        if not callable(reclaim):
+        """Move a file manager tab into a window of its own.
+
+        The page moves between tab views, as a detached RDP tab does, so the
+        file manager carries on as it is: both panes, their connections,
+        running transfers and the terminals below it. "Move Back to Tab"
+        returns it.
+        """
+        from .detached_tab_window import DetachedTabWindow
+
+        if page is None or embed is None:
             return False
+        window = DetachedTabWindow(
+            self, page.get_title() or _("Files"),
+            on_move_back=self._attach_file_manager_window,
+            on_close=self._close_file_manager_window,
+        )
         width, height = embed.get_width(), embed.get_height()
-        title = page.get_title() or ''
-
-        # Terminals below the manager belong to this window's terminal
-        # machinery; end them like a tab close would.
-        clear_panel = getattr(embed, 'clear_terminal_panel', None)
-        if callable(clear_panel):
-            clear_panel()
-        # Release the controller before the tab closes: the embed's destroy
-        # handlers and the tab-close teardown would otherwise close its
-        # connections and destroy it.
+        window.set_default_size(max(width, 640), max(height + 47, 480))
+        # The page leaves this tab view alive: on_tab_detached must not tear
+        # the file manager down.
+        self._transferring_tab_out = True
         try:
-            destroy_id = GObject.signal_lookup('destroy', Gtk.Widget.__gtype__)
-            GObject.signal_handlers_disconnect_matched(
-                embed, GObject.SignalMatchType.ID, destroy_id, 0, None, None, None)
-        except Exception:
-            logger.debug('Could not disconnect FM embed destroy handlers', exc_info=True)
-        embed._controller = None
-        try:
-            self._internal_file_manager_windows.remove(controller)
-        except (AttributeError, ValueError):
-            pass
-
-        reclaim(title=title, width=width, height=height)
-        self._track_internal_file_manager_window(controller)
-        self.tab_view.close_page(page)
+            self.tab_view.transfer_page(page, window.tab_view, 0)
+        finally:
+            self._transferring_tab_out = False
+        windows = self.__dict__.setdefault('_file_manager_windows', [])
+        windows.append(window)
+        if not getattr(self, '_file_manager_windows_close_hooked', False):
+            # Closing the main window takes its detached file managers with
+            # it: their terminals and "Move Back to Tab" need it.
+            self._file_manager_windows_close_hooked = True
+            self.connect('destroy', lambda *_a: self._close_all_file_manager_windows())
+        window.present()
         return True
+
+    def _attach_file_manager_window(self, window) -> None:
+        page = window.tab_view.get_selected_page()
+        self._forget_file_manager_window(window)
+        if page is None:
+            return
+        if hasattr(self, 'show_tab_view'):
+            self.show_tab_view()
+        window.tab_view.transfer_page(page, self.tab_view, self.tab_view.get_n_pages())
+        self.tab_view.set_selected_page(page)
+        self.present()
+
+    def _close_file_manager_window(self, window) -> None:
+        """The detached window was closed: end the file manager like a tab
+        close does (its terminals first, then its connections)."""
+        self._forget_file_manager_window(window)
+        page = window.tab_view.get_selected_page()
+        child = page.get_child() if page is not None else None
+        for embed in self._file_manager_embeds_for_child(child):
+            clear_panel = getattr(embed, 'clear_terminal_panel', None)
+            if callable(clear_panel):
+                clear_panel()
+            self._teardown_file_manager_embed(embed)
+
+    def _forget_file_manager_window(self, window) -> None:
+        windows = self.__dict__.get('_file_manager_windows', [])
+        if window in windows:
+            windows.remove(window)
+
+    def _close_all_file_manager_windows(self) -> None:
+        for window in list(self.__dict__.get('_file_manager_windows', [])):
+            window.close()
 
     def _on_tabmenu_rdp_detach(self, action, param=None):
         try:
@@ -1878,9 +1909,11 @@ class WindowTabsMixin:
             self._update_tab_button_visibility()
             return
         self._update_command_snippets_button_visibility()
-        # Skip dict cleanup when a terminal is being moved into a split pane
-        # (the terminal stays live; its tracking entries remain valid).
-        if getattr(self, '_moving_tab_to_pane', False):
+        # Skip dict cleanup when a terminal is being moved into a split pane,
+        # or a tab into a window of its own (it stays live; its tracking
+        # entries remain valid).
+        if getattr(self, '_moving_tab_to_pane', False) or getattr(
+                self, '_transferring_tab_out', False):
             self._update_tab_button_visibility()
             if not self.has_user_tabs():
                 self.show_start_tab()
