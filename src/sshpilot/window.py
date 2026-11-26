@@ -2338,7 +2338,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Match Adwaita's headerbar start-box spacing (6px) so the gap between
         # the sidebar toggle and the local-terminal button equals the gap from
-        # that button to the first tab (home), after the tab bar's -4 margin.
+        # that button to the first tab (home); see _headerbar_start_and_title.
         self._headerbar_start_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=6,
@@ -2371,8 +2371,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._content_title_stack.set_visible_child_name('empty')
 
         self._content_header_box.append(self._window_controls_start)
-        self._content_header_box.append(self._headerbar_start_box)
-        self._content_header_box.append(self._content_title_stack)
+        # The start controls and the tabs share a box with a tighter gap
+        # (2px, not the row's 6px), so the sidebar-toggle -> terminal and
+        # terminal -> first tab gaps match without changing the spacing around
+        # the window controls. This replaces a -4px margin on the tab bar,
+        # which GTK warns about on every measure ("adjusted size ... must not
+        # decrease below ...", #1423).
+        self._headerbar_start_and_title = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=2,
+        )
+        self._headerbar_start_and_title.append(self._headerbar_start_box)
+        self._headerbar_start_and_title.append(self._content_title_stack)
+        self._content_header_box.append(self._headerbar_start_and_title)
         self._content_header_box.append(self._headerbar_end_box)
         self._content_header_box.append(self._window_controls_end)
         self.header_bar.set_child(self._content_header_box)
@@ -2432,6 +2443,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             user_width=saved_width,
             on_user_resize=self._on_sidebar_width_dragged,
             on_drag=self._on_sidebar_divider_drag,
+            # Too narrow to dock it unclipped: the sidebar collapses and the
+            # header toggle floats it over the content instead (#1423).
+            on_collapsed_changed=self._on_sidebar_collapsed_changed,
+            collapse_floor=self._measure_sidebar_content_min,
         )
         self.split_view.set_vexpand(True)
         self.split_view.connect(
@@ -3871,10 +3886,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar.set_autohide(False)
         self.tab_bar.set_expand_tabs(False)
         self.tab_bar.set_hexpand(True)
-        # Pull the first tab 4px toward the start controls. Combined with the
-        # start box's 6px spacing, the sidebar↔terminal and terminal↔home gaps
-        # match without changing spacing around the window controls.
-        self.tab_bar.set_margin_start(-4)
+        # No negative margin to pull the first tab toward the start controls:
+        # the tighter gap lives on _headerbar_start_and_title instead.
         # The tab bar fills the custom title bar's centre stack. "inline"
         # avoids drawing another toolbar surface inside the WindowHandle row.
         self.tab_bar.add_css_class('inline')
@@ -5324,8 +5337,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             if hasattr(self, 'connection_list') and self.connection_list:
                 # If sidebar is hidden, show it first
-                if self._sidebar_hidden_by_toggle():
-                    self._apply_sidebar_visible(True)
+                self._reveal_sidebar()
 
                 # Close the search bar (if open) and clear the filter so the
                 # full connection list is shown when focus moves here.
@@ -6951,6 +6963,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_sidebar_toggle(self, button):
         """Handle sidebar toggle button click (flat Gtk.Button, Planify-style)."""
         try:
+            if self._sidebar_collapsed():
+                self._toggle_sidebar_overlay()
+                return
             is_visible = not bool(getattr(self, '_sidebar_visible', True))
             self._toggle_sidebar_visibility(is_visible)
             # A manual toggle cancels any pending "hide on terminal open" delay.
@@ -7010,6 +7025,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # The sidebar header bar stays behind; bring its actions along.
         from sshpilot.sidebar import set_sidebar_header_actions_floating
         set_sidebar_header_actions_floating(self, True)
+        if self._sidebar_collapsed():
+            self._sync_sidebar_toggle_button(True)
 
     def _on_search_popup_hidden(self) -> None:
         """Re-attached: restore the connection list and header actions."""
@@ -7017,6 +7034,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.connection_scrolled.set_visible(True)
         from sshpilot.sidebar import set_sidebar_header_actions_floating
         set_sidebar_header_actions_floating(self, False)
+        if self._sidebar_collapsed():
+            # Esc / click outside closed the floating sidebar.
+            self._sync_sidebar_toggle_button(False)
 
     def _dismiss_search_popup(self) -> None:
         """Esc / click-outside: route through search teardown when search is
@@ -7105,8 +7125,73 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return cards
 
     def _sidebar_hidden_by_toggle(self) -> bool:
-        """True while the sidebar is hidden via the header control / F9."""
-        return not bool(getattr(self, '_sidebar_visible', True))
+        """True while the sidebar is not docked: hidden via the header
+        control / F9, or collapsed because the window is too narrow. Either
+        way the floating popup is how it is shown (search, hover reveal)."""
+        return (not bool(getattr(self, '_sidebar_visible', True))
+                or self._sidebar_collapsed())
+
+    # --- Collapsed sidebar (window too narrow to dock it) --------------------
+    # Mirrors AdwOverlaySplitView's collapsed mode in GNOME apps (Files): the
+    # sidebar leaves the layout, the header toggle shows it over the content,
+    # and it docks again once the window is wide enough. The user's own
+    # shown/hidden choice (_sidebar_visible) is left untouched throughout.
+    def _sidebar_collapsed(self) -> bool:
+        sv = getattr(self, 'split_view', None)
+        if sv is None or getattr(self, '_split_variant', '') != 'paned':
+            return False
+        try:
+            return bool(sv.get_collapsed())
+        except Exception:
+            return False
+
+    def _sidebar_overlay_shown(self) -> bool:
+        popup = getattr(self, '_search_popup', None)
+        return bool(popup is not None and popup.visible)
+
+    def _sidebar_shown(self) -> bool:
+        """Whether the user can see the sidebar, docked or floating."""
+        if self._sidebar_collapsed():
+            return self._sidebar_overlay_shown()
+        return bool(getattr(self, '_sidebar_visible', True))
+
+    def _toggle_sidebar_overlay(self) -> None:
+        """Header toggle / F9 while collapsed: float the sidebar or put it away."""
+        if self._sidebar_overlay_shown():
+            self._dismiss_search_popup()
+        else:
+            popup = self._ensure_search_popup()
+            if popup is not None:
+                popup.show()
+        self._cancel_pending_sidebar_hide()
+        self._sync_sidebar_toggle_button(self._sidebar_shown())
+
+    def _reveal_sidebar(self) -> None:
+        """Make the sidebar visible for something the user asked to see in it."""
+        if self._sidebar_collapsed():
+            if not self._sidebar_overlay_shown():
+                self._toggle_sidebar_overlay()
+        elif self._sidebar_hidden_by_toggle():
+            self._apply_sidebar_visible(True)
+
+    def _dismiss_sidebar_overlay(self) -> None:
+        """A connection was opened: put a floating collapsed sidebar away, as a
+        GNOME overlay sidebar does once an item in it is picked."""
+        if self._sidebar_collapsed() and self._sidebar_overlay_shown():
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None:
+                popup.hide()
+            self._sync_sidebar_toggle_button(False)
+
+    def _on_sidebar_collapsed_changed(self, collapsed: bool) -> None:
+        if not collapsed:
+            # Wide enough again: dock it (the popup would otherwise keep the
+            # sidebar's widgets and leave the docked pane empty).
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None and popup.visible and getattr(self, '_sidebar_visible', True):
+                self._search_expanded_sidebar = False
+                popup.hide(animate=False)
+        self._sync_sidebar_toggle_button(self._sidebar_shown())
 
     def _sync_sidebar_toggle_button(self, visible: bool) -> None:
         """Update the flat sidebar button tooltip for the current visibility."""

@@ -59,6 +59,25 @@ What changed for callers:
 - The handle is thin (no wide handle) so it draws the same hairline the split
   view did and the panes stay edge to edge; GTK keeps a wider input area than it
   paints, so it is still easy to grab.
+- **Too narrow for both sides, the sidebar collapses** (#1423), the way
+  GNOME apps collapse an `AdwOverlaySplitView` at a breakpoint. The paned
+  collapses once the sidebar could only stay by being squeezed below its
+  measured floor, i.e. the split is narrower than
+  `floor + max(_CONTENT_MIN_WIDTH, content minimum)`; measuring rather than
+  a fixed breakpoint keeps the window's minimum width what the content
+  needs (a window breakpoint would drop it). The floor comes from the
+  window's `_measure_sidebar_content_min` (the `collapse_floor` callback),
+  which measures the sidebar wherever it is parented. Collapsed, the sidebar
+  leaves the layout, `get_collapsed()` is true and `on_collapsed_changed`
+  fires; `get_show_sidebar()` stays the user's own choice and is restored
+  when the window widens. The window treats a collapsed sidebar as hidden
+  (`_sidebar_hidden_by_toggle`), so search and hover reveal use the floating
+  popup, and the header toggle / F9 float it over the content
+  (`_toggle_sidebar_overlay`). Opening a connection puts it away again.
+- **GtkPaned keeps 1px for the sidebar.** `gtk_paned_compute_position`
+  never gives the start child less than 1px, so the clip holder claims 1px
+  and the start child is not shrinkable; otherwise the paned's minimum left
+  that pixel out and GTK measured the content side 1px short.
 - **Squeezing keeps the sidebar's leading edge.** `Gtk.Paned` shrinks a start
   child by allocating its minimum flush against the divider, so the *left* of
   the sidebar is what falls off the screen; a split view clips the other way.
@@ -118,8 +137,9 @@ rewrites them when an old config file still carries them.
 - **Overlay** (`True`) — `AdwOverlaySplitView.collapsed = True`: the sidebar is
   drawn as an overlay *above* the content.
 
-**Overlay needs a backend that has no `Gtk.Paned` equivalent, so it is inert
-since the split view became a paned**: the call records the request and the
+**`set_sidebar_overlay` cannot force it** (the width-driven collapse in
+section 0 is the paned's only overlay presentation, and it floats the sidebar
+in the popup below): the call records the request and the
 sidebar stays a side-by-side column. It had no callers — the over-the-content
 presentation in use is the detachable popup below, which was already preferred
 because collapsing an `AdwOverlaySplitView` **resizes the content by the sidebar

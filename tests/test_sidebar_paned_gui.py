@@ -162,30 +162,36 @@ def test_live_drag_callback_fires_while_resizing():
         window.destroy()
 
 
-def test_a_squeezed_sidebar_keeps_its_leading_edge():
-    """When the split is too narrow for the sidebar's content minimum, the
-    clip holder must keep the child's start edge (x=0), not the empty tail
+def test_the_clip_holder_keeps_the_sidebar_leading_edge():
+    """Squeezed below the sidebar's minimum (for a frame, before the collapse
+    lands), the holder keeps the child's start edge (x=0), not the empty tail
     Gtk.Paned would leave behind on its own."""
-    paned = _paned()
+    from sshpilot.sidebar_paned import _ClipStart
+
     wide = Gtk.Box()
     wide.set_size_request(200, -1)
-    paned.set_sidebar(wide)
-    # Window too narrow to give sidebar 200 + content 320.
-    window = _shown(paned, width=400)
+    holder = _ClipStart(wide)
+    holder.set_size_request(120, -1)
+    holder.set_halign(Gtk.Align.START)
+    window = Gtk.Window()
+    window.set_default_size(300, 200)
+    window.set_child(holder)
+    window.present()
     try:
+        _settle(lambda: holder.get_width() > 0)
         _pump()
-        found, bounds = wide.compute_bounds(paned)
+        found, bounds = wide.compute_bounds(holder)
         assert found and bounds.get_x() == 0
     finally:
         window.destroy()
 
 
-def test_a_narrow_window_squeezes_the_sidebar_not_the_content():
-    """The content side's title row ends in the window controls; a window too
-    narrow for both sides must give up sidebar width rather than push the
-    content past the window's right edge. The squeeze is not a drag, so the
-    remembered width survives it."""
-    paned = _paned(user_width=300)
+def test_a_window_too_narrow_for_both_sides_collapses_the_sidebar():
+    """When the sidebar could only stay by being clipped, it leaves the layout
+    (GNOME's collapsed split view, #1423); the content keeps its width, and
+    the user's own show/hide choice and dragged width survive it."""
+    collapsed_calls = []
+    paned = _paned(user_width=300, on_collapsed_changed=collapsed_calls.append)
     sidebar = Gtk.Box()
     sidebar.set_size_request(250, -1)
     paned.set_sidebar(sidebar)
@@ -194,17 +200,57 @@ def test_a_narrow_window_squeezes_the_sidebar_not_the_content():
     paned.set_content(content)
     window = _shown(paned, width=600)
     try:
-        _settle(lambda: paned.get_position() <= 600 - 460)
-        _pump()
+        _settle(lambda: paned.get_collapsed() and collapsed_calls)
+        assert paned.get_collapsed()
+        assert paned.get_start_child().get_visible() is False
+        assert paned.get_show_sidebar() is True
         found, bounds = content.compute_bounds(paned)
         assert found
+        assert bounds.get_x() == 0
         assert bounds.get_x() + bounds.get_width() <= paned.get_width()
         assert paned.user_width == 300
+        assert collapsed_calls == [True]
     finally:
         window.destroy()
 
 
-def test_overlay_presentation_is_not_offered_by_the_paned():
+def test_a_collapsed_sidebar_docks_again_once_it_fits():
+    collapsed_calls = []
+    paned = _paned(on_collapsed_changed=collapsed_calls.append)
+    sidebar = Gtk.Box()
+    sidebar.set_size_request(250, -1)
+    paned.set_sidebar(sidebar)
+    window = _shown(paned, width=500)
+    try:
+        _settle(lambda: paned.get_collapsed())
+        window.set_default_size(1000, 600)
+        _settle(lambda: not paned.get_collapsed() and collapsed_calls[-1:] == [False])
+        assert not paned.get_collapsed()
+        assert paned.get_start_child().get_visible() is True
+        assert collapsed_calls == [True, False]
+    finally:
+        window.destroy()
+
+
+def test_a_sidebar_hidden_by_the_user_stays_hidden_across_a_collapse():
+    paned = _paned()
+    sidebar = Gtk.Box()
+    sidebar.set_size_request(250, -1)
+    paned.set_sidebar(sidebar)
+    paned.set_show_sidebar(False)
+    window = _shown(paned, width=500)
+    try:
+        _settle(lambda: paned.get_collapsed())
+        window.set_default_size(1000, 600)
+        _settle(lambda: not paned.get_collapsed())
+        assert paned.get_show_sidebar() is False
+        assert paned.get_start_child().get_visible() is False
+    finally:
+        window.destroy()
+
+
+def test_collapse_cannot_be_forced():
+    """Only the width collapses the paned; the overlay is the window's."""
     paned = _paned()
     paned.set_collapsed(True)
     assert paned.get_collapsed() is False

@@ -11,6 +11,7 @@ class _Window:
     _ensure_search_popup = MainWindow._ensure_search_popup
     activate_search_entry = MainWindow.activate_search_entry
     _sidebar_hidden_by_toggle = MainWindow._sidebar_hidden_by_toggle
+    _sidebar_collapsed = MainWindow._sidebar_collapsed
 
 
 def test_ctrl_f_uses_popup_when_f9_sidebar_is_hidden():

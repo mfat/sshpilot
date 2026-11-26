@@ -99,6 +99,6 @@ def test_narrow_window_squeezes_the_sidebar_not_the_content():
     # 650px window, 464px content: only 186px left for a 260px-floor sidebar.
     assert _pos(650, min_width=260, content_min=464) == 186
     assert _pos(650, min_width=260, content_min=464, user_width=330) == 186
-    assert _pos(400, min_width=260, content_min=464) == 0
+    assert _pos(400, min_width=260, content_min=464) == 1  # GtkPaned keeps 1px
     # Before the first allocation there is no window width to cap against.
     assert _pos(0, min_width=260, content_min=464) == 400

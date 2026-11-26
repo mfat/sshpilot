@@ -231,6 +231,10 @@ class WindowActions:
     def on_toggle_sidebar_action(self, action, param):
         """Handle sidebar toggle action (for keyboard shortcuts)"""
         try:
+            # Too narrow to dock it: float the sidebar instead (#1423).
+            if hasattr(self, '_sidebar_collapsed') and self._sidebar_collapsed():
+                self._toggle_sidebar_overlay()
+                return
             # Get current sidebar visibility
             if hasattr(self, 'split_view') and hasattr(self, '_toggle_sidebar_visibility'):
                 split_variant = getattr(self, '_split_variant', '')

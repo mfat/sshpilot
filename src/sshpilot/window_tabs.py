@@ -692,7 +692,7 @@ class WindowTabsMixin:
             filter_action.set_state(GLib.Variant("s", ""))
         self.search_entry.set_text("")
         show_view(self, CONNECTIONS)
-        self._apply_sidebar_visible(True)
+        self._reveal_sidebar()
         self.rebuild_connection_list()
         self.complete_pending_connection_rows()
         ancestors = set()
@@ -2355,6 +2355,7 @@ class WindowTabsMixin:
         # Executing a result dismisses search (and re-attaches a sidebar that
         # search had detached). No-op when not searching.
         self._close_search_if_open()
+        self._dismiss_sidebar_overlay()
         try:
             # Check if there are open tabs for this connection
             terms_for_conn = []
@@ -2400,6 +2401,7 @@ class WindowTabsMixin:
         # Executing a result dismisses search (and re-attaches a sidebar that
         # search had detached). No-op when not searching.
         self._close_search_if_open()
+        self._dismiss_sidebar_overlay()
         try:
             # Collect current pages in visual/tab order
             terms_for_conn = []
@@ -2452,6 +2454,7 @@ class WindowTabsMixin:
         """
         self._return_to_tab_view_if_welcome()
         self._close_search_if_open()
+        self._dismiss_sidebar_overlay()
         try:
             terms = []
             try:

@@ -81,7 +81,8 @@ def content_cap(split_width: int, content_min: int) -> Optional[int]:
     """
     if split_width <= 0:
         return None
-    return max(0, int(split_width) - int(content_min))
+    # GtkPaned keeps at least 1px for the start child (see SidebarPaned).
+    return max(1, int(split_width) - int(content_min))
 
 
 def resolve_position(
@@ -128,7 +129,7 @@ class _ClipStart(Gtk.Widget):
     view clips the other way. This bin lays the child out at its minimum from
     x=0 and hides the overflow.
 
-    It deliberately reports *no* horizontal minimum of its own: a bin that
+    It deliberately reports no real horizontal minimum (1 px, see do_measure): a bin that
     forwarded the child's minimum would just be pushed off to the left by the
     paned itself, which is the very thing being fixed. The sidebar's real floor
     is enforced by :class:`SidebarPaned`, which will not let a drag go below
@@ -162,7 +163,9 @@ class _ClipStart(Gtk.Widget):
             return (0, 0, -1, -1)
         if orientation == Gtk.Orientation.HORIZONTAL:
             _minimum, natural, _a, _b = child.measure(orientation, for_size)
-            return (0, natural, -1, -1)
+            # 1, not 0: GtkPaned never gives its start child less than 1px
+            # (see SidebarPaned.__init__), so claim it.
+            return (1, max(1, natural), -1, -1)
         # Height for the width the child will actually be given, not for the
         # squeezed width this bin was asked about.
         child_min, _n, _a, _b = child.measure(Gtk.Orientation.HORIZONTAL, -1)
@@ -197,6 +200,8 @@ class SidebarPaned(Gtk.Paned):
         user_width: Optional[int] = None,
         on_user_resize: Optional[Callable[[int], None]] = None,
         on_drag: Optional[Callable[[int], None]] = None,
+        on_collapsed_changed: Optional[Callable[[bool], None]] = None,
+        collapse_floor: Optional[Callable[[], int]] = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
         self.add_css_class('sidebar-paned')
@@ -208,11 +213,15 @@ class SidebarPaned(Gtk.Paned):
         # takes the slack. That also makes an unprompted position change a
         # divider drag rather than a reflow.
         self.set_resize_start_child(False)
-        # The sidebar is wrapped in a _ClipStart bin with no minimum of its own,
+        # The sidebar is wrapped in a _ClipStart bin with a token 1px minimum,
         # so the paned never has to squeeze the child itself; the floor a drag
         # stops at is measured off the sidebar's content and enforced in
-        # _target_position / _on_position_notify.
-        self.set_shrink_start_child(True)
+        # _target_position / _on_position_notify. Not shrinkable, so that 1px
+        # counts in the paned's own minimum: a shrinkable start child's minimum
+        # is dropped there, yet gtk_paned_compute_position still gives it
+        # MAX (1, ...) px, and the content side came up 1px short whenever the
+        # paned was measured at its minimum width (#1423).
+        self.set_shrink_start_child(False)
         self.set_resize_end_child(True)
         # The content side is never squeezed below its minimum: that would
         # clip the title row from the right and take the window controls with
@@ -225,7 +234,17 @@ class SidebarPaned(Gtk.Paned):
         self._user_width = int(user_width) if user_width else None
         self._on_user_resize = on_user_resize
         self._on_drag = on_drag
+        self._on_collapsed_changed = on_collapsed_changed
         self._show_sidebar = True
+        # Collapsed: too narrow to dock the sidebar without clipping it, so it
+        # leaves the layout (see _should_collapse). Independent of
+        # _show_sidebar, which is the user's choice and survives a collapse.
+        self._collapsed = False
+        # What the sidebar's content needs, wherever it currently is. The
+        # owner may float the sidebar out of this paned (and a hidden one
+        # still counts), so it can supply a measure that does not depend on
+        # where the sidebar is parented; the default measures it in place.
+        self._collapse_floor_func = collapse_floor
 
         self._applying = False      # position is being set by us, not dragged
         self._allocating = False    # inside size-allocate: reflow, not a drag
@@ -268,6 +287,51 @@ class SidebarPaned(Gtk.Paned):
             logger.debug("sidebar content measure failed", exc_info=True)
             return 0
 
+    def _collapse_floor(self) -> int:
+        """Sidebar floor for the collapse decision."""
+        func = self._collapse_floor_func or self._floor
+        try:
+            return int(func())
+        except Exception:
+            logger.debug('collapse floor measure failed', exc_info=True)
+            return 0
+
+    def _should_collapse(self, width: int) -> bool:
+        """Whether a ``width``-wide split is too narrow to dock the sidebar.
+
+        It is, once the sidebar could only stay by being squeezed below what
+        its own content needs: the content side keeps the same room a drag
+        leaves it (``drag_ceiling``). GNOME apps collapse the same way, with
+        an ``AdwOverlaySplitView`` breakpoint; measuring instead of a fixed
+        breakpoint keeps the window's minimum width what the content needs.
+        """
+        if width <= 0:
+            return self._collapsed
+        floor = self._collapse_floor()
+        if floor <= 0:
+            return False
+        keep = max(_CONTENT_MIN_WIDTH, self._content_side_min())
+        return width < floor + keep
+
+    def _set_collapsed_state(self, collapsed: bool) -> None:
+        if collapsed == self._collapsed:
+            return
+        self._collapsed = collapsed
+        holder = self.get_start_child()
+        if holder is not None:
+            holder.set_visible(self._show_sidebar and not collapsed)
+        if self._on_collapsed_changed is not None:
+            # Out of size-allocate: the owner re-docks/hides widgets.
+            GLib.idle_add(self._notify_collapsed, collapsed)
+
+    def _notify_collapsed(self, collapsed: bool) -> bool:
+        if collapsed == self._collapsed and self._on_collapsed_changed is not None:
+            try:
+                self._on_collapsed_changed(collapsed)
+            except Exception:
+                logger.debug('sidebar on_collapsed_changed failed', exc_info=True)
+        return GLib.SOURCE_REMOVE
+
     def _floor(self) -> int:
         """Narrowest a *drag* may leave the sidebar: what its own content needs,
         so nothing inside it ever has to be clipped.
@@ -309,10 +373,11 @@ class SidebarPaned(Gtk.Paned):
     def do_size_allocate(self, width, height, baseline):  # noqa: D102 - GTK vfunc
         self._allocating = True
         try:
+            self._set_collapsed_state(self._should_collapse(width))
             if width > 0 and width != self._last_alloc_width:
                 self._last_alloc_width = width
                 self._sync_position(width)
-            elif (width > 0 and self._show_sidebar
+            elif (width > 0 and self._show_sidebar and not self._collapsed
                   and self.get_position() != self._target_position(width)):
                 # Same window width, but the sidebar's content floor moved —
                 # a row grew a status lock, or lost it. Follow it, so a
@@ -339,7 +404,7 @@ class SidebarPaned(Gtk.Paned):
         width = self.get_width()
         position = self.get_position()
         dragging = not self._allocating and width > 0
-        if not self._show_sidebar:
+        if not self._show_sidebar or self._collapsed:
             self._sync_position(width)
             return
         content_min = self._content_side_min()
@@ -406,7 +471,7 @@ class SidebarPaned(Gtk.Paned):
         holder.set_child(widget)
         # Visibility may have been decided (hide-on-startup) before the sidebar
         # widget existed; apply it to the holder that carries it.
-        holder.set_visible(self._show_sidebar)
+        holder.set_visible(self._show_sidebar and not self._collapsed)
 
     def get_sidebar(self) -> Optional[Gtk.Widget]:
         holder = self.get_start_child()
@@ -425,14 +490,13 @@ class SidebarPaned(Gtk.Paned):
         self._show_sidebar = show
         child = self.get_start_child()
         if child is not None:
-            child.set_visible(show)
-        if show:
+            child.set_visible(show and not self._collapsed)
+        if show and not self._collapsed:
             self._sync_position()
 
     def get_show_sidebar(self) -> bool:
-        child = self.get_start_child()
-        if child is not None:
-            return bool(child.get_visible())
+        """The user's choice; a collapsed sidebar is not docked either way
+        (see ``get_collapsed``)."""
         return self._show_sidebar
 
     def get_sidebar_width(self) -> int:
@@ -448,10 +512,12 @@ class SidebarPaned(Gtk.Paned):
         """The width the user last dragged to, if any."""
         return self._user_width
 
-    # Overlay presentation is an AdwOverlaySplitView feature with no Gtk.Paned
-    # equivalent; the sidebar is always a side-by-side column here.
+    # Collapsing follows the width only (see _should_collapse); unlike
+    # AdwOverlaySplitView it cannot be forced, and the overlay presentation is
+    # the owner's (the window floats the sidebar in its search popup).
     def set_collapsed(self, collapsed: bool) -> None:
         return None
 
     def get_collapsed(self) -> bool:
-        return False
+        """True while the split is too narrow to dock the sidebar."""
+        return self._collapsed

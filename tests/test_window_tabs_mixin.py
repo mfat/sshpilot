@@ -1186,7 +1186,7 @@ def test_reveal_sidebar_expands_memberships_and_clears_filters(monkeypatch):
         _search_popup=types.SimpleNamespace(visible=True, hide=Mock()),
         _tag_filter="production", search_entry=Mock(),
         lookup_action=lambda name: None,
-        _apply_sidebar_visible=Mock(), rebuild_connection_list=Mock(),
+        _reveal_sidebar=Mock(), rebuild_connection_list=Mock(),
         complete_pending_connection_rows=Mock(),
         group_manager=types.SimpleNamespace(
             get_connection_groups=lambda conn: ["nested"],
@@ -1200,6 +1200,7 @@ def test_reveal_sidebar_expands_memberships_and_clears_filters(monkeypatch):
     assert window._tag_filter is None
     window.search_entry.set_text.assert_called_once_with("")
     window._search_popup.hide.assert_called_once_with(animate=False)
+    window._reveal_sidebar.assert_called_once_with()
     assert root.group_info["expanded"] and nested.group_info["expanded"]
     assert not unrelated.group_info["expanded"]
     assert section._expanded
