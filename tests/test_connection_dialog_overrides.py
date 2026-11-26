@@ -259,6 +259,8 @@ def _dialog(**attrs):
     ):
         setattr(dialog, name, getattr(Validation, name).__get__(dialog))
     dialog._mark_row_override = Overrides._mark_row_override.__get__(dialog)
+    dialog._inherited_advice = Overrides._inherited_advice.__get__(dialog)
+    dialog._mark_unused_password = Overrides._mark_unused_password.__get__(dialog)
     return dialog
 
 
@@ -316,3 +318,69 @@ def test_a_mark_replaces_the_inherited_advice_and_gives_it_back():
 
 def test_states_used_by_the_marks_are_the_answer_s():
     assert NO_EFFECT != SETTINGS
+
+
+# -- the authentication section and the password, in the window's words -------
+
+
+@needs_ssh
+def test_the_authentication_section_is_told_the_line_that_decides(tmp_path):
+    # The issue's case: a global "no" beats this host's "yes".
+    answer = _answer(
+        tmp_path, "PasswordAuthentication no\n\n" + HOST,
+        extra=["PasswordAuthentication yes"],
+    )
+    note = Overrides._deciding_note(answer, "PasswordAuthentication")
+    assert note == "OpenSSH uses no from line 1 (global options)"
+    # Inherited, not set here: the same words.
+    answer = _answer(tmp_path / "b", HOST + "\nHost *\n    PasswordAuthentication no\n")
+    assert Overrides._deciding_note(answer, "PasswordAuthentication") == (
+        "OpenSSH uses no from line 5 (Host *)"
+    )
+
+
+def test_a_method_caption_names_what_decides_when_known():
+    from sshpilot.connection_dialog_auth import method_caption
+
+    reason = "OpenSSH uses no from line 1 (global options)"
+    assert method_caption("", False, True, False, reason) == (
+        "Checked, but not tried: " + reason
+    )
+    assert method_caption("", False, False, True, reason) == (
+        "Unchecked, but tried: " + reason
+    )
+    # Agreeing rows say nothing, whatever the reason.
+    assert method_caption("", False, None, False, reason) == ""
+
+
+def test_an_inherited_value_s_advice_says_where_it_comes_from():
+    assert inherited_note_text("OpenSSH uses shared from line 5 (Host *)") == (
+        "OpenSSH uses shared from line 5 (Host *)\nEdit to set it for this host."
+    )
+
+
+@needs_adw
+def test_the_saved_password_has_no_effect_when_no_password_login_is_tried():
+    from gi.repository import Adw
+
+    row = Adw.PasswordEntryRow(title="Password")
+    row.set_text("secret")
+    will_try = ["publickey", "hostbased"]
+    section = types.SimpleNamespace(
+        policy=types.SimpleNamespace(will_try=lambda: list(will_try))
+    )
+    dialog = _dialog(password_row=row, auth_policy=section)
+    dialog._mark_unused_password()
+    assert row._sshpilot_override_state == "unused"
+    assert row.has_css_class("warning")
+    assert "never asks for this password" in row.get_tooltip_text()
+    # Keyboard-interactive asks for it too.
+    will_try.append("keyboard-interactive")
+    dialog._mark_unused_password()
+    assert not row.has_css_class("warning")
+    assert not row.get_tooltip_text()
+    # Nothing saved, nothing to mark.
+    will_try.pop()
+    row.set_text("")
+    dialog._mark_unused_password()
+    assert not row.has_css_class("warning")

@@ -61,7 +61,12 @@ class ConnectionDialogValidationMixin:
                 getattr(row, '_sshpilot_override_note', ''),
             ) if text
         ]
-        tooltip = "\n".join(parts) or None
+        # A tag's note and the inherited-value advice can name the same
+        # source line: say it once.
+        lines = list(dict.fromkeys(
+            line for part in parts for line in part.split("\n")
+        ))
+        tooltip = "\n".join(lines) or None
         try:
             if hasattr(row, 'set_tooltip_text'):
                 row.set_tooltip_text(tooltip)

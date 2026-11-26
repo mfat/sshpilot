@@ -977,7 +977,7 @@ _DRAG_PREFIX = "sshpilot-auth-method:"
 
 def method_caption(
     value: str, profile: bool, overruled: Optional[bool] = None,
-    by_order: bool = False,
+    by_order: bool = False, reason: str = "",
 ) -> str:
     """A method row's caption; empty when the checkbox says it all.
 
@@ -985,8 +985,15 @@ def method_caption(
     Settings make OpenSSH do other than the checkbox says, which the row
     must state; ``by_order`` says the order in force is the cause, not the
     method's own switch. Else the authored value of a switch that is on with a
-    restriction (e.g. host-bound), so it is not hidden.
+    restriction (e.g. host-bound), so it is not hidden. ``reason``: what
+    OpenSSH uses instead and from where, in Advanced Configuration's words
+    (e.g. "OpenSSH uses no from line 1 (global options)"), when known.
     """
+    if overruled is not None and reason:
+        # Translators: {reason} says what decides instead, e.g. "OpenSSH
+        # uses no from line 1 (global options)".
+        return (_("Checked, but not tried: {reason}") if overruled
+                else _("Unchecked, but tried: {reason}")).format(reason=reason)
     if overruled is True and by_order:
         return _("Checked, but not tried: an earlier setting leaves it out of the order")
     if overruled is True:
@@ -1103,6 +1110,7 @@ class AuthPolicyGroup:
 
         self.policy = AuthPolicy()
         self._on_changed = on_changed
+        self._reasons: Dict[str, Dict[str, str]] = {}
         self._syncing = False
         # Set by a linked login profile: the order, and methods by name.
         self._order_locked = False
@@ -1573,6 +1581,42 @@ class AuthPolicyGroup:
         finally:
             self._syncing = False
 
+    def caption(self, method: str) -> str:
+        """*method*'s row caption (see :func:`method_caption`)."""
+        policy = self.policy
+        overruled = policy.overruled(method)
+        by_order = policy.overruled_by_order(method)
+        reason = ""
+        if overruled is not None:
+            reason = (getattr(self, "_reasons", None) or {}).get(method, {}).get(
+                "order" if by_order else "switch", ""
+            )
+        return method_caption(
+            policy.restriction(method), bool(self.profile), overruled,
+            by_order, reason,
+        )
+
+    def set_reasons(self, reasons: Mapping[str, Mapping[str, str]]) -> None:
+        """What decides each method instead of its row, from OpenSSH's
+        answer: ``{method: {"switch": note, "order": note}}``, the note on
+        the method's own switch and on the order."""
+        reasons = {m: dict(r) for m, r in (reasons or {}).items()}
+        if reasons == self._reasons:
+            return
+        self._reasons = reasons
+        for method in self.policy.rows():
+            row = self.rows.get(method)
+            if row is not None:
+                self._show_row(row, method)
+
+    def overruled_notes(self) -> List[Tuple[str, str]]:
+        """``(method name, caption)`` of each row OpenSSH does not follow."""
+        return [
+            (method_label(method), self.caption(method))
+            for method in self.policy.rows()
+            if self.policy.overruled(method) is not None
+        ]
+
     def set_preview_notes(self, notes) -> None:
         """Why OpenSSH tries something else: the tooltip of the preview.
 
@@ -1621,11 +1665,7 @@ class AuthPolicyGroup:
         actions.lookup_action("top").set_enabled(movable and (
             index > 0 or self.policy._passes_switched_off(method, 0)
         ))
-        row.set_subtitle(method_caption(
-            self.policy.restriction(method), bool(self.profile),
-            self.policy.overruled(method),
-            self.policy.overruled_by_order(method),
-        ))
+        row.set_subtitle(self.caption(method))
 
     def _show_switch(self, row, method: str) -> None:
         check = row._check

@@ -82,7 +82,6 @@ from .connection_dialog_search import ConnectionDialogSearchMixin
 from .connection_dialog_host_names import ConnectionDialogHostNamesMixin
 from .connection_dialog_overrides import (
     ConnectionDialogOverridesMixin,
-    inherited_note_text,
 )
 from .plugins.registry import protocol_registry
 
@@ -2698,7 +2697,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # While Settings ▸ SSH Options force this option, editing the row
         # would not put the host's value in force, so the note is not shown.
         self._set_row_inherited_note(
-            row, '' if overridden else inherited_note_text()
+            row, '' if overridden else self._inherited_advice(row_name)
         )
 
     def _on_inherited_row_edited(self, row_name) -> None:

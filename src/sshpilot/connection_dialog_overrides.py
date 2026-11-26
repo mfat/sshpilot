@@ -90,8 +90,11 @@ SWITCH_OFF_VALUE = {
     "port_forwarding_only_row": "default",
 }
 
-def inherited_note_text() -> str:
-    """The note on a row that shows a value the Host block did not author."""
+def inherited_note_text(source_note: str = "") -> str:
+    """The note on a row that shows a value the Host block did not author;
+    *source_note* says where it comes from (``EditorAnswer.inherited_note``)."""
+    if source_note:
+        return "\n".join((source_note, _("Edit to set it for this host.")))
     return _("Inherited from your SSH configuration. Edit to set it for this host.")
 
 
@@ -102,6 +105,13 @@ OVERRIDDEN = "overridden"
 GLOBAL = "global"
 #: OpenSSH rejects the row's line.
 REJECTED = "rejected"
+#: The row is not an SSH option, and what it holds goes unused because of
+#: one (the saved password, with no password login tried): marked like a
+#: value with no effect, but not counted, since the option's row is.
+UNUSED = "unused"
+
+#: Besides its own switch, what decides whether a method is tried.
+_ORDER_KEYWORD = "PreferredAuthentications"
 
 
 _YES_NO_LIKE = frozenset({"yes", "no", "ask", "confirm", "none"})
@@ -239,6 +249,13 @@ class ConnectionDialogOverridesMixin:
             "forward_agent_value_row", "identity_agent_value_row",
             "nickname_row", "certificate_row",
         ]
+        password = getattr(self, "password_row", None)
+        if password is not None:
+            # Not an SSH option: only its own mark depends on it.
+            try:
+                password.connect("changed", lambda *_a: self._mark_unused_password())
+            except Exception:
+                logger.debug("Cannot watch the password", exc_info=True)
         for name in dict.fromkeys(names):
             row = getattr(self, name, None)
             if row is None:
@@ -291,37 +308,88 @@ class ConnectionDialogOverridesMixin:
         self._sync_override_banner()
 
     def _note_auth_preview(self) -> None:
-        """Give the "OpenSSH will try" line the reasons it differs.
-
-        The method rows carry their marks inside a folded list; the line
-        below it is what shows while the list is closed, so it repeats the
-        notes of the authentication rows that are set here and not used.
+        """Tell the authentication section what decides each method a row
+        does not control, in Advanced Configuration's words, and give the
+        "OpenSSH will try" line (shown while the list is closed) the same
+        reasons. Then mark the saved password when it cannot be asked for.
         """
         section = getattr(self, "auth_policy", None)
-        set_notes = getattr(section, "set_preview_notes", None)
-        if not callable(set_notes):
+        answer = getattr(self, "_editor_answer", None)
+        set_reasons = getattr(section, "set_reasons", None)
+        if callable(set_reasons):
+            from .connection_dialog_auth import METHOD_KEYWORDS
+
+            reasons = {}
+            if answer is not None and answer.available:
+                order = self._deciding_note(answer, _ORDER_KEYWORD)
+                for method, keyword in METHOD_KEYWORDS:
+                    reasons[method] = {
+                        "switch": self._deciding_note(answer, keyword),
+                        "order": order,
+                    }
+            try:
+                set_reasons(reasons)
+                section.set_preview_notes(section.overruled_notes())
+            except Exception:
+                logger.debug("Could not note the authentication section", exc_info=True)
+        self._mark_unused_password(section)
+
+    @staticmethod
+    def _deciding_note(answer, keyword: str) -> str:
+        """What OpenSSH uses for *keyword* and from where: the note on the
+        host's own line when that line goes unused, else on the value it
+        inherits. Empty when the host's own line is the one used."""
+        from .connection_dialog_answer import NO_EFFECT, OVERRIDDEN as SETTINGS
+
+        state, note = answer.line_state(keyword)
+        if state in (NO_EFFECT, SETTINGS):
+            return note
+        if state is not None:
+            return ""
+        return answer.inherited_note(keyword)
+
+    def _mark_unused_password(self, section=None) -> None:
+        """"No effect" on the saved password while OpenSSH tries neither
+        password nor keyboard-interactive login, which are what ask for it."""
+        row = getattr(self, "password_row", None)
+        if row is None:
             return
-        notes = []
-        for row_name, _keyword in OVERRIDABLE_ROWS:
-            if row_name not in AUTH_ROWS:
-                continue
-            row = getattr(self, row_name, None)
-            if getattr(row, "_sshpilot_override_state", None) != OVERRIDDEN:
-                continue
-            note = getattr(row, "_sshpilot_override_note", "") or ""
-            if note:
-                notes.append((row.get_title(), note))
+        section = section or getattr(self, "auth_policy", None)
+        policy = getattr(section, "policy", None)
+        will_try = None
         try:
-            set_notes(notes)
+            will_try = policy.will_try() if policy is not None else None
         except Exception:
-            logger.debug("Could not note the authentication preview", exc_info=True)
+            logger.debug("Could not read the login order", exc_info=True)
+        unused = (
+            will_try is not None
+            and bool(row.get_text())
+            and not {"password", "keyboard-interactive"} & set(will_try)
+        )
+        if unused == (getattr(row, "_sshpilot_override_state", None) == UNUSED):
+            return
+        from .gtk import advanced_config_messages as messages
+        from .api.models.connections import SshConfigDraftLineState as State
+
+        try:
+            if unused:
+                self._mark_row_override(
+                    "password_row", row, UNUSED, _("No effect"),
+                    _("OpenSSH tries neither password nor keyboard-interactive "
+                      "login for this host, so it never asks for this password."),
+                    messages.STATE_STYLES[State.SHADOWED],
+                )
+            else:
+                self._mark_row_override("password_row", row, None, "", "", "")
+        except Exception:
+            logger.debug("Could not mark the password", exc_info=True)
 
     def _mark_row_override(
         self, row_name: str, row, kind: Optional[str], tag: str, note: str,
         style: str = "muted",
     ) -> None:
         """Advanced Configuration's marks on one row: a tag beside it, the
-        value struck through and tinted while it is not used, red while
+        typed value struck through, the row tinted while it is not used, red while
         OpenSSH rejects it."""
         from .advanced_config_widgets import (
             ensure_shared_css,
@@ -338,18 +406,17 @@ class ConnectionDialogOverridesMixin:
             row._sshpilot_override_pill = label
         if label is not None:
             set_pill(label, tag if kind else "", style or "muted", note)
-        unused = kind == OVERRIDDEN
+        unused = kind in (OVERRIDDEN, UNUSED)
         row._sshpilot_override_state = kind
-        for css, wanted in (("warning", unused), ("advcfg-unused", unused)):
-            try:
-                if wanted:
-                    row.add_css_class(css)
-                else:
-                    row.remove_css_class(css)
-            except Exception:
-                pass
-        # GtkText ignores CSS text-decoration: an entry's text is struck
-        # with a Pango attribute.
+        try:
+            if unused:
+                row.add_css_class("warning")
+            else:
+                row.remove_css_class("warning")
+        except Exception:
+            pass
+        # Only typed text is struck (a row's title or a checkbox is not).
+        # GtkText ignores CSS text-decoration: a Pango attribute it is.
         delegate = getattr(row, "get_delegate", None)
         text = delegate() if callable(delegate) else None
         if text is not None and getattr(text, "_sshpilot_struck", False) != unused:
@@ -364,8 +431,21 @@ class ConnectionDialogOverridesMixin:
         # option; the note replaces it, and it returns with the override gone.
         if row_name in (getattr(self, "_inherited_row_handlers", None) or {}):
             self._set_row_inherited_note(
-                row, note if kind else inherited_note_text()
+                row, note if kind else self._inherited_advice(row_name)
             )
+
+    def _inherited_advice(self, row_name: str) -> str:
+        """The tooltip of a row showing an inherited value: where it comes
+        from, and that editing it sets it for this host."""
+        keyword = dict(OVERRIDABLE_ROWS).get(row_name)
+        answer = getattr(self, "_editor_answer", None)
+        source = ""
+        if keyword and answer is not None:
+            try:
+                source = answer.inherited_note(keyword)
+            except Exception:
+                source = ""
+        return inherited_note_text(source)
 
     def _advanced_option_note(
         self, keyword: str, value: str
@@ -481,14 +561,14 @@ class ConnectionDialogOverridesMixin:
             # from it could not be used until the dialog is closed.
             if by_settings and by_earlier:
                 title = _(
-                    "Settings ▸ SSH Options and an earlier block of your SSH "
+                    "Settings ▸ SSH Options and earlier lines of your SSH "
                     "configuration override some settings of this "
                     "connection. They are marked below."
                 )
             elif by_earlier:
                 title = _(
-                    "An earlier block of your SSH configuration overrides "
-                    "some settings of this connection. They are marked below."
+                    "Earlier lines of your SSH configuration override some "
+                    "settings of this connection. They are marked below."
                 )
             else:
                 title = _(

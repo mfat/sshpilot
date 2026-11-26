@@ -85,7 +85,6 @@ _SHARED_CSS = """
 .advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
 .advcfg-pill.advcfg-pill-link:hover { text-decoration: underline; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
-row.advcfg-unused label.title { text-decoration-line: line-through; }
 """
 _shared_css_installed = False
 
