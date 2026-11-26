@@ -83,6 +83,7 @@ _SHARED_CSS = """
 .advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
 .advcfg-pill.advcfg-pill-link:hover { text-decoration: underline; }
 .advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
+row.warning button, row.warning menubutton, row.warning image.edit-icon { color: @view_fg_color; }
 """
 _shared_css_installed = False
 
@@ -170,6 +171,12 @@ def verdict_pill(on_follow) -> Gtk.Label:
     label = pill(style="warning")
     label._target = None
     click = Gtk.GestureClick()
+    # The click is the pill's: a row it sits in must not take it too (a
+    # row whose activatable widget is a checkbox would toggle it).
+    click.connect(
+        "pressed",
+        lambda gesture, *_a: gesture.set_state(Gtk.EventSequenceState.CLAIMED),
+    )
     click.connect(
         "released",
         lambda *_a: label._target is not None and on_follow(label._target),

@@ -390,6 +390,11 @@ class ConnectionDialogOverridesMixin:
             label = verdict_pill(self._reveal_config_line)
             row.add_suffix(label)
             row._sshpilot_override_pill = label
+            # Beside the value, ahead of the row's own buttons.
+            before = getattr(row, "_sshpilot_pill_before", None)
+            box = label.get_parent()
+            if before is not None and box is not None and before.get_parent() is box:
+                box.reorder_child_after(label, before.get_prev_sibling())
         if label is not None:
             show_verdict(label, verdict if kind else NOTHING)
         unused = kind in (OVERRIDDEN, UNUSED)

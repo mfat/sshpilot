@@ -1234,6 +1234,8 @@ class AuthPolicyGroup:
         button.set_valign(Gtk.Align.CENTER)
         button.set_tooltip_text(_("Method options"))
         row.add_suffix(button)
+        # A state tag goes ahead of this button (see _mark_row_override).
+        row._sshpilot_pill_before = button
 
         keys = Gtk.ShortcutController()
         keys.set_scope(Gtk.ShortcutScope.LOCAL)
