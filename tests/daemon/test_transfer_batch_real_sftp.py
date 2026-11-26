@@ -233,3 +233,41 @@ def test_losing_the_server_mid_batch_stops_short_with_what_landed(batch, tmp_pat
     assert summary.failure is not None
     assert summary.item_failures == ()
     assert (dst / "f0").read_bytes() == (src / "f0").read_bytes()
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_cancel_mid_file_leaves_nothing_under_the_real_name(batch, tmp_path, existing):
+    """Cancelled halfway through one large file: no truncated file under the
+    destination's name, no temporary file, and a file being replaced keeps
+    its old contents."""
+    src = _tree(tmp_path / "src", {"big": 64_000_000})
+    dst = tmp_path / "dst"
+    dst.mkdir()
+    if existing:
+        (dst / "big").write_bytes(b"old contents")
+    runtime = batch.runtime
+    from sshpilot.api.models.transfers import CancelTransferRequest
+
+    cancelled = []
+
+    def _cancel_midway(event):
+        if (
+            event.type is EventType.TRANSFER_PROGRESS
+            and not cancelled
+            and (event.payload.bytes_completed or 0) >= 8_000_000
+        ):
+            cancelled.append(event.payload.bytes_completed)
+            runtime.prepare_cancel_transfer(
+                CancelTransferRequest(transfer_id=event.payload.id), client_id=_OWNER
+            )
+
+    runtime.subscribe_events(_cancel_midway)
+    summary, _events = batch(TransferDirection.UPLOAD, _items(src, dst, ["big"]))
+
+    assert cancelled and cancelled[0] < 64_000_000
+    assert summary.state is TransferState.CANCELLED
+    if existing:
+        assert [p.name for p in dst.iterdir()] == ["big"]
+        assert (dst / "big").read_bytes() == b"old contents"
+    else:
+        assert list(dst.iterdir()) == []
