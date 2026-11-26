@@ -189,26 +189,6 @@ def confirm_cancel_transfers(
     dialog.present(parent)
 
 
-_layout_bar_css_installed = False
-
-
-def _ensure_layout_bar_css() -> None:
-    """Round the OSD layout bar like the pane cards below it."""
-    global _layout_bar_css_installed
-    if _layout_bar_css_installed:
-        return
-    try:
-        provider = Gtk.CssProvider()
-        provider.load_from_data(b".fm-layout-bar { border-radius: 12px; }")
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(), provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-        )
-        _layout_bar_css_installed = True
-    except Exception:  # pragma: no cover - headless/test doubles
-        logger.debug("Layout bar CSS install failed", exc_info=True)
-
-
 class _ProgressRun:
     """One copy, move or delete run and its dialog (see _show_progress_dialog).
 
@@ -1175,7 +1155,7 @@ class FileManagerWindow(Adw.Window):
     _SINGLE_PANE_KEY = "file_manager.single_pane"
 
     def _install_layout_bar(self) -> None:
-        """A full-width OSD toolbar above the panes, holding the one/two pane
+        """A full-width toolbar above the panes, holding the one/two pane
         switch as a segmented pair (#1356).
 
         It sits in the content, not the header bar, which a file manager
@@ -1183,12 +1163,9 @@ class FileManagerWindow(Adw.Window):
         (file_manager.single_pane); this switch, F3 and the tab menu change
         only this one, as in Dolphin.
         """
-        _ensure_layout_bar_css()
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        bar.add_css_class("osd")
+        bar = Gtk.CenterBox()
         bar.add_css_class("toolbar")
-        bar.add_css_class("fm-layout-bar")
-        bar.set_margin_top(8)
+        bar.set_vexpand(False)
         bar.set_margin_start(8)
         bar.set_margin_end(8)
 
@@ -1211,7 +1188,7 @@ class FileManagerWindow(Adw.Window):
                 group = None
         if group is not None:
             self._layout_toggle = group
-            bar.append(group)
+            bar.set_center_widget(group)
         else:
             # libadwaita before 1.7: linked radio-style toggle buttons.
             from sshpilot import icon_utils
@@ -1227,20 +1204,17 @@ class FileManagerWindow(Adw.Window):
                 linked.append(button)
             one.connect("toggled", self._on_layout_buttons_changed)
             self._layout_toggle = (one, two)
-            bar.append(linked)
+            bar.set_center_widget(linked)
 
         # Transfers run in the background; this lists them (right end).
         from .file_manager.transfer_indicator import TransferIndicator
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        bar.append(spacer)
         self._transfer_indicator = TransferIndicator(
             on_details=self._show_transfer_details,
             on_failed=self._on_transfer_failed,
             on_finished=self._on_transfer_finished,
             on_face=self._update_tab_indicator,
         )
-        bar.append(self._transfer_indicator)
+        bar.set_end_widget(self._transfer_indicator)
 
         # The bar and the panes share the toast overlay's child.
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
