@@ -14,7 +14,7 @@ and `vendor\conpty`; libvterm needs a compiler, see below):
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -Installer
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -Installer -Portable
 ```
 
 The result:
@@ -24,7 +24,8 @@ The result:
 | `build\windows\dist\sshPilot\sshPilot.exe` | the GUI (windowed) |
 | `build\windows\dist\sshPilot\sshpilot-cli.exe` | the daemon (`--daemon`), askpass (`--internal-askpass`) and rbw's pinentry (`--internal-rbw-pinentry`); console subsystem |
 | `build\windows\dist\sshPilot\_internal\` | Python, GTK 4, typelibs, `libvterm-0.dll`, `ghostty-vt.dll`, `conpty.dll`, `OpenConsole.exe`, gtk4-frdp with FreeRDP and OpenSSL (RDP tabs) |
-| `build\windows\SSHPilot-<version>-windows-<arch>-setup.exe` | the installer (about 60 MiB) |
+| `build\windows\SSHPilot-<version>-windows-<arch>-setup.exe` | the installer (about 60 MiB), with `-Installer` |
+| `build\windows\SSHPilot-<version>-windows-<arch>-portable.zip` | the portable build, with `-Portable` |
 
 `build.ps1` runs `verify_bundle.py`, which fails the build when a file the app
 loads at runtime (typelibs, schemas, pixbuf loaders, the ctypes-loaded DLLs)
@@ -66,6 +67,17 @@ Settings → Apps, and stops a running daemon before replacing files.
 Uninstalling removes the program but keeps settings and connections in
 `%APPDATA%\sshpilot` and `%LOCALAPPDATA%\sshpilot`. Silent install:
 `SSHPilot-<version>-windows-<arch>-setup.exe /S`, optionally `/D=<directory>` (last).
+
+## Portable build
+
+`SSHPilot-<version>-windows-<arch>-portable.zip` is the same app folder,
+zipped: unpack it anywhere (a USB stick, a folder without administrator
+rights) and run `sshPilot.exe`. It adds no Start-menu shortcut, no entry
+under Settings → Apps and no registry keys, so there is nothing to
+uninstall: delete the folder. Settings, connections and keys still live in
+`%APPDATA%\sshpilot` and `%LOCALAPPDATA%\sshpilot`, as for the installed app.
+Only the installer is signed; Windows may warn when the portable
+`sshPilot.exe` is first run.
 
 ## Testing on a clean Windows
 
