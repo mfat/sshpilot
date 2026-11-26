@@ -69,6 +69,18 @@ def _answer(tmp_path, text, host="h", extra=None, forced=()):
     )))
 
 
+def _rm(*args, **kwargs):
+    """``row_mark`` as ``(kind, tag, note, style)``."""
+    kind, verdict = row_mark(*args, **kwargs)
+    return kind, verdict.tag, verdict.note, verdict.style
+
+
+def _v(tag="", note="", style="muted"):
+    from sshpilot.ssh_config_answer import LineVerdict
+
+    return LineVerdict(tag=tag, style=style, tooltip=note, note=note)
+
+
 HOST = "Host h\n    HostName 192.0.2.1\n"
 
 
@@ -108,7 +120,7 @@ def test_a_line_an_earlier_block_beats_has_no_effect_and_says_what_wins(tmp_path
     answer = _answer(
         tmp_path, "Host *\n    User shared\n\n" + HOST + "    User mine\n",
     )
-    kind, tag, note, style = row_mark("username_row", "User", answer)
+    kind, tag, note, style = _rm("username_row", "User", answer)
     assert (kind, tag, style) == (OVERRIDDEN, "No effect", "error")
     assert note == "OpenSSH uses shared from line 2 (Host *)"
     assert answer.unused_count() == (0, 1)
@@ -119,7 +131,7 @@ def test_settings_override_a_line_and_the_mark_says_so(tmp_path):
     answer = _answer(
         tmp_path, HOST + "    Port 2200\n", forced=("Port=2222",),
     )
-    kind, tag, note, style = row_mark("port_row", "Port", answer)
+    kind, tag, note, style = _rm("port_row", "Port", answer)
     assert (kind, tag, style) == (OVERRIDDEN, "Overridden", "purple")
     assert note == "Settings ▸ SSH Options use 2222"
     assert answer.unused_count() == (1, 0)
@@ -128,7 +140,7 @@ def test_settings_override_a_line_and_the_mark_says_so(tmp_path):
 @needs_ssh
 def test_a_line_openssh_rejects_is_rejected(tmp_path):
     answer = _answer(tmp_path, HOST, extra=["Compression maybe"])
-    kind, tag, note, style = row_mark("x", "Compression", answer)
+    kind, tag, note, style = _rm("x", "Compression", answer)
     assert (kind, tag, style) == (REJECTED, "Rejected", "error")
     assert "OpenSSH rejects line" in note
 
@@ -136,7 +148,7 @@ def test_a_line_openssh_rejects_is_rejected(tmp_path):
 @needs_ssh
 def test_an_empty_text_field_names_the_block_that_decides_it(tmp_path):
     answer = _answer(tmp_path, HOST + "\nHost *\n    User shared\n")
-    kind, tag, note, _style = row_mark("username_row", "User", answer)
+    kind, tag, note, _style = _rm("username_row", "User", answer)
     assert (kind, tag) == (GLOBAL, "from Host *")
     assert note == "OpenSSH uses shared from line 5 (Host *)"
     assert answer.inherited_note("user") == note
@@ -145,7 +157,7 @@ def test_an_empty_text_field_names_the_block_that_decides_it(tmp_path):
 @needs_ssh
 def test_a_default_needs_no_mark(tmp_path):
     answer = _answer(tmp_path, HOST)
-    assert row_mark("port_row", "Port", answer) == (None, "", "", "")
+    assert _rm("port_row", "Port", answer)[:2] == (None, "")
     assert answer.inherited_note("port") == "OpenSSH default: 22"
 
 
@@ -153,34 +165,34 @@ def test_a_default_needs_no_mark(tmp_path):
 def test_an_emptied_text_field_shows_the_value_it_gets_in_its_tag(tmp_path):
     # Entry rows cannot show a placeholder cleanly, so the tag carries it.
     answer = _answer(tmp_path, HOST + "\nHost *\n    User shared\n")
-    kind, tag, note, style = row_mark("port_row", "Port", answer, empty=True)
+    kind, tag, note, style = _rm("port_row", "Port", answer, empty=True)
     assert (kind, tag, style) == (GLOBAL, "Not set (22, OpenSSH default)", "muted")
     assert note == "OpenSSH default: 22"
-    kind, tag, _note, _style = row_mark("username_row", "User", answer, empty=True)
+    kind, tag, _note, _style = _rm("username_row", "User", answer, empty=True)
     assert tag == "Not set (shared, from Host *)"
     # Not for switches or selectors, whose state shows a value of its own.
-    assert row_mark("x11_row", "ForwardX11", answer, empty=True)[0] is None
+    assert _rm("x11_row", "ForwardX11", answer, empty=True)[0] is None
 
 
 @needs_ssh
 def test_a_switch_that_is_off_is_pointed_out_only_when_the_value_differs(tmp_path):
     on = _answer(tmp_path / "on", HOST + "\nHost *\n    ForwardX11 yes\n")
-    assert row_mark("x11_row", "ForwardX11", on)[0] == GLOBAL
+    assert _rm("x11_row", "ForwardX11", on)[0] == GLOBAL
     off = _answer(tmp_path / "off", HOST + "\nHost *\n    ForwardX11 no\n")
-    assert row_mark("x11_row", "ForwardX11", off)[0] is None
+    assert _rm("x11_row", "ForwardX11", off)[0] is None
 
 
 @needs_ssh
 def test_a_selector_on_default_names_the_block_that_decides(tmp_path):
     answer = _answer(tmp_path, HOST + "\nHost *\n    ForwardAgent yes\n")
-    kind, tag, _note, _style = row_mark("forward_agent_row", "ForwardAgent", answer)
+    kind, tag, _note, _style = _rm("forward_agent_row", "ForwardAgent", answer)
     assert (kind, tag) == (GLOBAL, "from Host *")
 
 
 @needs_ssh
 def test_an_unset_authentication_row_needs_no_mark(tmp_path):
     answer = _answer(tmp_path, HOST + "\nHost *\n    PasswordAuthentication no\n")
-    assert row_mark("auth_password_row", "PasswordAuthentication", answer)[0] is None
+    assert _rm("auth_password_row", "PasswordAuthentication", answer)[0] is None
 
 
 @needs_ssh
@@ -189,7 +201,7 @@ def test_an_authentication_line_beaten_by_an_earlier_block(tmp_path):
         tmp_path, "Host *\n    PasswordAuthentication no\n\n" + HOST,
         extra=["PasswordAuthentication yes"],
     )
-    assert row_mark("auth_password_row", "PasswordAuthentication", answer)[0] == OVERRIDDEN
+    assert _rm("auth_password_row", "PasswordAuthentication", answer)[0] == OVERRIDDEN
     assert answer.inherited_first()["passwordauthentication"] == "no"
 
 
@@ -199,7 +211,7 @@ def test_local_command_loses_when_an_earlier_block_forbids_local_commands(tmp_pa
         tmp_path, "Host *\n    PermitLocalCommand no\n\n" + HOST
         + "    LocalCommand echo hi\n    PermitLocalCommand yes\n",
     )
-    kind, _tag, note, _style = row_mark("local_command_row", "LocalCommand", answer)
+    kind, _tag, note, _style = _rm("local_command_row", "LocalCommand", answer)
     assert kind == OVERRIDDEN
     assert note == "PermitLocalCommand: OpenSSH uses no from line 2 (Host *)"
 
@@ -225,7 +237,7 @@ def test_an_option_settings_add_to_is_said_to_be_used_twice(tmp_path):
 
 
 def test_no_answer_marks_nothing():
-    assert row_mark("username_row", "User", None) == (None, "", "", "")
+    assert _rm("username_row", "User", None)[:2] == (None, "")
     dialog = types.SimpleNamespace(_editor_answer=None)
     assert Overrides._advanced_option_note(dialog, "Compression", "no") is None
     assert Overrides._overridden_field_counts(dialog) == (0, 0)
@@ -259,6 +271,7 @@ def _dialog(**attrs):
     ):
         setattr(dialog, name, getattr(Validation, name).__get__(dialog))
     dialog._mark_row_override = Overrides._mark_row_override.__get__(dialog)
+    dialog._reveal_config_line = lambda target: None
     dialog._inherited_advice = Overrides._inherited_advice.__get__(dialog)
     dialog._mark_unused_password = Overrides._mark_unused_password.__get__(dialog)
     return dialog
@@ -272,7 +285,7 @@ def test_a_value_with_no_effect_is_struck_tinted_and_tagged_and_stays_editable()
     row.set_text("alice")
     dialog = _dialog(username_row=row)
     dialog._mark_row_override(
-        "username_row", row, OVERRIDDEN, "No effect", "OpenSSH uses bob", "error"
+        "username_row", row, OVERRIDDEN, _v("No effect", "OpenSSH uses bob", "error")
     )
     assert row._sshpilot_override_pill.get_label() == "No effect"
     assert row.has_css_class("warning") and not row.has_css_class("error")
@@ -280,7 +293,7 @@ def test_a_value_with_no_effect_is_struck_tinted_and_tagged_and_stays_editable()
     assert row.get_text() == "alice" and row.get_sensitive()
     assert "OpenSSH uses bob" in row.get_tooltip_text()
 
-    dialog._mark_row_override("username_row", row, None, "", "", "")
+    dialog._mark_row_override("username_row", row, None, _v())
     assert not row._sshpilot_override_pill.get_visible()
     assert not row.has_css_class("warning")
     assert not row.get_delegate()._sshpilot_struck
@@ -293,9 +306,9 @@ def test_a_rejected_line_is_red_and_not_struck():
 
     row = Adw.SwitchRow(title="X11")
     dialog = _dialog(x11_row=row)
-    dialog._mark_row_override("x11_row", row, REJECTED, "Rejected", "bad", "error")
+    dialog._mark_row_override("x11_row", row, REJECTED, _v("Rejected", "bad", "error"))
     assert row.has_css_class("error")
-    assert not row.has_css_class("advcfg-unused")
+    assert not row.has_css_class("warning")
 
 
 @needs_adw
@@ -308,11 +321,11 @@ def test_a_mark_replaces_the_inherited_advice_and_gives_it_back():
     dialog._set_row_inherited_note(row, inherited_note_text())
 
     dialog._mark_row_override(
-        "port_row", row, OVERRIDDEN, "Overridden",
-        "Settings ▸ SSH Options use 2222", "purple",
+        "port_row", row, OVERRIDDEN,
+        _v("Overridden", "Settings ▸ SSH Options use 2222", "purple"),
     )
     assert inherited_note_text() not in row.get_tooltip_text()
-    dialog._mark_row_override("port_row", row, None, "", "", "")
+    dialog._mark_row_override("port_row", row, None, _v())
     assert row.get_tooltip_text() == inherited_note_text()
 
 

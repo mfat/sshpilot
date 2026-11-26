@@ -21,6 +21,7 @@ blocks around in it.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 import re
 from gettext import gettext as _
 from typing import Optional, Tuple
@@ -31,6 +32,7 @@ except (ImportError, AttributeError, ValueError):  # pragma: no cover - no GTK
     Adw = GLib = Gtk = None  # type: ignore[assignment]
 
 from .core.settings import EXTRA_OPTIONS_ADDED_NOT_REPLACED
+from .ssh_config_answer import NOTHING, LineVerdict
 
 logger = logging.getLogger(__name__)
 
@@ -129,48 +131,41 @@ def _normalized(keyword: str, value: str) -> str:
 
 def row_mark(
     row_name: str, keyword: str, answer, *, empty: bool = False
-) -> Tuple[Optional[str], str, str, str]:
-    """``(kind, tag, note, style)`` for one editor row from OpenSSH's answer.
+) -> Tuple[Optional[str], "LineVerdict"]:
+    """``(kind, verdict)`` for one editor row from OpenSSH's answer.
 
-    *kind* is :data:`OVERRIDDEN`, :data:`REJECTED`, :data:`GLOBAL` or None;
-    *tag* the short text beside the row (Advanced Configuration's), *note*
-    what OpenSSH uses instead and from where, *style* the tag's colour
-    (Advanced Configuration's for the same state). *empty*: a text row
-    the user left empty, which shows the value it gets in its tag.
+    *kind* is :data:`OVERRIDDEN`, :data:`REJECTED`, :data:`GLOBAL` or None.
+    For a line the row writes, *verdict* is the line's
+    :class:`~sshpilot.ssh_config_answer.LineVerdict`, the one Advanced
+    Configuration shows for that line (tag, colour, tooltip, note, link).
+    For a row that sets nothing, it names where the value comes from.
+    *empty*: a text row the user left empty, whose tag says what it gets.
     """
-    from .connection_dialog_answer import NO_EFFECT, OVERRIDDEN as SETTINGS, REJECTED as BAD
-    from .gtk import advanced_config_messages as messages
-    from .api.models.connections import SshConfigDraftLineState as State
-
     if answer is None:
-        return None, "", "", ""
-    state, note = answer.line_state(keyword)
-    if row_name == "local_command_row" and state in (None, "used"):
+        return None, NOTHING
+    verdict = answer.line_verdict(keyword)
+    if row_name == "local_command_row" and not verdict.tag:
         # The block writes ``PermitLocalCommand yes`` next to the command,
         # and an earlier ``PermitLocalCommand no`` beats it.
-        extra, extra_note = answer.line_state("PermitLocalCommand")
-        if extra in (NO_EFFECT, SETTINGS, BAD):
+        extra = answer.line_verdict("PermitLocalCommand")
+        if extra.tag:
             # Translators: {keyword} is an SSH option name, {note} what
             # OpenSSH does with it, e.g. "PermitLocalCommand: OpenSSH uses no
             # from line 4 (Host *)".
-            state, note = extra, _("{keyword}: {note}").format(
-                keyword="PermitLocalCommand", note=extra_note
-            )
-    if state == BAD:
-        return REJECTED, _("Rejected"), note, "error"
-    if state == NO_EFFECT:
-        return OVERRIDDEN, _("No effect"), note, messages.STATE_STYLES[State.SHADOWED]
-    if state == SETTINGS:
-        return (
-            OVERRIDDEN, messages.state_label(State.FORCED), note,
-            messages.STATE_STYLES[State.FORCED],
-        )
-    if state is not None or not answer.available:
-        return None, "", "", ""
+            verdict = replace(extra, note=_("{keyword}: {note}").format(
+                keyword="PermitLocalCommand", note=extra.note
+            ))
+    if verdict.state == REJECTED:  # the row's kind is named as the line's state
+        return REJECTED, verdict
+    if verdict.unused:
+        return OVERRIDDEN, verdict
+    if verdict.state is not None or not answer.available:
+        return None, NOTHING
     # The row sets nothing. Text rows and the authentication section show
     # the inherited value themselves; a switch or a selector shows a state
     # of its own, so the block that decides another one is named.
     used = answer.used(keyword)
+    note = answer.inherited_note(keyword)
     # An entry row cannot show a placeholder (libadwaita draws it over the
     # title), so an empty text row's tag says what it gets.
     if empty and used and row_name in TEXT_ROWS:
@@ -179,13 +174,13 @@ def row_mark(
         tag = _("Not set ({value}, {source})").format(
             value=used, source=answer.source_text(keyword)
         )
-        return GLOBAL, tag, answer.inherited_note(keyword), "muted"
+        return GLOBAL, LineVerdict(tag=tag, tooltip=note, note=note)
     if not used or answer.is_default(keyword) or row_name in AUTH_ROWS:
-        return None, "", "", ""
+        return None, NOTHING
     shown = SWITCH_OFF_VALUE.get(row_name)
     if shown is not None and _normalized(keyword, used) == shown:
-        return None, "", "", ""
-    return GLOBAL, answer.source_text(keyword), answer.inherited_note(keyword), "muted"
+        return None, NOTHING
+    return GLOBAL, LineVerdict(tag=answer.source_text(keyword), tooltip=note, note=note)
 
 
 def added_by_settings_note(keyword: str, answer) -> Optional[str]:
@@ -284,10 +279,8 @@ class ConnectionDialogOverridesMixin:
                 continue
             try:
                 empty = row_name in TEXT_ROWS and not row.get_text().strip()
-                kind, tag, note, style = row_mark(
-                    row_name, keyword, answer, empty=empty
-                )
-                self._mark_row_override(row_name, row, kind, tag, note, style)
+                kind, verdict = row_mark(row_name, keyword, answer, empty=empty)
+                self._mark_row_override(row_name, row, kind, verdict)
             except Exception:
                 logger.debug("Could not mark %s", row_name, exc_info=True)
         self._note_auth_preview()
@@ -339,12 +332,10 @@ class ConnectionDialogOverridesMixin:
         """What OpenSSH uses for *keyword* and from where: the note on the
         host's own line when that line goes unused, else on the value it
         inherits. Empty when the host's own line is the one used."""
-        from .connection_dialog_answer import NO_EFFECT, OVERRIDDEN as SETTINGS
-
-        state, note = answer.line_state(keyword)
-        if state in (NO_EFFECT, SETTINGS):
-            return note
-        if state is not None:
+        verdict = answer.line_verdict(keyword)
+        if verdict.unused:
+            return verdict.note
+        if verdict.state is not None:
             return ""
         return answer.inherited_note(keyword)
 
@@ -373,60 +364,43 @@ class ConnectionDialogOverridesMixin:
 
         try:
             if unused:
-                self._mark_row_override(
-                    "password_row", row, UNUSED, _("No effect"),
-                    _("OpenSSH tries neither password nor keyboard-interactive "
-                      "login for this host, so it never asks for this password."),
-                    messages.STATE_STYLES[State.SHADOWED],
+                note = _(
+                    "OpenSSH tries neither password nor keyboard-interactive "
+                    "login for this host, so it never asks for this password."
                 )
+                self._mark_row_override("password_row", row, UNUSED, LineVerdict(
+                    tag=_("No effect"), style=messages.STATE_STYLES[State.SHADOWED],
+                    tooltip=note, note=note,
+                ))
             else:
-                self._mark_row_override("password_row", row, None, "", "", "")
+                self._mark_row_override("password_row", row, None, NOTHING)
         except Exception:
             logger.debug("Could not mark the password", exc_info=True)
 
-    def _mark_row_override(
-        self, row_name: str, row, kind: Optional[str], tag: str, note: str,
-        style: str = "muted",
-    ) -> None:
-        """Advanced Configuration's marks on one row: a tag beside it, the
-        typed value struck through, the row tinted while it is not used, red while
-        OpenSSH rejects it."""
-        from .advanced_config_widgets import (
-            ensure_shared_css,
-            pill,
-            set_pill,
-            struck_attributes,
-        )
+    def _mark_row_override(self, row_name: str, row, kind: Optional[str], verdict) -> None:
+        """Show *verdict* (a :class:`~sshpilot.ssh_config_answer.LineVerdict`)
+        on one row as Advanced Configuration shows it on a line: the tag
+        beside it (a "No effect" one links to the line used instead), the
+        typed value struck through and tinted while it is not used, red
+        while OpenSSH rejects it."""
+        from .advanced_config_widgets import mark_unused, show_verdict, verdict_pill
 
         label = getattr(row, "_sshpilot_override_pill", None)
         if kind and label is None:
-            ensure_shared_css()
-            label = pill()
+            label = verdict_pill(self._reveal_config_line)
             row.add_suffix(label)
             row._sshpilot_override_pill = label
         if label is not None:
-            set_pill(label, tag if kind else "", style or "muted", note)
+            show_verdict(label, verdict if kind else NOTHING)
         unused = kind in (OVERRIDDEN, UNUSED)
         row._sshpilot_override_state = kind
+        note = verdict.note if kind else ""
         try:
-            if unused:
-                row.add_css_class("warning")
-            else:
-                row.remove_css_class("warning")
+            mark_unused(row, unused)
         except Exception:
-            pass
-        # Only typed text is struck (a row's title or a checkbox is not).
-        # GtkText ignores CSS text-decoration: a Pango attribute it is.
-        delegate = getattr(row, "get_delegate", None)
-        text = delegate() if callable(delegate) else None
-        if text is not None and getattr(text, "_sshpilot_struck", False) != unused:
-            text._sshpilot_struck = unused
-            try:
-                text.set_attributes(struck_attributes(unused))
-            except Exception:
-                pass
+            logger.debug("Could not mark %s", row_name, exc_info=True)
         self._set_row_override_error(row, kind == REJECTED)
-        self._set_row_override_note(row, note or "")
+        self._set_row_override_note(row, note)
         # "Edit to set it for this host" is false while Settings force the
         # option; the note replaces it, and it returns with the override gone.
         if row_name in (getattr(self, "_inherited_row_handlers", None) or {}):
@@ -455,17 +429,15 @@ class ConnectionDialogOverridesMixin:
         *unused* is False only for an option Settings add to rather than
         replace: both values are used there.
         """
-        from .connection_dialog_answer import NO_EFFECT, OVERRIDDEN as SETTINGS, REJECTED as BAD
-
         answer = getattr(self, "_editor_answer", None)
         added = added_by_settings_note(keyword, answer)
         if added:
             return added, False
         if answer is None:
             return None
-        state, note = answer.line_state_of(keyword, value)
-        if state in (NO_EFFECT, SETTINGS, BAD) and note:
-            return note, True
+        verdict = answer.line_verdict_of(keyword, value)
+        if verdict.tag and verdict.note:
+            return verdict.note, True
         return None
 
     def _overridden_field_counts(self) -> Tuple[int, int]:
@@ -519,6 +491,21 @@ class ConnectionDialogOverridesMixin:
             file=(getattr(connection, "source", "") or "") if editing else "",
             over=self,
             on_saved=self._on_ssh_config_saved,
+        )
+
+    def _reveal_config_line(self, target) -> None:
+        """A "No effect" tag was clicked: open Advanced Configuration at the
+        line used instead, as the same tag does in Advanced Configuration."""
+        parent = getattr(self, "parent_window", None)
+        opener = getattr(parent, "open_advanced_config", None)
+        if not callable(opener):
+            return
+        file, line = target
+        connection = getattr(self, "connection", None)
+        host = (getattr(connection, "nickname", "") or "") if connection is not None else ""
+        opener(
+            host=host, line=line, file=file or "",
+            over=self, on_saved=self._on_ssh_config_saved,
         )
 
     def _on_ssh_config_saved(self) -> None:

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 21:04+0330\n"
+"POT-Creation-Date: 2026-11-26 21:20+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -178,7 +178,7 @@ msgstr "اتصالات باز شود؟"
 #: src/sshpilot/advanced_config_window.py:776
 #: src/sshpilot/advanced_config_window.py:1033
 #: src/sshpilot/advanced_config_window.py:1340
-#: src/sshpilot/advanced_config_structured_view.py:1166
+#: src/sshpilot/advanced_config_structured_view.py:1077
 msgid "Cancel"
 msgstr "لغو کنید"
 
@@ -391,7 +391,7 @@ msgstr "نام جلسه"
 #: src/sshpilot/resources/ui/connection_dialog.ui:158
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:31
 #: src/sshpilot/advanced_config_window.py:366
-#: src/sshpilot/advanced_config_structured_view.py:1169
+#: src/sshpilot/advanced_config_structured_view.py:1080
 msgid "Save"
 msgstr "ذخیره کنید"
 
@@ -1794,7 +1794,7 @@ msgstr "اضافه شد"
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:171
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:191
 #: src/sshpilot/preferences.py:5662 src/sshpilot/ssh_option_list.py:166
-#: src/sshpilot/advanced_config_structured_view.py:1160
+#: src/sshpilot/advanced_config_structured_view.py:1071
 msgid "Remove"
 msgstr "حذف کنید"
 
@@ -3018,11 +3018,11 @@ msgstr ""
 "تنظیم‌شده توسط نمایهٔ ورود «{name}». برای ویرایش در اینجا، «از نمایه استفاده "
 "نکن» را انتخاب کنید."
 
-#: src/sshpilot/connection_dialog_overrides.py:97
+#: src/sshpilot/connection_dialog_overrides.py:99
 msgid "Edit to set it for this host."
 msgstr "برای تنظیم آن برای این میزبان ویرایش کنید."
 
-#: src/sshpilot/connection_dialog_overrides.py:98
+#: src/sshpilot/connection_dialog_overrides.py:100
 msgid "Inherited from your SSH configuration. Edit to set it for this host."
 msgstr ""
 "از پیکربندی SSH شما به ارث رسیده است. برای تنظیم آن برای این میزبان ویرایش "
@@ -3031,30 +3031,19 @@ msgstr ""
 #. Translators: {keyword} is an SSH option name, {note} what
 #. OpenSSH does with it, e.g. "PermitLocalCommand: OpenSSH uses no
 #. from line 4 (Host *)".
-#: src/sshpilot/connection_dialog_overrides.py:156
+#: src/sshpilot/connection_dialog_overrides.py:155
 #, python-brace-format
 msgid "{keyword}: {note}"
 msgstr "{keyword}: {note}"
 
-#: src/sshpilot/connection_dialog_overrides.py:160
-#: src/sshpilot/advanced_config_structured_view.py:145
-msgid "Rejected"
-msgstr "رد شده"
-
-#: src/sshpilot/connection_dialog_overrides.py:162
-#: src/sshpilot/connection_dialog_overrides.py:377
-#: src/sshpilot/advanced_config_structured_view.py:149
-msgid "No effect"
-msgstr "بی‌اثر"
-
 #. Translators: an empty field and what OpenSSH uses for it, e.g.
 #. "Not set (22, OpenSSH default)" or "Not set (alice, from Host *)".
-#: src/sshpilot/connection_dialog_overrides.py:179
+#: src/sshpilot/connection_dialog_overrides.py:174
 #, python-brace-format
 msgid "Not set ({value}, {source})"
 msgstr "تنظیم‌نشده ({value}، {source})"
 
-#: src/sshpilot/connection_dialog_overrides.py:200
+#: src/sshpilot/connection_dialog_overrides.py:195
 #, python-brace-format
 msgid ""
 "Settings ▸ SSH Options also add “{value}” to every connection. Both are used."
@@ -3062,7 +3051,7 @@ msgstr ""
 "تنظیمات ▸ گزینه‌های SSH نیز «{value}» را به همهٔ اتصال‌ها اضافه می‌کند. هر دو "
 "استفاده می‌شوند."
 
-#: src/sshpilot/connection_dialog_overrides.py:378
+#: src/sshpilot/connection_dialog_overrides.py:368
 msgid ""
 "OpenSSH tries neither password nor keyboard-interactive login for this host, "
 "so it never asks for this password."
@@ -3070,7 +3059,12 @@ msgstr ""
 "OpenSSH برای این میزبان ورود با گذرواژه یا keyboard-interactive را امتحان "
 "نمی‌کند، پس هرگز این گذرواژه را نمی‌پرسد."
 
-#: src/sshpilot/connection_dialog_overrides.py:564
+#: src/sshpilot/connection_dialog_overrides.py:372
+#: src/sshpilot/ssh_config_answer.py:169
+msgid "No effect"
+msgstr "بی‌اثر"
+
+#: src/sshpilot/connection_dialog_overrides.py:551
 msgid ""
 "Settings ▸ SSH Options and earlier lines of your SSH configuration override "
 "some settings of this connection. They are marked below."
@@ -3078,7 +3072,7 @@ msgstr ""
 "تنظیمات ▸ گزینه‌های SSH و خط‌های قبلی پیکربندی SSH شما برخی تنظیمات این اتصال "
 "را لغو می‌کنند. در زیر علامت خورده‌اند."
 
-#: src/sshpilot/connection_dialog_overrides.py:570
+#: src/sshpilot/connection_dialog_overrides.py:557
 msgid ""
 "Earlier lines of your SSH configuration override some settings of this "
 "connection. They are marked below."
@@ -3086,7 +3080,7 @@ msgstr ""
 "خط‌های قبلی پیکربندی SSH شما برخی تنظیمات این اتصال را لغو می‌کنند. در زیر "
 "علامت خورده‌اند."
 
-#: src/sshpilot/connection_dialog_overrides.py:575
+#: src/sshpilot/connection_dialog_overrides.py:562
 msgid ""
 "Settings ▸ SSH Options override some settings of this connection. They are "
 "marked below."
@@ -10318,7 +10312,7 @@ msgid "Cursor Blinking"
 msgstr "چشمک زدن مکان‌نما"
 
 #: src/sshpilot/preferences.py:750
-#: src/sshpilot/advanced_config_structured_view.py:669
+#: src/sshpilot/advanced_config_structured_view.py:580
 msgid "Enabled"
 msgstr "فعال کردن"
 
@@ -13231,7 +13225,7 @@ msgid "Expand section"
 msgstr "کپی متن با انتخاب"
 
 #: src/sshpilot/sidebar.py:1343
-#: src/sshpilot/advanced_config_structured_view.py:369
+#: src/sshpilot/advanced_config_structured_view.py:287
 #: src/sshpilot/advanced_config_block_row.py:55
 #: src/sshpilot/advanced_config_block_row.py:109
 msgid "Drag to reorder"
@@ -13598,19 +13592,19 @@ msgid "Choose a keyword"
 msgstr "انتخاب کلیدواژه"
 
 #: src/sshpilot/ssh_option_list.py:159 src/sshpilot/ssh_option_list.py:161
-#: src/sshpilot/advanced_config_structured_view.py:386
-#: src/sshpilot/advanced_config_structured_view.py:476
+#: src/sshpilot/advanced_config_structured_view.py:304
+#: src/sshpilot/advanced_config_structured_view.py:385
 msgid "Value"
 msgstr "ارزش"
 
 #. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
-#: src/sshpilot/ssh_option_list.py:282 src/sshpilot/ssh_option_list.py:286
-#: src/sshpilot/advanced_config_structured_view.py:774
+#: src/sshpilot/ssh_option_list.py:275 src/sshpilot/ssh_option_list.py:279
+#: src/sshpilot/advanced_config_structured_view.py:685
 msgid "Add Option"
 msgstr "افزودن گزینه"
 
 #. Half an option. Saying so beats leaving it out without a word.
-#: src/sshpilot/ssh_option_list.py:426
+#: src/sshpilot/ssh_option_list.py:419
 msgid "Enter both a keyword and a value."
 msgstr "هم کلیدواژه و هم مقدار را وارد کنید."
 
@@ -18630,47 +18624,47 @@ msgstr "بلوک جدید"
 msgid "Add a block to this file"
 msgstr "افزودن بلوک به این پرونده"
 
-#: src/sshpilot/advanced_config_structured_view.py:378
-#: src/sshpilot/advanced_config_structured_view.py:379
-#: src/sshpilot/advanced_config_structured_view.py:766
+#: src/sshpilot/advanced_config_structured_view.py:296
+#: src/sshpilot/advanced_config_structured_view.py:297
+#: src/sshpilot/advanced_config_structured_view.py:677
 msgid "Option"
 msgstr "گزینه"
 
 #. A key or certificate line: choose its file (see _check_key).
-#: src/sshpilot/advanced_config_structured_view.py:390
+#: src/sshpilot/advanced_config_structured_view.py:308
 msgid "Choose a key file"
 msgstr "انتخاب پرونده کلید"
 
 #. Up and down: the line one place earlier or later in the block.
-#: src/sshpilot/advanced_config_structured_view.py:394
+#: src/sshpilot/advanced_config_structured_view.py:312
 msgid "Move Up"
 msgstr "انتقال به بالا"
 
-#: src/sshpilot/advanced_config_structured_view.py:395
+#: src/sshpilot/advanced_config_structured_view.py:313
 msgid "Move Down"
 msgstr "انتقال به پایین"
 
-#: src/sshpilot/advanced_config_structured_view.py:396
+#: src/sshpilot/advanced_config_structured_view.py:314
 msgid "Remove option"
 msgstr "برداشتن گزینه"
 
-#: src/sshpilot/advanced_config_structured_view.py:416
+#: src/sshpilot/advanced_config_structured_view.py:334
 msgid "Fix"
 msgstr "رفع"
 
-#: src/sshpilot/advanced_config_structured_view.py:418
+#: src/sshpilot/advanced_config_structured_view.py:336
 msgid "Make the key readable by you only (0600), as OpenSSH requires"
 msgstr "کلید را فقط برای شما خواندنی کن (0600)، همان‌گونه که OpenSSH می‌خواهد"
 
-#: src/sshpilot/advanced_config_structured_view.py:606
+#: src/sshpilot/advanced_config_structured_view.py:517
 msgid "No Block Selected"
 msgstr "هیچ بلوکی انتخاب نشده"
 
-#: src/sshpilot/advanced_config_structured_view.py:607
+#: src/sshpilot/advanced_config_structured_view.py:518
 msgid "Choose a block in the sidebar, or add one."
 msgstr "بلوکی را در نوار کناری انتخاب کنید یا یکی بیفزایید."
 
-#: src/sshpilot/advanced_config_structured_view.py:667
+#: src/sshpilot/advanced_config_structured_view.py:578
 msgid ""
 "On: OpenSSH reads this block. Off: it is written as comments, which OpenSSH "
 "ignores."
@@ -18678,67 +18672,71 @@ msgstr ""
 "روشن: OpenSSH این بلوک را می‌خواند. خاموش: به‌صورت توضیح نوشته می‌شود که "
 "OpenSSH نادیده می‌گیرد."
 
-#: src/sshpilot/advanced_config_structured_view.py:673
+#: src/sshpilot/advanced_config_structured_view.py:584
 msgid "Duplicate Block"
 msgstr "تکثیر بلوک"
 
-#: src/sshpilot/advanced_config_structured_view.py:678
+#: src/sshpilot/advanced_config_structured_view.py:589
 msgid "Delete Block"
 msgstr "حذف بلوک"
 
-#: src/sshpilot/advanced_config_structured_view.py:695
+#: src/sshpilot/advanced_config_structured_view.py:606
 msgid "Disabled: written as comments, which OpenSSH ignores."
 msgstr "غیرفعال: به‌صورت توضیح نوشته شده که OpenSSH نادیده می‌گیرد."
 
 #. Applies To: the hosts of a pattern, Match or wildcard block, each
 #. a link (none for a block that names its own hosts).
-#: src/sshpilot/advanced_config_structured_view.py:709
+#: src/sshpilot/advanced_config_structured_view.py:620
 msgid "Applies To"
 msgstr "اعمال می‌شود بر"
 
-#: src/sshpilot/advanced_config_structured_view.py:724
+#: src/sshpilot/advanced_config_structured_view.py:635
 msgid "Problems"
 msgstr "مشکلات"
 
-#: src/sshpilot/advanced_config_structured_view.py:730
+#: src/sshpilot/advanced_config_structured_view.py:641
 msgid "Show the first problem"
 msgstr "نمایش نخستین مشکل"
 
-#: src/sshpilot/advanced_config_structured_view.py:805
+#: src/sshpilot/advanced_config_structured_view.py:716
 msgid "Add a Common Option"
 msgstr "افزودن یک گزینهٔ رایج"
 
-#: src/sshpilot/advanced_config_structured_view.py:966
+#: src/sshpilot/advanced_config_structured_view.py:877
 msgid "The names and patterns this block is for"
 msgstr "نام‌ها و الگوهایی که این بلوک برای آن‌هاست"
 
-#: src/sshpilot/advanced_config_structured_view.py:967
+#: src/sshpilot/advanced_config_structured_view.py:878
 msgid "The conditions this block is for"
 msgstr "شرایطی که این بلوک برای آن‌هاست"
 
-#: src/sshpilot/advanced_config_structured_view.py:971
+#: src/sshpilot/advanced_config_structured_view.py:882
 msgid "Host patterns"
 msgstr "الگوهای میزبان"
 
-#: src/sshpilot/advanced_config_structured_view.py:971
+#: src/sshpilot/advanced_config_structured_view.py:882
 msgid "Match conditions"
 msgstr "شرط‌های Match"
 
-#: src/sshpilot/advanced_config_structured_view.py:1155
+#: src/sshpilot/advanced_config_structured_view.py:1066
 msgid "A comment above the block"
 msgstr "توضیحی بالای بلوک"
 
-#: src/sshpilot/advanced_config_structured_view.py:1156
+#: src/sshpilot/advanced_config_structured_view.py:1067
 msgid "Note"
 msgstr "یادداشت"
 
-#: src/sshpilot/advanced_config_structured_view.py:1201
+#: src/sshpilot/advanced_config_structured_view.py:1112
 msgid "Edit Note"
 msgstr "ویرایش یادداشت"
 
-#: src/sshpilot/advanced_config_structured_view.py:1201
+#: src/sshpilot/advanced_config_structured_view.py:1112
 msgid "Add Note"
 msgstr "افزودن یادداشت"
+
+#: src/sshpilot/ssh_config_answer.py:155
+msgid "Rejected"
+msgstr "رد شده"
 
 #: src/sshpilot/route_strip.py:241
 msgid "Drag to change the order of the jump hosts"

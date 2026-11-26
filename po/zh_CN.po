@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 21:04+0330\n"
+"POT-Creation-Date: 2026-11-26 21:20+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -172,7 +172,7 @@ msgstr "打开连接？"
 #: src/sshpilot/advanced_config_window.py:776
 #: src/sshpilot/advanced_config_window.py:1033
 #: src/sshpilot/advanced_config_window.py:1340
-#: src/sshpilot/advanced_config_structured_view.py:1166
+#: src/sshpilot/advanced_config_structured_view.py:1077
 msgid "Cancel"
 msgstr "取消"
 
@@ -376,7 +376,7 @@ msgstr "会话名称"
 #: src/sshpilot/resources/ui/connection_dialog.ui:158
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:31
 #: src/sshpilot/advanced_config_window.py:366
-#: src/sshpilot/advanced_config_structured_view.py:1169
+#: src/sshpilot/advanced_config_structured_view.py:1080
 msgid "Save"
 msgstr "保存"
 
@@ -1739,7 +1739,7 @@ msgstr "已添加"
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:171
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:191
 #: src/sshpilot/preferences.py:5662 src/sshpilot/ssh_option_list.py:166
-#: src/sshpilot/advanced_config_structured_view.py:1160
+#: src/sshpilot/advanced_config_structured_view.py:1071
 msgid "Remove"
 msgstr "移除"
 
@@ -2918,53 +2918,47 @@ msgid ""
 "Set by login profile “{name}”. Choose “Don't use a profile” to edit it here."
 msgstr "由登录配置文件“{name}”设置。选择“不使用配置文件”即可在此编辑。"
 
-#: src/sshpilot/connection_dialog_overrides.py:97
+#: src/sshpilot/connection_dialog_overrides.py:99
 msgid "Edit to set it for this host."
 msgstr "编辑可为此主机单独设置。"
 
-#: src/sshpilot/connection_dialog_overrides.py:98
+#: src/sshpilot/connection_dialog_overrides.py:100
 msgid "Inherited from your SSH configuration. Edit to set it for this host."
 msgstr "继承自您的 SSH 配置。编辑可为主机单独设置。"
 
 #. Translators: {keyword} is an SSH option name, {note} what
 #. OpenSSH does with it, e.g. "PermitLocalCommand: OpenSSH uses no
 #. from line 4 (Host *)".
-#: src/sshpilot/connection_dialog_overrides.py:156
+#: src/sshpilot/connection_dialog_overrides.py:155
 #, python-brace-format
 msgid "{keyword}: {note}"
 msgstr "{keyword}：{note}"
 
-#: src/sshpilot/connection_dialog_overrides.py:160
-#: src/sshpilot/advanced_config_structured_view.py:145
-msgid "Rejected"
-msgstr "被拒绝"
-
-#: src/sshpilot/connection_dialog_overrides.py:162
-#: src/sshpilot/connection_dialog_overrides.py:377
-#: src/sshpilot/advanced_config_structured_view.py:149
-msgid "No effect"
-msgstr "不起作用"
-
 #. Translators: an empty field and what OpenSSH uses for it, e.g.
 #. "Not set (22, OpenSSH default)" or "Not set (alice, from Host *)".
-#: src/sshpilot/connection_dialog_overrides.py:179
+#: src/sshpilot/connection_dialog_overrides.py:174
 #, python-brace-format
 msgid "Not set ({value}, {source})"
 msgstr "未设置（{value}，{source}）"
 
-#: src/sshpilot/connection_dialog_overrides.py:200
+#: src/sshpilot/connection_dialog_overrides.py:195
 #, python-brace-format
 msgid ""
 "Settings ▸ SSH Options also add “{value}” to every connection. Both are used."
 msgstr "“设置 ▸ SSH 选项”还会为所有连接添加“{value}”。两者都会生效。"
 
-#: src/sshpilot/connection_dialog_overrides.py:378
+#: src/sshpilot/connection_dialog_overrides.py:368
 msgid ""
 "OpenSSH tries neither password nor keyboard-interactive login for this host, "
 "so it never asks for this password."
 msgstr "OpenSSH 不会为此主机尝试密码或键盘交互式登录，因此永远不会询问此密码。"
 
-#: src/sshpilot/connection_dialog_overrides.py:564
+#: src/sshpilot/connection_dialog_overrides.py:372
+#: src/sshpilot/ssh_config_answer.py:169
+msgid "No effect"
+msgstr "不起作用"
+
+#: src/sshpilot/connection_dialog_overrides.py:551
 msgid ""
 "Settings ▸ SSH Options and earlier lines of your SSH configuration override "
 "some settings of this connection. They are marked below."
@@ -2972,13 +2966,13 @@ msgstr ""
 "“设置 ▸ SSH 选项”和您 SSH 配置中较早的行覆盖了此连接的部分设置。它们已在下方"
 "标出。"
 
-#: src/sshpilot/connection_dialog_overrides.py:570
+#: src/sshpilot/connection_dialog_overrides.py:557
 msgid ""
 "Earlier lines of your SSH configuration override some settings of this "
 "connection. They are marked below."
 msgstr "您 SSH 配置中较早的行覆盖了此连接的部分设置。它们已在下方标出。"
 
-#: src/sshpilot/connection_dialog_overrides.py:575
+#: src/sshpilot/connection_dialog_overrides.py:562
 msgid ""
 "Settings ▸ SSH Options override some settings of this connection. They are "
 "marked below."
@@ -10001,7 +9995,7 @@ msgid "Cursor Blinking"
 msgstr "光标闪烁"
 
 #: src/sshpilot/preferences.py:750
-#: src/sshpilot/advanced_config_structured_view.py:669
+#: src/sshpilot/advanced_config_structured_view.py:580
 msgid "Enabled"
 msgstr "启用"
 
@@ -12827,7 +12821,7 @@ msgid "Expand section"
 msgstr "选中时复制"
 
 #: src/sshpilot/sidebar.py:1343
-#: src/sshpilot/advanced_config_structured_view.py:369
+#: src/sshpilot/advanced_config_structured_view.py:287
 #: src/sshpilot/advanced_config_block_row.py:55
 #: src/sshpilot/advanced_config_block_row.py:109
 msgid "Drag to reorder"
@@ -13191,19 +13185,19 @@ msgid "Choose a keyword"
 msgstr "选择关键字"
 
 #: src/sshpilot/ssh_option_list.py:159 src/sshpilot/ssh_option_list.py:161
-#: src/sshpilot/advanced_config_structured_view.py:386
-#: src/sshpilot/advanced_config_structured_view.py:476
+#: src/sshpilot/advanced_config_structured_view.py:304
+#: src/sshpilot/advanced_config_structured_view.py:385
 msgid "Value"
 msgstr "值"
 
 #. ButtonRow requires libadwaita 1.6; AppImages also ship 1.5.
-#: src/sshpilot/ssh_option_list.py:282 src/sshpilot/ssh_option_list.py:286
-#: src/sshpilot/advanced_config_structured_view.py:774
+#: src/sshpilot/ssh_option_list.py:275 src/sshpilot/ssh_option_list.py:279
+#: src/sshpilot/advanced_config_structured_view.py:685
 msgid "Add Option"
 msgstr "添加选项"
 
 #. Half an option. Saying so beats leaving it out without a word.
-#: src/sshpilot/ssh_option_list.py:426
+#: src/sshpilot/ssh_option_list.py:419
 msgid "Enter both a keyword and a value."
 msgstr "请同时填写关键字和值。"
 
@@ -18050,113 +18044,117 @@ msgstr "新建块"
 msgid "Add a block to this file"
 msgstr "向此文件添加块"
 
-#: src/sshpilot/advanced_config_structured_view.py:378
-#: src/sshpilot/advanced_config_structured_view.py:379
-#: src/sshpilot/advanced_config_structured_view.py:766
+#: src/sshpilot/advanced_config_structured_view.py:296
+#: src/sshpilot/advanced_config_structured_view.py:297
+#: src/sshpilot/advanced_config_structured_view.py:677
 msgid "Option"
 msgstr "选项"
 
 #. A key or certificate line: choose its file (see _check_key).
-#: src/sshpilot/advanced_config_structured_view.py:390
+#: src/sshpilot/advanced_config_structured_view.py:308
 msgid "Choose a key file"
 msgstr "选择密钥文件"
 
 #. Up and down: the line one place earlier or later in the block.
-#: src/sshpilot/advanced_config_structured_view.py:394
+#: src/sshpilot/advanced_config_structured_view.py:312
 msgid "Move Up"
 msgstr "上移"
 
-#: src/sshpilot/advanced_config_structured_view.py:395
+#: src/sshpilot/advanced_config_structured_view.py:313
 msgid "Move Down"
 msgstr "下移"
 
-#: src/sshpilot/advanced_config_structured_view.py:396
+#: src/sshpilot/advanced_config_structured_view.py:314
 msgid "Remove option"
 msgstr "移除选项"
 
-#: src/sshpilot/advanced_config_structured_view.py:416
+#: src/sshpilot/advanced_config_structured_view.py:334
 msgid "Fix"
 msgstr "修复"
 
-#: src/sshpilot/advanced_config_structured_view.py:418
+#: src/sshpilot/advanced_config_structured_view.py:336
 msgid "Make the key readable by you only (0600), as OpenSSH requires"
 msgstr "使密钥仅对您可读（0600），这是 OpenSSH 的要求"
 
-#: src/sshpilot/advanced_config_structured_view.py:606
+#: src/sshpilot/advanced_config_structured_view.py:517
 msgid "No Block Selected"
 msgstr "未选择块"
 
-#: src/sshpilot/advanced_config_structured_view.py:607
+#: src/sshpilot/advanced_config_structured_view.py:518
 msgid "Choose a block in the sidebar, or add one."
 msgstr "请在侧栏中选择一个块，或添加一个。"
 
-#: src/sshpilot/advanced_config_structured_view.py:667
+#: src/sshpilot/advanced_config_structured_view.py:578
 msgid ""
 "On: OpenSSH reads this block. Off: it is written as comments, which OpenSSH "
 "ignores."
 msgstr "开：OpenSSH 读取此块。关：写为注释，OpenSSH 会忽略。"
 
-#: src/sshpilot/advanced_config_structured_view.py:673
+#: src/sshpilot/advanced_config_structured_view.py:584
 msgid "Duplicate Block"
 msgstr "复制块"
 
-#: src/sshpilot/advanced_config_structured_view.py:678
+#: src/sshpilot/advanced_config_structured_view.py:589
 msgid "Delete Block"
 msgstr "删除块"
 
-#: src/sshpilot/advanced_config_structured_view.py:695
+#: src/sshpilot/advanced_config_structured_view.py:606
 msgid "Disabled: written as comments, which OpenSSH ignores."
 msgstr "已禁用：写为注释，OpenSSH 会忽略。"
 
 #. Applies To: the hosts of a pattern, Match or wildcard block, each
 #. a link (none for a block that names its own hosts).
-#: src/sshpilot/advanced_config_structured_view.py:709
+#: src/sshpilot/advanced_config_structured_view.py:620
 msgid "Applies To"
 msgstr "适用于"
 
-#: src/sshpilot/advanced_config_structured_view.py:724
+#: src/sshpilot/advanced_config_structured_view.py:635
 msgid "Problems"
 msgstr "问题"
 
-#: src/sshpilot/advanced_config_structured_view.py:730
+#: src/sshpilot/advanced_config_structured_view.py:641
 msgid "Show the first problem"
 msgstr "显示第一个问题"
 
-#: src/sshpilot/advanced_config_structured_view.py:805
+#: src/sshpilot/advanced_config_structured_view.py:716
 msgid "Add a Common Option"
 msgstr "添加常用选项"
 
-#: src/sshpilot/advanced_config_structured_view.py:966
+#: src/sshpilot/advanced_config_structured_view.py:877
 msgid "The names and patterns this block is for"
 msgstr "此块适用的名称和模式"
 
-#: src/sshpilot/advanced_config_structured_view.py:967
+#: src/sshpilot/advanced_config_structured_view.py:878
 msgid "The conditions this block is for"
 msgstr "此块适用的条件"
 
-#: src/sshpilot/advanced_config_structured_view.py:971
+#: src/sshpilot/advanced_config_structured_view.py:882
 msgid "Host patterns"
 msgstr "主机模式"
 
-#: src/sshpilot/advanced_config_structured_view.py:971
+#: src/sshpilot/advanced_config_structured_view.py:882
 msgid "Match conditions"
 msgstr "Match 条件"
 
-#: src/sshpilot/advanced_config_structured_view.py:1155
+#: src/sshpilot/advanced_config_structured_view.py:1066
 msgid "A comment above the block"
 msgstr "块上方的注释"
 
-#: src/sshpilot/advanced_config_structured_view.py:1156
+#: src/sshpilot/advanced_config_structured_view.py:1067
 msgid "Note"
 msgstr "备注"
 
-#: src/sshpilot/advanced_config_structured_view.py:1201
+#: src/sshpilot/advanced_config_structured_view.py:1112
 msgid "Edit Note"
 msgstr "编辑备注"
 
-#: src/sshpilot/advanced_config_structured_view.py:1201
+#: src/sshpilot/advanced_config_structured_view.py:1112
 msgid "Add Note"
 msgstr "添加备注"
+
+#: src/sshpilot/ssh_config_answer.py:155
+msgid "Rejected"
+msgstr "被拒绝"
 
 #: src/sshpilot/route_strip.py:241
 msgid "Drag to change the order of the jump hosts"

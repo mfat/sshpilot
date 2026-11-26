@@ -25,139 +25,57 @@ from .advanced_config_widgets import (  # noqa: E402
     LineDragItem,
     gap_row,
     lift_row,
-    pill,
+    mark_unused,
     set_class,
-    set_pill,
-    struck_attributes,
+    show_verdict,
+    verdict_pill,
 )
-from .api.models.connections import SshConfigDraftLineState as State  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
 from .connection_dialog_auth import canonical_keyword  # noqa: E402
+from .ssh_config_answer import (  # noqa: E402
+    NO_EFFECT,
+    OVERRIDDEN,
+    REJECTED,
+    ConfigAnswer,
+    LineVerdict,
+)
 from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap, block_category  # noqa: E402
 from .ssh_option_list import OPENSSH_KEYWORDS  # noqa: E402
 
 
-class AnswerView:
-    """What OpenSSH answered, as the Structured view reads it."""
+class AnswerView(ConfigAnswer):
+    """What OpenSSH answered, as the Structured view reads it: the shared
+    reader (:class:`ConfigAnswer`), plus where each of the draft's lines is."""
 
     def __init__(self, evaluation=None, lines: Optional[LineMap] = None, *,
                  host: str = "", applies=None, related_hosts=None,
                  current: bool = True) -> None:
-        #: The answer when OpenSSH evaluated the draft; None otherwise (no
-        #: host, a rejected draft, a command waiting for consent).
-        self.evaluation = evaluation if evaluation is not None and evaluation.evaluated else None
+        super().__init__(evaluation)
         self.lines = lines or LineMap({}, {})
         self.host = host
         self.applies = applies
         self.related_hosts = related_hosts
         #: The answer is about the text as it is now (not one edit behind).
         self.current = current
-        self.values: Dict[str, List[str]] = {}
-        self.sources: Dict[str, object] = {}
-        self.forced: set = set()
-        self.defaults: set = set()
-        self.states: Dict[int, object] = {}
-        # A rejected line is said whether or not the rest was evaluated.
-        self.errors: Dict[int, object] = {
-            error.line: error for error in getattr(evaluation, "errors", ()) or ()
-            if not error.file
-        }
-        if self.evaluation is not None:
-            for item in self.evaluation.values:
-                self.values.setdefault(item.key, []).append(item.value)
-            self.sources = {source.key: source for source in self.evaluation.sources}
-            self.forced = {item.key for item in self.evaluation.forced}
-            self.defaults = set(self.evaluation.defaults)
-            self.states = {item.line: item for item in self.evaluation.lines}
 
-    def inherited(self, keyword: str) -> tuple:
-        """``(value, where it comes from)`` for a field this block leaves
-        empty. Empty strings when there is no answer."""
-        values = self.values.get(keyword)
-        if not values:
-            return "", ""
-        source = messages.source_label(
-            self.sources.get(keyword),
-            forced=keyword in self.forced, default=keyword in self.defaults,
-        )
-        return ", ".join(values), source
-
-    def line_state(self, uid: int) -> tuple:
-        """``(state item, error)`` of an option line, by its uid."""
-        line = self.lines.options.get(uid, 0)
-        if not line:
-            return None, None
-        return self.states.get(line), self.errors.get(line)
-
-
-def _instead(answer: AnswerView, uid: int, keyword: str) -> str:
-    """While option line *uid* goes unused: markup saying what OpenSSH
-    takes instead and from where ("" when it is used, or when there is no
-    one host's answer to say it from, as for a pattern block)."""
-    item, error = answer.line_state(uid)
-    if error is not None or item is None or item.state not in (State.SHADOWED, State.FORCED):
-        return ""
-    values = answer.values.get(keyword.lower())
-    if not values:
-        return ""
-    value = ", ".join(values)
-    if item.state is State.FORCED:
-        return messages.used_instead_markup(value, "", forced=True)
-    place = messages.where(item.decided_file, item.decided_line, item.decided_block)
-    return messages.used_instead_markup(value, place)
+    def line_verdict(self, uid: int, keyword: str = "") -> LineVerdict:
+        """The mark of an option line, by its uid."""
+        return self.verdict(self.lines.options.get(uid, 0), keyword)
 
 
 def _state_pill(view: "StructuredView") -> Gtk.Label:
     """The pill that says what OpenSSH does with a line. A "No effect" one
     is a link: a click shows the line that is used instead, as a source
     does in Effective."""
-    label = pill(style="warning")
-    label._target = None
-    click = Gtk.GestureClick()
-    click.connect("released", lambda *_a: _follow_pill(view, label))
-    label.add_controller(click)
-    return label
+    return verdict_pill(lambda target: _follow(view, target))
 
 
-def _follow_pill(view: "StructuredView", label: Gtk.Label) -> None:
-    target = label._target
-    if target is None:
-        return
+def _follow(view: "StructuredView", target) -> None:
     file, line = target
     if file:
         view.controller.reveal_source(file, line)
     else:
         view.controller.reveal_line(line)
-
-
-def _set_pill_target(label: Gtk.Label, target) -> None:
-    if getattr(label, "_target", None) == target:
-        return
-    label._target = target
-    label.set_cursor_from_name("pointer" if target else None)
-    set_class(label, "advcfg-pill-link", target is not None)
-
-
-def _line_pill(label: Gtk.Label, item, error) -> bool:
-    """Say what OpenSSH does with a line: only what needs saying (no effect,
-    overridden, rejected). Returns whether the line is unused."""
-    if error is not None:
-        set_pill(label, _("Rejected"), "error", messages.error_text(error))
-        _set_pill_target(label, None)
-        return False
-    if item is not None and item.state in (State.SHADOWED, State.FORCED):
-        text = _("No effect") if item.state is State.SHADOWED else messages.state_label(item.state)
-        tooltip = messages.state_tooltip(item)
-        target = None
-        if item.state is State.SHADOWED and item.decided_line:
-            target = (item.decided_file, item.decided_line)
-            tooltip += "\n" + messages.show_line_hint()
-        set_pill(label, text, messages.STATE_STYLES[item.state], tooltip)
-        _set_pill_target(label, target)
-        return True
-    set_pill(label, "", "muted")
-    _set_pill_target(label, None)
-    return False
 
 
 class _Syncing:
@@ -452,29 +370,22 @@ class LineRow:
             self._check_key(self.key.get_text(), self.value.get_text())
 
     def show(self, answer: AnswerView) -> None:
-        item, error = answer.line_state(self.uid)
-        unused = _line_pill(self.state, item, error)
+        option = self.view.controller.editor.find_option(self.uid)[1]
+        keyword = canonical_keyword(option.keyword) if option else ""
+        verdict = answer.line_verdict(self.uid, keyword)
+        show_verdict(self.state, verdict)
         # A line that does not take effect is struck through and tinted
         # yellow, as overridden declarations are in browser developer tools:
         # valid, just not used. Red (error) is for a line OpenSSH rejects.
-        struck = unused and error is None
         for entry in (self.key, self.value):
-            set_class(entry, "error", error is not None)
-            set_class(entry, "advcfg-unused", struck)
-            # Adwaita's warning entry: tinted, as the editor marks a field
-            # whose value has no effect.
-            set_class(entry, "warning", struck)
-            # GtkText ignores CSS text-decoration: a Pango attribute it is
-            # (cleared with an empty list: the binding refuses None).
-            if getattr(entry, "_struck", False) != struck:
-                entry._struck = struck
-                entry.set_attributes(struck_attributes(struck))
-        option = self.view.controller.editor.find_option(self.uid)[1]
-        keyword = canonical_keyword(option.keyword) if option else ""
+            set_class(entry, "error", verdict.state == REJECTED)
+            mark_unused(entry, verdict.unused)
         # Empty: what the host gets from elsewhere, greyed in the field.
         inherited = answer.inherited(keyword)[0] if keyword else ""
         self.value.set_placeholder_text(inherited or _("Value"))
-        text = _instead(answer, self.uid, keyword) if option else ""
+        # Under the fields, while the line goes unused: what is used
+        # instead ("" for a pattern block: no one host's answer says it).
+        text = verdict.note_markup if option and verdict.unused else ""
         if self.instead.get_label() != text:
             self.instead.set_label(text)
         self.instead.set_visible(bool(text))
@@ -1064,12 +975,12 @@ class StructuredView(Gtk.Box):
         unused = overridden = rejected = 0
         first = None
         for option in (block.options if block is not None and not block.disabled else ()):
-            item, error = answer.line_state(option.uid)
-            if error is not None:
+            state = answer.line_verdict(option.uid).state
+            if state == REJECTED:
                 rejected += 1
-            elif item is not None and item.state is State.SHADOWED:
+            elif state == NO_EFFECT:
                 unused += 1
-            elif item is not None and item.state is State.FORCED:
+            elif state == OVERRIDDEN:
                 overridden += 1
             else:
                 continue

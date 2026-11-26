@@ -218,7 +218,7 @@ class _OptionRow(Gtk.ListBoxRow):
         Configuration draws a line that has no effect: valid, still saved,
         just not used. Adwaita's error style stays for a refused value.
         """
-        from .advanced_config_widgets import struck_attributes
+        from .advanced_config_widgets import mark_unused
 
         unused = bool(note) and unused
         self.note_label.set_label(note or "")
@@ -229,17 +229,10 @@ class _OptionRow(Gtk.ListBoxRow):
         else:
             self.note_label.remove_css_class("warning")
             self.note_label.add_css_class("dim-label")
-        struck = unused and not self.error
-        if struck:
-            self.value_entry.add_css_class("warning")
-        else:
-            self.value_entry.remove_css_class("warning")
-        if getattr(self.value_entry, "_sshpilot_struck", False) != struck:
-            self.value_entry._sshpilot_struck = struck
-            try:
-                self.value_entry.set_attributes(struck_attributes(struck))
-            except Exception:
-                pass
+        try:
+            mark_unused(self.value_entry, unused and not self.error)
+        except Exception:
+            pass
 
 
 class SshOptionList(Gtk.Box):

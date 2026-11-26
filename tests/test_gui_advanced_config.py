@@ -821,9 +821,9 @@ def test_lines_that_do_not_take_effect_are_struck_through_and_rejected_ones_red(
         block = win.draft.blocks[0]
         rows = [win.structured.line_rows[o.uid] for o in block.options]
         assert _pump(lambda: rows[1].state.get_label() == "No effect")
-        assert rows[1].value._struck                                  # struck through
+        assert rows[1].value.get_delegate()._sshpilot_struck    # struck through
         assert not rows[1].value.has_css_class("dim-label")          # not dimmed
-        assert not getattr(rows[0].value, "_struck", False)          # used: plain
+        assert not getattr(rows[0].value.get_delegate(), "_sshpilot_struck", False)  # used
         rows[2].value.set_text("abc")                                # OpenSSH rejects it
         assert _pump(lambda: rows[2].state.get_label() == "Rejected")
         assert rows[2].value.has_css_class("error") and rows[2].state.has_css_class("error")

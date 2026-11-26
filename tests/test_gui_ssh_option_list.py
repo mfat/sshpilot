@@ -426,7 +426,7 @@ def test_a_note_saying_the_value_is_unused_strikes_and_tints_the_value(gui):
 
     assert unused.value_entry.has_css_class("warning")
     assert not unused.value_entry.has_css_class("error")
-    assert unused.value_entry._sshpilot_struck
+    assert unused.value_entry.get_delegate()._sshpilot_struck
     assert unused.note_label.has_css_class("warning")
     assert not unused.note_label.has_css_class("dim-label")
     assert not added.value_entry.has_css_class("warning")
@@ -437,7 +437,7 @@ def test_a_note_saying_the_value_is_unused_strikes_and_tints_the_value(gui):
     notes.pop("Compression")
     options.refresh_notes()
     assert not unused.value_entry.has_css_class("warning")
-    assert not unused.value_entry._sshpilot_struck
+    assert not unused.value_entry.get_delegate()._sshpilot_struck
     assert not unused.note_label.get_visible()
 
 
