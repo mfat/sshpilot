@@ -42,6 +42,19 @@ pytestmark = pytest.mark.skipif(
 OVERRIDES = ("-o", "ConnectTimeout=7", "-o", "User=forced")
 
 
+
+def _as_user_folder(path):
+    """On Windows, give pytest's folder the ACL of a user's own folder.
+
+    pytest creates it with an OWNER RIGHTS entry that the files inside
+    inherit, and OpenSSH for Windows refuses such a file when it is
+    included ("Bad permissions"); a user's own folders have no such entry.
+    """
+    if sys.platform == "win32":
+        from sshpilot.platform.windows.acl import drop_owner_rights
+
+        drop_owner_rights(path)
+
 def _ssh_g(args, host):
     out = subprocess.run(
         ["ssh", *args, "-G", host], capture_output=True, text=True, check=True,
@@ -64,12 +77,7 @@ def _request(text, host="web1", **kwargs):
 # -- isolated mode: the root is launched with -F -------------------------------
 
 def test_isolated_draft_matches_the_saved_launch(tmp_path):
-    if sys.platform == "win32":
-        # pytest's folder carries the OWNER RIGHTS entry OpenSSH for Windows
-        # refuses in an included file; a user's own folders do not.
-        from sshpilot.platform.windows.acl import drop_owner_rights
-
-        drop_owner_rights(tmp_path)
+    _as_user_folder(tmp_path)
     included = tmp_path / "extra.conf"
     included.write_text("Host web*\n    Port 2200\n    Compression yes\n")
     root = tmp_path / "isolated" / "config"
@@ -539,6 +547,7 @@ def test_no_answer_about_the_blocks_is_no_answer_at_all(tmp_path, monkeypatch):
 # -- the draft of an included file ------------------------------------------------
 
 def _included_tree(tmp_path):
+    _as_user_folder(tmp_path)
     inc, deep, root = tmp_path / "inc.conf", tmp_path / "deep.conf", tmp_path / "config"
     inc_text = (
         f"Compression yes\nHost a.prod\n    User incuser\n    Port 2200\n"
