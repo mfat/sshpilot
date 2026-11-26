@@ -5,6 +5,9 @@ name: Windows
 
 on:
   push:
+    # dev and main run only the tests: the package job builds on tags and
+    # manual runs.
+    branches: [dev, main]
     tags:
       - 'v*'
   pull_request:
