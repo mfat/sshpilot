@@ -1291,9 +1291,8 @@ def test_list_config_conflicts_completes_without_geteuid(tmp_path, monkeypatch):
     repo.root_config_path = root
     repo.ssh_config_isolated = False
     service = ConnectionApplicationService(repo)
-    monkeypatch.setattr(os, "name", "nt")
-    if hasattr(os, "geteuid"):
-        monkeypatch.delattr(os, "geteuid")
+    monkeypatch.setattr("sshpilot.platform.paths.openssh_user_dir", lambda: tmp_path)
+    monkeypatch.delattr(os, "geteuid", raising=False)
 
     conflicts = service.list_config_conflicts()
 

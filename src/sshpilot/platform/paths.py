@@ -6,10 +6,12 @@ CLI consumers should prefer these stdlib resolvers.
 from __future__ import annotations
 
 import os
+import stat
 import sys
 from pathlib import Path
 
 APP_NAME = "sshpilot"
+_SANDBOX_OVERFLOW_UID = 65534
 
 
 def _windows_base(env_var: str, fallback: str) -> Path:
@@ -48,6 +50,28 @@ def openssh_user_dir() -> Path:
         except (ImportError, KeyError, OSError):
             pass
     return get_home_dir() / ".ssh"
+
+
+def direct_f_workaround_for_unmapped_user_ssh_config(config_path: str) -> bool:
+    """Whether to use direct ``-F`` on ``realpath`` for #1384 / Flatpak #6982.
+
+    Only when ``stat()`` shows the sandbox overflow UID, the mode is not
+    group/world-writable, the process runs inside Flatpak, and the resolved
+    path lies under ``/nix/store/``.  Any other unexpected owner keeps plain
+    ``ssh host`` so OpenSSH's own rejection still applies.
+    """
+    from .detect import is_flatpak
+
+    try:
+        st = os.stat(config_path)
+    except OSError:
+        return False
+    if st.st_uid != _SANDBOX_OVERFLOW_UID:
+        return False
+    if stat.S_IMODE(st.st_mode) & (stat.S_IWGRP | stat.S_IWOTH):
+        return False
+    resolved = os.path.realpath(config_path)
+    return is_flatpak() and resolved.startswith("/nix/store/")
 
 
 def is_openssh_user_config(path) -> bool:

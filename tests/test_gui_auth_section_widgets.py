@@ -244,7 +244,7 @@ def test_the_line_shows_in_red_with_its_reason_when_another_setting_wins(gtk):
     assert section.effective_row.has_css_class("error")
     # The reason names the row it is about; the note's text is not markup.
     assert section.effective_row.get_tooltip_markup() == (
-        "<b>Password</b>\nNot used: “Host *” &lt;sets&gt; it &amp; wins."
+        "<b>Password</b>\nNo effect: “Host *” &lt;sets&gt; it &amp; wins."
     )
     # Unchecking the overruled method ends the conflict: the line goes.
     section.rows["password"]._check.set_active(False)

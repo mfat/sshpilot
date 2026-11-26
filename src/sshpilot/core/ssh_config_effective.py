@@ -15,7 +15,6 @@ import logging
 import os
 import re
 import socket
-import stat
 import subprocess
 import tempfile
 from collections import Counter
@@ -24,7 +23,12 @@ from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Uni
 
 from sshpilot.platform.process import hidden_console_kwargs
 
-from ..platform.paths import include_base_dir, is_openssh_user_config, openssh_user_dir
+from ..platform.paths import (
+    direct_f_workaround_for_unmapped_user_ssh_config,
+    include_base_dir,
+    is_openssh_user_config,
+    openssh_user_dir,
+)
 from ..ssh_config_document import (
     SSHConfigDocument,
     _split_keyword,
@@ -34,9 +38,6 @@ from ..ssh_config_document import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Unmapped host UID inside user namespaces (Flatpak #6982, sshPilot #1384).
-_SANDBOX_OVERFLOW_UID = 65534
 
 _PATH_DIRECTIVES = frozenset(
     {
@@ -208,35 +209,13 @@ def trusted_default_user_ssh_config_owner(config_path: str) -> bool:
     so the default user config is always treated as trusted for launch-file
     selection (plain ``ssh host`` without ``-F``).
     """
-    if os.name == "nt":
+    if not hasattr(os, "geteuid"):
         return True
     try:
         owner = os.stat(config_path).st_uid
     except OSError:
         return True
     return owner in (0, os.geteuid())
-
-
-def direct_f_workaround_for_unmapped_user_ssh_config(config_path: str) -> bool:
-    """Whether to use direct ``-F`` on ``realpath`` for #1384 / Flatpak #6982.
-
-    Only when ``stat()`` shows the sandbox overflow UID, the mode is not
-    group/world-writable, the process runs inside Flatpak, and the resolved
-    path lies under ``/nix/store/``.  Any other unexpected owner keeps plain
-    ``ssh host`` so OpenSSH's own rejection still applies.
-    """
-    from ..platform.detect import is_flatpak
-
-    try:
-        st = os.stat(config_path)
-    except OSError:
-        return False
-    if st.st_uid != _SANDBOX_OVERFLOW_UID:
-        return False
-    if stat.S_IMODE(st.st_mode) & (stat.S_IWGRP | stat.S_IWOTH):
-        return False
-    resolved = os.path.realpath(config_path)
-    return is_flatpak() and resolved.startswith("/nix/store/")
 
 
 def launch_config_file(

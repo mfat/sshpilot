@@ -455,12 +455,15 @@ def test_the_note_is_saved_cancelled_or_removed_and_the_title_follows(window):
     structured = window.structured
     web = window.draft.blocks[1]
     assert structured.head_title.get_label() == "web1 web2"
+    _show(window)
     structured.note_popover.popup()
     structured.note_row.set_text("typed, then cancelled")
     structured.note_popover.popdown()                    # Cancel: nothing written
-    assert web.note == "" and not structured.note_label.get_visible()
+    assert web.note == "web servers"
+    assert structured.note_label.get_visible()
+    assert structured.note_label.get_label() == "# web servers"
     structured.note_popover.popup()
-    assert structured.note_row.get_text() == ""          # what was cancelled is gone
+    assert structured.note_row.get_text() == "web servers"
     structured.note_row.set_text("Front ends")
     structured.note_row.emit("activate")                 # Enter saves
     assert window.draft.blocks[1].note == "Front ends"
@@ -576,7 +579,7 @@ def test_a_common_option_is_added_at_the_end_and_edited_in_its_row(window):
     window.undo()
     assert "Port 2222" in window.editor.text
     assert _field(window, "port").value.get_text() == "2222"
-    assert [o.key for o in web.options][:3] == ["User", "Port", "IdentityFile"]
+    assert [o.key for o in window.draft.blocks[1].options][:3] == ["User", "Port", "IdentityFile"]
 
 
 def test_every_line_is_a_keyword_and_a_value(gtk, tmp_path):
@@ -600,7 +603,7 @@ def test_every_line_is_a_keyword_and_a_value(gtk, tmp_path):
 
 def test_lines_move_up_and_down_and_undo_restores_them(window):
     web = window.draft.blocks[1]
-    keys = lambda: [o.key for o in web.options]
+    keys = lambda: [o.key for o in window.draft.blocks[1].options]
     rows = lambda: [window.structured.line_rows[o.uid] for o in web.options]
     assert keys() == ["User", "Port", "IdentityFile"]
     assert not rows()[0].up.get_sensitive() and not rows()[-1].down.get_sensitive()
@@ -618,6 +621,7 @@ def test_a_line_dropped_by_its_grip_lands_where_the_gap_opened(window):
     web = window.draft.blocks[1]
     structured = window.structured
     first, last = web.options[0], web.options[-1]
+    _show(window)
     structured.line_drag_began(last.uid)
     found, bounds = structured.line_rows[first.uid].row.compute_bounds(structured.options_list)
     assert found
@@ -657,6 +661,7 @@ def test_keyword_suggestions_are_chosen_with_the_keyboard(window):
     web = window.draft.blocks[1]
     window.structured.add_option_row.emit("activated")
     row = window.structured.line_rows[web.options[-1].uid]
+    _show(window)
     row.key.grab_focus()
     row.key.set_text("Pass")
     row.suggestions.typed()
@@ -899,7 +904,7 @@ def test_effective_column_titles_sit_over_their_columns(window):
     window.show_page("effective")
     effective = window.effective
     assert _pump(lambda: any(item.cell for item in effective._items.values()))
-    _pump(lambda: False, seconds=0.3)                  # laid out
+    _show(window)
     header = effective.table.get_first_child().get_first_child()
     titles = []
     child = header.get_first_child()
@@ -1421,7 +1426,8 @@ def test_an_included_file_is_shown_evaluated_and_saved(gtk, tmp_path):
         assert _selected(win) == "inc1"
         assert win.structured.head_file.get_label() == "hosts.conf"
         assert files[""].get_activatable() and not files[str(included)].get_activatable()
-        assert _pump(lambda: _command(win) == "ssh -G inc1")
+        assert _settled(win)
+        assert _command(win) == "ssh -G inc1"
         assert _effective(win, "port") == "2200"            # the root's line counts too
 
         _field(win, "user").value.set_text("carol")
