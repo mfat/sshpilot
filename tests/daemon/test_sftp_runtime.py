@@ -132,6 +132,8 @@ class _FakeSftpClient:
         self.directories.add(path)
 
     def open(self, path, mode):
+        if mode == "xb" and (path in self.files or path in self.directories):
+            raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "exists")
         return _File(self, path, mode)
 
     def rename(self, old, new):

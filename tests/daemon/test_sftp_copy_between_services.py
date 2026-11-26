@@ -94,6 +94,9 @@ class _Untouchable(_FsClient):
     def stat(self, path):  # pragma: no cover - asserted not called
         raise AssertionError(f"destination session stat {path}")
 
+    def lstat(self, path):  # pragma: no cover - asserted not called
+        raise AssertionError(f"destination session lstat {path}")
+
 
 def test_tree_copies_to_another_server():
     source, destination = _tree_client(), _FsClient()
@@ -179,7 +182,7 @@ def test_lost_destination_fails_that_service_and_leaves_no_partial_file():
 
     def _open(path, mode):
         handle = original_open(path, mode)
-        if mode == "wb":
+        if mode != "rb":
             def _write(_data):
                 raise EOFError("connection closed")
             handle.write = _write

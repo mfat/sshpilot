@@ -2126,52 +2126,72 @@ class SftpServiceRuntime:
         def _copy_file(
             source_path: str, destination_path: str, size: Optional[int] = None
         ) -> None:
-            """Copy one file; *size* (a single-file copy) turns on byte progress."""
+            """Copy one file; *size* (a single-file copy) turns on byte progress.
+
+            The destination is created exclusively: a file that appeared there
+            since the checks (another client, a refused rename) is never
+            truncated, and on failure only a file this copy created is removed.
+            """
             nonlocal copied, pending_files
             if cancel is not None and cancel():
                 raise OperationCancelled()
+            created = False
             try:
-                with client.open(source_path, "rb") as source_file, destination_client.open(
-                    destination_path, "wb"
-                ) as destination_file:
-                    if not (
-                        same_server
-                        and _server_side_copy(client, source_file, destination_file)
-                    ):
-                        done = 0
-                        reported = 0.0
-                        while True:
-                            if cancel is not None and cancel():
-                                raise OperationCancelled()
-                            chunk = source_file.read(_COPY_BLOCK)
-                            if not chunk:
-                                break
-                            destination_file.write(chunk)
-                            done += len(chunk)
-                            if progress is not None and size:
-                                fraction = min(done / size, 0.99)
-                                if fraction - reported >= 0.01:
-                                    reported = fraction
-                                    progress(fraction)
-            except BaseException:
-                # The destination did not exist before (checked above, or its
-                # directory was just created): never leave a partial file.
-                try:
-                    destination_client.remove(destination_path)
-                except Exception:
-                    pass
+                with client.open(source_path, "rb") as source_file:
+                    destination_file = destination_client.open(destination_path, "xb")
+                    created = True
+                    with destination_file:
+                        _copy_bytes(source_file, destination_file, size)
+            except BaseException as exc:
+                if created:
+                    try:
+                        destination_client.remove(destination_path)
+                    except Exception:
+                        pass
+                elif (
+                    destination_path == destination
+                    and not isinstance(exc, OperationCancelled)
+                    and _destination_exists()
+                ):
+                    # The exclusive open lost a race for the name.
+                    raise _exists_error() from exc
                 raise
             copied += 1
             _report_copy_progress()
 
+        def _copy_bytes(source_file: Any, destination_file: Any, size: Optional[int]) -> None:
+            """Stream *source_file* into *destination_file*, unless the server
+            copies for us; *size* turns on byte progress."""
+            if not (
+                same_server
+                and _server_side_copy(client, source_file, destination_file)
+            ):
+                done = 0
+                reported = 0.0
+                while True:
+                    if cancel is not None and cancel():
+                        raise OperationCancelled()
+                    chunk = source_file.read(_COPY_BLOCK)
+                    if not chunk:
+                        break
+                    destination_file.write(chunk)
+                    done += len(chunk)
+                    if progress is not None and size:
+                        fraction = min(done / size, 0.99)
+                        if fraction - reported >= 0.01:
+                            reported = fraction
+                            progress(fraction)
+
         def _moved_by_rename() -> bool:
             """Move within one server by renaming, as ``mv`` does (#1356).
 
-            Plain SFTP RENAME never replaces an existing destination, so the
-            refusal checked above still holds. A server that cannot rename
-            here (another filesystem, no permission to link) answers with an
-            error and the move falls back to copy and remove. Only a lost
-            connection is final.
+            Plain SFTP RENAME never replaces an existing destination. When it
+            is refused because something took the name since the check, the
+            move fails as "already exists". A server that cannot rename here
+            (another filesystem, no permission to link) answers with an error
+            and the move falls back to copy and remove, whose exclusive
+            creation still never replaces a file. Only a lost connection is
+            final.
             """
             if not (request.move and same_server):
                 return False
@@ -2182,11 +2202,37 @@ class SftpServiceRuntime:
             except sftp_proto.SFTPError as exc:
                 if exc.code == sftp_proto.FX_CONNECTION_LOST:
                     raise
+                if _destination_exists():
+                    # Something took the name since the check: the rename was
+                    # refused for that, and the copy must not replace it.
+                    raise _exists_error() from exc
                 logger.debug("Rename for a move failed; copying instead: %s", exc)
                 return False
             if progress is not None:
                 progress(1.0)
             return True
+
+        def _destination_exists() -> bool:
+            """lstat, never stat: a symlink there, dangling or not, is taken."""
+            try:
+                destination_client.lstat(destination)
+            except Exception as exc:
+                missing = _unwrap_destination_error(exc)
+                if (
+                    isinstance(missing, sftp_proto.SFTPError)
+                    and getattr(missing, "errno", None) == errno.ENOENT
+                ):
+                    return False
+                raise
+            return True
+
+        def _exists_error() -> _SftpSummaryError:
+            return _SftpSummaryError(
+                ErrorCode.REMOTE_PATH_EXISTS,
+                "The destination already exists",
+                SftpFailureCode.DESTINATION_ALREADY_EXISTS,
+                details={"service_id": destination_record.service_id},
+            )
 
         def _into_itself_error() -> _SftpSummaryError:
             return _SftpSummaryError(
@@ -2295,22 +2341,8 @@ class SftpServiceRuntime:
                     SftpFailureCode.RECURSIVE_COPY_SYMLINK_UNSUPPORTED,
                     details={"service_id": record.service_id},
                 )
-            try:
-                destination_client.stat(destination)
-            except Exception as exc:
-                missing = _unwrap_destination_error(exc)
-                if not (
-                    isinstance(missing, sftp_proto.SFTPError)
-                    and getattr(missing, "errno", None) == errno.ENOENT
-                ):
-                    raise
-            else:
-                raise _SftpSummaryError(
-                    ErrorCode.REMOTE_PATH_EXISTS,
-                    "The destination already exists",
-                    SftpFailureCode.DESTINATION_ALREADY_EXISTS,
-                    details={"service_id": destination_record.service_id},
-                )
+            if _destination_exists():
+                raise _exists_error()
             if source_attr.is_dir():
                 if not request.recursive:
                     raise _SftpSummaryError(

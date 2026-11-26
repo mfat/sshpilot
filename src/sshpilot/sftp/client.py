@@ -1179,8 +1179,12 @@ class OpenSSHSFTPClient:
         same OPEN request (the server still applies its umask), saving the
         separate SETSTAT round trip."""
         m = mode.replace("b", "")
-        if m in ("w", "x"):
+        if m == "w":
             pflags = proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_TRUNC
+        elif m == "x":
+            # Exclusive creation, as Python's "x": the server refuses a path
+            # that exists, a symlink (even a dangling one) included.
+            pflags = proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_EXCL
         elif m == "a":
             pflags = proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_APPEND
         elif m in ("r+", "w+"):

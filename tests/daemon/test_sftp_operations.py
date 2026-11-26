@@ -38,6 +38,11 @@ class _FileHandle:
         self._fs = fs
         self._path = path
         self._mode = mode
+        if mode == "xb" and (
+            path in fs.files or path in fs.dirs or path in fs.links
+        ):
+            # O_EXCL: a real server refuses any existing path, links too.
+            raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE)
         if mode == "rb":
             self._data = fs.files.get(path, b"")
             self._pos = 0
@@ -57,7 +62,7 @@ class _FileHandle:
         self._data.extend(data)
 
     def close(self):
-        if self._mode == "wb":
+        if self._mode in ("wb", "xb"):
             self._fs.files[self._path] = bytes(self._data)
             self._fs._register_child(self._path)
 
@@ -644,3 +649,95 @@ def test_single_file_move_as_operation_removes_the_source():
     assert done.state is OperationState.SUCCEEDED
     assert fs.files["/moved"] == content
     assert "/big" not in fs.files
+
+
+def _move_file(fs, source="/big", destination="/moved"):
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_copy(
+        SftpCopyRequest(summary.id, source, destination, move=True, as_operation=True),
+        client_id=OWNER,
+    )
+    return _await_terminal(ops, started.operation_id)
+
+
+def test_destination_created_between_check_and_rename_is_never_replaced():
+    """Another client takes the name after the preflight: the server refuses
+    the rename for that, and the move must not fall back to a copy that
+    truncates their file."""
+    fs = _single_file_client(1024)
+    content = fs.files["/big"]
+    real_rename = fs.rename
+
+    def _raced_rename(old, new):
+        fs.add_file(new, b"theirs")
+        fs._register_child(new)
+        return real_rename(old, new)
+
+    fs.rename = _raced_rename
+    done = _move_file(fs)
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DESTINATION_ALREADY_EXISTS
+    assert fs.files["/moved"] == b"theirs"
+    assert fs.files["/big"] == content
+
+
+def test_destination_created_before_the_fallback_copy_is_never_truncated():
+    """The rename is refused for another reason (another filesystem), and
+    the name is taken just before the copy opens it: the exclusive open
+    fails, and the file is neither truncated nor removed."""
+    fs = _single_file_client(1024)
+    content = fs.files["/big"]
+    fs.rename_error = sftp_proto.FX_FAILURE
+    real_open = fs.open
+
+    def _raced_open(path, mode):
+        if path == "/moved" and mode != "rb" and "/moved" not in fs.files:
+            fs.add_file("/moved", b"theirs")
+        return real_open(path, mode)
+
+    fs.open = _raced_open
+    done = _move_file(fs)
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DESTINATION_ALREADY_EXISTS
+    assert fs.files["/moved"] == b"theirs"
+    assert fs.files["/big"] == content
+
+
+def test_failed_fallback_copy_removes_only_the_file_it_created():
+    fs = _single_file_client(4 * 1024 * 1024)
+    content = fs.files["/big"]
+    fs.rename_error = sftp_proto.FX_FAILURE
+    real_open = fs.open
+
+    def _failing_open(path, mode):
+        handle = real_open(path, mode)
+        if mode == "xb":
+            def _write(_data):
+                raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE)
+            handle.write = _write
+        return handle
+
+    fs.open = _failing_open
+    done = _move_file(fs)
+
+    assert done.state is OperationState.FAILED
+    assert "/moved" not in fs.files
+    assert fs.files["/big"] == content
+
+
+def test_dangling_symlink_destination_is_refused():
+    """stat follows a link and calls a dangling one missing; the preflight
+    lstats, so the link counts as taken."""
+    fs = _single_file_client(1024)
+    fs.add_link("/moved", target="/nowhere")
+    with pytest.raises(sftp_proto.SFTPError):
+        fs.stat("/moved")
+
+    done = _move_file(fs)
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DESTINATION_ALREADY_EXISTS
+    assert fs.rename_calls == []
+    assert "/moved" in fs.links and "/moved" not in fs.files
