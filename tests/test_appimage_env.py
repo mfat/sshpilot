@@ -6,7 +6,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from sshpilot import appimage_env
+
+# AppImages exist only on Linux, and these tests run /bin/sh and look up
+# programs on PATH the POSIX way.
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="AppImages are Linux-only"
+)
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 

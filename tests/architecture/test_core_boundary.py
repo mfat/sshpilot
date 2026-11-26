@@ -291,6 +291,9 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
     ("startup_info.py", "subprocess"): "frontend",
     ("startup_info.py", "ssh_binary"): "frontend",  # ssh -V version probe
     ("sshpilot_agent.py", "subprocess"): "frontend",  # local getent lookups
+    # Wraps Popen so host programs started from the AppImage get the host's
+    # environment back; it launches nothing itself.
+    ("appimage_env.py", "subprocess"): "frontend",
 }
 
 
