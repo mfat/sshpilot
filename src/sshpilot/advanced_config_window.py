@@ -94,14 +94,6 @@ _PREFETCH_HOSTS = 150
 PAGES = ("structured", "effective", "raw")
 
 _CSS = """
-.advcfg-pill { font-size: 0.82em; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
-.advcfg-pill.success { background-color: alpha(@success_color, 0.16); color: @success_color; }
-.advcfg-pill.warning { background-color: alpha(@warning_color, 0.18); color: @warning_color; }
-.advcfg-pill.error { background-color: alpha(@error_color, 0.16); color: @error_color; }
-.advcfg-pill.accent { background-color: alpha(@accent_color, 0.15); color: @accent_color; }
-.advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
-.advcfg-pill.advcfg-pill-link:hover { text-decoration: underline; }
-.advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
 .advcfg-context { padding: 12px 16px 0 16px; }
 .advcfg-title-card { padding: 0; }
 /* The card is libadwaita's .osd (dark, partly see-through, light text,
@@ -173,6 +165,9 @@ _css_installed = False
 
 def _ensure_css() -> None:
     global _css_installed
+    from .advanced_config_widgets import ensure_shared_css
+
+    ensure_shared_css()
     display = Gdk.Display.get_default()
     if _css_installed or display is None:
         return

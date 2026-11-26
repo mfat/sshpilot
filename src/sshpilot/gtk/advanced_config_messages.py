@@ -249,6 +249,29 @@ def used_instead_markup(value: str, place: str, forced: bool = False) -> str:
         "{value}", shown).replace("{place}", escape(place))
 
 
+def used_instead_text(value: str, place: str, forced: bool = False) -> str:
+    """:func:`used_instead_markup` as plain text, for a tooltip."""
+    if forced:
+        return _("Settings ▸ SSH Options use {value}").format(value=value)
+    return _("OpenSSH uses {value} from {place}").format(value=value, place=place)
+
+
+def inherited_text(value: str, source, *, forced: bool = False,
+                   default: bool = False) -> str:
+    """What a field the block leaves empty gets, and from where: worded as
+    a line that goes unused is, since the value is decided the same way."""
+    if forced:
+        return used_instead_text(value, "", forced=True)
+    if source is not None:
+        return used_instead_text(
+            value, where(source.file, source.line, source.block)
+        )
+    if default:
+        # Translators: {value} is an option's value, e.g. "OpenSSH default: 22".
+        return _("OpenSSH default: {value}").format(value=value)
+    return ""
+
+
 def jump_text(place: str) -> str:
     """The toast after following a link: where it went (Back returns)."""
     # Translators: e.g. "Showing line 2 (Host zoo)".

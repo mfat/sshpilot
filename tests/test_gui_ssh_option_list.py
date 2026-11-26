@@ -391,17 +391,16 @@ def test_refresh_notes_follows_what_the_note_depends_on(gui):
     assert not row.note_label.get_visible()
 
 
-def test_advanced_tab_notes_options_that_settings_override(gui):
+def test_advanced_tab_notes_options_that_do_not_take_effect(gui):
     """The dialog supplies the note; the tab asks it for each of its rows."""
     import types
 
     from sshpilot.connection_dialog import SSHConfigAdvancedTab
-    from sshpilot.connection_dialog_overrides import advanced_option_note
 
-    forced = {"serveraliveinterval": "15"}
+    notes = {("ServerAliveInterval", "90"): ("Settings ▸ SSH Options use 15", True)}
     synced = []
     dialog = types.SimpleNamespace(
-        _advanced_option_note=lambda k, v: advanced_option_note(k, v, forced),
+        _advanced_option_note=lambda k, v: notes.get((k, v)),
         _sync_override_banner=lambda: synced.append(True),
     )
     tab = SSHConfigAdvancedTab(None, parent_dialog=dialog)
@@ -413,10 +412,10 @@ def test_advanced_tab_notes_options_that_settings_override(gui):
     assert tab.get_extra_ssh_config() == "ServerAliveInterval 90\nTCPKeepAlive no"
 
 
-def test_a_note_saying_the_value_is_unused_draws_the_row_in_error_style(gui):
-    """``(text, True)`` from the note callback: the value is never used, so the
-    value field and the note take Adwaita's error style; a plain remark keeps
-    the dim style. Nothing is refused either way."""
+def test_a_note_saying_the_value_is_unused_strikes_and_tints_the_value(gui):
+    """``(text, True)`` from the note callback: the value is never used, so it
+    is struck through and tinted as Advanced Configuration draws a line with
+    no effect; a plain remark keeps the dim style. Nothing is refused."""
     notes = {
         "Compression": ("No effect: Host * sets yes", True),
         "SendEnv": ("Both are used", False),
@@ -425,17 +424,20 @@ def test_a_note_saying_the_value_is_unused_draws_the_row_in_error_style(gui):
     options.set_options([("Compression", "no"), ("SendEnv", "TERM"), ("Ciphers", "x")])
     unused, added, plain = options.rows()
 
-    assert unused.value_entry.has_css_class("error")
-    assert unused.note_label.has_css_class("error")
+    assert unused.value_entry.has_css_class("warning")
+    assert not unused.value_entry.has_css_class("error")
+    assert unused.value_entry._sshpilot_struck
+    assert unused.note_label.has_css_class("warning")
     assert not unused.note_label.has_css_class("dim-label")
-    assert not added.value_entry.has_css_class("error")
+    assert not added.value_entry.has_css_class("warning")
     assert added.note_label.has_css_class("dim-label")
     assert not plain.note_label.get_visible()
     assert options.get_options() == [("Compression", "no"), ("SendEnv", "TERM"), ("Ciphers", "x")]
 
     notes.pop("Compression")
     options.refresh_notes()
-    assert not unused.value_entry.has_css_class("error")
+    assert not unused.value_entry.has_css_class("warning")
+    assert not unused.value_entry._sshpilot_struck
     assert not unused.note_label.get_visible()
 
 

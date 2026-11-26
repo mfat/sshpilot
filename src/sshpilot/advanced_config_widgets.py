@@ -71,6 +71,55 @@ def gap_row(height: int) -> Gtk.ListBoxRow:
     return gap
 
 
+#: The look Advanced Configuration and the connection editor share: the
+#: status pills, and a value that does not take effect, struck through.
+#: GtkText ignores CSS text-decoration, so a field's text is struck with a
+#: Pango attribute (:func:`struck_attributes`); a row's title is a label,
+#: which honours CSS.
+_SHARED_CSS = """
+.advcfg-pill { font-size: 0.82em; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+.advcfg-pill.success { background-color: alpha(@success_color, 0.16); color: @success_color; }
+.advcfg-pill.warning { background-color: alpha(@warning_color, 0.18); color: @warning_color; }
+.advcfg-pill.error { background-color: alpha(@error_color, 0.16); color: @error_color; }
+.advcfg-pill.accent { background-color: alpha(@accent_color, 0.15); color: @accent_color; }
+.advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
+.advcfg-pill.advcfg-pill-link:hover { text-decoration: underline; }
+.advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
+row.advcfg-unused label.title { text-decoration-line: line-through; }
+"""
+_shared_css_installed = False
+
+
+def ensure_shared_css() -> None:
+    global _shared_css_installed
+    display = Gdk.Display.get_default()
+    if _shared_css_installed or display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(_SHARED_CSS.encode("utf-8"))
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _shared_css_installed = True
+
+
+_STRUCK: list = []
+
+
+def struck_attributes(struck: bool = True):
+    """The text attributes of a value that does not take effect (an empty
+    list when *struck* is false: the binding refuses None)."""
+    from gi.repository import Pango
+
+    if not struck:
+        return Pango.AttrList()
+    if not _STRUCK:
+        attrs = Pango.AttrList()
+        attrs.insert(Pango.attr_strikethrough_new(True))
+        _STRUCK.append(attrs)
+    return _STRUCK[0]
+
+
 def pill(text: str = "", style: str = "muted") -> Gtk.Label:
     """A small rounded label: a state, a source, a count."""
     label = Gtk.Label(label=text)

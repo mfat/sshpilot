@@ -8,7 +8,6 @@
 """
 from __future__ import annotations
 
-import types
 
 import pytest
 
@@ -17,7 +16,6 @@ from sshpilot.api.models.login_profiles import (
     LoginProfileSnapshot,
     LoginProfileSummary,
 )
-from sshpilot.api.models.settings import GlobalSshOverrides
 from tests.test_gui_auth_section_widgets import gtk  # noqa: F401 - fixture
 from tests.test_gui_connection_dialog_overrides import _Manager, _pump
 
@@ -57,37 +55,22 @@ def _dialog(*earlier, forced=()):
     above it, and ``ssh -G``'s answer for a host with no order of its own."""
     from gi.repository import Gtk
 
-    from sshpilot.api.models.connections import (
-        EarlierDirective,
-        EffectiveConfigComparison,
-    )
     from sshpilot.connection_dialog import ConnectionDialog
     from sshpilot.connection_model import Connection
     from sshpilot.plugins.loader import ensure_builtin_protocols
+    from tests.editor_answer_rig import RealConfigClient
 
     ensure_builtin_protocols()
-    comparison = EffectiveConfigComparison(
-        connection_id="web", host="web", available=True,
-        full=("hostname web.example.com",),
-        earlier=tuple(
-            EarlierDirective(
-                key=key, value=value, block="Host *",
-                file="/home/me/.ssh/config", line=number,
-            )
-            for number, (key, value) in enumerate(earlier, start=2)
-        ),
-    )
-    snapshot = GlobalSshOverrides(
-        revision="r1", connect_timeout=0, strict_host_key_checking="",
-        compression="", verbosity=0, debug_enabled=False, forced_options=forced,
-    )
+    # A ``Host *`` above the host's block sets *earlier*, from line 2 on;
+    # OpenSSH itself answers the dialog's questions.
+    text = "".join(
+        ["Host *\n"] + [f"    {key} {value}\n" for key, value in earlier]
+    ) if earlier else ""
+    text += "\nHost web\n    HostName web.example.com\n"
     parent = Gtk.Window()
     parent.connection_manager = _Manager()
     parent._daemon_ready = lambda: True
-    parent.client = types.SimpleNamespace(
-        get_global_ssh_overrides=lambda: snapshot,
-        get_effective_config=lambda _cid: comparison,
-    )
+    parent.client = RealConfigClient(text, forced=forced)
     connection = Connection({
         "nickname": "web", "host": "web", "hostname": "web.example.com",
         "__authored_directives": ("hostname",),
@@ -100,8 +83,7 @@ def _dialog(*earlier, forced=()):
     blank = dialog.auth_policy.policy
     _pump(lambda: dialog.auth_policy.policy is not blank)
     assert dialog.auth_policy.policy is not blank, "the connection never loaded"
-    if earlier:
-        _pump(lambda: bool(getattr(dialog, "_earlier_directives", None)))
+    _pump(lambda: getattr(dialog, "_editor_answer", None) is not None)
     resolved = dict(SSH_G)
     resolved.update(dict(earlier))
     dialog.auth_policy.policy.set_inherited(resolved)
@@ -184,7 +166,7 @@ def test_an_order_an_earlier_block_beats_is_named_in_the_line(gtk):
 def test_settings_forcing_the_order_is_named_in_the_line_too(gtk):
     dialog = _dialog(forced=("PreferredAuthentications=publickey",))
     section = dialog.auth_policy
-    _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
+    _pump(lambda: bool(getattr(getattr(dialog, "_editor_answer", None), "forced", None)))
     dialog.auth_password_row._actions.activate_action("top", None)
     assert section.policy.order[0] == "password"
     assert section.preview.get_visible()

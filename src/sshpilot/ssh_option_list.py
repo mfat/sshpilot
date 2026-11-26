@@ -214,23 +214,32 @@ class _OptionRow(Gtk.ListBoxRow):
     def show_note(self, note: Optional[str], *, unused: bool = False) -> None:
         """Show a remark under the row; *unused* says the value is never used.
 
-        An unused value is drawn in Adwaita's error style, like a refused
-        one, though nothing is refused: the option is still saved.
+        An unused value is struck through and tinted, as Advanced
+        Configuration draws a line that has no effect: valid, still saved,
+        just not used. Adwaita's error style stays for a refused value.
         """
+        from .advanced_config_widgets import struck_attributes
+
         unused = bool(note) and unused
         self.note_label.set_label(note or "")
         self.note_label.set_visible(bool(note))
         if unused:
             self.note_label.remove_css_class("dim-label")
-            self.note_label.add_css_class("error")
+            self.note_label.add_css_class("warning")
         else:
-            self.note_label.remove_css_class("error")
+            self.note_label.remove_css_class("warning")
             self.note_label.add_css_class("dim-label")
-        if not self.error:
-            if unused:
-                self.value_entry.add_css_class("error")
-            else:
-                self.value_entry.remove_css_class("error")
+        struck = unused and not self.error
+        if struck:
+            self.value_entry.add_css_class("warning")
+        else:
+            self.value_entry.remove_css_class("warning")
+        if getattr(self.value_entry, "_sshpilot_struck", False) != struck:
+            self.value_entry._sshpilot_struck = struck
+            try:
+                self.value_entry.set_attributes(struck_attributes(struck))
+            except Exception:
+                pass
 
 
 class SshOptionList(Gtk.Box):

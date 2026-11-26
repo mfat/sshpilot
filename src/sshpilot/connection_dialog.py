@@ -131,6 +131,18 @@ def _entry_row_text(row):
     return None
 
 
+def _set_inherited_hint(row, value):
+    """The value an empty row inherits, as its placeholder (shown while the
+    empty row has focus); cleared with ''."""
+    text = _entry_row_text(row)
+    if text is None:
+        return
+    try:
+        text.set_placeholder_text(value or None)
+    except Exception:
+        logger.debug("Could not set an inherited hint", exc_info=True)
+
+
 def _set_entry_row_hint(row, placeholder="", *, digits=False, max_length=0):
     text = _entry_row_text(row)
     if text is None:
@@ -649,12 +661,70 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.option_list.connect("edited", self.on_entry_changed)
         self.option_list.connect("changed", self.on_entry_changed)
 
+        # What the host gets for the options it does not set: another
+        # block, another file, or Settings ▸ SSH Options decide them.
+        # Read-only; "Set for This Host" copies one into the rows above.
+        self.inherited_group = Adw.PreferencesGroup(
+            title=_("Inherited Options"),
+            description=_(
+                "This host gets these options from other blocks of your SSH "
+                "configuration or from Settings ▸ SSH Options. Set one here "
+                "to give this host its own value."
+            ),
+        )
+        self.inherited_group.set_visible(False)
+        self._inherited_rows = []
+        self._inherited_shown = None
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        content.append(self.option_list)
+        content.append(self.inherited_group)
+
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_min_content_height(200)
         scrolled.set_vexpand(True)
-        scrolled.set_child(self.option_list)
+        scrolled.set_child(content)
         self.append(scrolled)
+
+    def show_inherited(self, answer) -> None:
+        """List what the host inherits for the options this page offers,
+        from OpenSSH's answer for the form (None: not known, nothing listed)."""
+        found = ()
+        if answer is not None and answer.available:
+            found = tuple(answer.inherited_options(self.ssh_options))
+        if found == self._inherited_shown:
+            return
+        self._inherited_shown = found
+        for row in self._inherited_rows:
+            self.inherited_group.remove(row)
+        self._inherited_rows = []
+        from .advanced_config_widgets import ensure_shared_css, pill
+
+        ensure_shared_css()
+        for keyword, value, where in found:
+            row = Adw.ActionRow()
+            # Keywords, values and file names are not markup.
+            row.set_use_markup(False)
+            row.set_title(keyword)
+            row.set_subtitle(value)
+            row.set_subtitle_selectable(True)
+            row.add_css_class("property")
+            source = pill(where, "muted")
+            source.set_tooltip_text(where)
+            row.add_suffix(source)
+            adopt = Gtk.Button.new_from_icon_name("list-add-symbolic")
+            adopt.add_css_class("flat")
+            adopt.set_valign(Gtk.Align.CENTER)
+            adopt.set_tooltip_text(_("Set for This Host"))
+            adopt.update_property([Gtk.AccessibleProperty.LABEL], [_("Set for This Host")])
+            adopt.connect(
+                "clicked", lambda _b, k=keyword, v=value: self.set_option(k, v)
+            )
+            row.add_suffix(adopt)
+            self.inherited_group.add(row)
+            self._inherited_rows.append(row)
+        self.inherited_group.set_visible(bool(found))
 
     def _override_note(self, keyword, value):
         """What Settings ▸ SSH Options do to this option, from the dialog."""
@@ -666,16 +736,21 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.option_list.add_empty_row()
 
     def on_entry_changed(self, widget, pspec=None):
-        """Refresh the preview and the switches that mirror Advanced rows."""
+        """Refresh the switches that mirror Advanced rows, and ask OpenSSH
+        about the form again."""
         self.update_config_preview()
+        parent = getattr(self, 'parent_dialog', None)
+        refresh = getattr(parent, '_schedule_effective_refresh', None)
+        if callable(refresh):
+            refresh()
         self._notify_parent_session_type_changed()
-        sync_banner = getattr(self.parent_dialog, '_sync_override_banner', None)
+        sync_banner = getattr(parent, '_sync_override_banner', None)
         if callable(sync_banner):
             sync_banner()
 
     def _notify_parent_session_type_changed(self):
         """Notify the dialog when Advanced SessionType / ExitOnForwardFailure change."""
-        parent = self.parent_dialog
+        parent = getattr(self, 'parent_dialog', None)
         for name in (
             '_sync_session_type_toggle_from_advanced',
             '_sync_exit_on_forward_failure_toggle_from_advanced',
@@ -733,6 +808,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
         ]
         entries.append((keyword, value))
         self.set_config_entries(entries)
+        # set_options trusts its rows and emits nothing: say it changed.
+        self.on_entry_changed(None)
 
     def remove_option(self, keyword, value=None):
         """Remove an extra SSH option, optionally matching its value too."""
@@ -750,6 +827,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
             )
         ]
         self.set_config_entries(entries)
+        self.on_entry_changed(None)
 
     def set_config_entries(self, entries):
         """Set config entries from saved data"""
@@ -2298,27 +2376,6 @@ class ConnectionDialog(
             section.policy.set_fallback(inherited)
         section.sync()
 
-    def _auth_policy_set_forced(self, forced) -> None:
-        """Settings ▸ SSH Options force some lines on the command line."""
-        section = getattr(self, 'auth_policy', None)
-        if section is None:
-            return
-        section.policy.forced = {
-            str(keyword).lower(): str(value) for keyword, value in (forced or {}).items()
-        }
-        section.sync()
-
-    def _auth_policy_set_earlier(self, earlier) -> None:
-        """Earlier blocks decide some authentication lines; show what wins."""
-        section = getattr(self, 'auth_policy', None)
-        if section is None:
-            return
-        section.policy.earlier = {
-            str(keyword).lower(): str(getattr(entry, 'value', entry) or '')
-            for keyword, entry in (earlier or {}).items()
-        }
-        section.sync()
-
     #: "Only offer listed identities" choices -> IdentitiesOnly value.
     _IDENTITIES_ONLY_VALUES = ("", "yes", "no")
 
@@ -2752,36 +2809,81 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return ''
         return value
 
-    def _load_inherited_values_async(self):
-        """Fill unauthored rows with what OpenSSH resolves, styled as inherited.
+    def _apply_inherited_rows(self, answer) -> None:
+        """Show, in each text row the Host block leaves empty, the value
+        OpenSSH uses for it (from OpenSSH's answer for the form).
 
-        An unauthored field is not empty-because-unset: OpenSSH fills it from a
-        global block or its own default, and that is the value the session will
-        use. The row shows that real value, dimmed, so the form states the truth
-        while still distinguishing "inherited" from "set here".
-
-        Editing such a row adopts the value for this host — see
-        :meth:`_on_inherited_row_edited`. Authorship follows the edit, not a
-        value comparison, because pinning an inherited value (``Port 22`` under
-        a global ``Port 2222``) changes no text at all.
-
-        Resolution runs on the daemon's dedicated effective-config command key,
-        never on the shared configuration key, so a slow ``ssh -G`` cannot stall
-        unrelated configuration RPCs.
+        The first answer after loading fills the empty rows with that value,
+        dimmed (:meth:`_show_inherited_value`); editing such a row adopts it.
+        Later answers keep those rows current. A row the user emptied stays
+        empty: typing is never undone. It names the value as a hint and in
+        its note instead.
         """
-        authored = getattr(self.connection, 'authored_directives', None)
-        # Saving a search-box target fills in what its session used, as the
-        # user's own values: they just connected with them, and Save writes
-        # them into the new Host block.
-        fill_effective = False
-        if authored is None:
-            authored = self._typed_target_directives()
-            fill_effective = authored is not None
+        if self._typed_target_directives() is not None:
+            # Saving a search-box target: its rows were filled once with what
+            # its session used, as the user's own values.
+            return
+        handlers = getattr(self, '_inherited_row_handlers', None) or {}
+        first = not getattr(self, '_inherited_filled', False)
+        self._inherited_filled = True
+        aliases = {
+            str(getattr(self.connection, name, '') or '')
+            for name in ('nickname', 'host')
+        } if self.connection is not None else set()
+        filled = False
+        for row_name, directive, ssh_key in self._INHERITABLE_ROWS:
+            row = getattr(self, row_name, None)
+            if row is None:
+                continue
+            showing = row_name in handlers
+            if answer.sets(directive) and not showing:
+                _set_inherited_hint(row, '')
+                continue
+            value = self._fillable_effective_value(ssh_key, answer.used(ssh_key))
+            if row_name == 'hostname_row' and value in aliases:
+                # `ssh -G` echoes the alias when no HostName is set. That is
+                # the connection's own identity, not an inherited value.
+                value = ''
+            try:
+                if showing:
+                    if value and row.get_text() != value:
+                        self._show_inherited_value(row_name, row, value)
+                    elif not value:
+                        # Nothing is inherited any more: the row is empty,
+                        # and still not this host's own.
+                        row.disconnect(handlers.pop(row_name))
+                        self._applying_inherited_value = True
+                        try:
+                            row.set_text('')
+                        finally:
+                            self._applying_inherited_value = False
+                        row.remove_css_class('dim-label')
+                        self._set_row_inherited_note(row, '')
+                    filled = True
+                elif row.get_text().strip():
+                    continue
+                elif first and value:
+                    self._show_inherited_value(row_name, row, value)
+                    filled = True
+                else:
+                    _set_inherited_hint(row, value)
+                    self._set_row_inherited_note(row, answer.inherited_note(ssh_key))
+            except Exception:
+                logger.debug("Could not show inherited value for %s", row_name, exc_info=True)
+        if filled:
+            # The rows were filled programmatically; re-baseline so an
+            # untouched inherited value is never mistaken for an edit.
+            self._capture_editor_delta_baseline()
+
+    def _load_inherited_values_async(self):
+        """Saving a search-box target: fill its rows, once, with what its
+        session used, as the user's own values (Save writes them into the
+        new Host block). Other connections show inherited values from
+        OpenSSH's answer for the form (:meth:`_apply_inherited_rows`).
+        """
+        authored = self._typed_target_directives()
         if authored is None:
             return
-        # Remember the text each row holds now: `ssh -G` runs off-thread, and a
-        # value the user typed meanwhile must never be overwritten by the
-        # inherited one that arrives late.
         pending = []
         for row_name, directive, ssh_key in self._INHERITABLE_ROWS:
             if directive in authored:
@@ -2793,11 +2895,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pending.append((row_name, ssh_key, row.get_text()))
             except Exception:
                 continue
-        # The authentication section shows inherited values for whatever the
-        # block does not set, so it always wants the resolution.
-        if not pending and getattr(self, 'auth_policy', None) is None:
+        if not pending:
             return
-
         parent = getattr(self, 'parent_window', None)
         client = getattr(parent, 'client', None)
         if not (
@@ -2807,83 +2906,40 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         ):
             return
 
-        aliases = {
-            str(getattr(self.connection, name, '') or '')
-            for name in ('nickname', 'host')
-        }
-
         def _apply(resolved):
-            # The Routing page's picture: which of ProxyJump and
-            # ProxyCommand OpenSSH uses when a block sets both.
-            self._effective_resolved = resolved or {}
-            redraw = getattr(self, '_schedule_route_update', None)
-            if callable(redraw):
-                redraw()
-            section = getattr(self, 'auth_policy', None)
-            if section is not None:
-                # None: OpenSSH could not be asked; the section says so.
-                section.policy.set_inherited(resolved)
-                section.sync()
             if not resolved:
                 return False
             for row_name, ssh_key, text_at_schedule in pending:
-                value = resolved.get(ssh_key)
                 row = getattr(self, row_name, None)
+                value = self._fillable_effective_value(ssh_key, resolved.get(ssh_key))
                 if not value or row is None:
-                    continue
-                if row_name == 'hostname_row' and value in aliases:
-                    # `ssh -G` echoes the alias when no HostName is set. That is
-                    # the connection's own identity, not an inherited value.
                     continue
                 try:
                     if row.get_text() != text_at_schedule:
                         continue  # edited while the daemon was resolving
-                    if fill_effective:
-                        value = self._fillable_effective_value(ssh_key, value)
-                        if value and row_name == 'proxy_jump_row':
-                            self._set_text_without_completion(row, value)
-                        elif value:
-                            row.set_text(value)
-                        continue
-                    self._show_inherited_value(row_name, row, value)
+                    if row_name == 'proxy_jump_row':
+                        self._set_text_without_completion(row, value)
+                    else:
+                        row.set_text(value)
                 except Exception:
-                    logger.debug(
-                        "Could not show inherited value for %s", row_name, exc_info=True
-                    )
-            # The rows were filled programmatically; re-baseline so an untouched
-            # inherited value is never mistaken for an edit and written back.
-            self._capture_editor_delta_baseline()
-            # An inherited value is not this connection's own: re-mark the
-            # rows, which were judged while their text was still being set.
-            remark = getattr(self, '_apply_override_notes', None)
-            if callable(remark):
-                remark()
+                    logger.debug("Could not fill %s", row_name, exc_info=True)
             return False
 
-        def _start_worker():
-            def worker():
-                resolved = None
-                try:
-                    from .api.connection_identity import connection_id_for
-                    result = client.get_effective_config(
-                        connection_id_for(self.connection)
-                    )
-                    if getattr(result, 'available', False):
-                        resolved = {}
-                        for line in getattr(result, 'full', ()) or ():
-                            key, _sep, value = str(line).partition(' ')
-                            # ssh -G repeats accumulating keys; first wins, which
-                            # matches the order OpenSSH itself applies them.
-                            resolved.setdefault(key.strip().lower(), value.strip())
-                except Exception:
-                    logger.debug(
-                        "Daemon effective-config lookup unavailable", exc_info=True
-                    )
-                GLib.idle_add(_apply, resolved)
+        def worker():
+            resolved = None
+            try:
+                from .api.connection_identity import connection_id_for
+                result = client.get_effective_config(connection_id_for(self.connection))
+                if getattr(result, 'available', False):
+                    resolved = {}
+                    for line in getattr(result, 'full', ()) or ():
+                        key, _sep, value = str(line).partition(' ')
+                        resolved.setdefault(key.strip().lower(), value.strip())
+            except Exception:
+                logger.debug("Daemon effective-config lookup unavailable", exc_info=True)
+            GLib.idle_add(_apply, resolved)
 
-            threading.Thread(target=worker, daemon=True).start()
-
-        _start_worker()
+        threading.Thread(target=worker, daemon=True).start()
 
     def _load_password_async(self):
         """Load the saved password into the masked editor field."""
@@ -3485,18 +3541,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._capture_effective_baseline()
         except Exception:
             logger.debug("Could not record the loaded lines", exc_info=True)
-        # After the authored values are in place: fill unauthored rows with what
-        # OpenSSH actually resolves, so the form never implies this block owns a
-        # value it merely inherits.
+        # After the authored values are in place: ask OpenSSH about the form,
+        # and fill unauthored rows with what it resolves from the first
+        # answer, so the form never implies this block owns a value it merely
+        # inherits (see _apply_inherited_rows).
+        self._inherited_filled = False
         try:
-            self._load_inherited_values_async()
+            self._schedule_effective_refresh(0)
         except Exception:
-            logger.debug("Could not start inherited-value lookup", exc_info=True)
-        # The saved file may have a different block order now.
-        try:
-            self._load_earlier_directives_async()
-        except Exception:
-            logger.debug("Could not start earlier-directive lookup", exc_info=True)
+            logger.debug("Could not ask OpenSSH about the form", exc_info=True)
 
 
     def _refresh_save_sensitivity(self):
@@ -5616,64 +5669,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             meta['tags'] = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
         return meta
 
-    def on_save_clicked(self, *_args):
-        """Handle save button click or dialog save response"""
-        if getattr(self, '_secret_save_in_progress', False):
-            return
-        # Ctrl+S bypasses the insensitive Save button: a read-only SSH config
-        # explains itself again instead of failing at the daemon.
-        if self._config_read_only_active():
-            from .gtk.ssh_config_access_messages import (
-                read_only_body,
-                read_only_heading,
-            )
-            unavailable = getattr(self, '_config_unavailable', False)
-            self.show_error(
-                read_only_body(unavailable), heading=read_only_heading(unavailable)
-            )
-            return
-        # Daemon edits: never save before the authoritative editor snapshot
-        # arrived, and never save after a terminal load failure.
-        if self.is_daemon_editor():
-            if not self._daemon_editor_loaded:
-                if self._editor_load_failed:
-                    self.show_error(_("Could not load the connection from the daemon"))
-                else:
-                    self.show_error(_("Connection is still loading"))
-                return
-        # Plugin protocols collect their own (declarative) fields; the rest of
-        # this method is the SSH path, which serializes to ~/.ssh/config.
-        backend = self._selected_protocol_backend()
-        if backend is not None and backend.protocol_id != 'ssh':
-            self._save_plugin_connection(backend)
-            return
-        # A refused option on the Advanced tab would be left out of the Host
-        # block; make the user fix or remove it instead of losing it quietly.
-        advanced_tab = getattr(self, 'advanced_tab', None)
-        has_invalid = getattr(advanced_tab, 'has_invalid_options', None)
-        if callable(has_invalid) and has_invalid():
-            self.select_page("advanced")
-            self.show_error(
-                _("An SSH option on the Extra Options page is not valid. Fix or remove it, then save again.")
-            )
-            return
-        # Block save and focus the first invalid field if any inline validation fails
-        invalid_row = None
-        try:
-            invalid_row = self._validate_all_required_for_save()
-        except Exception:
-            invalid_row = None
-        if invalid_row is not None:
-            try:
-                self._focus_row(invalid_row)
-            except Exception:
-                pass
-            return
-        # Validate required fields
-        if not self.nickname_row.get_text().strip():
-            self.show_error(_("Please enter a nickname for this connection"))
-            return
-            
+    def _collect_connection_data(self):
+        """The form as a save sends it: every field, and for an edit the
+        names of the fields changed since it was loaded (``__changed_fields``).
+
+        The save and the question to OpenSSH before it
+        (``connection_dialog_effective``) both read the form here.
+        """
         # Initialize forwarding_rules list if needed
         if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
             self.forwarding_rules = []
@@ -5687,24 +5689,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         certificate_files = self._collect_certificate_files()
         keyfile_value = identity_files[0] if identity_files else ''
         certificate_value = certificate_files[0] if certificate_files else ''
-
-        try:
-            logger.info(
-                "ConnectionDialog save: %d forwarding rules, %d identity files",
-                len(forwarding_rules or []), len(identity_files),
-            )
-            logger.debug("Forwarding rules: %s", forwarding_rules)
-        except Exception:
-            pass
-
-        # Detect if password text was changed by user during this edit session
-        try:
-            # _orig_password is unset for new connections — treat it as empty so an
-            # untouched empty field doesn't count as a change.
-            password_changed = (self.password_row.get_text() != (getattr(self, '_orig_password', None) or ''))
-        except Exception:
-            password_changed = False
-
 
         # Advanced-tab options plus the authentication section's lines
         extra_ssh_config = self._combined_extra_ssh_config()
@@ -5772,6 +5756,83 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             connection_data['__changed_fields'] = self._changed_editor_fields(
                 connection_data
             )
+        return connection_data
+
+    def on_save_clicked(self, *_args):
+        """Handle save button click or dialog save response"""
+        if getattr(self, '_secret_save_in_progress', False):
+            return
+        # Ctrl+S bypasses the insensitive Save button: a read-only SSH config
+        # explains itself again instead of failing at the daemon.
+        if self._config_read_only_active():
+            from .gtk.ssh_config_access_messages import (
+                read_only_body,
+                read_only_heading,
+            )
+            unavailable = getattr(self, '_config_unavailable', False)
+            self.show_error(
+                read_only_body(unavailable), heading=read_only_heading(unavailable)
+            )
+            return
+        # Daemon edits: never save before the authoritative editor snapshot
+        # arrived, and never save after a terminal load failure.
+        if self.is_daemon_editor():
+            if not self._daemon_editor_loaded:
+                if self._editor_load_failed:
+                    self.show_error(_("Could not load the connection from the daemon"))
+                else:
+                    self.show_error(_("Connection is still loading"))
+                return
+        # Plugin protocols collect their own (declarative) fields; the rest of
+        # this method is the SSH path, which serializes to ~/.ssh/config.
+        backend = self._selected_protocol_backend()
+        if backend is not None and backend.protocol_id != 'ssh':
+            self._save_plugin_connection(backend)
+            return
+        # A refused option on the Advanced tab would be left out of the Host
+        # block; make the user fix or remove it instead of losing it quietly.
+        advanced_tab = getattr(self, 'advanced_tab', None)
+        has_invalid = getattr(advanced_tab, 'has_invalid_options', None)
+        if callable(has_invalid) and has_invalid():
+            self.select_page("advanced")
+            self.show_error(
+                _("An SSH option on the Extra Options page is not valid. Fix or remove it, then save again.")
+            )
+            return
+        # Block save and focus the first invalid field if any inline validation fails
+        invalid_row = None
+        try:
+            invalid_row = self._validate_all_required_for_save()
+        except Exception:
+            invalid_row = None
+        if invalid_row is not None:
+            try:
+                self._focus_row(invalid_row)
+            except Exception:
+                pass
+            return
+        # Validate required fields
+        if not self.nickname_row.get_text().strip():
+            self.show_error(_("Please enter a nickname for this connection"))
+            return
+            
+        connection_data = self._collect_connection_data()
+        try:
+            logger.info(
+                "ConnectionDialog save: %d forwarding rules, %d identity files",
+                len(connection_data.get('forwarding_rules') or []),
+                len(connection_data.get('identity_files') or []),
+            )
+        except Exception:
+            pass
+
+        # Detect if password text was changed by user during this edit session
+        try:
+            # _orig_password is unset for new connections — treat it as empty so an
+            # untouched empty field doesn't count as a change.
+            password_changed = (self.password_row.get_text() != (getattr(self, '_orig_password', None) or ''))
+        except Exception:
+            password_changed = False
 
         # Create a separate local-only secret plan that never enters wire DTOs.
         passphrase_ops = []

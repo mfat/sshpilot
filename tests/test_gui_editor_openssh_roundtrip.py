@@ -197,18 +197,21 @@ def test_an_earlier_host_star_is_reported_from_the_real_resolution(gui, config):
     assert resolved["user"] == "globaluser"  # what OpenSSH will actually use
 
     dialog = _open_editor(gui, "own")
-    assert _pump(lambda: bool(getattr(dialog, "_earlier_directives", None)))
+    assert _pump(
+        lambda: getattr(dialog.username_row, "_sshpilot_override_state", None) == "overridden"
+    )
 
-    # The host's own value stays in the form, flagged as losing to Host *.
+    # The host's own value stays in the form, struck through and tagged as
+    # having no effect, as Advanced Configuration shows the same line.
     assert dialog.username_row.get_text() == "ownuser"
-    icon = dialog.username_row._sshpilot_override_icon
-    assert icon.get_visible()
+    tag = dialog.username_row._sshpilot_override_pill
+    assert tag.get_visible() and tag.get_label() == "No effect"
+    assert dialog.username_row.has_css_class("warning")
     tooltip = dialog.username_row.get_tooltip_text()
     assert resolved["user"] in tooltip
     assert "Host *" in tooltip and "line 4" in tooltip
     assert dialog._override_banner.get_revealed()
     # Port is not authored by `own`, so it is inherited, not overridden.
     assert dialog.port_row.get_text() == resolved["port"]
-    port_icon = getattr(dialog.port_row, "_sshpilot_override_icon", None)
-    assert port_icon is None or not port_icon.get_visible()
+    assert getattr(dialog.port_row, "_sshpilot_override_state", None) != "overridden"
     assert not dialog.port_row.has_css_class("error")

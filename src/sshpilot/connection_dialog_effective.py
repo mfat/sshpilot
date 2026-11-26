@@ -1,18 +1,21 @@
 """What OpenSSH would use for the connection being edited, edits included.
 
-The dialog's authentication section and its identity-file list show the
-lines of one ``Host`` block. Which methods OpenSSH tries and which identity
-files it offers also depend on every other block that applies. This mixin
-asks OpenSSH about the configuration *with the dialog's pending lines*
-(see :mod:`sshpilot.connection_dialog_draft`) and hands the answer to
+Every SSH option the editor shows depends on more than its own Host block:
+an earlier block, a ``Match`` block, an included file, the system-wide file
+or Settings ▸ SSH Options may decide it. After each edit this mixin asks
+the daemon one question (``connections.evaluate_connection_edit``) with
+what a save would send. The daemon writes the block with the save's own
+code, writes nothing to disk, and evaluates the file as Advanced
+Configuration evaluates a draft. The answer
+(:class:`~sshpilot.connection_dialog_answer.EditorAnswer`) goes to
 
 * the authentication section (:class:`AuthPolicy.set_draft`), so a checkbox
-  and the "OpenSSH will try" line agree with OpenSSH before Save, and
-* the "Identity files OpenSSH uses" list next to IdentitiesOnly.
+  and the "OpenSSH will try" line agree with OpenSSH before Save;
+* the "Identity files OpenSSH uses" list;
+* the Routing page, the fields' marks and inherited values, and the Extra
+  Options page (``connection_dialog_overrides``).
 
-A lookup that fails is shown as unknown, never as a default. A host whose
-block is in an included file cannot be put into a draft; for it the saved
-configuration is shown, and labelled as saved.
+A lookup that fails is shown as unknown, never as a default.
 """
 
 from __future__ import annotations
@@ -28,9 +31,8 @@ except Exception:  # pragma: no cover - GTK-less import (headless tests)
     Adw = GLib = None
 
 from .connection_dialog_draft import (
-    DraftAnswer,
+    _AUTH_KEYWORDS,
     EffectiveIdentity,
-    build_drafts,
     read_answer,
 )
 
@@ -41,7 +43,6 @@ _REFRESH_DELAY_MS = 250
 
 # How the identity list was obtained.
 PENDING = "pending"      # the draft: the dialog's lines counted
-SAVED = "saved"          # the saved file only
 FAILED = "failed"        # OpenSSH was asked and did not answer
 WAITING = "waiting"      # no answer yet
 
@@ -52,9 +53,7 @@ def identity_status_text(state: str, dirty: bool) -> str:
         return _("Unknown: OpenSSH could not read the configuration.")
     if state == PENDING and dirty:
         return _("Includes unsaved changes to authentication and keys")
-    if state == SAVED and dirty:
-        return _("As saved; unsaved changes are not counted")
-    if state in (PENDING, SAVED):
+    if state == PENDING:
         return _("As saved")
     return _("Shown once OpenSSH has read the configuration.")
 
@@ -111,7 +110,7 @@ class ConnectionDialogEffectiveMixin:
         if row is None:
             return
         row.set_subtitle(identity_status_text(state, dirty))
-        shown = tuple(identities) if state in (PENDING, SAVED) else ()
+        shown = tuple(identities) if state == PENDING else ()
         if shown == self._effective_identity_shown:
             return
         self._effective_identity_shown = shown
@@ -167,8 +166,8 @@ class ConnectionDialogEffectiveMixin:
     # -- asking ------------------------------------------------------------
 
     def _schedule_effective_refresh(self, delay: int = _REFRESH_DELAY_MS) -> None:
-        """Ask OpenSSH about the pending block, shortly after the last edit."""
-        if GLib is None or getattr(self, "auth_policy", None) is None:
+        """Ask OpenSSH about the edit, shortly after the last change."""
+        if GLib is None or getattr(self, "_effective_closed", False):
             return
         pending = getattr(self, "_effective_refresh_timer", 0)
         if pending:
@@ -182,45 +181,80 @@ class ConnectionDialogEffectiveMixin:
         if pending and GLib is not None:
             GLib.source_remove(pending)
         self._effective_refresh_timer = 0
+        self._effective_closed = True
         # An answer still on its way is dropped.
         self._effective_serial = getattr(self, "_effective_serial", 0) + 1
 
+    def _edit_evaluation_request(self):
+        """What the save would send, as a question to OpenSSH; ``None`` when
+        the form cannot be saved as it stands (no name yet, a refused value):
+        there is then nothing to ask about."""
+        from . import connection_save_request as save_request
+        from .api.connection_identity import connection_id_for
+        from .api.models.connections import EvaluateConnectionEditRequest
+
+        try:
+            data = self._collect_connection_data()
+        except Exception:
+            logger.debug("Could not read the form for OpenSSH", exc_info=True)
+            return None
+        changed = data.pop("__changed_fields", None)
+        for key in [key for key in data if key.startswith("__")]:
+            data.pop(key)
+        without = tuple(sorted(_AUTH_KEYWORDS))
+        connection = getattr(self, "connection", None)
+        try:
+            if bool(getattr(self, "is_editing", False)) and connection is not None:
+                delta = changed is not None
+                update = None
+                if not delta or changed:
+                    update = save_request.update_request(
+                        data, delta_available=delta, changed_fields=changed or (),
+                        expected_generation=None,
+                    )
+                return EvaluateConnectionEditRequest(
+                    connection_id=str(connection_id_for(connection)),
+                    update=update, without_own=without,
+                )
+            if not str(data.get("nickname") or "").strip():
+                return None
+            return EvaluateConnectionEditRequest(
+                create=save_request.create_request(data), without_own=without,
+            )
+        except (TypeError, ValueError):
+            # A value the save would refuse too (validation marks the field).
+            return None
+
     def _run_effective_refresh(self) -> bool:
         self._effective_refresh_timer = 0
-        section = getattr(self, "auth_policy", None)
         parent = getattr(self, "parent_window", None)
         client = getattr(parent, "client", None)
         try:
             ssh = self._selected_protocol_id() == "ssh"
         except Exception:
             ssh = True
-        if section is None or not ssh or not (
+        if not ssh or not (
             callable(getattr(parent, "_daemon_ready", None))
             and parent._daemon_ready()
-            and callable(getattr(client, "evaluate_ssh_config_draft", None))
-            and callable(getattr(client, "get_ssh_config_text", None))
+            and callable(getattr(client, "evaluate_connection_edit", None))
         ):
             return False
-        connection = getattr(self, "connection", None)
-        editing = bool(getattr(self, "is_editing", False)) and connection is not None
-        if editing:
-            host = str(getattr(connection, "nickname", "") or "").strip()
-        else:
-            # One host is asked about: the first of several names typed.
-            typed = getattr(self, "_typed_primary_alias", None)
-            if callable(typed):
-                host = typed()
-            else:
-                row = getattr(self, "nickname_row", None)
-                host = row.get_text().strip() if row is not None else ""
-        if not host:
+        request = self._edit_evaluation_request()
+        if request is None:
             self._show_effective_identities(WAITING, (), False)
+            # No host to ask about yet (a new connection without a name):
+            # the authentication section starts from OpenSSH's built-in
+            # order, so it stays editable; an answer replaces it.
+            fallback = getattr(self, "_auth_policy_set_fallback", None)
+            if callable(fallback) and not getattr(self, "_effective_draft_answered", False):
+                fallback({})
             return False
+        section = getattr(self, "auth_policy", None)
+        auth_lines = list(section.policy.to_lines()) if section is not None else []
         if getattr(self, "_effective_baseline", None) is None:
             self._capture_effective_baseline()
-        auth_lines = list(section.policy.to_lines())
         identity_lines = self._pending_identity_lines()
-        dirty = (not editing) or identity_lines is not None or (
+        dirty = (not getattr(self, "is_editing", False)) or identity_lines is not None or (
             tuple(auth_lines) != self._effective_baseline[0]
         )
         self._effective_serial = serial = getattr(self, "_effective_serial", 0) + 1
@@ -228,57 +262,19 @@ class ConnectionDialogEffectiveMixin:
         def current() -> bool:
             return serial == getattr(self, "_effective_serial", 0)
 
-        def apply(state, effective, inherited, identities):
-            if not current():
-                return False
-            if state == PENDING:
-                section.policy.set_draft(
-                    effective.first(), inherited.first(), auth_lines
-                )
-                self._effective_draft_answered = True
-                section.sync()
-            elif state == FAILED:
-                section.policy.set_lookup_failed()
-                self._effective_draft_answered = True
-                section.sync()
-            else:
-                # Not a block of the root file: the section keeps what the
-                # saved configuration says.
-                self._effective_draft_answered = False
-            self._show_effective_identities(
-                FAILED if identities is None else state, identities or (), dirty
-            )
-            notes = getattr(self, "_apply_override_notes", None)
-            if callable(notes) and state != SAVED:
-                notes()
+        def apply(result):
+            if current():
+                self._take_editor_answer(result, auth_lines, dirty)
             return False
 
         def worker():
-            state, effective, inherited, identities = FAILED, None, None, None
+            result = None
             try:
-                root = client.get_ssh_config_text().text
-                drafts = build_drafts(
-                    root, host, auth_lines, identity_lines, new=not editing
-                )
-                if drafts is None:
-                    state = SAVED
-                    identities = self._saved_effective_identities(client, connection)
-                else:
-                    effective = self._ask_draft(client, drafts.effective, host, current)
-                    if effective is not None and drafts.inherited != drafts.effective:
-                        inherited = self._ask_draft(
-                            client, drafts.inherited, host, current
-                        )
-                    else:
-                        inherited = effective
-                    if effective is not None and inherited is not None:
-                        state = PENDING
-                        identities = effective.identities
+                result = self._ask_edit(client, request, current)
             except Exception:
-                logger.debug("Draft evaluation for the editor failed", exc_info=True)
-                state, identities = FAILED, None
+                logger.debug("Edit evaluation for the editor failed", exc_info=True)
             if current():
-                GLib.idle_add(apply, state, effective, inherited, identities)
+                GLib.idle_add(apply, result)
 
         threading.Thread(
             target=worker, daemon=True, name="sshpilot-editor-draft"
@@ -286,47 +282,69 @@ class ConnectionDialogEffectiveMixin:
         return False
 
     @staticmethod
-    def _ask_draft(client, text: str, host: str, current) -> Optional[DraftAnswer]:
-        """One draft evaluation; ``None`` when OpenSSH gives no answer.
+    def _ask_edit(client, request, current):
+        """One edit evaluation; ``None`` when this dialog moved on.
 
-        The daemon lets a client's newest evaluation supersede its earlier
-        ones, and Advanced Configuration asks through the same client: an
-        evaluation it cut short is asked once more, unless this dialog has
+        The daemon lets a client's newest question supersede the one before;
+        a question cut short is asked once more, unless this dialog has
         itself moved on to a newer one.
         """
         from .api.errors import ErrorCode, SshPilotError
-        from .api.models.connections import EvaluateSshConfigDraftRequest
 
-        request = EvaluateSshConfigDraftRequest(text=text, host=host)
         for _attempt in range(2):
             if not current():
                 return None
             try:
-                return read_answer(
-                    client.evaluate_ssh_config_draft(request), text, host
-                )
+                return client.evaluate_connection_edit(request)
             except SshPilotError as exc:
                 if exc.code != ErrorCode.OPERATION_CANCELLED:
                     raise
         return None
 
-    @staticmethod
-    def _saved_effective_identities(
-        client, connection
-    ) -> Optional[Tuple[EffectiveIdentity, ...]]:
-        """``IdentityFile`` values of ``ssh -G`` for the saved host, in order."""
-        if connection is None or not callable(
-            getattr(client, "get_effective_config", None)
-        ):
-            return None
-        from .api.connection_identity import connection_id_for
+    def _take_editor_answer(self, result, auth_lines, dirty) -> None:
+        """Put OpenSSH's answer on every page of the editor."""
+        from .connection_dialog_answer import NO_EFFECT, EditorAnswer
 
-        result = client.get_effective_config(connection_id_for(connection))
-        if not getattr(result, "available", False):
-            return None
-        found = []
-        for line in getattr(result, "full", ()) or ():
-            key, _sep, value = str(line).partition(" ")
-            if key.strip().lower() == "identityfile" and value.strip():
-                found.append(EffectiveIdentity(value.strip()))
-        return tuple(found)
+        answer = None if result is None else EditorAnswer(result)
+        self._editor_answer = answer
+        available = answer is not None and answer.available
+        # The Routing page's picture: which of ProxyJump and ProxyCommand
+        # OpenSSH uses when a block sets both.
+        self._effective_resolved = answer.first() if available else {}
+        redraw = getattr(self, "_schedule_route_update", None)
+        if callable(redraw):
+            redraw()
+        section = getattr(self, "auth_policy", None)
+        if section is not None:
+            policy = section.policy
+            if available:
+                policy.forced = dict(answer.forced)
+                policy.earlier = {
+                    keyword: answer.used(keyword)
+                    for keyword in _AUTH_KEYWORDS
+                    if answer.line_state(keyword)[0] == NO_EFFECT
+                }
+                policy.set_inherited(answer.first())
+                policy.set_draft(answer.first(), answer.inherited_first(), auth_lines)
+                self._effective_draft_answered = True
+            elif answer is not None and answer.refusal is not None:
+                # Not saveable as it stands: keep what was known.
+                pass
+            else:
+                policy.set_lookup_failed()
+                self._effective_draft_answered = True
+            section.sync()
+        identities = None
+        if available:
+            draft = read_answer(result.evaluation, result.text, result.host)
+            identities = draft.identities if draft is not None else None
+        self._show_effective_identities(
+            PENDING if identities is not None else FAILED, identities or (), dirty
+        )
+        if available:
+            inherited = getattr(self, "_apply_inherited_rows", None)
+            if callable(inherited):
+                inherited(answer)
+        notes = getattr(self, "_apply_override_notes", None)
+        if callable(notes):
+            notes()

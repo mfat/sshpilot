@@ -28,6 +28,7 @@ from .advanced_config_widgets import (  # noqa: E402
     pill,
     set_class,
     set_pill,
+    struck_attributes,
 )
 from .api.models.connections import SshConfigDraftLineState as State  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
@@ -104,19 +105,6 @@ def _instead(answer: AnswerView, uid: int, keyword: str) -> str:
         return messages.used_instead_markup(value, "", forced=True)
     place = messages.where(item.decided_file, item.decided_line, item.decided_block)
     return messages.used_instead_markup(value, place)
-
-
-_STRUCK_ATTRS: list = []
-
-
-def _struck() -> "Pango.AttrList":
-    """The text attributes of a line that does not take effect (see
-    LineRow.show): made on first use, not at import (gi may be a stub)."""
-    if not _STRUCK_ATTRS:
-        attrs = Pango.AttrList()
-        attrs.insert(Pango.attr_strikethrough_new(True))
-        _STRUCK_ATTRS.append(attrs)
-    return _STRUCK_ATTRS[0]
 
 
 def _state_pill(view: "StructuredView") -> Gtk.Label:
@@ -466,18 +454,21 @@ class LineRow:
     def show(self, answer: AnswerView) -> None:
         item, error = answer.line_state(self.uid)
         unused = _line_pill(self.state, item, error)
-        # A line that does not take effect is struck through, as overridden
-        # declarations are in browser developer tools: valid, just not used.
-        # Red (error) is for a line OpenSSH rejects.
+        # A line that does not take effect is struck through and tinted
+        # yellow, as overridden declarations are in browser developer tools:
+        # valid, just not used. Red (error) is for a line OpenSSH rejects.
         struck = unused and error is None
         for entry in (self.key, self.value):
             set_class(entry, "error", error is not None)
             set_class(entry, "advcfg-unused", struck)
+            # Adwaita's warning entry: tinted, as the editor marks a field
+            # whose value has no effect.
+            set_class(entry, "warning", struck)
             # GtkText ignores CSS text-decoration: a Pango attribute it is
             # (cleared with an empty list: the binding refuses None).
             if getattr(entry, "_struck", False) != struck:
                 entry._struck = struck
-                entry.set_attributes(_struck() if struck else Pango.AttrList())
+                entry.set_attributes(struck_attributes(struck))
         option = self.view.controller.editor.find_option(self.uid)[1]
         keyword = canonical_keyword(option.keyword) if option else ""
         # Empty: what the host gets from elsewhere, greyed in the field.
