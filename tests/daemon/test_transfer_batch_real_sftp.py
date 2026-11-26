@@ -235,8 +235,9 @@ def test_losing_the_server_mid_batch_stops_short_with_what_landed(batch, tmp_pat
     assert (dst / "f0").read_bytes() == (src / "f0").read_bytes()
 
 
+@pytest.mark.parametrize("direction", [TransferDirection.UPLOAD, TransferDirection.DOWNLOAD])
 @pytest.mark.parametrize("existing", [False, True])
-def test_cancel_mid_file_leaves_nothing_under_the_real_name(batch, tmp_path, existing):
+def test_cancel_mid_file_leaves_nothing_under_the_real_name(batch, tmp_path, existing, direction):
     """Cancelled halfway through one large file: no truncated file under the
     destination's name, no temporary file, and a file being replaced keeps
     its old contents."""
@@ -262,7 +263,10 @@ def test_cancel_mid_file_leaves_nothing_under_the_real_name(batch, tmp_path, exi
             )
 
     runtime.subscribe_events(_cancel_midway)
-    summary, _events = batch(TransferDirection.UPLOAD, _items(src, dst, ["big"]))
+    summary, _events = batch(
+        direction,
+        _items(src, dst, ["big"], download=direction is TransferDirection.DOWNLOAD),
+    )
 
     assert cancelled and cancelled[0] < 64_000_000
     assert summary.state is TransferState.CANCELLED
