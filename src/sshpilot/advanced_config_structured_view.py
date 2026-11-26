@@ -1033,9 +1033,10 @@ class StructuredView(Gtk.Box):
             self.applies_chips.remove(child)
             child = following
         for name in shown[:self._APPLIES_SHOWN]:
+            # A plain button with the theme's own look: no custom styling,
+            # which drew unreadable pills under some bundled themes (AppImage).
             chip = Gtk.Button(label=name, halign=Gtk.Align.START,
                               tooltip_text=messages.show_host_block(name))
-            chip.add_css_class("advcfg-host-chip")
             chip.connect("clicked", lambda *_a, n=name: self.controller.follow_host(n))
             self.applies_chips.append(chip)
         if len(shown) > self._APPLIES_SHOWN:

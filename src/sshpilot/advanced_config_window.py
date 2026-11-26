@@ -122,8 +122,6 @@ row:hover .advcfg-drag-handle { opacity: 0.9; }
 .advcfg-comment { font-style: italic; color: alpha(currentColor, 0.6); font-family: monospace; }
 .advcfg-disabled-note { color: @warning_color; font-weight: 600; }
 .advcfg-dimmed { opacity: 0.55; }
-button.advcfg-host-chip { padding: 1px 10px; min-height: 24px; border-radius: 999px;
-  font-family: monospace; font-size: 0.9em; }
 /* Effective's summary: no card of its own; its line and tiles sit on the
    page, as the tiles under the title card do on the Directives view. */
 .advcfg-summary { padding: 0; }
