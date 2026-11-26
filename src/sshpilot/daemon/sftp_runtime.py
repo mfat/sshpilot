@@ -2179,13 +2179,24 @@ class SftpServiceRuntime:
 
         def _resolves_into_source() -> bool:
             """Whether the destination lies inside the source once links are
-            resolved (as text alone, ``/home/x`` hides ``/usr/home/x``)."""
+            resolved (as text alone, ``/home/x`` hides ``/usr/home/x``).
+
+            When the server will not resolve the paths the answer is unknown,
+            and unknown counts as inside: a wrong "no" lets the walk copy the
+            new folder into itself until the disk is full, a wrong "yes"
+            only refuses one copy.
+            """
             target = posixpath.normpath(destination)
             try:
                 real_source = posixpath.normpath(client.realpath(source))
                 real_parent = client.realpath(posixpath.dirname(target) or "/")
             except Exception:
-                return _remote_path_is_descendant(source, destination)
+                logger.warning(
+                    "Could not resolve the paths of a folder copy; refusing it "
+                    "rather than risk copying the folder into itself",
+                    exc_info=True,
+                )
+                return True
             real_target = posixpath.normpath(
                 posixpath.join(real_parent, posixpath.basename(target))
             )

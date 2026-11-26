@@ -346,3 +346,44 @@ def test_two_connections_to_one_machine_still_copy_elsewhere():
 
     assert done.state is OperationState.SUCCEEDED, done.failure
     assert fs.files["/srv/tree/sub/b.txt"] == b"world!"
+
+
+def _unresolvable(fs):
+    """A server that will not say where a path really is."""
+    def _refuse(_path):
+        raise OSError("Permission denied")
+
+    fs.realpath = _refuse
+    return fs
+
+
+def test_two_connections_refuse_a_folder_copy_they_cannot_place():
+    """The new folder shows up through the source, so both connections reach
+    one filesystem; where it really lies cannot be resolved. As text it is
+    outside the source, which a link would hide: refuse rather than guess."""
+    fs = _unresolvable(_aliased(_tree_client()))
+    runtime, ops, a, b = _two_services(fs, fs)
+    before_dirs, before_files = dict(fs.dirs), dict(fs.files)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, "/tree", "/alias/sub/copy", recursive=True, destination_service_id=b,
+    ))
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF
+    assert set(fs.dirs) == set(before_dirs)
+    assert fs.files == before_files
+
+
+def test_one_server_refuses_a_folder_copy_it_cannot_place():
+    fs = _unresolvable(_aliased(_tree_client()))
+    runtime, ops, a, b = _two_services(fs, _Untouchable(), same_connection=True)
+    before_dirs = dict(fs.dirs)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, "/tree", "/alias/sub/copy", recursive=True, destination_service_id=b,
+    ))
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF
+    assert set(fs.dirs) == set(before_dirs)
