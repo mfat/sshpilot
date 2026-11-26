@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-26 22:08+0330\n"
+"POT-Creation-Date: 2026-11-26 22:13+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -1988,8 +1988,8 @@ msgid "Certificates"
 msgstr "گواهینامه‌ها"
 
 #: src/sshpilot/connection_dialog.py:3685
-msgid "Certificates for these keys (CertificateFile)."
-msgstr "گواهی‌های این کلیدها (CertificateFile)."
+msgid "Certificates for your private keys (CertificateFile)."
+msgstr "گواهی‌های کلیدهای خصوصی شما (CertificateFile)."
 
 #. --- Key handling ---
 #: src/sshpilot/connection_dialog.py:3689

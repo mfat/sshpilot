@@ -3682,7 +3682,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             parent_window=self.parent_window,
         )
         self.cert_editor.set_description(
-            _("Certificates for these keys (CertificateFile).")
+            _("Certificates for your private keys (CertificateFile).")
         )
 
         # --- Key handling ---
