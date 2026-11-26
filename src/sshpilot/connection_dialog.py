@@ -3645,7 +3645,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # --- Identity files: this block's IdentityFile lines, in order ---
         self.key_editor = FileListEditor(
-            title=_("Identity files set on this host"),
+            title=_("SSH Keys"),
             on_changed=lambda _editor: self._schedule_effective_refresh(),
             empty_placeholder=_("No identity files set for this host."),
             with_passphrase=True,
@@ -3663,8 +3663,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             ),
         )
         # Only this block's lines: what other blocks add is listed under
-        # "Identity files OpenSSH uses", next to IdentitiesOnly.
-        self.key_editor.set_description("IdentityFile")
+        # "Keys OpenSSH offers", next to IdentitiesOnly. "Keys" is the word
+        # people look for; the caption gives OpenSSH's.
+        self.key_editor.set_description(
+            _("Identity files (IdentityFile) for this host, offered in this order.")
+        )
 
         # --- Certificates ---
         self.cert_editor = FileListEditor(
@@ -3677,6 +3680,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             with_passphrase=False,
             connection_manager=cm,
             parent_window=self.parent_window,
+        )
+        self.cert_editor.set_description(
+            _("Certificates for these keys (CertificateFile).")
         )
 
         # --- Key handling ---

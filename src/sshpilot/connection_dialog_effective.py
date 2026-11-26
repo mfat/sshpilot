@@ -11,7 +11,7 @@ Configuration evaluates a draft. The answer
 
 * the authentication section (:class:`AuthPolicy.set_draft`), so a checkbox
   and the "OpenSSH will try" line agree with OpenSSH before Save;
-* the "Identity files OpenSSH uses" list;
+* the "Keys OpenSSH offers" list;
 * the Routing page, the fields' marks and inherited values, and the Extra
   Options page (``connection_dialog_overrides``).
 
@@ -48,7 +48,7 @@ WAITING = "waiting"      # no answer yet
 
 
 def identity_status_text(state: str, dirty: bool) -> str:
-    """The caption under "Identity files OpenSSH uses"."""
+    """The caption under "Keys OpenSSH offers"."""
     if state == FAILED:
         return _("Unknown: OpenSSH could not read the configuration.")
     if state == PENDING and dirty:
@@ -95,8 +95,8 @@ class ConnectionDialogEffectiveMixin:
     # -- the identity list -------------------------------------------------
 
     def _build_effective_identity_row(self):
-        """The read-only "Identity files OpenSSH uses" expander."""
-        row = Adw.ExpanderRow(title=_("Identity files OpenSSH uses"))
+        """The read-only "Keys OpenSSH offers" expander."""
+        row = Adw.ExpanderRow(title=_("Keys OpenSSH offers"))
         row.set_subtitle(identity_status_text(WAITING, False))
         self.effective_identity_row = row
         self._effective_identity_rows = []
