@@ -82,6 +82,10 @@ class _FsClient:
         self.dirs = {}
         self.links = set()
         self.link_targets = {}
+        self.rename_calls = []
+        # An SFTP status code to refuse every rename with, as a server does
+        # across filesystems; None renames.
+        self.rename_error = None
 
     def _attr(self, path, *, follow=False):
         if follow and path in self.link_targets:
@@ -153,6 +157,30 @@ class _FsClient:
 
     def open(self, path, mode):
         return _FileHandle(self, path, mode)
+
+    def rename(self, old, new):
+        """Plain SFTP RENAME: never replaces an existing destination."""
+        self.rename_calls.append((old, new))
+        if self.rename_error is not None:
+            raise sftp_proto.SFTPError(self.rename_error)
+        if not (old in self.files or old in self.dirs or old in self.links):
+            raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE)
+        if new in self.files or new in self.dirs or new in self.links:
+            raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE)
+
+        def _moved(path):
+            if path == old:
+                return new
+            if path.startswith(old + "/"):
+                return new + path[len(old):]
+            return path
+
+        self.files = {_moved(k): v for k, v in self.files.items()}
+        self.dirs = {_moved(k): v for k, v in self.dirs.items()}
+        self.links = {_moved(k) for k in self.links}
+        self.link_targets = {_moved(k): v for k, v in self.link_targets.items()}
+        self._unregister_child(old)
+        self._register_child(new)
 
     def add_dir(self, path, children=()):
         self.dirs.setdefault(path, set()).update(children)
@@ -375,8 +403,78 @@ def test_copy_tree_operation_copies_recursively():
     assert fs.files["/tree/a.txt"] == b"hello"
 
 
-def test_move_tree_operation_removes_source_after_copy():
+def test_move_tree_on_one_server_is_a_rename():
+    """#1356: a move within one server renames, as ``mv`` does; it never
+    copies the bytes and removes them after."""
     fs = _tree_client()
+    fs.add_dir("/", {"tree"})
+    opened = []
+    real_open = fs.open
+    fs.open = lambda path, mode: opened.append(path) or real_open(path, mode)
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_copy(
+        SftpCopyRequest(
+            summary.id, "/tree", "/destination", recursive=True, move=True
+        ),
+        client_id=OWNER,
+    )
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert fs.rename_calls == [("/tree", "/destination")]
+    assert opened == []
+    assert fs.files["/destination/sub/b.txt"] == b"world!"
+    assert "/tree" not in fs.dirs
+    assert fs.dirs["/"] == {"destination"}
+
+
+def test_single_file_move_on_one_server_is_a_rename():
+    fs = _single_file_client(1024)
+    content = fs.files["/big"]
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_copy(
+        SftpCopyRequest(summary.id, "/big", "/moved", move=True, as_operation=True),
+        client_id=OWNER,
+    )
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert fs.rename_calls == [("/big", "/moved")]
+    assert fs.files == {"/moved": content}
+
+
+def test_copy_on_one_server_never_renames():
+    fs = _tree_client()
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_copy(
+        SftpCopyRequest(summary.id, "/tree", "/destination", recursive=True),
+        client_id=OWNER,
+    )
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert fs.rename_calls == []
+    assert fs.files["/tree/a.txt"] == b"hello"
+
+
+def test_move_with_an_existing_destination_is_refused_before_any_rename():
+    fs = _tree_client()
+    fs.add_dir("/destination")
+    runtime, ops, summary = _make_runtime(fs)
+    started = runtime.start_copy(
+        SftpCopyRequest(
+            summary.id, "/tree", "/destination", recursive=True, move=True
+        ),
+        client_id=OWNER,
+    )
+    done = _await_terminal(ops, started.operation_id)
+    assert done.state is OperationState.FAILED
+    assert fs.rename_calls == []
+    assert fs.files["/tree/a.txt"] == b"hello"
+
+
+def test_move_tree_operation_removes_source_after_copy():
+    """A server that cannot rename there (another filesystem) still moves:
+    copy, then remove the source."""
+    fs = _tree_client()
+    fs.rename_error = sftp_proto.FX_FAILURE
     runtime, ops, summary = _make_runtime(fs)
     started = runtime.start_copy(
         SftpCopyRequest(
@@ -535,6 +633,7 @@ def test_cancelling_a_single_file_copy_leaves_no_partial_file():
 
 def test_single_file_move_as_operation_removes_the_source():
     fs = _single_file_client(1024)
+    fs.rename_error = sftp_proto.FX_OP_UNSUPPORTED
     content = fs.files["/big"]
     runtime, ops, summary = _make_runtime(fs)
     started = runtime.start_copy(

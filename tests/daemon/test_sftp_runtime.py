@@ -134,6 +134,13 @@ class _FakeSftpClient:
     def open(self, path, mode):
         return _File(self, path, mode)
 
+    def rename(self, old, new):
+        if old not in self.files:
+            raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE, "missing")
+        if new in self.files or new in self.directories:
+            raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "exists")
+        self.files[new] = self.files.pop(old)
+
     def remove(self, path):
         self.remove_calls.append(path)
         self.files.pop(path, None)

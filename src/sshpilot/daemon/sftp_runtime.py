@@ -2164,6 +2164,30 @@ class SftpServiceRuntime:
             copied += 1
             _report_copy_progress()
 
+        def _moved_by_rename() -> bool:
+            """Move within one server by renaming, as ``mv`` does (#1356).
+
+            Plain SFTP RENAME never replaces an existing destination, so the
+            refusal checked above still holds. A server that cannot rename
+            here (another filesystem, no permission to link) answers with an
+            error and the move falls back to copy and remove. Only a lost
+            connection is final.
+            """
+            if not (request.move and same_server):
+                return False
+            if cancel is not None and cancel():
+                raise OperationCancelled()
+            try:
+                client.rename(source, destination)
+            except sftp_proto.SFTPError as exc:
+                if exc.code == sftp_proto.FX_CONNECTION_LOST:
+                    raise
+                logger.debug("Rename for a move failed; copying instead: %s", exc)
+                return False
+            if progress is not None:
+                progress(1.0)
+            return True
+
         def _into_itself_error() -> _SftpSummaryError:
             return _SftpSummaryError(
                 ErrorCode.VALIDATION_FAILED,
@@ -2298,6 +2322,8 @@ class SftpServiceRuntime:
                 if same_server:
                     if _resolves_into_source():
                         raise _into_itself_error()
+                    if _moved_by_rename():
+                        return
                     _copy_directory(source, destination)
                 else:
                     _make_root_unless_inside_source()
@@ -2310,6 +2336,8 @@ class SftpServiceRuntime:
                         SftpFailureCode.RECURSIVE_COPY_REQUIRES_DIRECTORY_SOURCE,
                         details={"service_id": record.service_id},
                     )
+                if _moved_by_rename():
+                    return
                 _copy_file(source, destination, size=source_attr.st_size)
             if progress is not None:
                 progress(1.0)

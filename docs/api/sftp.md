@@ -42,6 +42,12 @@ daemon streams between the two sessions, or, when both services are on one
 connection, copies through the source session so the server can copy for
 itself. A failure on the receiving side is that service's failure.
 
+A `move` within one connection (one service, or two on the same connection)
+is a plain SFTP `RENAME` first, as `mv` is; an existing destination is still
+refused. When the server cannot rename there (another filesystem, say), the
+move copies and then removes the source. A move between connections always
+copies.
+
 The generic `ServiceFailure` contract was not changed by the SFTP migration.
 Native SCP has its own strict `ScpFailure` contract; unrelated service
 summaries retain `ServiceFailure`.
