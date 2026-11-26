@@ -209,6 +209,43 @@ def _ensure_layout_bar_css() -> None:
         logger.debug("Layout bar CSS install failed", exc_info=True)
 
 
+class _ProgressRun:
+    """One copy, move or delete run and its dialog (see _show_progress_dialog).
+
+    Each run keeps its own futures, byte counts and progress listeners, so a
+    newer run taking the window's dialog slot neither freezes an older one's
+    progress nor decides its outcome. A run ends once every future it
+    registered has been settled on the main loop, not merely when they are
+    done: each settle records the file it finished, and deciding earlier
+    could report success before a later failure was counted.
+    """
+
+    def __init__(self, dialog, manager) -> None:
+        self.dialog = dialog
+        self.manager = manager
+        self.handler_ids: list = []
+        self.futures: list = []
+        self.settled: set = set()
+        self.cancelled = 0
+        self.future_to_filename: dict = {}
+        self.batch_expected: Dict[str, Optional[int]] = {}
+        self.batch_active_bytes: Dict[str, Tuple[int, int]] = {}
+        self.batch_settled_bytes: Dict[str, Tuple[int, int]] = {}
+        self.batch_file_meta: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {}
+        self.batch_focused_key: Optional[str] = None
+
+    def running(self) -> bool:
+        return len(self.settled) < len(self.futures)
+
+    def disconnect(self) -> None:
+        for handler_id in self.handler_ids:
+            try:
+                self.manager.disconnect(handler_id)
+            except (TypeError, RuntimeError, AttributeError):
+                pass
+        self.handler_ids = []
+
+
 # Global registry to track live file manager windows. Used to ensure
 # managers are cleaned up even if the application does not hold references.
 _file_manager_windows_registry: weakref.WeakSet = weakref.WeakSet()
@@ -1401,7 +1438,7 @@ class FileManagerWindow(Adw.Window):
             return
         # While a transfer dialog owns the progress handlers, skip the legacy
         # path so per-file fractions cannot overwrite the batch aggregate.
-        if getattr(self, "_progress_handler_id", None):
+        if any(run.running() for run in self.__dict__.get("_progress_runs") or []):
             return
         self._show_progress(fraction, message)
 
@@ -3984,6 +4021,15 @@ class FileManagerWindow(Adw.Window):
         # ends: the originals must never be removed there.
         source_manager = self._manager_for(pane)
 
+        def _notice(completed):
+            if getattr(completed, "_sshpilot_originals_kept_notice", False):
+                return
+            completed._sshpilot_originals_kept_notice = True
+            GLib.idle_add(
+                pane.show_toast,
+                _("The move ended as a copy: the originals could not be removed"),
+            )
+
         def _cleanup(completed: Future, path: str = source_path, target_pane: FilePane = pane) -> None:
             if not self._transfer_item_succeeded(completed, index):
                 return
@@ -4008,18 +4054,24 @@ class FileManagerWindow(Adw.Window):
                         "Not removing %s after the move: its pane shows another server now",
                         path,
                     )
-                    notified = self.__dict__.setdefault("_move_kept_notified", set())
-                    if id(completed) not in notified:
-                        notified.add(id(completed))
-                        GLib.idle_add(
-                            target_pane.show_toast,
-                            _("The originals were not removed: this pane now shows another server"),
-                        )
+                    _notice(completed)
                     return
                 # Reconnected to the same server: remove them through the
                 # connection the pane has now.
                 manager = current
-            cleanup_future = manager.remove(path, recursive=True, report_progress=False)
+            try:
+                cleanup_future = manager.remove(path, recursive=True, report_progress=False)
+            except Exception:
+                _notice(completed)
+                return
+
+            def _removed(result):
+                try:
+                    result.result()
+                except Exception:
+                    _notice(completed)
+
+            cleanup_future.add_done_callback(_removed)
             self._attach_refresh(cleanup_future, refresh_remote=target_pane)
 
         future.add_done_callback(_cleanup)
@@ -4051,44 +4103,57 @@ class FileManagerWindow(Adw.Window):
             size /= 1024
         return f"{size:.1f} TB"
 
-    def _finish_replaced_transfer(self, dialog, future_result: Future, filename: str) -> None:
-        """Settle one future of a transfer whose dialog is no longer current.
+    def _settle_run_future(self, run: "_ProgressRun", future_result: Future) -> None:
+        """Account for one finished future of *run*; end the run with the last.
 
-        Starting another kind of operation (or one on another server) while
-        a copy, move or delete runs gives the new one the window's dialog
-        slot; the older transfer carries on in the background. Its outcome
-        is worked out from the dialog's own futures, since the window's
-        bookkeeping now belongs to the newer transfer.
+        Runs on the main loop, once per future. The outcome is decided only
+        when every registered future has been accounted for here.
         """
-        if future_result.cancelled():
+        if future_result in run.settled:
+            return
+        run.settled.add(future_result)
+        dialog = run.dialog
+        last = not run.running()
+        if last:
+            run.disconnect()
+        if dialog is None:
             return
         if dialog.operation_type == "delete":
-            self._complete_delete_progress(future_result, dialog)
+            if not future_result.cancelled():
+                self._complete_delete_progress(future_result, dialog)
             return
-        exception = future_result.exception()
-        if isinstance(exception, TransferCancelledException):
-            # The daemon confirmed the cancel: the backend reports that as
-            # an error.
-            dialog.mark_cancelled()
-            return
-        if dialog.is_cancelled:
-            return
-        failed = getattr(dialog, "_failed_files", None)
-        if exception is not None:
+        try:
+            exception = None if future_result.cancelled() else future_result.exception()
+        except CancelledError:
+            exception = None
+        if future_result.cancelled() or isinstance(exception, TransferCancelledException):
+            # The daemon confirmed a cancel (the backend reports it as an
+            # error): neither a success nor a failure of that file.
+            run.cancelled += 1
+            self._settle_batch_transfer(future_result, success=False, run=run)
+        elif exception is not None:
+            self._settle_batch_transfer(future_result, success=False, run=run)
+            filename = run.future_to_filename.get(future_result, "unknown file")
             logger.error("Transfer failed for %s: %s", filename, exception)
+            failed = getattr(dialog, "_failed_files", None)
             if failed is not None:
                 failed.append((filename, str(exception)))
         else:
-            dialog.increment_file_count()
-        if any(f is not None and not f.done() for f in getattr(dialog, "_futures", [])):
+            self._settle_batch_transfer(future_result, success=True, run=run)
+            # Counted now, not on a later idle: the run's summary may be
+            # written by this very call.
+            dialog.set_files_completed(dialog.files_completed + 1)
+        if not last or dialog.is_cancelled:
+            return
+        failed = list(getattr(dialog, "_failed_files", None) or [])
+        if run.cancelled and not failed and dialog.files_completed == 0:
+            # Every file was cancelled: the run was.
+            dialog.mark_cancelled()
             return
         if not failed:
-            if exception is None:
-                dialog.show_completion(success=True)
-            else:
-                dialog.show_completion(success=False, error_message=str(exception))
+            dialog.show_completion(success=True)
             return
-        total = dialog.total_files
+        total = max(dialog.total_files, len(run.futures))
         if len(failed) >= total:
             dialog.show_completion(success=False, error_message=failed[0][1])
             return
@@ -4101,19 +4166,6 @@ class FileManagerWindow(Adw.Window):
             ).format(count=len(failed), total=total),
         )
 
-    def _disconnect_progress_handlers(self) -> None:
-        """Stop listening for the transfer that had the dialog slot."""
-        manager = self.__dict__.get("_progress_manager")
-        for name in ("_progress_handler_id", "_progress_bytes_handler_id"):
-            handler_id = self.__dict__.get(name)
-            if handler_id and manager is not None:
-                try:
-                    manager.disconnect(handler_id)
-                except (TypeError, RuntimeError, AttributeError):
-                    pass
-            setattr(self, name, None)
-        self._progress_manager = None
-
     def _reset_batch_progress_state(self) -> None:
         self._batch_expected: Dict[str, Optional[int]] = {}
         self._batch_active_bytes: Dict[str, Tuple[int, int]] = {}
@@ -4122,16 +4174,35 @@ class FileManagerWindow(Adw.Window):
         self._batch_file_meta: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {}
         self._batch_focused_key: Optional[str] = None
 
-    def _focus_batch_transfer(self, key: str, *, force: bool = False) -> None:
+    def _batch_state(self, run: Optional["_ProgressRun"]):
+        """(dialog, expected, active, settled, meta) of *run*, or of the
+        window's current batch when no run is given."""
+        if run is not None:
+            return (run.dialog, run.batch_expected, run.batch_active_bytes,
+                    run.batch_settled_bytes, run.batch_file_meta)
+        return (
+            getattr(self, "_aggregate_dialog", None),
+            getattr(self, "_batch_expected", None),
+            getattr(self, "_batch_active_bytes", {}),
+            getattr(self, "_batch_settled_bytes", {}),
+            getattr(self, "_batch_file_meta", {}),
+        )
+
+    def _focus_batch_transfer(self, key: str, *, force: bool = False,
+                              run: Optional["_ProgressRun"] = None) -> None:
         """Point the dialog's name / From / To labels at one batch member."""
-        dialog = self._aggregate_dialog
-        meta = getattr(self, "_batch_file_meta", {}).get(key)
+        dialog, _expected, _active, _settled, metas = self._batch_state(run)
+        meta = metas.get(key)
         if dialog is None or meta is None:
             return
-        if not force and getattr(self, "_batch_focused_key", None) == key:
+        focused = run.batch_focused_key if run is not None else getattr(self, "_batch_focused_key", None)
+        if not force and focused == key:
             return
         filename, source_path, destination_path = meta
-        self._batch_focused_key = key
+        if run is not None:
+            run.batch_focused_key = key
+        else:
+            self._batch_focused_key = key
         try:
             dialog.set_operation_details(
                 total_files=dialog.total_files or 1,
@@ -4142,32 +4213,32 @@ class FileManagerWindow(Adw.Window):
         except (AttributeError, RuntimeError, GLib.Error):
             pass
 
-    def _focus_next_active_batch_transfer(self, exclude_key: Optional[str] = None) -> None:
+    def _focus_next_active_batch_transfer(self, exclude_key: Optional[str] = None,
+                                          run: Optional["_ProgressRun"] = None) -> None:
         """After a file finishes, show another still-active transfer if needed."""
-        active = getattr(self, "_batch_active_bytes", {})
-        focused = getattr(self, "_batch_focused_key", None)
+        _dialog, expected, active, settled, _meta = self._batch_state(run)
+        focused = run.batch_focused_key if run is not None else getattr(self, "_batch_focused_key", None)
         if focused and focused != exclude_key and focused in active:
             return
         for key in active:
             if key != exclude_key:
-                self._focus_batch_transfer(key, force=True)
+                self._focus_batch_transfer(key, force=True, run=run)
                 return
         # Nothing active yet — fall back to any unfinished expected key.
-        settled = getattr(self, "_batch_settled_bytes", {})
-        for key in getattr(self, "_batch_expected", {}):
+        for key in expected or {}:
             if key != exclude_key and key not in settled:
-                self._focus_batch_transfer(key, force=True)
+                self._focus_batch_transfer(key, force=True, run=run)
                 return
 
-    def _publish_batch_transfer_progress(self) -> None:
+    def _publish_batch_transfer_progress(self, run: Optional["_ProgressRun"] = None) -> None:
         """Push aggregated batch bytes + an honest status string into the dialog."""
-        dialog = self._aggregate_dialog
+        dialog, expected, active, settled, _meta = self._batch_state(run)
         if dialog is None or dialog.is_cancelled:
             return
         batch = aggregate_batch_bytes(
-            expected=getattr(self, "_batch_expected", {}),
-            active=getattr(self, "_batch_active_bytes", {}),
-            settled=getattr(self, "_batch_settled_bytes", {}),
+            expected=expected or {},
+            active=active,
+            settled=settled,
             files_completed=dialog.files_completed,
             total_files=dialog.total_files,
         )
@@ -4189,14 +4260,13 @@ class FileManagerWindow(Adw.Window):
         except (AttributeError, RuntimeError, GLib.Error):
             pass
 
-    def _settle_batch_transfer(self, future_result: Future, *, success: bool) -> None:
+    def _settle_batch_transfer(self, future_result: Future, *, success: bool,
+                               run: Optional["_ProgressRun"] = None) -> None:
         """Move a finished transfer's bytes from active → settled for aggregation."""
         key = progress_key_for_future(future_result)
-        expected = getattr(self, "_batch_expected", None)
+        _dialog, expected, active, settled, _meta = self._batch_state(run)
         if expected is None:
             return
-        active = getattr(self, "_batch_active_bytes", {})
-        settled = getattr(self, "_batch_settled_bytes", {})
         if key in settled:
             return
         if key in active:
@@ -4220,8 +4290,8 @@ class FileManagerWindow(Adw.Window):
             done = total
         if done > 0 or total > 0:
             settled[key] = (done, total if total > 0 else done)
-        self._focus_next_active_batch_transfer(exclude_key=key)
-        self._publish_batch_transfer_progress()
+        self._focus_next_active_batch_transfer(exclude_key=key, run=run)
+        self._publish_batch_transfer_progress(run=run)
 
     def _embedded_dialog_parent(self) -> Optional[Gtk.Widget]:
         """Where dialogs go while embedded: the window the tab is in now.
@@ -4329,52 +4399,78 @@ class FileManagerWindow(Adw.Window):
             logger.debug("Finding the file manager's tab failed", exc_info=True)
         return None
 
+    # Marks a tab whose indicator shows this file manager's transfers.
+    _TAB_FACE_ATTR = "_sshpilot_fm_transfer_face"
+
     def _update_tab_indicator(
         self, state: str, fraction: Optional[float], tooltip: Optional[str]
-    ) -> None:
+    ) -> bool:
         """Show the transfers on the tab too: it is what stays visible while
         another tab is in front. The same ring as the toolbar button, a
-        spinner until a size is known, a warning after a failure."""
+        spinner until a size is known, a warning after a failure.
+
+        Returns whether the tab took it; the indicator tells again otherwise
+        (the tab was between windows, say).
+        """
         page = self._own_tab_page()
         if page is None:
-            return
-        held = self.__dict__.get("_tab_indicator_held")
-        if held is not None and held[0] is not page:
-            # The tab moved to another window: that is a new page.
-            held = None
+            return False
         try:
             if state == "idle":
-                if held is not None:
-                    page.set_loading(False)
-                    page.set_indicator_icon(held[1])
-                    page.set_indicator_tooltip(held[2] or "")
-                self._tab_indicator_held = None
-                return
-            if held is None:
-                # Whatever the tab showed there (a group colour) comes back.
-                held = (page, page.get_indicator_icon(), page.get_indicator_tooltip())
-                self._tab_indicator_held = held
+                page.set_loading(False)
+                if getattr(page, self._TAB_FACE_ATTR, False):
+                    self._restore_tab_indicator(page)
+                return True
             if state == "failed":
                 from sshpilot import icon_utils
 
                 icon = icon_utils.new_gicon_from_icon_name("dialog-warning-symbolic")
                 tooltip = _("Transfer Failed")
             elif fraction is None:
-                icon = held[1]
+                icon = getattr(page, "_sshpilot_group_indicator_icon", None)
             else:
                 from .file_manager.transfer_indicator import progress_ring_icon
 
-                # The tab's own text colour, not the file manager toolbar's:
-                # that bar can be dark while the tabs are light.
-                tab_view = page.get_child().get_ancestor(Adw.TabView)
                 icon = progress_ring_icon(
-                    fraction, tab_view.get_color(), tab_view.get_scale_factor()
+                    fraction, self._tab_text_colour(page), self._tab_scale(page)
                 )
+            setattr(page, self._TAB_FACE_ATTR, True)
             page.set_loading(state == "running" and fraction is None)
             page.set_indicator_icon(icon)
             page.set_indicator_tooltip(tooltip or "")
+            return True
         except Exception:
             logger.debug("Updating the tab's transfer indicator failed", exc_info=True)
+            return False
+
+    @staticmethod
+    def _restore_tab_indicator(page) -> None:
+        """Give the tab back what it shows now without transfers: its group
+        colour as it is today (it may have changed while they ran)."""
+        icon = getattr(page, "_sshpilot_group_indicator_icon", None)
+        page.set_indicator_icon(icon)
+        page.set_indicator_tooltip(_("Group color") if icon is not None else "")
+        setattr(page, FileManagerWindow._TAB_FACE_ATTR, False)
+
+    def _tab_text_colour(self, page):
+        """The colour the tab's label is drawn in: the tab bar's, which can
+        differ from the content area below it."""
+        widget = None
+        try:
+            root = page.get_child().get_root()
+            widget = getattr(root, "tab_bar", None)
+            if widget is None:
+                widget = page.get_child().get_ancestor(Adw.TabView)
+            return widget.get_color()
+        except Exception:
+            return self._toolbar_view.get_color()
+
+    @staticmethod
+    def _tab_scale(page) -> int:
+        try:
+            return page.get_child().get_scale_factor()
+        except Exception:
+            return 1
 
     def _on_transfer_finished(self, dialog) -> None:
         """A transfer long enough to show in the indicator finished (Nautilus
@@ -4565,292 +4661,151 @@ class FileManagerWindow(Adw.Window):
 
         *manager* is the backend whose progress signals drive the dialog
         (default: the right pane's); *source_pane* / *destination_pane* name
-        the servers in its text.
+        the servers in its text. Futures of one kind on one backend join the
+        running run (its dialog); anything else starts a new run, and the
+        older one carries on in the background with its own state.
         """
         if manager is None:
             manager = self._manager
+        run = self.__dict__.get("_progress_run")
         try:
             logger.debug("_show_progress_dialog called for %s %s", operation_type, filename)
-
-            # Reuse only when the existing dialog is still open and active.
-            # A dismissed/completed dialog keeps its Python wrapper around until
-            # the user starts another transfer; reusing that object skips
-            # present() and nothing appears on screen.
-            reuse_dialog = False
-            if (
-                hasattr(self, "_aggregate_dialog")
-                and self._aggregate_dialog
-                and self._aggregate_dialog.is_reusable()
-                and self._aggregate_dialog.operation_type == operation_type
-                # Its progress handlers listen to one backend.
-                and self.__dict__.get("_progress_manager") in (None, manager)
-            ):
-                reuse_dialog = True
-                logger.debug("Reusing existing progress dialog for %s", operation_type)
-            else:
-                # Dismiss any stale or different-operation dialog.
-                if hasattr(self, "_aggregate_dialog") and self._aggregate_dialog:
+            reuse = (
+                run is not None
+                and run.dialog is not None
+                and run.dialog is getattr(self, "_aggregate_dialog", None)
+                and run.dialog.is_reusable()
+                and run.dialog.operation_type == operation_type
+                # Its progress listeners are on one backend.
+                and run.manager is manager
+            )
+            if not reuse:
+                previous = getattr(self, "_aggregate_dialog", None)
+                if previous is not None:
                     try:
-                        self._aggregate_dialog.close()
+                        # Only hides it: a running transfer goes on.
+                        previous.close()
                     except (AttributeError, RuntimeError):
                         pass
-                    self._aggregate_dialog = None
-
-            if not reuse_dialog:
-                self._aggregate_dialog = self._present_progress_dialog(
+                dialog = self._present_progress_dialog(
                     operation_type, total_files=total_files, filename=filename,
                     **(
                         {"source_pane": source_pane, "destination_pane": destination_pane}
                         if source_pane is not None or destination_pane is not None else {}
                     ),
                 )
+                run = _ProgressRun(dialog, manager)
+                self._connect_run(run)
+                self._progress_run = run
+                self._aggregate_dialog = dialog
+                # The window's batch fields follow the current run (helpers
+                # called without a run read them).
+                self._batch_expected = run.batch_expected
+                self._batch_active_bytes = run.batch_active_bytes
+                self._batch_settled_bytes = run.batch_settled_bytes
+                self._batch_file_meta = run.batch_file_meta
+                self._batch_focused_key = None
+                self._active_futures = run.futures
+                self._future_to_filename = run.future_to_filename
 
             # Keep the file counter in sync. Name / From / To are owned by
             # ``_focus_batch_transfer`` so a multi-file start loop does not
             # leave the dialog stuck on the last registered path.
-            self._aggregate_dialog.set_operation_details(total_files=total_files)
-            self._aggregate_dialog.set_future(future)
-            self._note_transfer_backends(self._aggregate_dialog, manager)
-
+            run.dialog.set_operation_details(total_files=total_files)
+            run.dialog.set_future(future)
+            self._note_transfer_backends(run.dialog, manager)
         except Exception as exc:
             logger.error("Error in _show_progress_dialog: %s", exc, exc_info=True)
             return
-        # The dialog this transfer belongs to. A later transfer may have its
-        # own by the time this one ends.
-        owner_dialog = self._aggregate_dialog
-        owner_filename = filename
 
-        # Only connect progress signal handler when creating a new dialog
-        # When reusing, the handler is already connected
-        if not reuse_dialog:
-            # A transfer this one replaced must not keep feeding its
-            # progress into the new dialog.
-            self._disconnect_progress_handlers()
-            self._active_futures = []  # Track all active futures for multi-file transfers
-            self._future_to_filename = {}  # Map futures to filenames for progress tracking
-            self._reset_batch_progress_state()
-
-            # Connect progress signal. Multi-file byte transfers are driven by
-            # the progress-bytes aggregator; this handler only covers deletes
-            # and single-file transfers (and starting messages).
-            def _on_progress(manager, progress: float, message: str) -> None:
-                if not (self._aggregate_dialog and
-                        not self._aggregate_dialog.is_cancelled and
-                        getattr(self, '_active_futures', None)):
-                    return
-                active_count = sum(
-                    1 for f in self._active_futures
-                    if f and not f.done() and not f.cancelled()
-                )
-                if active_count == 0:
-                    return
-                try:
-                    # Mass/recursive delete emits an overall 0..1 fraction on a
-                    # single future — do not re-apply multi-file math.
-                    if self._aggregate_dialog.operation_type == "delete":
-                        self._aggregate_dialog.update_progress(progress, message)
-                    elif self._aggregate_dialog.total_files > 1:
-                        # Concurrent transfers each emit their own fraction and
-                        # "Transferred X of Y" for that file alone. Ignore those
-                        # for the bar/status — batch aggregation owns them.
-                        # Keep only pre-byte starting messages so the dialog
-                        # isn't blank before the first chunk arrives.
-                        if getattr(self, "_batch_active_bytes", None) or getattr(
-                            self, "_batch_settled_bytes", None
-                        ):
-                            return
-                        self._aggregate_dialog.update_progress(0.0, message)
-                    else:
-                        self._aggregate_dialog.update_progress(progress, message)
-                except (AttributeError, RuntimeError, GLib.Error):
-                    # Dialog may have been destroyed mid-emit.
-                    pass
-
-            def _on_progress_bytes(manager, transferred, total, progress_key="") -> None:
-                if not (self._aggregate_dialog and not self._aggregate_dialog.is_cancelled):
-                    return
-                key = str(progress_key or "")
-                if not key:
-                    return
-                try:
-                    transferred_n = int(transferred or 0)
-                    total_n = int(total or 0)
-                except (TypeError, ValueError):
-                    return
-                active = getattr(self, "_batch_active_bytes", None)
-                expected = getattr(self, "_batch_expected", None)
-                if active is None or expected is None:
-                    return
-                if key not in expected:
-                    # Progress for a transfer outside this dialog batch.
-                    return
-                active[key] = (transferred_n, total_n)
-                try:
-                    GLib.idle_add(self._focus_batch_transfer, key)
-                    GLib.idle_add(self._publish_batch_transfer_progress)
-                except (AttributeError, RuntimeError, GLib.Error):
-                    pass
-
-            self._progress_manager = manager
-            self._progress_handler_id = manager.connect("progress", _on_progress)
-            self._progress_bytes_handler_id = manager.connect(
-                "progress-bytes", _on_progress_bytes
-            )
-
-        # Add this future to the active futures list
-        if not hasattr(self, '_active_futures'):
-            self._active_futures = []
-        if future not in self._active_futures:
-            self._active_futures.append(future)
-
-        # Map future to filename for progress tracking
-        if not hasattr(self, '_future_to_filename'):
-            self._future_to_filename = {}
-        self._future_to_filename[future] = filename
-
-        if not hasattr(self, "_batch_expected"):
-            self._reset_batch_progress_state()
+        if future not in run.futures:
+            run.futures.append(future)
+        run.future_to_filename[future] = filename
         key = progress_key_for_future(future)
         exp = int(expected_bytes) if expected_bytes is not None and expected_bytes > 0 else None
-        first_in_batch = key not in self._batch_expected and not self._batch_expected
-        self._batch_expected[key] = exp
-        self._batch_file_meta[key] = (filename, source_path, destination_path)
+        first_in_batch = key not in run.batch_expected and not run.batch_expected
+        run.batch_expected[key] = exp
+        run.batch_file_meta[key] = (filename, source_path, destination_path)
         # Show the first file immediately; later files update the labels when
         # their progress-bytes arrive (or when a prior file settles).
         if first_in_batch or total_files <= 1:
-            self._focus_batch_transfer(key, force=True)
+            self._focus_batch_transfer(key, force=True, run=run)
         if exp is not None and total_files > 1:
-            self._publish_batch_transfer_progress()
+            self._publish_batch_transfer_progress(run=run)
 
         # Also update current_future for backward compatibility
         self._current_future = future
 
-        def _on_complete(future_result) -> None:
-            # Use GLib.idle_add to ensure we're on the main thread
-            def _cleanup():
-                # Remove this future from active futures list
-                if hasattr(self, '_active_futures') and future_result in self._active_futures:
-                    self._active_futures.remove(future_result)
-
-                # Only disconnect progress signals if all futures are done
-                active_count = sum(1 for f in getattr(self, '_active_futures', [])
-                                 if f and not f.done())
-                if active_count == 0:
-                    progress_manager = self.__dict__.get("_progress_manager")
-                    if progress_manager is None:
-                        progress_manager = getattr(self, "_manager", None)
-                    if (hasattr(self, '_progress_handler_id') and self._progress_handler_id and
-                        progress_manager is not None):
-                        try:
-                            progress_manager.disconnect(self._progress_handler_id)
-                        except (TypeError, RuntimeError, AttributeError):
-                            pass
-                        self._progress_handler_id = None
-                    if (hasattr(self, '_progress_bytes_handler_id') and self._progress_bytes_handler_id and
-                        progress_manager is not None):
-                        try:
-                            progress_manager.disconnect(self._progress_bytes_handler_id)
-                        except (TypeError, RuntimeError, AttributeError):
-                            pass
-                        self._progress_bytes_handler_id = None
-                    self._progress_manager = None
-
-                # Update dialog to show completion
-                if owner_dialog is not None and self._aggregate_dialog is not owner_dialog:
-                    # A newer transfer has its own dialog: that one is not
-                    # ours to mark. Ours still has to hear how this ended,
-                    # or it shows as running for good.
-                    try:
-                        self._finish_replaced_transfer(
-                            owner_dialog, future_result, owner_filename
-                        )
-                    except (CancelledError, AttributeError, RuntimeError, GLib.Error):
-                        pass
-                elif self._aggregate_dialog:
-                    try:
-                        # Check if the future was cancelled first
-                        if future_result.cancelled():
-                            # Operation was cancelled, don't show completion
-                            # The dialog will be closed by the cancel handler
-                            pass
-                        elif self._aggregate_dialog.operation_type == "delete":
-                            self._complete_delete_progress(future_result)
-                        else:
-                            # Check for exceptions
-                            try:
-                                exception = future_result.exception()
-                                if isinstance(exception, TransferCancelledException):
-                                    # The daemon confirmed the cancel: the
-                                    # backend reports that as an error.
-                                    self._settle_batch_transfer(future_result, success=False)
-                                    self._aggregate_dialog.mark_cancelled()
-                                elif self._aggregate_dialog.is_cancelled:
-                                    self._settle_batch_transfer(
-                                        future_result, success=exception is None
-                                    )
-                                elif exception:
-                                    self._settle_batch_transfer(future_result, success=False)
-                                    error_msg = str(exception)
-                                    # Get filename for this future
-                                    filename = self._future_to_filename.get(future_result, "unknown file")
-                                    # Track failed file
-                                    if hasattr(self._aggregate_dialog, '_failed_files'):
-                                        self._aggregate_dialog._failed_files.append((filename, error_msg))
-                                    logger.error(f"Upload failed for {filename}: {error_msg}")
-
-                                    # For multi-file operations, don't show completion until all files are done
-                                    active_count = sum(1 for f in getattr(self, '_active_futures', [])
-                                                     if f and not f.done())
-                                    if active_count == 0:
-                                        # All files are done (some may have failed)
-                                        # Show completion with summary
-                                        if hasattr(self._aggregate_dialog, '_failed_files') and self._aggregate_dialog._failed_files:
-                                            # Some files failed
-                                            failed_count = len(self._aggregate_dialog._failed_files)
-                                            if failed_count == self._aggregate_dialog.total_files:
-                                                # All files failed
-                                                error_summary = self._aggregate_dialog._failed_files[0][1] if self._aggregate_dialog._failed_files else _("Unknown error")
-                                                self._aggregate_dialog.show_completion(success=False, error_message=error_summary)
-                                            else:
-                                                # Some succeeded, some failed
-                                                total = self._aggregate_dialog.total_files
-                                                error_msg = ngettext(
-                                                    "{count} of {total} file could not be transferred",
-                                                    "{count} of {total} files could not be transferred",
-                                                    total,
-                                                ).format(count=failed_count, total=total)
-                                                self._aggregate_dialog.show_completion(success=False, error_message=error_msg)
-                                        else:
-                                            # All files succeeded (shouldn't happen if we're here, but handle it)
-                                            self._aggregate_dialog.show_completion(success=True)
-                                else:
-                                    # File completed successfully
-                                    self._settle_batch_transfer(future_result, success=True)
-                                    self._aggregate_dialog.increment_file_count()
-
-                                    # Only show completion dialog when ALL files are done
-                                    active_count = sum(1 for f in getattr(self, '_active_futures', [])
-                                                     if f and not f.done())
-                                    if active_count == 0:
-                                        # All files completed successfully
-                                        self._aggregate_dialog.show_completion(success=True)
-                            except CancelledError:
-                                # Future was cancelled, ignore
-                                pass
-                    except (AttributeError, RuntimeError, GLib.Error):
-                        # Dialog may have been destroyed
-                        pass
-
-                # Only clear current_future when all transfers are done
-                active_count = sum(1 for f in getattr(self, '_active_futures', [])
-                                 if f and not f.done())
-                if active_count == 0:
+        def _on_complete(future_result, run=run) -> None:
+            def _settle() -> bool:
+                try:
+                    self._settle_run_future(run, future_result)
+                except (AttributeError, RuntimeError, GLib.Error):
+                    logger.debug("Settling a transfer failed", exc_info=True)
+                if not any(r.running() for r in self._live_runs()):
                     self._current_future = None
+                return False
 
-            GLib.idle_add(_cleanup)
+            GLib.idle_add(_settle)
 
-        # Connect future completion
         future.add_done_callback(_on_complete)
+
+    def _live_runs(self) -> list:
+        runs = self.__dict__.get("_progress_runs")
+        if runs is None:
+            runs = self._progress_runs = []
+        runs[:] = [r for r in runs if r.running() or r is self.__dict__.get("_progress_run")]
+        return runs
+
+    def _connect_run(self, run: "_ProgressRun") -> None:
+        """Listen to *run*'s backend for *run* alone, until it ends."""
+        self._live_runs().append(run)
+
+        def _on_progress(_manager, progress: float, message: str) -> None:
+            dialog = run.dialog
+            if dialog is None or dialog.is_cancelled or not run.running():
+                return
+            try:
+                # Mass/recursive delete emits an overall 0..1 fraction on a
+                # single future — do not re-apply multi-file math.
+                if dialog.operation_type == "delete":
+                    dialog.update_progress(progress, message)
+                elif dialog.total_files > 1:
+                    # Concurrent transfers each emit their own fraction and
+                    # "Transferred X of Y" for that file alone. Ignore those
+                    # for the bar/status — batch aggregation owns them. Keep
+                    # only pre-byte starting messages so the dialog isn't
+                    # blank before the first chunk arrives.
+                    if run.batch_active_bytes or run.batch_settled_bytes:
+                        return
+                    dialog.update_progress(0.0, message)
+                else:
+                    dialog.update_progress(progress, message)
+            except (AttributeError, RuntimeError, GLib.Error):
+                pass
+
+        def _on_progress_bytes(_manager, transferred, total, progress_key="") -> None:
+            dialog = run.dialog
+            if dialog is None or dialog.is_cancelled:
+                return
+            key = str(progress_key or "")
+            if not key or key not in run.batch_expected:
+                # Progress of a transfer outside this run.
+                return
+            try:
+                run.batch_active_bytes[key] = (int(transferred or 0), int(total or 0))
+            except (TypeError, ValueError):
+                return
+            try:
+                GLib.idle_add(lambda: (self._focus_batch_transfer(key, run=run), False)[1])
+                GLib.idle_add(lambda: (self._publish_batch_transfer_progress(run=run), False)[1])
+            except (AttributeError, RuntimeError, GLib.Error):
+                pass
+
+        run.handler_ids = [
+            run.manager.connect("progress", _on_progress),
+            run.manager.connect("progress-bytes", _on_progress_bytes),
+        ]
 
     @staticmethod
     def _normalize_local_path(path: Optional[str]) -> str:

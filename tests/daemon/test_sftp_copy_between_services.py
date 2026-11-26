@@ -29,6 +29,7 @@ from sshpilot.api.transport.codec import (
 )
 from sshpilot.daemon.operation_runtime import OperationRuntime
 from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
+from sshpilot.sftp import protocol as sftp_proto
 
 from tests.daemon.test_sftp_operations import (
     OWNER,
@@ -387,3 +388,24 @@ def test_one_server_refuses_a_folder_copy_it_cannot_place():
     assert done.state is OperationState.FAILED
     assert done.failure.code is SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF
     assert set(fs.dirs) == set(before_dirs)
+
+
+def test_one_server_refuses_unresolvable_destination_parent():
+    """Missing canonical paths cannot establish safe containment."""
+    fs = _tree_client()
+    original_realpath = fs.realpath
+
+    def _realpath(path):
+        if path.startswith("/nowhere"):
+            raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE)
+        return original_realpath(path)
+
+    fs.realpath = _realpath
+    runtime, ops, a, b = _two_services(fs, _Untouchable(), same_connection=True)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, "/tree", "/nowhere/copy", recursive=True, destination_service_id=b,
+    ))
+
+    assert done.state is OperationState.FAILED
+    assert done.failure.code is SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF

@@ -378,3 +378,26 @@ def test_a_pane_leaving_a_server_waits_only_for_that_servers_transfers():
 
     assert window._pending_transfer_futures(server_a) == [here.future, untagged.future]
     assert len(window._pending_transfer_futures()) == 3
+
+
+def test_move_cleanup_reports_remove_failure():
+    from concurrent.futures import Future
+
+    window_module = _module()
+    window = _window(window_module)
+    pane = window._right_pane
+    manager = MagicMock()
+    window._manager = manager
+    window._attach_refresh = lambda *a, **k: None
+    window_module.GLib.idle_add = lambda fn, *a: fn(*a)
+    toasts = []
+    pane.show_toast = toasts.append
+    removal = Future()
+    manager.remove.return_value = removal
+    transfer = Future()
+    window._schedule_remote_move_cleanup(transfer, "/source", pane)
+    transfer.set_result(None)
+    assert toasts == []
+    removal.set_exception(OSError("connection still opening"))
+    assert len(toasts) == 1
+    assert "copy" in toasts[0]

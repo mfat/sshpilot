@@ -242,12 +242,14 @@ def test_replaced_transfer_on_another_server_reports_too(load_file_manager_windo
     window._show_progress_dialog("copy", "b", second, total_files=1, manager=other)
     first_dialog, second_dialog = window.created
 
-    # The first transfer's listeners are gone: it no longer feeds the new dialog.
-    assert window._manager.handlers == {}
+    # The first transfer keeps listening to its own server for its own
+    # dialog (its progress must not freeze), until it ends.
+    assert window._manager.handlers != {}
 
     first.set_exception(OSError("gone"))
     assert first_dialog.completions == [(False, "gone")]
     assert second_dialog.completions == []
+    assert window._manager.handlers == {}
 
 
 def test_replaced_transfer_cancel_is_not_a_failure(load_file_manager_window, monkeypatch):
@@ -261,3 +263,48 @@ def test_replaced_transfer_cancel_is_not_a_failure(load_file_manager_window, mon
     copy.set_exception(window_module.TransferCancelledException("cancelled"))
 
     assert copy_dialog.is_cancelled and copy_dialog.completions == []
+
+
+def test_replaced_transfer_keeps_its_own_progress(load_file_manager_window, monkeypatch):
+    """A copy replaced by a newer run still moves its own bar, and its
+    progress never reaches the newer dialog."""
+    window_module = load_file_manager_window()
+    window = _background_window(window_module, monkeypatch)
+    copy = Future()
+    window._show_progress_dialog("copy", "big", copy, total_files=2, expected_bytes=100)
+    second = Future()
+    window._show_progress_dialog("copy", "small", second, total_files=2, expected_bytes=100)
+    move = Future()
+    window._show_progress_dialog("move", "other", move, total_files=1)
+    copy_dialog, move_dialog = window.created
+
+    window._manager.emit("progress-bytes", 50, 100, f"fut-{id(copy)}")
+
+    assert copy_dialog._latest_fraction is not None and copy_dialog._latest_fraction > 0
+    assert move_dialog._latest_fraction is None
+
+
+def test_success_waits_for_every_file_to_be_counted(load_file_manager_window, monkeypatch):
+    """Both futures finish before the main loop runs: the run must not call
+    the first one a success of the whole copy and then drop the failure."""
+    window_module = load_file_manager_window()
+    queued = []
+    window = _background_window(window_module, monkeypatch)
+    monkeypatch.setattr(
+        window_module.GLib, "idle_add",
+        lambda fn, *args, **kwargs: queued.append((fn, args)) or 1, raising=False,
+    )
+    copies = [Future(), Future()]
+    for future in copies:
+        window._show_progress_dialog("copy", "big", future, total_files=2)
+    copy_dialog = window.created[0]
+
+    copies[0].set_result(None)
+    copies[1].set_exception(OSError("disk full"))
+    for fn, args in list(queued):
+        fn(*args)
+
+    assert len(copy_dialog.completions) == 1
+    success, message = copy_dialog.completions[0]
+    assert success is False and "1 of 2" in message
+    assert copy_dialog.files_completed == 1

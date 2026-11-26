@@ -76,6 +76,12 @@ def _install_gi_stub(monkeypatch):
     setattr(glib_module, "get_user_config_dir", lambda: "/tmp")
     setattr(glib_module, "get_user_data_dir", lambda: "/tmp")
     setattr(glib_module, "get_home_dir", lambda: "/tmp")
+    glib_module.UserDirectory = types.SimpleNamespace(**{
+        "DIRECTORY_" + name: i for i, name in enumerate(
+            ("DESKTOP", "DOCUMENTS", "DOWNLOAD", "MUSIC", "PICTURES",
+             "PUBLIC_SHARE", "TEMPLATES", "VIDEOS")
+        )
+    })
     repository.GLib = glib_module
     sys.modules["gi.repository.GLib"] = glib_module
     # platform_utils outlives the registry restore, so rebind its GLib through

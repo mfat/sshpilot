@@ -562,13 +562,22 @@ class TransferIndicator(Gtk.MenuButton):
         face = (state, None if fraction is None else int(fraction * 100), tooltip)
         if face == self._face_told:
             return
-        self._face_told = face
         try:
-            self._on_face(
+            taken = self._on_face(
                 state, None if fraction is None else face[1] / 100.0, tooltip
             )
         except Exception:
             logger.debug("Transfer face callback failed", exc_info=True)
+            taken = False
+        # Remembered only once the tab took it: a refused face (the tab was
+        # between windows) is told again on the next tick.
+        if taken is not False:
+            self._face_told = face
+
+    def retell_face(self) -> None:
+        """Tell the tab again, as when the light or dark style changed."""
+        self._face_told = None
+        self._update_face()
 
     def _draw_face(self) -> tuple:
         snaps = [
