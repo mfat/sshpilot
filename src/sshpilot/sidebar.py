@@ -302,7 +302,7 @@ def install_sidebar_css():
            root connection rows. Flat, non-card, smaller than GroupRow so they
            read as list chrome rather than another folder. */
         .navigation-sidebar row.sidebar-section-header {
-          margin: 6px 8px 0 8px;
+          margin: 6px 6px 0 6px;
           background: transparent;
           box-shadow: none;
         }
@@ -341,13 +341,9 @@ def install_sidebar_css():
           transform: scale(0.98);
         }
 
-        /* Gap between sidebar list rows (GtkListBox has no spacing property) */
-        .navigation-sidebar row {
-          margin: 4px 8px;
-        }
-
-        /* Compact mode: denser IDE-style gaps (Cursor/VS Code); horizontal
-           inset still leaves room for the selection pill. */
+        /* Full mode keeps libadwaita's row margins (.navigation-sidebar > row:
+           0 6px 2px). Compact mode: denser IDE-style gaps (Cursor/VS Code);
+           horizontal inset still leaves room for the selection pill. */
         .navigation-sidebar.sidebar-compact row {
           margin: 1px 4px;
         }
@@ -360,7 +356,6 @@ def install_sidebar_css():
 """ + NAVIGATION_SIDEBAR_SELECTION_CSS + """
 
         .navigation-sidebar row.tinted {
-          margin: 4px 8px;
           border-radius: 10px;
           transition: background-color 0s ease;
         }
