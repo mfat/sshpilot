@@ -1890,12 +1890,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return list(rows)
         return [rows]
 
-    def _select_opened_connection(self, connection):
-        """Select the opened host after search has restored the sidebar rows."""
+    def _select_opened_connection(self, connection) -> bool:
+        """Select and reveal a sidebar row for the connection, if present."""
         self.complete_pending_connection_rows()
         rows = self._rows_for_connection(connection)
         if not rows:
-            return
+            return False
         visible = [row for row in rows if row.get_visible()]
         if visible:
             target = next((row for row in visible if row.is_selected()), visible[0])
@@ -1933,6 +1933,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return GLib.SOURCE_REMOVE
 
         GLib.idle_add(scroll_to_match)
+        return True
 
     def _primary_row_for_connection(self, connection) -> Optional[Gtk.ListBoxRow]:
         """Return the first row representing ``connection`` (or ``None``)."""

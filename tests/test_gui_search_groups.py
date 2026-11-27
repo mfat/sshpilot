@@ -1,3 +1,4 @@
+from time import monotonic
 from types import SimpleNamespace
 
 import pytest
@@ -99,7 +100,11 @@ def test_opened_offscreen_match_scrolls_into_view_without_taking_focus(gui):
             complete_pending_connection_rows=lambda: None,
             _rows_for_connection=lambda connection: [target],
         ), object())
-        gui.pump(500)
+        deadline = monotonic() + 3
+        while adjustment.get_value() + adjustment.get_page_size() < adjustment.get_upper() - 1:
+            if monotonic() >= deadline:
+                break
+            gui.pump(20)
 
         assert adjustment.get_value() > 0
         assert adjustment.get_value() + adjustment.get_page_size() >= adjustment.get_upper() - 1

@@ -1208,3 +1208,30 @@ def test_reveal_sidebar_expands_memberships_and_clears_filters(monkeypatch):
     assert section._expanded
     window._select_only_row.assert_called_once_with(selected)
     selected.grab_focus.assert_called_once()
+
+
+def test_selecting_saved_localhost_tab_reveals_current_sidebar_connection():
+    from sshpilot.connection_model import Connection
+
+    child = object()
+    terminal_host = Connection({"id": "loopback", "hostname": "localhost"})
+    sidebar_host = Connection({"id": "loopback", "hostname": "localhost"})
+    revealed = []
+    window = types.SimpleNamespace(
+        _update_content_theme_for_selected_tab=lambda: None,
+        _update_layout_toggle_state=lambda: None,
+        _update_command_snippets_button_visibility=lambda: None,
+        _is_start_tab_page=lambda page: False,
+        terminal_to_connection={child: terminal_host},
+        active_terminals={},
+        connection_manager=types.SimpleNamespace(
+            get_connection_by_id={"loopback": sidebar_host}.get,
+        ),
+        _select_opened_connection=lambda host: revealed.append(host) or True,
+    )
+    page = types.SimpleNamespace(get_child=lambda: child)
+    view = types.SimpleNamespace(get_selected_page=lambda: page)
+    _window_module().MainWindow.on_tab_selected(window, view)
+
+    assert revealed == [sidebar_host]
+    assert window.active_terminals[terminal_host] is child

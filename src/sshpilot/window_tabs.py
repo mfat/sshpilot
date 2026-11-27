@@ -2577,62 +2577,22 @@ class WindowTabsMixin:
                         logger.debug(f"Failed to focus terminal on tab switch: {e}")
                 GLib.timeout_add(50, _focus_on_tab_switch)
 
-            # Split-view tabs have no single connection — clear sidebar selection
+            from .rdp_tab import RdpTab
             from .split_view import SplitViewTab
-            if isinstance(child, SplitViewTab):
-                try:
-                    if hasattr(self.connection_list, 'unselect_all'):
-                        self.connection_list.unselect_all()
-                    else:
-                        current = self.connection_list.get_selected_row()
-                        if current is not None:
-                            self.connection_list.unselect_row(current)
-                except Exception:
-                    pass
-                return
 
             connection = self.terminal_to_connection.get(child)
-            if connection:
-                # Check if this is a local terminal
-                host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-                if host_value == 'localhost':
-                    # Local terminal - clear selection
-                    try:
-                        if hasattr(self.connection_list, 'unselect_all'):
-                            self.connection_list.unselect_all()
-                        else:
-                            current = self.connection_list.get_selected_row()
-                            if current is not None:
-                                self.connection_list.unselect_row(current)
-                    except Exception:
-                        pass
-                else:
-                    # Regular connection terminal - select the corresponding row
-                    self.active_terminals[connection] = child
-                    conn_rows = self._rows_for_connection(connection)
-                    if conn_rows:
-                        selected_rows = []
-                        try:
-                            selected_rows = list(self.connection_list.get_selected_rows())
-                        except Exception:
-                            current = self.connection_list.get_selected_row()
-                            if current:
-                                selected_rows = [current]
-                        # Leave the selection alone if any row for this
-                        # connection is already selected; otherwise select the first.
-                        if not any(r in selected_rows for r in conn_rows):
-                            self._select_only_row(conn_rows[0])
-            else:
-                # Other non-connection terminal - clear selection
-                try:
-                    if hasattr(self.connection_list, 'unselect_all'):
-                        self.connection_list.unselect_all()
-                    else:
-                        current = self.connection_list.get_selected_row()
-                        if current is not None:
-                            self.connection_list.unselect_row(current)
-                except Exception:
-                    pass
+            if isinstance(child, SplitViewTab):
+                connection = None
+            elif isinstance(child, RdpTab):
+                connection = child.connection
+            elif connection is not None and not getattr(connection, "is_local_shell", False):
+                self.active_terminals[connection] = child
+
+            # Tabs can outlive the sidebar snapshot that supplied their connection.
+            connection_id = getattr(connection, "id", None)
+            saved = self.connection_manager.get_connection_by_id(connection_id) if connection_id else None
+            if saved is None or not self._select_opened_connection(saved):
+                self.connection_list.unselect_all()
         except Exception as e:
             logger.error(f"Failed to sync tab selection: {e}")
 
