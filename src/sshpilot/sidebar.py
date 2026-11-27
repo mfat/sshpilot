@@ -358,6 +358,19 @@ def install_sidebar_css():
           margin: 1px 4px;
         }
 
+        /* .sidebar-pane draws its trailing border on its own last pixel, so
+           1px of the right margin went under it and the right gap read 1px
+           tighter than the left. Give that pixel back. */
+        .sidebar-pane .navigation-sidebar > row {
+          margin-right: 7px;
+        }
+        .sidebar-pane .navigation-sidebar.sidebar-compact > row {
+          margin-right: 5px;
+        }
+        .sidebar-pane .navigation-sidebar > row.sidebar-section-header {
+          margin-right: 7px;
+        }
+
         /* Selected sidebar row: shared with accent_override_css so hover/press
            survive equal-priority provider reordering after accent changes. */
 """ + NAVIGATION_SIDEBAR_SELECTION_CSS + """
