@@ -86,26 +86,6 @@ class _AdvancedState:
         ]
 
 
-def _session_type_dialog(advanced, active=False):
-    dialog = ConnectionDialog.__new__(ConnectionDialog)
-    dialog._session_type_syncing = False
-    dialog._exit_on_forward_failure_syncing = False
-    dialog.advanced_tab = advanced
-    dialog.port_forwarding_only_row = _Switch(active)
-    dialog.exit_on_forward_failure_row = _Switch(False)
-    return dialog
-
-
-def _exit_on_forward_failure_dialog(advanced, active=False):
-    dialog = ConnectionDialog.__new__(ConnectionDialog)
-    dialog._session_type_syncing = False
-    dialog._exit_on_forward_failure_syncing = False
-    dialog.advanced_tab = advanced
-    dialog.port_forwarding_only_row = _Switch(False)
-    dialog.exit_on_forward_failure_row = _Switch(active)
-    return dialog
-
-
 class _SilentOptionList:
     """Model SshOptionList.set_options(): load rows without change signals."""
 
@@ -119,33 +99,75 @@ class _SilentOptionList:
         return list(self.options)
 
 
-def test_loaded_advanced_options_sync_both_switches_without_change_signals():
-    """#1389: a silent load must still notify the dialog's convenience switches."""
-    advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
-    advanced.option_list = _SilentOptionList()
-    # Parent projection is irrelevant here; no GTK window or ancestor needed.
-    dialog = _session_type_dialog(advanced)
-    advanced.parent_dialog = dialog
+def _switch_dialog(advanced=None, session_none=False, exit_yes=False):
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog._loading_switch_lines = False
+    dialog.advanced_tab = advanced if advanced is not None else _AdvancedState()
+    dialog.port_forwarding_only_row = _Switch(session_none)
+    dialog.exit_on_forward_failure_row = _Switch(exit_yes)
+    dialog._schedule_effective_refresh = lambda *_a: None
+    return dialog
 
-    assert dialog.port_forwarding_only_row.get_active() is False
-    assert dialog.exit_on_forward_failure_row.get_active() is False
 
-    # Unlike a user edit, set_options() deliberately emits no change signal.
-    # Before the #1389 fix, these options loaded but both switches stayed off.
-    advanced.set_extra_ssh_config(
-        "sessiontype none\nExitOnForwardFailure yes"
+# The two Port Forwarding switches own their line of the Host block: taken out
+# of the extra lines on load (so Extra Options never lists it), joined back on
+# save. A value a switch does not stand for stays on Extra Options.
+
+def test_the_switches_take_only_the_lines_they_stand_for():
+    found, rest = ConnectionDialog._split_switch_lines(
+        "Compression yes\nsessiontype none\nExitOnForwardFailure=YES\n"
+        "SessionType subsystem\nexitonforwardfailure no"
     )
-    assert advanced.get_option("SESSIONTYPE") == "none"
-    assert advanced.get_option("exitonforwardfailure") == "yes"
-    assert dialog.port_forwarding_only_row.get_active() is True
+    assert found == {"port_forwarding_only_row", "exit_on_forward_failure_row"}
+    assert rest == "Compression yes\nSessionType subsystem\nexitonforwardfailure no"
+
+
+def test_loading_sets_and_clears_both_switches():
+    dialog = _switch_dialog(session_none=True, exit_yes=True)
+    dialog._load_switch_lines({"exit_on_forward_failure_row"})
+    assert dialog.port_forwarding_only_row.get_active() is False
     assert dialog.exit_on_forward_failure_row.get_active() is True
-
-    # Replacing the saved options must also clear stale switch states.
-    advanced.set_extra_ssh_config(
-        "SessionType default\nexitonforwardfailure no"
-    )
-    assert dialog.port_forwarding_only_row.get_active() is False
+    dialog._load_switch_lines(set())
     assert dialog.exit_on_forward_failure_row.get_active() is False
+
+
+def test_a_switch_that_is_on_writes_its_line():
+    dialog = _switch_dialog(session_none=True)
+    assert dialog._switch_extra_lines() == ["SessionType none"]
+    dialog.exit_on_forward_failure_row.set_active(True)
+    assert dialog._switch_extra_lines() == [
+        "SessionType none", "ExitOnForwardFailure yes",
+    ]
+    dialog.port_forwarding_only_row.set_active(False)
+    assert dialog._switch_extra_lines() == ["ExitOnForwardFailure yes"]
+
+
+def test_turning_a_switch_on_drops_another_value_from_extra_options():
+    # OpenSSH keeps the first value: SessionType subsystem left on the page
+    # would make the switch do nothing.
+    advanced = _AdvancedState(("Compression", "yes"), ("SessionType", "subsystem"))
+    dialog = _switch_dialog(advanced, session_none=True)
+    dialog._on_switch_line_toggled(dialog.port_forwarding_only_row, None, "SessionType")
+    assert advanced.entries == [("Compression", "yes")]
+
+
+def test_turning_a_switch_off_leaves_extra_options_alone():
+    advanced = _AdvancedState(("ExitOnForwardFailure", "no"))
+    dialog = _switch_dialog(advanced)
+    dialog._on_switch_line_toggled(
+        dialog.exit_on_forward_failure_row, None, "ExitOnForwardFailure"
+    )
+    assert advanced.entries == [("ExitOnForwardFailure", "no")]
+    assert advanced.remove_calls == []
+
+
+def test_loading_does_not_touch_extra_options():
+    advanced = _AdvancedState(("SessionType", "subsystem"))
+    dialog = _switch_dialog(advanced)
+    dialog._loading_switch_lines = True
+    dialog.port_forwarding_only_row.set_active(True)
+    dialog._on_switch_line_toggled(dialog.port_forwarding_only_row, None, "SessionType")
+    assert advanced.remove_calls == []
 
 
 def test_session_type_helpers_are_case_insensitive_and_deduplicate():
@@ -165,148 +187,6 @@ def test_session_type_helpers_are_case_insensitive_and_deduplicate():
 
     advanced.remove_option("sessionTYPE", "NONE")
     assert advanced.entries == [("Compression", "yes")]
-
-
-def test_existing_session_type_none_turns_forwarding_only_on():
-    dialog = _session_type_dialog(_AdvancedState(("sessiontype", "NONE")))
-
-    dialog._sync_session_type_toggle_from_advanced()
-
-    assert dialog.port_forwarding_only_row.get_active() is True
-
-
-def test_forwarding_only_on_writes_one_session_type_none():
-    advanced = _AdvancedState(("Compression", "yes"), ("sessiontype", "default"))
-    dialog = _session_type_dialog(advanced, active=True)
-
-    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
-
-    assert advanced.entries == [("Compression", "yes"), ("SessionType", "none")]
-    assert advanced.set_calls == [("SessionType", "none")]
-
-
-def test_forwarding_only_off_removes_session_type_none():
-    advanced = _AdvancedState(("SessionType", "none"))
-    dialog = _session_type_dialog(advanced, active=False)
-
-    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
-
-    assert advanced.entries == []
-    assert advanced.remove_calls == [("SessionType", "none")]
-
-
-def test_manual_advanced_session_type_none_turns_forwarding_only_on():
-    advanced = _AdvancedState(("SessionType", "default"))
-    dialog = _session_type_dialog(advanced)
-
-    advanced.entries[0] = ("SessionType", "none")
-    dialog._sync_session_type_toggle_from_advanced()
-
-    assert dialog.port_forwarding_only_row.get_active() is True
-
-
-def test_non_none_advanced_session_type_turns_forwarding_only_off_and_survives():
-    advanced = _AdvancedState(("SessionType", "subsystem"))
-    dialog = _session_type_dialog(advanced, active=True)
-
-    dialog._sync_session_type_toggle_from_advanced()
-    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
-
-    assert dialog.port_forwarding_only_row.get_active() is False
-    assert advanced.entries == [("SessionType", "subsystem")]
-    assert advanced.remove_calls == []
-
-
-def test_forwarding_only_round_trip_preserves_session_type_none():
-    advanced = _AdvancedState()
-    dialog = _session_type_dialog(advanced)
-
-    dialog.port_forwarding_only_row.set_active(True)
-    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
-    dialog._sync_session_type_toggle_from_advanced()
-
-    assert advanced.entries == [("SessionType", "none")]
-    assert dialog.port_forwarding_only_row.get_active() is True
-
-
-def test_existing_exit_on_forward_failure_yes_turns_toggle_on():
-    dialog = _exit_on_forward_failure_dialog(
-        _AdvancedState(("exitonforwardfailure", "YES"))
-    )
-
-    dialog._sync_exit_on_forward_failure_toggle_from_advanced()
-
-    assert dialog.exit_on_forward_failure_row.get_active() is True
-
-
-def test_exit_on_forward_failure_on_writes_yes():
-    advanced = _AdvancedState(("Compression", "yes"), ("exitonforwardfailure", "no"))
-    dialog = _exit_on_forward_failure_dialog(advanced, active=True)
-
-    dialog._on_exit_on_forward_failure_toggle_changed(
-        dialog.exit_on_forward_failure_row
-    )
-
-    assert advanced.entries == [
-        ("Compression", "yes"),
-        ("ExitOnForwardFailure", "yes"),
-    ]
-    assert advanced.set_calls == [("ExitOnForwardFailure", "yes")]
-
-
-def test_exit_on_forward_failure_off_removes_yes_only():
-    advanced = _AdvancedState(("ExitOnForwardFailure", "yes"))
-    dialog = _exit_on_forward_failure_dialog(advanced, active=False)
-
-    dialog._on_exit_on_forward_failure_toggle_changed(
-        dialog.exit_on_forward_failure_row
-    )
-
-    assert advanced.entries == []
-    assert advanced.remove_calls == [("ExitOnForwardFailure", "yes")]
-
-
-def test_non_yes_exit_on_forward_failure_turns_toggle_off_and_survives():
-    advanced = _AdvancedState(("ExitOnForwardFailure", "no"))
-    dialog = _exit_on_forward_failure_dialog(advanced, active=True)
-
-    dialog._sync_exit_on_forward_failure_toggle_from_advanced()
-    dialog._on_exit_on_forward_failure_toggle_changed(
-        dialog.exit_on_forward_failure_row
-    )
-
-    assert dialog.exit_on_forward_failure_row.get_active() is False
-    assert advanced.entries == [("ExitOnForwardFailure", "no")]
-    assert advanced.remove_calls == []
-
-
-def test_exit_on_forward_failure_round_trip_preserves_yes():
-    advanced = _AdvancedState()
-    dialog = _exit_on_forward_failure_dialog(advanced)
-
-    dialog.exit_on_forward_failure_row.set_active(True)
-    dialog._on_exit_on_forward_failure_toggle_changed(
-        dialog.exit_on_forward_failure_row
-    )
-    dialog._sync_exit_on_forward_failure_toggle_from_advanced()
-
-    assert advanced.entries == [("ExitOnForwardFailure", "yes")]
-    assert dialog.exit_on_forward_failure_row.get_active() is True
-
-
-def test_session_type_write_does_not_clear_exit_on_forward_failure_toggle():
-    advanced = _AdvancedState(
-        ("SessionType", "none"),
-        ("ExitOnForwardFailure", "yes"),
-    )
-    dialog = _session_type_dialog(advanced, active=True)
-    dialog.exit_on_forward_failure_row.set_active(True)
-
-    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
-    dialog._sync_exit_on_forward_failure_toggle_from_advanced()
-
-    assert dialog.exit_on_forward_failure_row.get_active() is True
-    assert ("ExitOnForwardFailure", "yes") in advanced.entries
 
 
 def _dialog():
@@ -359,25 +239,17 @@ class TestApplyRuleEditorDefaultsForType:
         assert _dialog()._autosave_forwarding_changes() is None
 
 
-def test_empty_advanced_snapshot_clears_options_and_both_switches():
+def test_an_empty_advanced_snapshot_clears_the_options():
     """A loaded empty Host block must not retain options from the prior one."""
     advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
     advanced.option_list = _SilentOptionList()
-    dialog = _session_type_dialog(advanced)
-    advanced.parent_dialog = dialog
+    advanced.parent_dialog = None
 
-    advanced.set_extra_ssh_config(
-        "SessionType none\nExitOnForwardFailure yes"
-    )
-    assert dialog.port_forwarding_only_row.get_active()
-    assert dialog.exit_on_forward_failure_row.get_active()
-
+    advanced.set_extra_ssh_config("Compression yes")
     advanced.set_extra_ssh_config("")
 
     assert advanced.get_config_entries() == []
     assert advanced.get_extra_ssh_config() == ""
-    assert dialog.port_forwarding_only_row.get_active() is False
-    assert dialog.exit_on_forward_failure_row.get_active() is False
 
 
 def test_forwarding_rule_reload_is_private_and_replaces_empty_snapshots():
@@ -420,7 +292,7 @@ def test_connection_loader_clears_advanced_and_forwarding_on_empty_snapshot():
 
     advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
     advanced.option_list = _SilentOptionList()
-    dialog = _session_type_dialog(advanced)
+    dialog = _switch_dialog(advanced)
     advanced.parent_dialog = dialog
     dialog.is_editing = True
     dialog._loading_connection_data = False
@@ -458,10 +330,8 @@ def test_connection_loader_clears_advanced_and_forwarding_on_empty_snapshot():
 
     dialog.load_connection_data()
 
-    assert advanced.get_config_entries() == [
-        ("SessionType", "none"), ("ExitOnForwardFailure", "yes"),
-        ("Compression", "yes"),
-    ]
+    # The switches own their lines: Extra Options keeps only the rest.
+    assert advanced.get_config_entries() == [("Compression", "yes")]
     assert dialog.port_forwarding_only_row.get_active() is True
     assert dialog.exit_on_forward_failure_row.get_active() is True
     assert dialog.forwarding_rules == [rule]

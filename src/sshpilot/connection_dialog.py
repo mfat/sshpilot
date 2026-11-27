@@ -721,31 +721,15 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.option_list.add_empty_row()
 
     def on_entry_changed(self, widget, pspec=None):
-        """Refresh the switches that mirror Advanced rows, and ask OpenSSH
-        about the form again."""
+        """Ask OpenSSH about the form again."""
         self.update_config_preview()
         parent = getattr(self, 'parent_dialog', None)
         refresh = getattr(parent, '_schedule_effective_refresh', None)
         if callable(refresh):
             refresh()
-        self._notify_parent_session_type_changed()
         sync_banner = getattr(parent, '_sync_override_banner', None)
         if callable(sync_banner):
             sync_banner()
-
-    def _notify_parent_session_type_changed(self):
-        """Notify the dialog when Advanced SessionType / ExitOnForwardFailure change."""
-        parent = getattr(self, 'parent_dialog', None)
-        for name in (
-            '_sync_session_type_toggle_from_advanced',
-            '_sync_exit_on_forward_failure_toggle_from_advanced',
-        ):
-            try:
-                callback = getattr(parent, name, None)
-                if callable(callback):
-                    callback()
-            except Exception:
-                logger.debug("Failed to synchronize %s", name, exc_info=True)
 
     def update_config_preview(self):
         """No-op retained for existing callers.
@@ -857,10 +841,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.set_config_entries(entries)
         # Update preview after loading data
         self.update_config_preview()
-        # set_options trusts loaded rows and emits nothing, so the ssh -N and
-        # ExitOnForwardFailure switches would otherwise stay at their empty-list
-        # state (#1389).
-        self._notify_parent_session_type_changed()
 
 
 _KEY_BADGE_CSS_REGISTERED = False
@@ -1773,8 +1753,7 @@ class ConnectionDialog(
             self.split_original_nickname = ''
 
         self._loading_connection_data = False
-        self._session_type_syncing = False
-        self._exit_on_forward_failure_syncing = False
+        self._loading_switch_lines = False
         self._active_key_path: Optional[str] = None
 
         # Daemon editor-snapshot state.  A daemon edit is gated on the
@@ -1908,8 +1887,7 @@ class ConnectionDialog(
         advanced_group = Adw.PreferencesGroup()
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
-        self._wire_session_type_toggle()
-        self._wire_exit_on_forward_failure_toggle()
+        self._wire_switch_lines()
 
         # Wake on LAN on its own page (built by build_connection_groups above).
         wol_page = _page_box()
@@ -1937,107 +1915,72 @@ class ConnectionDialog(
         "wol": "system-shutdown-symbolic",
     }
 
-    def _wire_session_type_toggle(self):
-        """Connect the forwarding-only switch to Advanced SessionType."""
-        self.port_forwarding_only_row.connect(
-            "notify::active", self._on_session_type_toggle_changed
-        )
-        self._sync_session_type_toggle_from_advanced()
+    #: Port Forwarding switches that each stand for one line of the Host
+    #: block: (row attribute, keyword, the value the switch writes). They own
+    #: that line as the authentication section owns its keywords: it is taken
+    #: out of the extra lines on load and joined back on save. Another value
+    #: (``SessionType subsystem``, ``ExitOnForwardFailure no``) is not theirs
+    #: and stays on the Extra Options page.
+    _SWITCH_LINES = (
+        ("port_forwarding_only_row", "SessionType", "none"),
+        ("exit_on_forward_failure_row", "ExitOnForwardFailure", "yes"),
+    )
 
-    def _wire_exit_on_forward_failure_toggle(self):
-        """Connect the ExitOnForwardFailure switch to Advanced SSH options."""
-        self.exit_on_forward_failure_row.connect(
-            "notify::active", self._on_exit_on_forward_failure_toggle_changed
-        )
-        self._sync_exit_on_forward_failure_toggle_from_advanced()
-
-    def _begin_port_forwarding_ssh_option_sync(self):
-        """Suppress both convenience toggles while rewriting Advanced options.
-
-        ``set_option`` / ``remove_option`` rebuild the Advanced entry list and
-        notify on every intermediate remove; without both guards, the sibling
-        toggle can briefly see a missing option and flip off.
-        """
-        self._session_type_syncing = True
-        self._exit_on_forward_failure_syncing = True
-
-    def _end_port_forwarding_ssh_option_sync(self):
-        self._session_type_syncing = False
-        self._exit_on_forward_failure_syncing = False
-
-    def _sync_session_type_toggle_from_advanced(self):
-        """Reflect Advanced ``SessionType none`` in the forwarding switch."""
-        if getattr(self, '_session_type_syncing', False):
-            return
-        advanced_tab = getattr(self, 'advanced_tab', None)
-        toggle = getattr(self, 'port_forwarding_only_row', None)
-        if advanced_tab is None or toggle is None:
-            return
-
-        value = advanced_tab.get_option('SessionType')
-        active = isinstance(value, str) and value.strip().lower() == 'none'
-        self._session_type_syncing = True
-        try:
-            if toggle.get_active() != active:
-                toggle.set_active(active)
-        finally:
-            self._session_type_syncing = False
-
-    def _sync_exit_on_forward_failure_toggle_from_advanced(self):
-        """Reflect Advanced ``ExitOnForwardFailure yes`` in the switch."""
-        if getattr(self, '_exit_on_forward_failure_syncing', False):
-            return
-        advanced_tab = getattr(self, 'advanced_tab', None)
-        toggle = getattr(self, 'exit_on_forward_failure_row', None)
-        if advanced_tab is None or toggle is None:
-            return
-
-        value = advanced_tab.get_option('ExitOnForwardFailure')
-        active = isinstance(value, str) and value.strip().lower() == 'yes'
-        self._exit_on_forward_failure_syncing = True
-        try:
-            if toggle.get_active() != active:
-                toggle.set_active(active)
-        finally:
-            self._exit_on_forward_failure_syncing = False
-
-    def _on_session_type_toggle_changed(self, row, pspec=None):
-        """Write/remove only ``SessionType none`` when the switch changes."""
-        if getattr(self, '_session_type_syncing', False):
-            return
-        advanced_tab = getattr(self, 'advanced_tab', None)
-        if advanced_tab is None:
-            return
-
-        self._begin_port_forwarding_ssh_option_sync()
-        try:
-            if row.get_active():
-                advanced_tab.set_option('SessionType', 'none')
+    @classmethod
+    def _split_switch_lines(cls, extra):
+        """``(row attributes whose line is there, the other lines)``."""
+        owned = {
+            f"{keyword.lower()} {value}": name
+            for name, keyword, value in cls._SWITCH_LINES
+        }
+        found, other = set(), []
+        for line in (extra or "").splitlines():
+            if not line.strip():
+                continue
+            normalized = " ".join(line.replace("=", " ").split()).lower()
+            if normalized in owned:
+                found.add(owned[normalized])
             else:
-                value = advanced_tab.get_option('SessionType')
-                if isinstance(value, str) and value.strip().lower() == 'none':
-                    advanced_tab.remove_option('SessionType', 'none')
-        finally:
-            self._end_port_forwarding_ssh_option_sync()
+                other.append(line)
+        return found, "\n".join(other)
 
-    def _on_exit_on_forward_failure_toggle_changed(self, row, pspec=None):
-        """Write/remove only ``ExitOnForwardFailure yes`` when the switch changes."""
-        if getattr(self, '_exit_on_forward_failure_syncing', False):
+    def _wire_switch_lines(self):
+        for name, keyword, _value in self._SWITCH_LINES:
+            getattr(self, name).connect(
+                "notify::active", self._on_switch_line_toggled, keyword
+            )
+
+    def _load_switch_lines(self, found):
+        self._loading_switch_lines = True
+        try:
+            for name, _keyword, _value in self._SWITCH_LINES:
+                row = getattr(self, name, None)
+                if row is not None:
+                    row.set_active(name in found)
+        finally:
+            self._loading_switch_lines = False
+
+    def _switch_extra_lines(self):
+        """The lines of the switches that are on, to join with the others."""
+        lines = []
+        for name, keyword, value in self._SWITCH_LINES:
+            row = getattr(self, name, None)
+            if row is not None and row.get_active():
+                lines.append(f"{keyword} {value}")
+        return lines
+
+    def _on_switch_line_toggled(self, row, _pspec, keyword):
+        if getattr(self, '_loading_switch_lines', False):
             return
         advanced_tab = getattr(self, 'advanced_tab', None)
-        if advanced_tab is None:
-            return
-
-        self._begin_port_forwarding_ssh_option_sync()
-        try:
-            if row.get_active():
-                advanced_tab.set_option('ExitOnForwardFailure', 'yes')
-            else:
-                value = advanced_tab.get_option('ExitOnForwardFailure')
-                if isinstance(value, str) and value.strip().lower() == 'yes':
-                    advanced_tab.remove_option('ExitOnForwardFailure', 'yes')
-        finally:
-            self._end_port_forwarding_ssh_option_sync()
+        if row.get_active() and advanced_tab is not None:
+            # OpenSSH keeps the first value: another one on the Extra
+            # Options page would make the switch do nothing.
+            if advanced_tab.get_option(keyword) is not None:
+                advanced_tab.remove_option(keyword)
+        refresh = getattr(self, '_schedule_effective_refresh', None)
+        if callable(refresh):
+            refresh()
 
     # Wider than Adw.PreferencesPage's 600 so the page doesn't feel empty;
     # only reins in content on very wide windows.
@@ -2323,11 +2266,11 @@ class ConnectionDialog(
         self.add_controller(shortcut_controller)
     
     def _combined_extra_ssh_config(self) -> str:
-        """The Advanced tab's options plus the authentication section's and
-        the Share connection row's lines.
+        """The Advanced tab's options plus the lines of the authentication
+        section, the Share connection row and the Port Forwarding switches.
 
         All are plain lines of the Host block (``extra_ssh_config``); the
-        section and the row only present their own keywords separately.
+        section and the rows only present their own lines separately.
         """
         other = ''
         if hasattr(self, 'advanced_tab'):
@@ -2337,7 +2280,9 @@ class ConnectionDialog(
                 logger.error(f"Error getting extra SSH config from advanced tab: {e}")
         section = getattr(self, 'auth_policy', None)
         policy_lines = section.policy.to_lines() if section is not None else []
-        return join_extra(other, [*policy_lines, *self._multiplex_extra_lines()])
+        return join_extra(other, [
+            *policy_lines, *self._multiplex_extra_lines(), *self._switch_extra_lines(),
+        ])
 
     def _on_auth_policy_changed(self) -> None:
         apply_notes = getattr(self, '_apply_override_notes', None)
@@ -3436,6 +3381,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 # So do the Share connection row's.
                 multiplex_lines, extra_config = split_multiplex_lines(extra_config)
                 self._load_multiplex_lines(multiplex_lines)
+                # And the Port Forwarding switches theirs.
+                switch_lines, extra_config = self._split_switch_lines(extra_config)
+                self._load_switch_lines(switch_lines)
                 if hasattr(self, 'advanced_tab'):
                     self.advanced_tab.set_extra_ssh_config(extra_config)
                     logger.debug(f"Set extra SSH config in advanced tab: {extra_config}")
@@ -4087,17 +4035,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         x11_group = Adw.PreferencesGroup(title=_("X11 Forwarding"))
         x11_group.add(self.x11_row)
 
-        # SessionType none / ssh -N is exposed here as a convenience, while
-        # remaining stored in the shared Advanced SSH option list.
+        # SessionType none / ssh -N: a line of the Host block this switch
+        # owns (see _SWITCH_LINES).
         self.port_forwarding_only_row = Adw.SwitchRow(
             title=_("Do not start a remote shell (ssh -N flag)"),
         )
         forwarding_only_group = Adw.PreferencesGroup(title=_("Session"))
         forwarding_only_group.add(self.port_forwarding_only_row)
 
-        # ExitOnForwardFailure=yes is a separate convenience toggle over the
-        # Advanced SSH option list / ssh_config — not daemon-backed forwards,
-        # and not part of the Session group above.
+        # ExitOnForwardFailure yes: a line of the Host block this switch owns
+        # (see _SWITCH_LINES) — not daemon-backed forwards, and not part of
+        # the Session group above.
         self.exit_on_forward_failure_row = Adw.SwitchRow(
             title=_("Exit if port forwarding fails"),
             subtitle=_("Terminate the connection when a requested forward cannot be set up (ExitOnForwardFailure=yes)"),
