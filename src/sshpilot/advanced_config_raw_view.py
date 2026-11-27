@@ -328,7 +328,9 @@ class RawView(Gtk.Box):
 
     def _on_cursor_moved(self, buffer, _pspec) -> None:
         # The user's cursor only: text put here by the view moves it too.
-        if self._syncing or self.pending or not self.view.has_focus():
+        # The focus of its window, not has_focus(): that one also needs the
+        # window active, which a window just presented may not be yet.
+        if self._syncing or self.pending or not self.view.is_focus():
             return
         position = buffer.get_iter_at_mark(buffer.get_insert())
         self.controller.raw_cursor_moved(position.get_line() + 1)

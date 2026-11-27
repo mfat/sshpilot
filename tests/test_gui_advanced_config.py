@@ -1605,7 +1605,9 @@ def test_the_raw_view_marks_the_selected_block_and_follows_edits(window):
 
 def test_the_cursor_in_the_raw_view_selects_the_block_it_is_in(window):
     buffer = _raw(window)
-    window.raw.view.has_focus = lambda: True                 # the user is in it
+    window.show_page("raw")
+    _show(window)
+    window.raw.view.grab_focus()                             # the user is in it
     glob, web, star = window.draft.blocks
     line = window.editor.lines.options[star.options[0].uid]  # a line of Host *
     found, position = buffer.get_iter_at_line(line - 1)
