@@ -808,10 +808,17 @@ def test_activating_a_file_between_two_servers_offers_copy_to_other_pane(
     assert dialog.default == "copy_to_other"
     assert "other pane" in dialog.body
 
+    assert dialog.responses["download_to_computer"] == "Download to This Computer…"
+
     dialog.handler(dialog, "copy_to_other")
     assert selected == [(0, True)]
     args, kwargs = calls[0]
     assert args == ([entry], "/srv/data", "/root", False)
+
+    asked = []
+    left._on_menu_download_to_computer = lambda: asked.append(True)
+    dialog.handler(dialog, "download_to_computer")
+    assert asked == [True]
 
 
 def test_activating_a_server_file_beside_this_computer_offers_download(
@@ -831,4 +838,56 @@ def test_activating_a_server_file_beside_this_computer_offers_download(
     dialog = _RecordingAlertDialog.last
     assert dialog.default == "download"
     assert "copy_to_other" not in dialog.responses
+    assert "download_to_computer" not in dialog.responses
     assert "this computer" in dialog.body
+
+
+def test_download_to_this_computer_is_offered_only_between_two_servers(load_file_manager_window):
+    module = load_file_manager_window()
+    left, right, _entry, _calls = _copy_to_other_panes(module, left_local=False)
+    assert left._download_to_computer_available()
+    assert right._download_to_computer_available()
+
+    left, right, _entry, _calls = _copy_to_other_panes(module, left_local=True)
+    assert not left._download_to_computer_available()
+    assert not right._download_to_computer_available()
+
+
+def test_download_to_this_computer_downloads_into_the_picked_folder(
+    load_file_manager_window, monkeypatch, tmp_path
+):
+    module = load_file_manager_window()
+    from sshpilot.file_manager import pane as pane_module
+
+    class _Folder:
+        def get_path(self):
+            return str(tmp_path)
+
+    class _FileDialog:
+        def set_title(self, *_args):
+            pass
+
+        def set_initial_folder(self, *_args):
+            pass
+
+        def select_folder(self, _parent, _cancellable, callback):
+            callback(self, None)
+
+        def select_folder_finish(self, _result):
+            return _Folder()
+
+    monkeypatch.setattr(pane_module.Gtk, "FileDialog", _FileDialog, raising=False)
+    monkeypatch.setattr(
+        pane_module.GLib, "get_user_special_dir", lambda *_args: None, raising=False
+    )
+    left, _right, entry, _calls = _copy_to_other_panes(module, left_local=False)
+    left.get_root = lambda: None
+    emitted = []
+    left.emit = lambda *args: emitted.append(args)
+
+    left._on_menu_download_to_computer()
+
+    assert emitted == [(
+        "request-operation", "download",
+        {"entries": [entry], "directory": "/srv/data", "destination": tmp_path},
+    )]

@@ -2094,6 +2094,7 @@ class FilePane(Gtk.Box):
         _add_action("download", self._on_menu_download)
         _add_action("upload", self._on_menu_upload)
         _add_action("copy_to_other", self._on_copy_to_other_clicked)
+        _add_action("download_to_computer", self._on_menu_download_to_computer)
         _add_action("edit", self._on_menu_edit)
         _add_action("copy", lambda: self._emit_entry_operation("copy"))
         _add_action("cut", lambda: self._emit_entry_operation("cut"))
@@ -2288,6 +2289,8 @@ class FilePane(Gtk.Box):
                 else _item(_("Upload…"), "upload") if not self._is_remote
                 else _item(_("Copy to Other Pane"), "copy_to_other")
                 if self._copy_to_other_available() else None,
+                _item(_("Download to This Computer…"), "download_to_computer")
+                if self._download_to_computer_available() else None,
             )
             _section(
                 _item(_("Cut"), "cut", "<Primary>x"),
@@ -2475,6 +2478,10 @@ class FilePane(Gtk.Box):
         _set_enabled("download", can_download and has_selection)
         can_copy_to_other = self._copy_to_other_available()
         _set_enabled("copy_to_other", can_copy_to_other and has_selection)
+        _set_enabled(
+            "download_to_computer",
+            self._download_to_computer_available() and has_selection,
+        )
         _set_enabled("upload", (not self._is_remote) and has_selection)
         _set_enabled("copy", has_selection)
         _set_enabled("cut", has_selection)
@@ -2640,6 +2647,11 @@ class FilePane(Gtk.Box):
             return local_pane() is not None
         return True
 
+    def _download_to_computer_available(self) -> bool:
+        """Download to This Computer…: a server pane beside another server,
+        where plain Download has no local pane to save into (#1431)."""
+        return bool(self._is_remote) and self._copy_to_other_available()
+
     def _copy_to_other_available(self) -> bool:
         """Copy to Other Pane: this pane and the other both show a server."""
         if not self._is_remote:
@@ -2723,6 +2735,34 @@ class FilePane(Gtk.Box):
             self.show_toast(_("Select items to download first"))
             return
         self._on_download_clicked(None)
+
+    def _on_menu_download_to_computer(self) -> None:
+        """Ask for a folder on this computer and download the selection there."""
+        if not self._download_to_computer_available():
+            return
+        entries = self.get_selected_entries()
+        if not entries:
+            self.show_toast(_("Select items to download first"))
+            return
+        dialog = Gtk.FileDialog()
+        dialog.set_title(_("Download To"))
+        downloads = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
+        if downloads and os.path.isdir(downloads):
+            dialog.set_initial_folder(Gio.File.new_for_path(downloads))
+
+        def _picked(dlg, result) -> None:
+            try:
+                folder = dlg.select_folder_finish(result)
+            except GLib.Error:
+                return  # cancelled
+            path = folder.get_path() if folder is not None else None
+            if not path or not os.path.isdir(path):
+                self.show_toast(_("Local destination is not accessible"))
+                return
+            self._emit_download(entries, path)
+
+        root = self.get_root()
+        dialog.select_folder(root if isinstance(root, Gtk.Window) else None, None, _picked)
 
     def _on_menu_upload(self) -> None:
         if self._is_remote:
@@ -2840,6 +2880,10 @@ class FilePane(Gtk.Box):
         if not os.path.isdir(destination_root):
             self.show_toast(_("Local destination is not accessible"))
             return
+        self._emit_download(entries, destination_root)
+
+    def _emit_download(self, entries: List[FileEntry], destination_root: str) -> None:
+        """Download *entries* from this pane's folder into *destination_root*."""
         payload = {
             "entries": entries,
             "directory": self._current_path,
@@ -3547,12 +3591,14 @@ class FilePane(Gtk.Box):
         default = transfer or "edit"
         if transfer is not None:
             dialog.add_response(transfer, transfer_label)
+        if transfer == "copy_to_other" and self._download_to_computer_available():
+            dialog.add_response("download_to_computer", _("Download to This Computer…"))
         dialog.set_response_appearance(default, Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response(default)
         dialog.set_close_response("cancel")
 
         def _on_response(_dialog, response: str) -> None:
-            if response not in ("download", "copy_to_other", "edit"):
+            if response not in ("download", "copy_to_other", "download_to_computer", "edit"):
                 return
             # Every action works on the selection; make it the activated file.
             self._selection_model.select_item(position, True)
@@ -3560,6 +3606,8 @@ class FilePane(Gtk.Box):
                 self._on_menu_download()
             elif response == "copy_to_other":
                 self._on_copy_to_other_clicked()
+            elif response == "download_to_computer":
+                self._on_menu_download_to_computer()
             else:
                 self._on_menu_edit()
 
