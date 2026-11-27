@@ -727,9 +727,9 @@ def test_effective_has_a_host_field_for_a_block_that_names_no_host(window):
     assert window.stack.get_visible_child_name() == "effective"
     assert field.get_text() == ""
     field.set_text("example.org")                     # any host, typed
-    assert _pump(lambda: window._evaluation is not None and window._evaluation.evaluated)
     assert window.target_text() == "example.org"
-    assert _command(window) == "ssh -G example.org"
+    assert _pump(lambda: _command(window) == "ssh -G example.org"
+                 and window._evaluation is not None and window._evaluation.evaluated)
     field.set_text("alice@example.org")               # a user too
     assert _pump(lambda: _command(window) == "ssh -G -l alice example.org")
     field.set_text("")                                # cleared: the block's own again
@@ -853,7 +853,9 @@ def test_an_unused_line_says_what_is_used_instead(gtk, tmp_path):
         second_hostname = [r for r in rows if r.key.get_text() == "HostName"][1]
         assert second_hostname.instead.get_label() == "OpenSSH uses <tt>10.0.0.5</tt> from line 5 (Host zoo)"
         timeout = next(r for r in rows if r.key.get_text() == "ConnectTimeout")
-        assert timeout.instead.get_label() == "Settings ▸ SSH Options use <tt>7</tt>"
+        # A link to the setting: the sentence, opening Settings when clicked.
+        assert timeout.instead.get_text() == "Settings ▸ SSH Options use 7"
+        assert 'href="sshpilot-settings:ssh-options"' in timeout.instead.get_label()
         hostname = _field(win, "hostname")                  # used: nothing said
         assert not hostname.instead.get_visible()
     finally:

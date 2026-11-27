@@ -454,14 +454,18 @@ class EffectiveView(Gtk.Box):
         if not self._setting_host:
             self.controller.check_host(entry.get_text())
 
-    def set_host(self, host: str) -> None:
-        """Show the host the window asks about. Text being typed is left
-        alone: a field cleared while focused keeps empty, not filled with
-        the selected block's own host under the cursor."""
+    def set_host(self, host: str, typed: str = "") -> None:
+        """Show the host the window asks about (*typed*: the one typed
+        here, if any). What is being typed is left alone: a field cleared
+        while focused keeps empty, not filled with the selected block's own
+        host under the cursor. Focus alone keeps nothing: the field has it
+        whenever the page opens, and a host the window put there goes when
+        another block is selected."""
         entry = self.host_entry
-        if entry.get_text().strip() == host:
+        text = entry.get_text().strip()
+        if text == host:
             return
-        if entry.get_state_flags() & Gtk.StateFlags.FOCUS_WITHIN:
+        if entry.get_state_flags() & Gtk.StateFlags.FOCUS_WITHIN and text == typed:
             return
         self._setting_host = True
         try:

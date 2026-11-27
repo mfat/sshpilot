@@ -1199,6 +1199,9 @@ class AdvancedConfigBase:
         self.sidebar.new_button.set_sensitive(not pending)
 
     def _target_changed(self, *, idle: bool = False) -> None:
+        # The field follows at once: the answer may be a while (a pattern
+        # block's is asked of many hosts).
+        self.effective.set_host(self.target_text(), self._typed_host())
         # A command can depend on the host (%h, %r): agreement to run it
         # was for the host in question at the time.
         self._allowed_exec.clear()
@@ -1963,7 +1966,7 @@ class AdvancedConfigBase:
 
     def _show_answer(self) -> None:
         """Hand OpenSSH's answer (or its absence) to the views."""
-        self.effective.set_host(self.target_text())
+        self.effective.set_host(self.target_text(), self._typed_host())
         evaluation = self._evaluation
         related = self._related if evaluation is None else None
         lines = self._evaluated_lines if evaluation is not None else self.editor.lines
