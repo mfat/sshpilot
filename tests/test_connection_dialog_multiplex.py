@@ -1,8 +1,8 @@
 """Connection multiplexing in the connection editor, written to the Host block.
 
-The row is a view over the Extra Options list: Default writes nothing, On
-``ControlMaster auto`` with a ``ControlPath`` and a ``ControlPersist``, Off
-``ControlMaster no`` with ``ControlPath none``.
+The row owns its directives, which the Extra Options page never lists:
+Default writes nothing, On ``ControlMaster auto`` with a ``ControlPath`` and
+a ``ControlPersist``, Off ``ControlMaster no`` with ``ControlPath none``.
 """
 
 import os
@@ -10,7 +10,13 @@ import os
 import pytest
 
 from sshpilot import connection_dialog_multiplex as multiplex
-from sshpilot.connection_dialog_multiplex import DEFAULT, OFF, ON, mode_of
+from sshpilot.connection_dialog_multiplex import (
+    DEFAULT,
+    OFF,
+    ON,
+    mode_of,
+    split_multiplex_lines,
+)
 
 
 def test_the_block_s_control_master_reads_as_the_choice():
@@ -20,6 +26,17 @@ def test_the_block_s_control_master_reads_as_the_choice():
     assert mode_of("No") == OFF
     for value in ("auto", "yes", "ask", "autoask"):
         assert mode_of(value) == ON
+
+
+def test_the_row_s_lines_are_split_from_the_other_extra_lines():
+    own, rest = split_multiplex_lines(
+        "sessiontype none\ncontrolmaster auto\n\nControlPath=~/x/%C\nsendenv LANG"
+    )
+    if multiplex.MULTIPLEXING_SUPPORTED:
+        assert own == [("controlmaster", "auto"), ("ControlPath", "~/x/%C")]
+        assert rest == "sessiontype none\nsendenv LANG"
+    else:
+        assert own == []
 
 
 def test_the_socket_directory_is_created_private(tmp_path):
@@ -65,9 +82,10 @@ def _save(dialog):
 
 
 def _lines(dialog):
+    """The sharing lines the dialog would save."""
     return [
         line.strip().lower()
-        for line in dialog.advanced_tab.get_extra_ssh_config().splitlines()
+        for line in dialog._combined_extra_ssh_config().splitlines()
         if line.strip().lower().startswith("control")
     ]
 
@@ -150,12 +168,21 @@ def test_the_choice_survives_save_and_creates_the_socket_directory(tmp_path, mon
 
 
 @_gtk
-def test_the_row_follows_edits_on_the_extra_options_page():
-    dialog = _open_dialog("")
+def test_the_extra_options_page_neither_lists_nor_takes_the_row_s_options():
+    from sshpilot.connection_dialog import ADVANCED_TAB_SSH_OPTIONS
+    from sshpilot.ssh_option_list import check_ssh_option
+
+    dialog = _open_dialog("sendenv LANG\ncontrolmaster auto\ncontrolpath ~/x/%C")
     try:
-        dialog.advanced_tab.set_option("ControlMaster", "no")
-        assert dialog.multiplex_row.get_selected() == OFF
-        dialog.advanced_tab.remove_option("ControlMaster")
-        assert dialog.multiplex_row.get_selected() == DEFAULT
+        listed = dialog.advanced_tab.get_extra_ssh_config().lower()
+        assert listed == "sendenv lang"
+        assert dialog.multiplex_row.get_selected() == ON
+        # Untouched, the block's lines are saved as they were.
+        assert sorted(_lines(dialog)) == ["controlmaster auto", "controlpath ~/x/%c"]
     finally:
         dialog.close()
+    for keyword in ("ControlMaster", "ControlPath", "ControlPersist"):
+        assert keyword not in ADVANCED_TAB_SSH_OPTIONS
+        assert check_ssh_option(
+            keyword, "auto", reserved=multiplex.OWN_KEYWORDS, reserved_message="own",
+        ) == "own"

@@ -2,8 +2,10 @@
 
 Like every other field of the editor, the choice is written as directives of
 the host's own block, so plain ``ssh`` outside the app shares the connection
-too. The row is a view over the Extra Options list, as the ssh -N and
-ExitOnForwardFailure switches are:
+too. The row owns those directives, as the authentication section owns its
+keywords: they are taken out of the block's extra lines on load, so the Extra
+Options page (options no other field covers) never lists them, and joined
+back on save and for OpenSSH's answer (``_combined_extra_ssh_config``):
 
 * Default writes nothing: Settings ▸ SSH Options, or an earlier block, decide;
 * On writes ``ControlMaster auto`` with a ``ControlPath`` and a
@@ -20,14 +22,17 @@ plain ``ssh`` reads the same block, and the daemon retires only the masters
 it started there (``daemon.control_masters``). A master this block opens
 outlives the app by its ``ControlPersist``, as one opened by ``ssh`` does.
 
-OpenSSH for Windows cannot multiplex, so there is no row there.
+OpenSSH for Windows cannot multiplex, so there is no row there, and the
+directives stay on the Extra Options page.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 from gettext import gettext as _
+from typing import List, Optional, Tuple
 
 import gi
 
@@ -56,7 +61,36 @@ CONTROL_PERSIST = "60"
 SOCKET_DIR = "~/.ssh/sockets"
 CONTROL_PATH = SOCKET_DIR + "/%C"
 
-_KEYWORDS = ("ControlMaster", "ControlPath", "ControlPersist")
+#: The directives the row owns (lower-case), where there is a row: kept off
+#: the Extra Options page, which refuses them as having their own field.
+OWN_KEYWORDS = (
+    frozenset({"controlmaster", "controlpath", "controlpersist"})
+    if MULTIPLEXING_SUPPORTED else frozenset()
+)
+
+_LINE = re.compile(r"\s*(\S+?)\s*(?:=\s*|\s+)(.*?)\s*$")
+
+Line = Tuple[str, str]
+
+
+def _parse(line: str) -> Optional[Line]:
+    """``(keyword, value)`` of one ``Keyword value`` (or ``=value``) line."""
+    match = _LINE.match(line or "")
+    return (match.group(1), match.group(2)) if match else None
+
+
+def split_multiplex_lines(extra: str) -> Tuple[List[Line], str]:
+    """``(the row's lines, the rest)`` of an extra-options text."""
+    own, other = [], []
+    for line in (extra or "").splitlines():
+        if not line.strip():
+            continue
+        parsed = _parse(line)
+        if parsed is not None and parsed[0].lower() in OWN_KEYWORDS:
+            own.append(parsed)
+        else:
+            other.append(line)
+    return own, "\n".join(other)
 
 
 def mode_of(control_master) -> int:
@@ -81,6 +115,7 @@ class ConnectionDialogMultiplexMixin:
 
     def _build_multiplex_group(self):
         """The group holding the row, or None where ssh cannot multiplex."""
+        self._multiplex_lines: List[Line] = []
         self._multiplex_syncing = False
         if not MULTIPLEXING_SUPPORTED:
             self._multiplex_group = None
@@ -96,70 +131,84 @@ class ConnectionDialogMultiplexMixin:
         # Found by every directive it writes, not only ControlMaster.
         self.multiplex_row._sshpilot_search_keywords = "ControlPath ControlPersist"
         self.multiplex_row.set_selected(DEFAULT)
+        self.multiplex_row.connect("notify::selected", self._on_multiplex_row_changed)
         group = Adw.PreferencesGroup(title=_("Multiplexing"))
         group.add(self.multiplex_row)
         self._multiplex_group = group
         return group
 
-    def _wire_multiplex_row(self):
-        """Connect the row to the Extra Options list it writes to."""
+    # -- the lines --------------------------------------------------------
+
+    def _multiplex_get(self, keyword: str) -> Optional[str]:
+        wanted = keyword.lower()
+        for key, value in getattr(self, "_multiplex_lines", ()):
+            if key.lower() == wanted:
+                return value
+        return None
+
+    def _multiplex_set(self, keyword: str, value: str) -> None:
+        """Set *keyword*, in place when the block has it (keeping its line's
+        position and spelling), else after the others."""
+        lines = self._multiplex_lines
+        wanted = keyword.lower()
+        for index, (key, _value) in enumerate(lines):
+            if key.lower() == wanted:
+                lines[index] = (key, value)
+                return
+        lines.append((keyword, value))
+
+    def _multiplex_remove(self, keyword: str) -> None:
+        wanted = keyword.lower()
+        self._multiplex_lines[:] = [
+            line for line in self._multiplex_lines if line[0].lower() != wanted
+        ]
+
+    def _load_multiplex_lines(self, lines: List[Line]) -> None:
+        """Take the block's own lines (see ``split_multiplex_lines``)."""
+        self._multiplex_lines = list(lines)
         row = getattr(self, "multiplex_row", None)
         if row is None:
             return
-        row.connect("notify::selected", self._on_multiplex_row_changed)
-        self._sync_multiplex_row_from_advanced()
-
-    def _sync_multiplex_row_from_advanced(self):
-        """Show the block's ``ControlMaster`` on the row."""
-        if getattr(self, "_multiplex_syncing", False):
-            return
-        advanced_tab = getattr(self, "advanced_tab", None)
-        row = getattr(self, "multiplex_row", None)
-        if advanced_tab is None or row is None:
-            return
-        mode = mode_of(advanced_tab.get_option("ControlMaster"))
         self._multiplex_syncing = True
         try:
-            if row.get_selected() != mode:
-                row.set_selected(mode)
+            row.set_selected(mode_of(self._multiplex_get("ControlMaster")))
         finally:
             self._multiplex_syncing = False
+
+    def _multiplex_extra_lines(self) -> List[str]:
+        """The row's lines, to join with the other extra lines."""
+        return [f"{key} {value}" for key, value in getattr(self, "_multiplex_lines", ())]
+
+    # -- the row ----------------------------------------------------------
 
     def _on_multiplex_row_changed(self, row, _pspec=None):
         """Rewrite the block's sharing directives for the choice."""
         if getattr(self, "_multiplex_syncing", False):
             return
-        advanced_tab = getattr(self, "advanced_tab", None)
-        if advanced_tab is None:
-            return
         mode = row.get_selected()
-        self._multiplex_syncing = True
-        try:
-            if mode == ON:
-                advanced_tab.set_option("ControlMaster", "auto")
-                path = advanced_tab.get_option("ControlPath")
-                if path is None or path.strip().lower() == "none":
-                    advanced_tab.set_option("ControlPath", CONTROL_PATH)
-                if advanced_tab.get_option("ControlPersist") is None:
-                    advanced_tab.set_option("ControlPersist", CONTROL_PERSIST)
-            elif mode == OFF:
-                advanced_tab.set_option("ControlMaster", "no")
-                advanced_tab.set_option("ControlPath", "none")
-                advanced_tab.remove_option("ControlPersist")
-            else:
-                for keyword in _KEYWORDS:
-                    if advanced_tab.get_option(keyword) is not None:
-                        advanced_tab.remove_option(keyword)
-        finally:
-            self._multiplex_syncing = False
+        if mode == ON:
+            self._multiplex_set("ControlMaster", "auto")
+            path = self._multiplex_get("ControlPath")
+            if path is None or path.strip().lower() == "none":
+                self._multiplex_set("ControlPath", CONTROL_PATH)
+            if self._multiplex_get("ControlPersist") is None:
+                self._multiplex_set("ControlPersist", CONTROL_PERSIST)
+        elif mode == OFF:
+            self._multiplex_set("ControlMaster", "no")
+            self._multiplex_set("ControlPath", "none")
+            self._multiplex_remove("ControlPersist")
+        else:
+            self._multiplex_lines = []
+        # The lines changed: ask OpenSSH what the host uses with them.
+        refresh = getattr(self, "_schedule_effective_refresh", None)
+        if callable(refresh):
+            refresh()
 
     def _prepare_multiplex_save(self):
         """Before a save: the directory the block's sockets go in exists."""
-        get_option = getattr(getattr(self, "advanced_tab", None), "get_option", None)
-        if not callable(get_option) or not MULTIPLEXING_SUPPORTED:
+        if not MULTIPLEXING_SUPPORTED:
             return
-        if mode_of(get_option("ControlMaster")) != ON:
+        if mode_of(self._multiplex_get("ControlMaster")) != ON:
             return
-        path = get_option("ControlPath") or ""
-        if path.strip() == CONTROL_PATH:
+        if (self._multiplex_get("ControlPath") or "").strip() == CONTROL_PATH:
             ensure_socket_dir()

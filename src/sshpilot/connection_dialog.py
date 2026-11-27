@@ -78,7 +78,11 @@ from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
 from .connection_dialog_effective import ConnectionDialogEffectiveMixin
 from .connection_dialog_route import ConnectionDialogRouteMixin
-from .connection_dialog_multiplex import ConnectionDialogMultiplexMixin
+from .connection_dialog_multiplex import (
+    OWN_KEYWORDS as MULTIPLEX_KEYWORDS,
+    ConnectionDialogMultiplexMixin,
+    split_multiplex_lines,
+)
 from .connection_dialog_search import ConnectionDialogSearchMixin
 from .connection_dialog_host_names import ConnectionDialogHostNamesMixin
 from .connection_dialog_overrides import (
@@ -588,10 +592,13 @@ def _set_action_row_child(row, widget):
 # MANAGED_HOST_OPTIONS already have typed dialog fields (or are Host-block
 # structure) and must not appear here: the loader routes them out of
 # extra_ssh_config, so they would vanish from this tab after save/reload.
+# The authentication section's and the Share connection row's keywords are
+# theirs: the page is for options no other field covers.
 ADVANCED_TAB_SSH_OPTIONS = tuple(
     name for name in OPENSSH_KEYWORDS
     if name.lower() not in MANAGED_HOST_OPTIONS
     and name.lower() not in AUTH_POLICY_KEYWORDS
+    and name.lower() not in MULTIPLEX_KEYWORDS
 )
 
 
@@ -641,7 +648,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
             keywords=self.ssh_options,
             validate=lambda keyword, value: check_ssh_option(
                 keyword, value,
-                reserved=MANAGED_HOST_OPTIONS | AUTH_POLICY_KEYWORDS,
+                reserved=MANAGED_HOST_OPTIONS | AUTH_POLICY_KEYWORDS | MULTIPLEX_KEYWORDS,
                 reserved_message=own_field,
             ),
             note=self._override_note,
@@ -732,7 +739,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
         for name in (
             '_sync_session_type_toggle_from_advanced',
             '_sync_exit_on_forward_failure_toggle_from_advanced',
-            '_sync_multiplex_row_from_advanced',
         ):
             try:
                 callback = getattr(parent, name, None)
@@ -1904,7 +1910,6 @@ class ConnectionDialog(
         advanced_page.append(advanced_group)
         self._wire_session_type_toggle()
         self._wire_exit_on_forward_failure_toggle()
-        self._wire_multiplex_row()
 
         # Wake on LAN on its own page (built by build_connection_groups above).
         wol_page = _page_box()
@@ -2318,10 +2323,11 @@ class ConnectionDialog(
         self.add_controller(shortcut_controller)
     
     def _combined_extra_ssh_config(self) -> str:
-        """The Advanced tab's options plus the authentication section's lines.
+        """The Advanced tab's options plus the authentication section's and
+        the Share connection row's lines.
 
-        Both are plain lines of the Host block (``extra_ssh_config``); the
-        authentication section only presents its own keywords separately.
+        All are plain lines of the Host block (``extra_ssh_config``); the
+        section and the row only present their own keywords separately.
         """
         other = ''
         if hasattr(self, 'advanced_tab'):
@@ -2331,7 +2337,7 @@ class ConnectionDialog(
                 logger.error(f"Error getting extra SSH config from advanced tab: {e}")
         section = getattr(self, 'auth_policy', None)
         policy_lines = section.policy.to_lines() if section is not None else []
-        return join_extra(other, policy_lines)
+        return join_extra(other, [*policy_lines, *self._multiplex_extra_lines()])
 
     def _on_auth_policy_changed(self) -> None:
         apply_notes = getattr(self, '_apply_override_notes', None)
@@ -3427,6 +3433,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 section = getattr(self, 'auth_policy', None)
                 if section is not None:
                     section.load(AuthPolicy.from_lines(policy_lines))
+                # So do the Share connection row's.
+                multiplex_lines, extra_config = split_multiplex_lines(extra_config)
+                self._load_multiplex_lines(multiplex_lines)
                 if hasattr(self, 'advanced_tab'):
                     self.advanced_tab.set_extra_ssh_config(extra_config)
                     logger.debug(f"Set extra SSH config in advanced tab: {extra_config}")
