@@ -54,6 +54,9 @@ class WebTab(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         from gi.repository import WebKit
 
+        from .appimage_env import prepare_webkit
+
+        prepare_webkit(WebKit)
         self._webview = WebKit.WebView()
         try:
             # Web UIs on https-looking ports are reached through a localhost

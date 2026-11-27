@@ -5,6 +5,18 @@ notes remain separate.
 
 ## Unreleased
 
+- `connections.evaluate_connection_edit(EvaluateConnectionEditRequest)`
+  returns OpenSSH's answer for a connection as a save of the given
+  `UpdateConnectionRequest` (or `CreateConnectionRequest`) would write it:
+  the edit is merged into the Host block by the save's own code and the
+  resulting file is evaluated like a draft; nothing is written. The result
+  (`ConnectionEditEvaluation`) carries that text, the host's own option
+  lines in it (`SshConfigOwnLine`), the evaluation, an optional second evaluation
+  without the host's own lines for chosen keywords (`without_own`), and a
+  `ConnectionEditRefusal` code when the save would be refused. The
+  connection editor uses it for every SSH option it shows. Requires
+  `connections.config.read`. The API implementation version is 0.120;
+  Protocol remains 1.0.
 - `SftpCopyRequest` gains `destination_service_id`: the copy (or move) lands
   on that second SFTP service, owned by the same client, while the source
   stays on `service_id`. Such a copy always runs as an `sftp_copy_tree`

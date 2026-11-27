@@ -253,6 +253,7 @@ def test_unmapped_owner_forces_dash_f_for_user_config(tmp_path, monkeypatch):
             )
         return real_stat(path, follow_symlinks=follow_symlinks)
 
+    monkeypatch.setattr(os, "geteuid", lambda: 1000, raising=False)
     fake_nix_store = "/nix/store/sshpilot-pytest-hm_.sshconfig"
     real_realpath = os.path.realpath
 
@@ -658,7 +659,6 @@ def test_a_launch_with_nothing_to_run_first_does_not_resolve_the_host(
     """Every launch reads these settings; `ssh -G` also runs `Match exec`
     commands, so resolving when there is no knock, command or wake costs a
     subprocess and can fire the user's own scripts."""
-    from sshpilot.core import connection_application_service as cas
 
     root = tmp_path / "config"
     root.write_text("Host plain\n    HostName 192.0.2.6\n")

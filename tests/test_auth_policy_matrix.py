@@ -177,7 +177,7 @@ def test_an_order_edit_leaves_every_per_method_line_as_written(start, edit):
     if not changed:
         assert sorted(lines) == sorted(STARTS[start]), "an edit that did nothing changed the lines"
     assert len(_order_lines(lines)) <= max(1, len(_order_lines(STARTS[start])))
-    if policy.edited or edit == "reset-order" and changed:
+    if policy.edited or (edit == "reset-order" and changed):
         # An edited order is one line, or none: an ignored copy must not
         # be left to take its place.
         assert len(_order_lines(lines)) <= 1

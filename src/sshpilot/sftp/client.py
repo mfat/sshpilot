@@ -292,7 +292,13 @@ class OpenSSHSFTPClient:
         # slots, so a slot registered after that sweep is woken here.
         if self._closed:
             slot.event.set()
-        self._write_packet(proto.build_request(ptype, rid, payload))
+        packet = proto.build_request(ptype, rid, payload)
+        try:
+            self._write_packet(packet)
+        except (OSError, ValueError) as exc:
+            # The write pipe may close before the reader observes EOF.
+            self._pending.pop(rid, None)
+            raise proto.SFTPError(proto.FX_CONNECTION_LOST, "SFTP session lost") from exc
         return slot
 
     @staticmethod
@@ -1179,8 +1185,12 @@ class OpenSSHSFTPClient:
         same OPEN request (the server still applies its umask), saving the
         separate SETSTAT round trip."""
         m = mode.replace("b", "")
-        if m in ("w", "x"):
+        if m == "w":
             pflags = proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_TRUNC
+        elif m == "x":
+            # Exclusive creation, as Python's "x": the server refuses a path
+            # that exists, a symlink (even a dangling one) included.
+            pflags = proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_EXCL
         elif m == "a":
             pflags = proto.FXF_WRITE | proto.FXF_CREAT | proto.FXF_APPEND
         elif m in ("r+", "w+"):

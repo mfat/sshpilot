@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.119",
+  "api_implementation_version": "0.120",
   "client_method_contract": {
     "acknowledge_terminal_output": {
       "capability": "terminal.flow_control",
@@ -163,6 +163,10 @@
     },
     "duplicate_connection": {
       "capability": "connections.write",
+      "status": "implemented"
+    },
+    "evaluate_connection_edit": {
+      "capability": "connections.config.read",
       "status": "implemented"
     },
     "evaluate_ssh_config_draft": {
@@ -748,6 +752,9 @@
     },
     "connections.duplicate": {
       "capability": "connections.write"
+    },
+    "connections.evaluate_connection_edit": {
+      "capability": "connections.config.read"
     },
     "connections.evaluate_ssh_config_draft": {
       "capability": "connections.config.read"
@@ -1405,6 +1412,13 @@
       "secrets.write",
       "secrets.operate",
       "secrets.transfer"
+    ],
+    "ConnectionEditRefusal": [
+      "invalid",
+      "name_taken",
+      "not_found",
+      "declaration",
+      "unreadable"
     ],
     "ConnectionHealth": [
       "unknown",
@@ -2884,6 +2898,60 @@
           "required": false,
           "sensitive": false,
           "type": "Mapping[str, Any]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConnectionEditEvaluation": {
+      "fields": [
+        {
+          "default": "",
+          "name": "host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "file",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "text",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "own_lines",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[SshConfigOwnLine, ...]"
+        },
+        {
+          "default": null,
+          "name": "evaluation",
+          "required": false,
+          "sensitive": false,
+          "type": "SshConfigDraftEvaluation | None"
+        },
+        {
+          "default": null,
+          "name": "without_own",
+          "required": false,
+          "sensitive": false,
+          "type": "SshConfigDraftEvaluation | None"
+        },
+        {
+          "default": null,
+          "name": "refusal",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionEditRefusal | None"
         }
       ],
       "status": "Implemented"
@@ -4734,6 +4802,39 @@
           "required": true,
           "sensitive": true,
           "type": "ErrorData"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "EvaluateConnectionEditRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "update",
+          "required": false,
+          "sensitive": false,
+          "type": "ForwardRef('UpdateConnectionRequest') | None"
+        },
+        {
+          "default": null,
+          "name": "create",
+          "required": false,
+          "sensitive": false,
+          "type": "ForwardRef('CreateConnectionRequest') | None"
+        },
+        {
+          "default": [],
+          "name": "without_own",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
         }
       ],
       "status": "Implemented"
@@ -9955,6 +10056,32 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SshConfigOwnLine": {
+      "fields": [
+        {
+          "default": null,
+          "name": "line",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Schema only"

@@ -133,6 +133,7 @@ _ICON_RESOURCE_MAP = {
     'connections-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/connections-symbolic.svg',
     'connections-rail-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/connections-rail-symbolic.svg',
     'document-config-rail-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/document-config-rail-symbolic.svg',
+    'settings-rail-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/settings-rail-symbolic.svg',
     'network-shield-dots-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-dots-symbolic.svg',
     'network-shield-crossed-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-shield-crossed-symbolic.svg',
     'text-editor-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/text-editor-symbolic.svg',

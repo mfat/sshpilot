@@ -574,6 +574,24 @@ class PreferencesWindow(Adw.Window):
         if target is not None:
             self.reveal_setting_row(*target)
 
+    def reveal_extra_ssh_option(self, keyword):
+        """Show the SSH Options page's Additional Options row that sets
+        *keyword* (the group, when none does)."""
+        page_id = self._page_id("SSH Options")
+        self._ensure_page_built(page_id)
+        option_list = getattr(self, 'extra_options_list', None)
+        target = None
+        if option_list is not None:
+            wanted = (keyword or '').strip().lower()
+            target = next(
+                (row for row in option_list.rows()
+                 if row.keyword_entry.get_text().strip().lower() == wanted),
+                None,
+            )
+            if target is None:
+                target = option_list.get_ancestor(Adw.PreferencesGroup)
+        self.reveal_setting_row(page_id, target)
+
     def reveal_setting_row(self, page_id, target):
         """Show *target* on its page: select the page, scroll to it, flash it."""
         self.select_page(page_id)
@@ -3100,8 +3118,13 @@ class PreferencesWindow(Adw.Window):
             ):
                 row.set_sensitive(False)
 
-        # Ensure shortcut overview controls reflect current state
-        self._set_shortcut_controls_enabled(not self._pass_through_enabled)
+        # Ensure shortcut overview controls reflect current state. The
+        # Terminal page sets the flag; this page can be built first (Settings
+        # opened straight at an SSH option), so it falls back to the setting.
+        pass_through = getattr(self, '_pass_through_enabled', None)
+        if pass_through is None:
+            pass_through = bool(self.config.get_setting('terminal.pass_through_mode', False))
+        self._set_shortcut_controls_enabled(not pass_through)
 
         # Every row's displayed value is a claim about what's applied. Persist
         # it the moment the user changes it instead of leaving it pending

@@ -585,6 +585,8 @@ def test_reconnect_terminal_uses_canonical_connection_id(monkeypatch):
             start_daemon_session=lambda _c, _b, cid: opened.append(cid) or True,
             apply_theme=lambda: None,
             queue_terminal_draw=lambda: None,
+            # Reconnect scrolls to the new session's output (6d531b5f).
+            scroll_to_bottom=lambda: None,
         )
         for name, value in attrs.items():
             setattr(terminal, name, value)

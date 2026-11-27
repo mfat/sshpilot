@@ -94,6 +94,9 @@ class _Untouchable(_FsClient):
     def stat(self, path):  # pragma: no cover - asserted not called
         raise AssertionError(f"destination session stat {path}")
 
+    def lstat(self, path):  # pragma: no cover - asserted not called
+        raise AssertionError(f"destination session lstat {path}")
+
 
 def test_tree_copies_to_another_server():
     source, destination = _tree_client(), _FsClient()
@@ -179,7 +182,7 @@ def test_lost_destination_fails_that_service_and_leaves_no_partial_file():
 
     def _open(path, mode):
         handle = original_open(path, mode)
-        if mode == "wb":
+        if mode != "rb":
             def _write(_data):
                 raise EOFError("connection closed")
             handle.write = _write
@@ -195,6 +198,7 @@ def test_lost_destination_fails_that_service_and_leaves_no_partial_file():
     assert runtime.get_service(b).state is SftpServiceState.FAILED
     assert runtime.get_service(a).state is SftpServiceState.READY
     assert "/f" not in destination.files
+    assert destination.staging_files() == []
 
 
 def test_two_sessions_on_one_server_copy_through_the_source_session():
@@ -409,3 +413,37 @@ def test_one_server_refuses_unresolvable_destination_parent():
 
     assert done.state is OperationState.FAILED
     assert done.failure.code is SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF
+
+
+def test_move_to_another_server_never_renames():
+    """A rename only works inside one filesystem: a move between servers
+    copies through both sessions and removes the source."""
+    source, destination = _tree_client(), _FsClient()
+    destination.add_dir("/srv", set())
+    runtime, ops, a, b = _two_services(source, destination)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, "/tree", "/srv/tree", recursive=True, move=True, destination_service_id=b,
+    ))
+
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert source.move_renames == [] and destination.move_renames == []
+    assert destination.files["/srv/tree/a.txt"] == b"hello"
+
+
+def test_move_between_two_panes_on_one_server_is_a_rename():
+    """#1356: both panes on one server, moving 1 GB files took minutes
+    because the bytes were copied and the originals removed."""
+    source = _tree_client()
+    source.add_dir("/srv", set())
+    runtime, ops, a, b = _two_services(source, _Untouchable(), same_connection=True)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, "/tree", "/srv/tree", recursive=True, move=True, destination_service_id=b,
+    ))
+
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert source.move_renames == [("/tree", "/srv/tree")]
+    assert source.files["/srv/tree/sub/b.txt"] == b"world!"
+    assert "/tree" not in source.dirs
+

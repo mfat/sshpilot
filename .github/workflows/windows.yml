@@ -5,6 +5,9 @@ name: Windows
 
 on:
   push:
+    # dev and main run only the tests: the package job builds on tags and
+    # manual runs.
+    branches: [dev, main]
     tags:
       - 'v*'
   pull_request:
@@ -179,11 +182,11 @@ jobs:
           }
           throw "NSIS did not install after 4 attempts"
 
-      - name: Build app and installer
+      - name: Build app, installer and portable zip
         shell: pwsh
         run: |
           $env:PATH = "${env:ProgramFiles(x86)}\NSIS;$env:PATH"
-          powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -Installer
+          powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -Installer -Portable
 
       # The SignPath artifact configuration checks the installer's product
       # version against this (packaging/windows/signpath/installer.xml).
@@ -200,6 +203,13 @@ jobs:
         with:
           name: sshpilot-windows-unsigned
           path: build/windows/SSHPilot-*-setup.exe
+
+      # The portable zip: the app folder, unpacked and run without installing.
+      - name: Upload portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-windows-portable
+          path: build/windows/SSHPilot-*-portable.zip
 
       - name: Sign with SignPath
         if: env.SIGNPATH_ENABLED == 'true'
@@ -228,7 +238,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: ${{ env.SIGNPATH_ENABLED == 'true' && 'build/windows/signed/*.exe' || 'build/windows/SSHPilot-*-setup.exe' }}
+          files: |
+            ${{ env.SIGNPATH_ENABLED == 'true' && 'build/windows/signed/*.exe' || 'build/windows/SSHPilot-*-setup.exe' }}
+            build/windows/SSHPilot-*-portable.zip
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -34,7 +34,7 @@ from .api.models.connections import (  # noqa: E402
 )
 from .connection_dialog_auth import canonical_keyword  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
-from .ssh_config_blocks import Block, LineMap  # noqa: E402
+from .ssh_config_blocks import GLOBAL, Block, LineMap  # noqa: E402
 
 ALL, THIS_BLOCK, OTHER, DEFAULT = "all", "this", "other", "default"
 #: The filter of the values that need attention (not a kind: any kind can).
@@ -291,7 +291,9 @@ class _EffectiveCell:
         item = self.item
         if item is None:
             return
-        if item.line:
+        if item.forced:
+            self.controller.show_forced_setting(item.key)
+        elif item.line:
             self.controller.reveal_line(item.line)
         elif item.file:
             self.controller.reveal_source(item.file, item.file_line)
@@ -332,8 +334,10 @@ class _EffectiveCell:
         )
         set_pill(self.problem, text, shown or "error", "\n".join(problems))
         self.label.set_label(item.source)
-        self.source.set_tooltip_text(item.tooltip or None)
-        reachable = bool(item.line) or (
+        self.source.set_tooltip_text(
+            messages.open_settings_text() if item.forced else item.tooltip or None
+        )
+        reachable = item.forced or bool(item.line) or (
             bool(item.file) and self.controller.source_file(item.file) is not None
         )
         # A source that cannot be shown (OpenSSH's default, the system-wide
@@ -344,21 +348,55 @@ class _EffectiveCell:
 
 
 class EffectiveView(Gtk.Box):
-    """*controller* supplies ``reveal_line``, ``reveal_source`` and
-    ``source_file``."""
+    """*controller* supplies ``reveal_line``, ``reveal_source``,
+    ``source_file``, ``check_host`` and ``show_forced_setting``."""
 
     def __init__(self, controller) -> None:
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.controller = controller
+        # The page scrolls as one, as Directives does: the host field, the
+        # summary, the table and Matching Order. The filter chips are
+        # pinned: scrolled past the top, they move to a bar over the page
+        # (see _sync_pinned) and back when scrolled down to again.
+        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         for side in ("top", "bottom", "start", "end"):
-            getattr(self, f"set_margin_{side}")(16)
+            getattr(self.content, f"set_margin_{side}")(16)
+        self.page = Gtk.ScrolledWindow(vexpand=True)
+        self.page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.page.set_child(self.content)
+        self.page.get_vadjustment().connect("value-changed", lambda *_a: self._sync_pinned())
+        self.pinned_bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.START)
+        self.pinned_bar.add_css_class("advcfg-pinned")
+        self.pinned_bar.set_visible(False)
+        overlay = Gtk.Overlay(vexpand=True)
+        overlay.set_child(self.page)
+        overlay.add_overlay(self.pinned_bar)
+        Gtk.Box.append(self, overlay)
         self._answer = Answer(None, [], LineMap({}, {}))
         self._items: Dict[str, EffectiveItem] = {}
         self._stale = True
         self._shown = False
+        #: True while the window puts its own host in the field.
+        self._setting_host = False
+
+        # The host OpenSSH is asked about: the selected block's own, or one
+        # typed here (any host, for a block that names none: Host *, a
+        # pattern, a Match rule, the global options).
+        self.host_entry = Gtk.Entry(
+            placeholder_text=_("Host to check, e.g. server or user@server"),
+            hexpand=True,
+        )
+        self.host_entry.set_icon_from_icon_name(
+            Gtk.EntryIconPosition.PRIMARY, "network-server-symbolic"
+        )
+        self.host_entry.update_property(
+            [Gtk.AccessibleProperty.LABEL], [_("Host to check")]
+        )
+        self.host_entry.connect("changed", self._on_host_changed)
+        self.content.append(self.host_entry)
 
         self.summary = self._build_summary()
-        self.append(self.summary)
+        self.content.append(self.summary)
         self.search = Gtk.SearchEntry(placeholder_text=_("Search options or values"))
         self.search.set_width_chars(24)
         self.search.connect("search-changed", lambda *_a: self._refilter())
@@ -380,34 +418,151 @@ class EffectiveView(Gtk.Box):
         spacer = Gtk.Box(hexpand=True)
         self.chips.append(spacer)
         self.chips.append(self.search)              # the controls, together
-        self.append(self.chips)
+        #: Where the chips sit while not pinned; it keeps their height
+        #: while they are, so the page does not jump.
+        self.chips_slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.chips_slot.append(self.chips)
+        self.content.append(self.chips_slot)
 
         self.store = Gio.ListStore(item_type=EffectiveItem)
         self.model = Gtk.FilterListModel(model=self.store, filter=self._filter)
-        factory = Gtk.SignalListItemFactory()
-        factory.connect("setup", self._setup_row)
-        factory.connect("bind", lambda _f, list_item: list_item._cell.bind(list_item.get_item()))
-        self.list = Gtk.ListView(model=Gtk.NoSelection(model=self.model), factory=factory)
+        # Every row built (some hundred at most), so the page, not the
+        # list, scrolls: a ListView only lays out the rows in its own view.
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.list.add_css_class("advcfg-effective-list")
-        self.scroller = Gtk.ScrolledWindow()
-        self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.scroller.set_vexpand(True)
-        self.scroller.set_child(self.list)
+        self.list.bind_model(self.model, self._create_row)
         # The table: column titles over the list, in one card.
         self.table = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.table.add_css_class("card")
-        self.table.set_vexpand(True)
         self.table.append(self._build_header())
         self.table.append(Gtk.Separator())
-        self.table.append(self.scroller)
-        self.append(self.table)
+        self.table.append(self.list)
+        self.content.append(self.table)
+        self.order = self._build_order()
+        self.content.append(self.order)
         self.note = Adw.StatusPage(icon_name="system-search-symbolic")
         self.note.set_vexpand(True)
-        self.append(self.note)
+        self.content.append(self.note)
         # Offered only while some value needs attention.
         self._chips[ATTENTION].add_css_class("advcfg-chip-attention")
         self._chips[ATTENTION].set_visible(False)
         self._set_chip_labels({ALL: 0, THIS_BLOCK: 0, OTHER: 0, DEFAULT: 0, ATTENTION: 0})
+
+    # -- the host checked -----------------------------------------------------------
+
+    def _on_host_changed(self, entry) -> None:
+        if not self._setting_host:
+            self.controller.check_host(entry.get_text())
+
+    def set_host(self, host: str, typed: str = "") -> None:
+        """Show the host the window asks about (*typed*: the one typed
+        here, if any). What is being typed is left alone: a field cleared
+        while focused keeps empty, not filled with the selected block's own
+        host under the cursor. Focus alone keeps nothing: the field has it
+        whenever the page opens, and a host the window put there goes when
+        another block is selected."""
+        entry = self.host_entry
+        text = entry.get_text().strip()
+        if text == host:
+            return
+        if entry.get_state_flags() & Gtk.StateFlags.FOCUS_WITHIN and text == typed:
+            return
+        self._setting_host = True
+        try:
+            entry.set_text(host)
+        finally:
+            self._setting_host = False
+
+    # -- the order OpenSSH reads the configuration in ----------------------------
+
+    def _build_order(self) -> Gtk.Widget:
+        """A section under the table, folded until opened: the forced
+        options, every block in file order with whether it applies to the
+        host, then the system-wide file. Opened, it stays open from one
+        answer to the next."""
+        box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        box.add_css_class("boxed-list")
+        self.order_row = Adw.ExpanderRow(
+            title=_("Matching Order"),
+            subtitle=GLib.markup_escape_text(_(
+                "The order OpenSSH reads the configuration in for this host. "
+                "The first value it obtains for an option is the one it keeps."
+            )),
+        )
+        self.order_row.set_icon_name("view-list-symbolic")
+        box.append(self.order_row)
+        self._order_rows: List[Gtk.Widget] = []
+        return box
+
+    def _add_order_row(self, title: str, subtitle: str, suffix=None, line: int = 0,
+                       on_activate=None) -> None:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(title))
+        row.set_subtitle(GLib.markup_escape_text(subtitle))
+        if suffix is not None:
+            row.add_suffix(suffix)
+        if line and on_activate is None:
+            # A block is a link to where it is written.
+            on_activate = lambda n=line: self.controller.reveal_line(n)  # noqa: E731
+        if on_activate is not None:
+            row.set_activatable(True)
+            row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+            row.connect("activated", lambda _r: on_activate())
+        self.order_row.add_row(row)
+        self._order_rows.append(row)
+
+    def _fill_order(self, answer: Answer) -> None:
+        for row in self._order_rows:
+            self.order_row.remove(row)
+        self._order_rows = []
+        evaluation = answer.evaluation
+        states = {item.line: item.state for item in evaluation.lines}
+        matched = set(evaluation.matched_blocks)
+        if evaluation.forced:
+            keys = list(dict.fromkeys(item.key for item in evaluation.forced))
+            # One option: its control; several: the page.
+            key = keys[0] if len(keys) == 1 else ""
+            self._add_order_row(
+                messages.forced_source(),
+                ", ".join(f"{item.key}={item.value}" for item in evaluation.forced),
+                pill(_("First"), "purple"),
+                on_activate=lambda: self.controller.show_forced_setting(key),
+            )
+        for index, block in enumerate(answer.blocks):
+            header = answer.lines.headers.get(block.uid, 0)
+            is_global = block.kind == GLOBAL
+            applies = None if block.disabled else (is_global or header in matched)
+            label, style, tip = messages.block_status(block.disabled, applies, is_global)
+            counts: Dict[State, int] = {}
+            for option in block.options:
+                state = states.get(answer.lines.options.get(option.uid, 0))
+                if state is not None:
+                    counts[state] = counts.get(state, 0) + 1
+            parts = [
+                f"{messages.state_label(state)}: {counts[state]}"
+                for state in (State.APPLIED, State.ACCUMULATED, State.INCLUDE,
+                              State.SHADOWED, State.FORCED)
+                if counts.get(state)
+            ]
+            if applies is False:
+                parts = [messages.order_skipped_text()]
+            badge = pill(label, style) if label else None
+            if badge is not None and tip:
+                badge.set_tooltip_text(tip)
+            first_line = header or next(
+                (answer.lines.options.get(option.uid, 0) for option in block.options
+                 if answer.lines.options.get(option.uid, 0)), 0,
+            )
+            self._add_order_row(
+                f"#{index + 1}  {messages.block_title(block.kind, block.patterns)}",
+                " · ".join(parts), badge, first_line,
+            )
+        if evaluation.system_config:
+            supplied = sum(1 for s in evaluation.sources if s.file == evaluation.system_config)
+            self._add_order_row(
+                _("System-wide configuration"),
+                f"{evaluation.system_config} · {messages.state_label(State.APPLIED)}: {supplied}",
+                pill(_("Last"), "muted"),
+            )
 
     # -- the summary ---------------------------------------------------------------
 
@@ -501,9 +656,25 @@ class EffectiveView(Gtk.Box):
             self._refilter()
         for position in range(self.model.get_n_items()):
             if self.model.get_item(position) is item:
-                self.list.scroll_to(position, Gtk.ListScrollFlags.FOCUS, None)
-                GLib.idle_add(self._flash, item)
+                GLib.idle_add(self._scroll_to_row, position, item)
                 return
+
+    def _scroll_to_row(self, position: int, item: "EffectiveItem") -> bool:
+        """Bring row *position* into view below the pinned chips, then
+        flash it (once the list has its rows after a filter change)."""
+        row = self.list.get_row_at_index(position)
+        if row is not None:
+            found, bounds = row.compute_bounds(self.content)
+            if found:
+                adjustment = self.page.get_vadjustment()
+                top, bottom = bounds.get_y(), bounds.get_y() + bounds.get_height()
+                above = self.chips_slot.get_height() + 12      # under the pinned chips
+                if top - above < adjustment.get_value():
+                    adjustment.set_value(top - above)
+                elif bottom > adjustment.get_value() + adjustment.get_page_size():
+                    adjustment.set_value(bottom - adjustment.get_page_size())
+        self._flash(item)
+        return False
 
     @staticmethod
     def _flash(item: "EffectiveItem") -> bool:
@@ -535,10 +706,38 @@ class EffectiveView(Gtk.Box):
         holder.append(header)
         return holder
 
-    def _setup_row(self, _factory, list_item) -> None:
+    def _create_row(self, item: EffectiveItem) -> Gtk.Widget:
         cell = _EffectiveCell(self.controller)
-        list_item._cell = cell
-        list_item.set_child(cell.outer)
+        cell.bind(item)
+        # A row filtered out goes; shown again, it is built again.
+        return Gtk.ListBoxRow(activatable=False, child=cell.outer)
+
+    # -- the pinned chips ------------------------------------------------------
+
+    def _sync_pinned(self) -> None:
+        """Move the chips to the bar over the page once the page scrolls
+        past where they sit, and back when it no longer does."""
+        offset = self.page.get_vadjustment().get_value()
+        found, bounds = self.chips_slot.compute_bounds(self.content)
+        stuck = found and self.chips_slot.get_visible() and offset > bounds.get_y()
+        pinned = self.chips.get_parent() is self.pinned_bar
+        if stuck == pinned:
+            return
+        # Typing in the search moves no focus: it stays where it was.
+        typing = bool(self.search.get_state_flags() & Gtk.StateFlags.FOCUS_WITHIN)
+        position = self.search.get_position()
+        if stuck:
+            self.chips_slot.set_size_request(-1, self.chips_slot.get_height())
+            self.chips_slot.remove(self.chips)
+            self.pinned_bar.append(self.chips)
+        else:
+            self.pinned_bar.remove(self.chips)
+            self.chips_slot.append(self.chips)
+            self.chips_slot.set_size_request(-1, -1)
+        self.pinned_bar.set_visible(stuck)
+        if typing:
+            self.search.grab_focus()
+            self.search.select_region(position, position)
 
     # -- filters ---------------------------------------------------------------
 
@@ -612,9 +811,10 @@ class EffectiveView(Gtk.Box):
         evaluation = answer.evaluation
         command = "ssh -G " + (f"-l {answer.user} " if answer.user else "") + answer.host
         self.command.set_label(command if answer.host else "ssh -G")
-        for widget in (self.summary, self.chips, self.table):
+        for widget in (self.summary, self.order, self.chips_slot, self.table):
             widget.set_visible(answer.answered)
         self.note.set_visible(not answer.answered)
+        self._sync_pinned()
         if not answer.answered:
             if evaluation is None:
                 self.note.set_title(_("No Host Checked"))
@@ -630,6 +830,7 @@ class EffectiveView(Gtk.Box):
                     "\n".join(messages.error_text(e) for e in evaluation.errors)
                 ))
             return
+        self._fill_order(answer)
         values: Dict[str, List[str]] = {}
         for item in evaluation.values:
             values.setdefault(item.key, []).append(item.value)

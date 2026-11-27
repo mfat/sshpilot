@@ -1890,6 +1890,68 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return list(rows)
         return [rows]
 
+    def _select_opened_connection(self, connection, *, focus=False) -> bool:
+        """Reveal one occurrence of the connection, optionally focusing its row."""
+        self.complete_pending_connection_rows()
+        pending = getattr(self, "_sidebar_reveal_tick", None)
+        if pending:
+            self.connection_list.remove_tick_callback(pending)
+            self._sidebar_reveal_tick = None
+        rows = self._rows_for_connection(connection)
+        if not rows:
+            return False
+        self._sidebar_scroll_request = object()
+        visible = [row for row in rows if row.get_visible()]
+        if visible:
+            target = next((row for row in visible if row.is_selected()), visible[0])
+        else:
+            target = rows[0]
+            group_id = getattr(target, "_group_id", None)
+            section_id = "groups" if group_id else "ungrouped"
+            ancestors = set()
+            while group_id and group_id not in ancestors:
+                ancestors.add(group_id)
+                group_id = self.group_manager.groups.get(group_id, {}).get("parent_id")
+            # Headers precede their children, so parents expand first.
+            for header in self.connection_list:
+                if isinstance(header, SectionHeaderRow) and header.section_id == section_id:
+                    header.set_expanded(True)
+                elif isinstance(header, GroupRow) and header.group_id in ancestors:
+                    header.set_expanded(True)
+        if not target.is_selected() or focus:
+            self._select_only_row(target)
+
+        # A tick runs before layout. Let one layout pass after expansion, then
+        # clamp the adjustment to the allocated row without moving terminal focus.
+        frames = 0
+        target_group = getattr(target, "_group_id", None)
+
+        def reveal(listbox, _clock):
+            nonlocal frames
+            frames += 1
+            if frames == 1:
+                return GLib.SOURCE_CONTINUE
+            # Clearing search can rebuild the list again before the next frame.
+            for row in self._rows_for_connection(connection):
+                if not row.is_selected() or getattr(row, "_group_id", None) != target_group:
+                    continue
+                viewport = listbox.get_ancestor(Gtk.Viewport)
+                if viewport is not None:
+                    ok, bounds = row.compute_bounds(viewport.get_child())
+                    if ok and bounds.get_height() > 0:
+                        top = bounds.get_y()
+                        viewport.get_vadjustment().clamp_page(top, top + bounds.get_height())
+                    elif frames < 5:
+                        return GLib.SOURCE_CONTINUE
+                if focus:
+                    row.grab_focus()
+                break
+            self._sidebar_reveal_tick = None
+            return GLib.SOURCE_REMOVE
+
+        self._sidebar_reveal_tick = self.connection_list.add_tick_callback(reveal)
+        return True
+
     def _primary_row_for_connection(self, connection) -> Optional[Gtk.ListBoxRow]:
         """Return the first row representing ``connection`` (or ``None``)."""
         rows = self._rows_for_connection(connection)
@@ -2338,7 +2400,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Match Adwaita's headerbar start-box spacing (6px) so the gap between
         # the sidebar toggle and the local-terminal button equals the gap from
-        # that button to the first tab (home), after the tab bar's -4 margin.
+        # that button to the first tab (home); see _headerbar_start_and_title.
         self._headerbar_start_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=6,
@@ -2371,8 +2433,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._content_title_stack.set_visible_child_name('empty')
 
         self._content_header_box.append(self._window_controls_start)
-        self._content_header_box.append(self._headerbar_start_box)
-        self._content_header_box.append(self._content_title_stack)
+        # The start controls and the tabs share a box with a tighter gap
+        # (2px, not the row's 6px), so the sidebar-toggle -> terminal and
+        # terminal -> first tab gaps match without changing the spacing around
+        # the window controls. This replaces a -4px margin on the tab bar,
+        # which GTK warns about on every measure ("adjusted size ... must not
+        # decrease below ...", #1423).
+        self._headerbar_start_and_title = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=2,
+        )
+        self._headerbar_start_and_title.append(self._headerbar_start_box)
+        self._headerbar_start_and_title.append(self._content_title_stack)
+        self._content_header_box.append(self._headerbar_start_and_title)
         self._content_header_box.append(self._headerbar_end_box)
         self._content_header_box.append(self._window_controls_end)
         self.header_bar.set_child(self._content_header_box)
@@ -2432,6 +2505,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             user_width=saved_width,
             on_user_resize=self._on_sidebar_width_dragged,
             on_drag=self._on_sidebar_divider_drag,
+            # Too narrow to dock it unclipped: the sidebar collapses and the
+            # header toggle floats it over the content instead (#1423).
+            on_collapsed_changed=self._on_sidebar_collapsed_changed,
+            collapse_floor=self._measure_sidebar_content_min,
         )
         self.split_view.set_vexpand(True)
         self.split_view.connect(
@@ -3871,10 +3948,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar.set_autohide(False)
         self.tab_bar.set_expand_tabs(False)
         self.tab_bar.set_hexpand(True)
-        # Pull the first tab 4px toward the start controls. Combined with the
-        # start box's 6px spacing, the sidebar↔terminal and terminal↔home gaps
-        # match without changing spacing around the window controls.
-        self.tab_bar.set_margin_start(-4)
+        # No negative margin to pull the first tab toward the start controls:
+        # the tighter gap lives on _headerbar_start_and_title instead.
         # The tab bar fills the custom title bar's centre stack. "inline"
         # avoids drawing another toolbar surface inside the WindowHandle row.
         self.tab_bar.add_css_class('inline')
@@ -4396,8 +4471,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     break
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
             vadj = self.connection_scrolled.get_vadjustment()
-            if vadj:
-                GLib.idle_add(lambda: vadj.set_value(scroll_position))
+            if vadj and not getattr(self, "_sidebar_reveal_tick", None):
+                request = self._sidebar_scroll_request = object()
+
+                def restore_scroll():
+                    if self._sidebar_scroll_request is request:
+                        vadj.set_value(scroll_position)
+                    return GLib.SOURCE_REMOVE
+
+                GLib.idle_add(restore_scroll)
 
     def _append_command_matches(self) -> None:
         """When the search popup is open with a query, append in-app commands
@@ -4979,7 +5061,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle search text changes and update connection list."""
         self.rebuild_connection_list()
         first_row = self.connection_list.get_row_at_index(0)
-        if first_row:
+        if first_row and entry.get_text().strip():
             self._select_only_row(first_row)
 
     def on_search_stopped(self, entry):
@@ -5324,8 +5406,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             if hasattr(self, 'connection_list') and self.connection_list:
                 # If sidebar is hidden, show it first
-                if self._sidebar_hidden_by_toggle():
-                    self._apply_sidebar_visible(True)
+                self._reveal_sidebar()
 
                 # Close the search bar (if open) and clear the filter so the
                 # full connection list is shown when focus moves here.
@@ -5405,9 +5486,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         if getattr(self, 'search_entry', None):
             self.search_entry.set_text('')
-        self.rebuild_connection_list()
         self.search_container.set_visible(False)
         self._restore_sidebar_after_search()
+        self.rebuild_connection_list()
 
     def activate_search_entry(self):
         """Show (if hidden) and focus the connection search entry.
@@ -6951,6 +7032,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_sidebar_toggle(self, button):
         """Handle sidebar toggle button click (flat Gtk.Button, Planify-style)."""
         try:
+            if self._sidebar_collapsed():
+                self._toggle_sidebar_overlay()
+                return
             is_visible = not bool(getattr(self, '_sidebar_visible', True))
             self._toggle_sidebar_visibility(is_visible)
             # A manual toggle cancels any pending "hide on terminal open" delay.
@@ -7010,6 +7094,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # The sidebar header bar stays behind; bring its actions along.
         from sshpilot.sidebar import set_sidebar_header_actions_floating
         set_sidebar_header_actions_floating(self, True)
+        if self._sidebar_collapsed():
+            self._sync_sidebar_toggle_button(True)
 
     def _on_search_popup_hidden(self) -> None:
         """Re-attached: restore the connection list and header actions."""
@@ -7017,6 +7103,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.connection_scrolled.set_visible(True)
         from sshpilot.sidebar import set_sidebar_header_actions_floating
         set_sidebar_header_actions_floating(self, False)
+        if self._sidebar_collapsed():
+            # Esc / click outside closed the floating sidebar.
+            self._sync_sidebar_toggle_button(False)
 
     def _dismiss_search_popup(self) -> None:
         """Esc / click-outside: route through search teardown when search is
@@ -7105,8 +7194,73 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return cards
 
     def _sidebar_hidden_by_toggle(self) -> bool:
-        """True while the sidebar is hidden via the header control / F9."""
-        return not bool(getattr(self, '_sidebar_visible', True))
+        """True while the sidebar is not docked: hidden via the header
+        control / F9, or collapsed because the window is too narrow. Either
+        way the floating popup is how it is shown (search, hover reveal)."""
+        return (not bool(getattr(self, '_sidebar_visible', True))
+                or self._sidebar_collapsed())
+
+    # --- Collapsed sidebar (window too narrow to dock it) --------------------
+    # Mirrors AdwOverlaySplitView's collapsed mode in GNOME apps (Files): the
+    # sidebar leaves the layout, the header toggle shows it over the content,
+    # and it docks again once the window is wide enough. The user's own
+    # shown/hidden choice (_sidebar_visible) is left untouched throughout.
+    def _sidebar_collapsed(self) -> bool:
+        sv = getattr(self, 'split_view', None)
+        if sv is None or getattr(self, '_split_variant', '') != 'paned':
+            return False
+        try:
+            return bool(sv.get_collapsed())
+        except Exception:
+            return False
+
+    def _sidebar_overlay_shown(self) -> bool:
+        popup = getattr(self, '_search_popup', None)
+        return bool(popup is not None and popup.visible)
+
+    def _sidebar_shown(self) -> bool:
+        """Whether the user can see the sidebar, docked or floating."""
+        if self._sidebar_collapsed():
+            return self._sidebar_overlay_shown()
+        return bool(getattr(self, '_sidebar_visible', True))
+
+    def _toggle_sidebar_overlay(self) -> None:
+        """Header toggle / F9 while collapsed: float the sidebar or put it away."""
+        if self._sidebar_overlay_shown():
+            self._dismiss_search_popup()
+        else:
+            popup = self._ensure_search_popup()
+            if popup is not None:
+                popup.show()
+        self._cancel_pending_sidebar_hide()
+        self._sync_sidebar_toggle_button(self._sidebar_shown())
+
+    def _reveal_sidebar(self) -> None:
+        """Make the sidebar visible for something the user asked to see in it."""
+        if self._sidebar_collapsed():
+            if not self._sidebar_overlay_shown():
+                self._toggle_sidebar_overlay()
+        elif self._sidebar_hidden_by_toggle():
+            self._apply_sidebar_visible(True)
+
+    def _dismiss_sidebar_overlay(self) -> None:
+        """A connection was opened: put a floating collapsed sidebar away, as a
+        GNOME overlay sidebar does once an item in it is picked."""
+        if self._sidebar_collapsed() and self._sidebar_overlay_shown():
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None:
+                popup.hide()
+            self._sync_sidebar_toggle_button(False)
+
+    def _on_sidebar_collapsed_changed(self, collapsed: bool) -> None:
+        if not collapsed:
+            # Wide enough again: dock it (the popup would otherwise keep the
+            # sidebar's widgets and leave the docked pane empty).
+            popup = getattr(self, '_search_popup', None)
+            if popup is not None and popup.visible and getattr(self, '_sidebar_visible', True):
+                self._search_expanded_sidebar = False
+                popup.hide(animate=False)
+        self._sync_sidebar_toggle_button(self._sidebar_shown())
 
     def _sync_sidebar_toggle_button(self, visible: bool) -> None:
         """Update the flat sidebar button tooltip for the current visibility."""
@@ -9122,14 +9276,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         pending_meta=None,
     ) -> None:
         from .api import SshPilotError
-        from .api.models.connections import (
-            ConnectionMutationResult,
-            EDITABLE_CONFIG_FIELDS,
-            ForwardingRule,
-            forwarding_rule_to_dict,
-            UNSET,
-        )
-        from .api.models import CreateConnectionRequest, UpdateConnectionRequest
+        from .api.models.connections import ConnectionMutationResult
 
         bridge = self.client_bridge
         if bridge is None:
@@ -9181,45 +9328,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             was_editing = bool(getattr(dialog, 'is_editing', False))
             dialog._save_started_as_edit = was_editing
 
+        from . import connection_save_request as save_request
+
         def _build_config_patch():
-            import re
-            patch = {}
-
-            for key in EDITABLE_CONFIG_FIELDS:
-                if key in ("nickname", "hostname", "username", "port", "protocol"):
-                    continue
-                if key not in connection_data:
-                    continue
-                if changed_fields and key not in changed_fields:
-                    continue
-
-                if key == "forwarding_rules":
-                    raw = connection_data.get(key, ())
-                    if raw:
-                        patch[key] = [
-                            forwarding_rule_to_dict(r) if isinstance(r, ForwardingRule)
-                            else r if isinstance(r, dict) else {}
-                            for r in raw
-                        ]
-                    else:
-                        patch[key] = []
-                elif key in ("identity_files", "certificate_files", "proxy_jump", "aliases"):
-                    val = connection_data.get(key, ())
-                    if isinstance(val, str):
-                        if key in ("proxy_jump", "aliases"):
-                            patch[key] = [h.strip() for h in re.split(r'[\s,]+', val) if h.strip()]
-                        else:
-                            patch[key] = [f.strip() for f in re.split(r'[\r\n,]+', val) if f.strip()]
-                    else:
-                        patch[key] = [str(item).strip() for item in val if str(item).strip()] if val else []
-
-                elif isinstance(connection_data.get(key), bool):
-                    patch[key] = connection_data[key]
-                else:
-                    val = connection_data.get(key, '')
-                    if val is not None:
-                        patch[key] = val
-            return patch
+            return save_request.config_patch(connection_data, changed_fields)
 
         try:
             if dialog.is_editing:
@@ -9274,23 +9386,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         )
                         operation = lambda: self.client.split_connection(split_req)
                     else:
-                        request = UpdateConnectionRequest(
-                            nickname=(connection_data.get('nickname')
-                                      if (not delta_available or 'nickname' in changed_fields)
-                                      else UNSET),
-                            hostname=(connection_data.get('hostname')
-                                      if (not delta_available or 'hostname' in changed_fields)
-                                      else UNSET),
-                            username=(connection_data.get('username')
-                                      if (not delta_available or 'username' in changed_fields)
-                                      else UNSET),
-                            port=(connection_data.get('port')
-                                  if (not delta_available or 'port' in changed_fields)
-                                  else UNSET),
-                            display_name=(connection_data.get('display_name')
-                                          if (not delta_available or 'display_name' in changed_fields)
-                                          else UNSET),
-                            config_patch=config_patch,
+                        request = save_request.update_request(
+                            connection_data,
+                            delta_available=delta_available,
+                            changed_fields=changed_fields,
                             expected_generation=current_generation,
                             shared_block=shared_block,
                         )
@@ -9300,18 +9399,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         )
             else:
                 config_patch = _build_config_patch()
-                request = CreateConnectionRequest(
-                    nickname=connection_data.get('nickname', ''),
-                    hostname=connection_data.get('hostname', ''),
-                    username=connection_data.get('username', ''),
-                    # A new connection needs a concrete port; an empty field
-                    # means "inherit", and 22 is what OpenSSH falls back to, so
-                    # the formatter still omits the Port line for it.
-                    port=connection_data.get('port') or 22,
-                    protocol='ssh',
-                    display_name=connection_data.get('display_name', ''),
-                    config_patch=config_patch,
-                )
+                request = save_request.create_request(connection_data)
                 operation = lambda: self.client.create_connection(request)
         except (ValueError, TypeError) as build_err:
             logger.error(

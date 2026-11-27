@@ -67,6 +67,7 @@ from .api.models.connections import (  # noqa: E402
     SshConfigDraftEvaluation,
 )
 from .gtk import advanced_config_messages as messages  # noqa: E402
+from .core.settings.ssh_overrides import OverrideSource, override_source  # noqa: E402
 from .ssh_config_blocks import GLOBAL, HOST, LineMap  # noqa: E402
 from .ssh_config_document import declared_hosts  # noqa: E402
 
@@ -92,16 +93,10 @@ _PREFETCH_DELAY_MS = 350
 _PREFETCH_HOSTS = 150
 
 PAGES = ("structured", "effective", "raw")
+#: Settings' page of SSH options (PreferencesWindow._page_id("SSH Options")).
+SSH_OPTIONS_PAGE = "ssh-options"
 
 _CSS = """
-.advcfg-pill { font-size: 0.82em; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
-.advcfg-pill.success { background-color: alpha(@success_color, 0.16); color: @success_color; }
-.advcfg-pill.warning { background-color: alpha(@warning_color, 0.18); color: @warning_color; }
-.advcfg-pill.error { background-color: alpha(@error_color, 0.16); color: @error_color; }
-.advcfg-pill.accent { background-color: alpha(@accent_color, 0.15); color: @accent_color; }
-.advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
-.advcfg-pill.advcfg-pill-link:hover { text-decoration: underline; }
-.advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
 .advcfg-context { padding: 12px 16px 0 16px; }
 .advcfg-title-card { padding: 0; }
 /* The card is libadwaita's .osd (dark, partly see-through, light text,
@@ -130,8 +125,6 @@ row:hover .advcfg-drag-handle { opacity: 0.9; }
 .advcfg-comment { font-style: italic; color: alpha(currentColor, 0.6); font-family: monospace; }
 .advcfg-disabled-note { color: @warning_color; font-weight: 600; }
 .advcfg-dimmed { opacity: 0.55; }
-button.advcfg-host-chip { padding: 1px 10px; min-height: 24px; border-radius: 999px;
-  font-family: monospace; font-size: 0.9em; }
 /* Effective's summary: no card of its own; its line and tiles sit on the
    page, as the tiles under the title card do on the Directives view. */
 .advcfg-summary { padding: 0; }
@@ -156,6 +149,9 @@ button.advcfg-fix { min-height: 22px; padding: 0 10px; font-size: 0.85em; border
 .advcfg-dot.advcfg-attn-purple { background-color: @purple_3; }
 .advcfg-row-flash { background-color: alpha(@accent_bg_color, 0.18); }
 .advcfg-effective-list { background: none; }
+/* Effective's chips, pinned over the page once it scrolls past them. */
+.advcfg-pinned { background: @window_bg_color; padding: 8px 16px;
+                 box-shadow: 0 1px alpha(@borders, 0.8); }
 .advcfg-effective-list > row { padding: 0; }
 .advcfg-cell { padding: 9px 14px; min-height: 30px; }
 .advcfg-explicit { font-weight: bold; }
@@ -173,6 +169,9 @@ _css_installed = False
 
 def _ensure_css() -> None:
     global _css_installed
+    from .advanced_config_widgets import ensure_shared_css
+
+    ensure_shared_css()
     display = Gdk.Display.get_default()
     if _css_installed or display is None:
         return
@@ -342,8 +341,6 @@ class AdvancedConfigBase:
         ):
             self.stack.add_titled_with_icon(widget, name, title, icon)
         self.stack.connect("notify::visible-child-name", self._on_page_shown)
-        #: Effective was on screen when it was hidden (see _sync_effective_page).
-        self._effective_left = False
 
         header = Adw.HeaderBar()
         self.switcher = Adw.ViewSwitcher(stack=self.stack)
@@ -506,32 +503,60 @@ class AdvancedConfigBase:
         return self._pinned_host
 
     def show_page(self, name: str) -> None:
-        """Make one of the three views the one on screen (Effective only
-        while it is offered: see :meth:`_sync_effective_page`)."""
-        if name == "effective" and not self.stack.get_page(self.effective).get_visible():
-            return
+        """Make one of the three views the one on screen."""
         if name in PAGES and self.stack.get_visible_child_name() != name:
             self.stack.set_visible_child_name(name)
 
-    def _sync_effective_page(self) -> None:
-        """Offer Effective only while there is a host to ask OpenSSH about.
-
-        ``ssh -G`` answers for one host. A block that names none (``Host *``,
-        a pattern, a Match rule, the global options) has nothing to show
-        there until a host is typed, so the page is hidden for it. Effective
-        on screen when it goes is left for Structured, and comes back when
-        the page does."""
-        page = self.stack.get_page(self.effective)
-        offered = bool(self.target_text())
-        if page.get_visible() == offered:
+    def show_forced_setting(self, keyword: str = "") -> None:
+        """Open Settings ▸ SSH Options at the control that forces *keyword*
+        (the page alone for "", or while the settings cannot be read).
+        Settings belong to the main window: it opens them."""
+        main = self._parent_window
+        show = getattr(main, "show_preferences", None)
+        if show is None:
             return
-        if not offered and self.stack.get_visible_child_name() == "effective":
-            self.stack.set_visible_child_name("structured")
-            self._effective_left = True     # after the switch, which clears it
-        page.set_visible(offered)
-        if offered and self._effective_left:
-            self._effective_left = False
-            self.stack.set_visible_child_name("effective")
+        if keyword:
+            ssh = self._ssh_settings(main)
+            source = override_source(ssh, keyword) if ssh is not None else None
+            if source is OverrideSource.EXTRA:
+                show(SSH_OPTIONS_PAGE, extra_ssh_option=keyword)
+                return
+            if source is not None:
+                show(SSH_OPTIONS_PAGE, messages.settings_row_title(source))
+                return
+        show(SSH_OPTIONS_PAGE)
+
+    @staticmethod
+    def _ssh_settings(main) -> Optional[dict]:
+        """The settings Settings ▸ SSH Options shows, as the daemon has
+        them (multiplexing is the app's own setting). None: unreadable."""
+        builder = getattr(main, "_build_ssh_overrides_controller", None)
+        try:
+            controller = builder() if builder is not None else None
+            snapshot = controller.load() if controller is not None else None
+        except Exception:
+            logger.debug("SSH options unreadable", exc_info=True)
+            return None
+        if snapshot is None:
+            return None
+        ssh = {key: getattr(snapshot, key, None) for key in (
+            "connect_timeout", "strict_host_key_checking", "compression", "verbosity",
+            "debug_enabled", "address_family", "legacy_algorithms",
+        )}
+        config = getattr(main, "config", None)
+        if config is not None:
+            ssh["controlmaster"] = bool(config.get_setting("ssh.controlmaster", False))
+        return ssh
+
+    def check_host(self, text: str) -> None:
+        """A host typed in Effective's field: OpenSSH is asked about it,
+        whichever block is selected, until a block is picked. Cleared: the
+        selected block's own host again."""
+        self._check_from_search = False
+        if text.strip() == self._pinned_host:
+            return
+        self._set_typed(text)
+        self._target_changed()
 
     # -- the search field ------------------------------------------------
 
@@ -1174,6 +1199,9 @@ class AdvancedConfigBase:
         self.sidebar.new_button.set_sensitive(not pending)
 
     def _target_changed(self, *, idle: bool = False) -> None:
+        # The field follows at once: the answer may be a while (a pattern
+        # block's is asked of many hosts).
+        self.effective.set_host(self.target_text(), self._typed_host())
         # A command can depend on the host (%h, %r): agreement to run it
         # was for the host in question at the time.
         self._allowed_exec.clear()
@@ -1438,8 +1466,6 @@ class AdvancedConfigBase:
 
     def _on_page_shown(self, *_args) -> None:
         name = self.stack.get_visible_child_name()
-        # Another page picked while Effective was hidden is where to stay.
-        self._effective_left = False
         self.effective.set_shown(name == "effective")
         self.raw.set_shown(name == "raw")
         if name == "raw":
@@ -1940,7 +1966,7 @@ class AdvancedConfigBase:
 
     def _show_answer(self) -> None:
         """Hand OpenSSH's answer (or its absence) to the views."""
-        self._sync_effective_page()
+        self.effective.set_host(self.target_text(), self._typed_host())
         evaluation = self._evaluation
         related = self._related if evaluation is None else None
         lines = self._evaluated_lines if evaluation is not None else self.editor.lines

@@ -54,6 +54,26 @@ jobs:
                 tests/test_gui_connection_editor_contracts.py
           '
 
+      - name: Run the editor tests against the app
+        # The connection editor's marks, inherited values, key list and
+        # Extra Options against the real app and OpenSSH: what each field
+        # says about the lines that decide it, and that an edit made while
+        # OpenSSH answers is still saved. Their own process and app session.
+        env:
+          SSHPILOT_GUI_TESTS: "1"
+        run: |
+          dbus-run-session -- bash -ceu '
+            printf "ci" | gnome-keyring-daemon --unlock --replace --components=secrets >/dev/null
+            xvfb-run -a -s "-screen 0 1400x900x24" \
+              .venv-gui/bin/python -m pytest -ra -o addopts="" -n0 -m gui \
+                --junitxml=editor.xml \
+                tests/test_gui_connection_dialog_overrides.py \
+                tests/test_gui_connection_dialog_effective.py \
+                tests/test_gui_editor_openssh_roundtrip.py \
+                tests/test_gui_ssh_option_list.py \
+                tests/test_gui_config_syntax_notice.py
+          '
+
       - name: Run the dialog tests that need no daemon
         # The authentication section and the login profile dialogs in real
         # windows: dragging, profile locks, the "OpenSSH will try" line,
@@ -94,7 +114,8 @@ jobs:
           python3 - <<'EOF'
           import sys
           import xml.etree.ElementTree as ET
-          for report, least in (("contracts.xml", 60), ("dialogs.xml", 108), ("real-login.xml", 6)):
+          for report, least in (("contracts.xml", 60), ("editor.xml", 44),
+                                ("dialogs.xml", 108), ("real-login.xml", 6)):
               suite = ET.parse(report).getroot()
               suite = suite.find("testsuite") if suite.tag == "testsuites" else suite
               tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))

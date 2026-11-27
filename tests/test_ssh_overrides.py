@@ -233,3 +233,39 @@ def test_derived_overrides_override_config_values():
     fragment = config.get_ssh_config()["ssh_overrides"]
     assert "-o" in fragment
     assert fragment[0] == "-o"
+
+
+# -- which Settings control forces an option ------------------------------------
+
+def test_override_source_names_the_control_that_is_set():
+    from sshpilot.core.settings.ssh_overrides import OverrideSource as S, override_source
+
+    ssh = {
+        "connection_timeout": 10, "address_family": "inet",
+        "strict_host_key_checking": "no", "compression": "yes",
+        "verbosity": 0, "debug_enabled": True, "controlmaster": True,
+        "legacy_algorithms": True,
+    }
+    assert override_source(ssh, "ConnectTimeout") is S.CONNECT_TIMEOUT
+    assert override_source(ssh, "addressfamily") is S.ADDRESS_FAMILY
+    assert override_source(ssh, "stricthostkeychecking") is S.STRICT_HOST_KEY_CHECKING
+    assert override_source(ssh, "compression") is S.COMPRESSION
+    assert override_source(ssh, "loglevel") is S.DEBUG
+    assert override_source({**ssh, "verbosity": 2}, "loglevel") is S.VERBOSITY
+    assert override_source(ssh, "controlpath") is S.MULTIPLEXING
+    assert override_source(ssh, "kexalgorithms") is S.LEGACY_ALGORITHMS
+
+
+def test_override_source_is_the_free_form_list_when_no_control_is_set():
+    from sshpilot.core.settings.ssh_overrides import OverrideSource as S, override_source
+
+    unset = {
+        "connection_timeout": 0, "address_family": "any",
+        "strict_host_key_checking": "", "compression": "",
+        "verbosity": 0, "debug_enabled": False, "controlmaster": False,
+        "legacy_algorithms": False,
+    }
+    for keyword in ("connecttimeout", "addressfamily", "stricthostkeychecking",
+                    "compression", "loglevel", "controlmaster", "ciphers", "user"):
+        assert override_source(unset, keyword) is S.EXTRA, keyword
+    assert override_source({}, "compression") is S.EXTRA

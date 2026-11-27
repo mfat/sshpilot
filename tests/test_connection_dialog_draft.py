@@ -16,12 +16,12 @@ import pytest
 
 from sshpilot.api.models.connections import EvaluateSshConfigDraftRequest
 from sshpilot.connection_dialog_auth import AuthPolicy, is_policy_line
-from sshpilot.connection_dialog_draft import (
-    build_drafts,
-    draft_for_host,
-    has_own_block,
-    read_answer,
+from sshpilot.api.models.connections import (
+    EvaluateConnectionEditRequest,
+    UpdateConnectionRequest,
 )
+from sshpilot.connection_dialog_answer import EditorAnswer
+from sshpilot.connection_dialog_draft import _AUTH_KEYWORDS, read_answer
 from sshpilot.core.ssh_config_draft import DraftContext, evaluate_draft
 
 pytestmark = pytest.mark.skipif(
@@ -71,49 +71,36 @@ def _policy_for(tmp_path, saved_text, host="demo"):
     return policy
 
 
-def _resolve(tmp_path, policy, saved_text, host="demo", identity=None):
+def _edit(tmp_path, saved_text, host="demo", extra=None, identity_files=None):
+    """The editor's question, through the daemon's own service: the saved
+    configuration, and an update carrying the form's pending lines."""
+    from tests.core.test_connection_edit_evaluation import _service
+
+    folder = tmp_path / "service"
+    folder.mkdir(exist_ok=True)
+    service, repository, _root = _service(folder, saved_text)
+    patch = {}
+    if extra is not None:
+        patch["extra_ssh_config"] = "\n".join(extra)
+    if identity_files is not None:
+        patch["identity_files"] = list(identity_files)
+    update = None
+    if patch:
+        update = UpdateConnectionRequest(
+            config_patch=patch,
+            expected_generation=repository.get_record(host).generation,
+        )
+    return service.evaluate_connection_edit(EvaluateConnectionEditRequest(
+        connection_id=host, update=update, without_own=tuple(sorted(_AUTH_KEYWORDS)),
+    ))
+
+
+def _resolve(tmp_path, policy, saved_text, host="demo"):
     lines = policy.to_lines()
-    drafts = build_drafts(saved_text, host, lines, identity)
-    effective = _ask(tmp_path, drafts.effective, host)
-    inherited = effective if drafts.inherited == drafts.effective else _ask(
-        tmp_path, drafts.inherited, host
-    )
-    policy.set_draft(effective.first(), inherited.first(), lines)
-    return drafts, effective
-
-
-# -- building the draft --------------------------------------------------------
-
-def test_draft_swaps_only_the_named_lines_of_the_hosts_own_block():
-    text = (
-        "Host other\n    PasswordAuthentication no\n"
-        "Host demo extra\n    User me\n    PasswordAuthentication yes\n"
-        "    ChallengeResponseAuthentication no\n"
-        "Host *\n    PasswordAuthentication no\n"
-    )
-    draft = draft_for_host(
-        text, "demo", {"passwordauthentication", "kbdinteractiveauthentication"},
-        ["PubkeyAuthentication no"],
-    )
-    assert draft == (
-        "Host other\n    PasswordAuthentication no\n"
-        "Host demo extra\n    PubkeyAuthentication no\n    User me\n"
-        "Host *\n    PasswordAuthentication no\n"
-    )
-
-
-def test_a_host_kept_in_an_included_file_has_no_draft():
-    text = "Include conf.d/*\nHost *\n    User me\n"
-    assert not has_own_block(text, "demo")
-    assert draft_for_host(text, "demo", {"user"}, []) is None
-    assert build_drafts(text, "demo", ["PasswordAuthentication no"]) is None
-
-
-def test_a_new_host_is_appended_after_everything_else():
-    draft = draft_for_host(
-        "Host *\n    User me", "fresh", set(), ["Port 2200"], new=True
-    )
-    assert draft == "Host *\n    User me\nHost fresh\n    Port 2200\n"
+    result = _edit(tmp_path, saved_text, host, extra=lines)
+    answer = EditorAnswer(result)
+    policy.set_draft(answer.first(), answer.inherited_first(), lines)
+    return result, answer
 
 
 # -- the reported case: a later Match block decides once the line is gone ---------
@@ -128,10 +115,10 @@ def test_removing_the_hosts_yes_shows_the_match_blocks_no(tmp_path):
     assert "password" in policy.will_try()
 
     assert policy.set_switch("password", None)
-    drafts, _answer = _resolve(tmp_path, policy, saved)
+    result, _answer = _resolve(tmp_path, policy, saved)
 
     after = tmp_path / "after"
-    after.write_text(drafts.effective)
+    after.write_text(result.text)
     assert _ssh_g(after)["passwordauthentication"] == ["no"]
     assert policy.effective_switch("password") is False
     assert policy.shown_checked("password") is False
@@ -149,10 +136,10 @@ def test_checking_keeps_the_hosts_no_when_a_match_block_also_says_no(tmp_path):
     assert policy.set_tried("password", True)
     # Dropping the "no" would leave the Match block's: a "yes" is written.
     assert "PasswordAuthentication yes" in policy.to_lines()
-    drafts, _answer = _resolve(tmp_path, policy, saved)
+    result, _answer = _resolve(tmp_path, policy, saved)
 
     after = tmp_path / "after"
-    after.write_text(drafts.effective)
+    after.write_text(result.text)
     assert _ssh_g(after)["passwordauthentication"] == ["yes"]
     assert policy.shown_checked("password") is True
     assert "password" in policy.will_try()
@@ -226,28 +213,25 @@ IDENTITY_CONFIG = (
 )
 
 
+def _identities(result):
+    return read_answer(result.evaluation, result.text, result.host).identities
+
+
 def test_effective_identities_list_inherited_files_in_openssh_order(tmp_path):
-    drafts = build_drafts(IDENTITY_CONFIG, "demo", [])
-    answer = _ask(tmp_path, drafts.effective)
+    result = _edit(tmp_path, IDENTITY_CONFIG)
+    identities = _identities(result)
     saved = tmp_path / "saved"
     saved.write_text(IDENTITY_CONFIG)
-    assert [i.path for i in answer.identities] == _ssh_g(saved)["identityfile"]
-    assert [(i.path, i.origin, i.block) for i in answer.identities] == [
+    assert [i.path for i in identities] == _ssh_g(saved)["identityfile"]
+    assert [(i.path, i.origin, i.block) for i in identities] == [
         ("~/.ssh/demo_key", "host", "Host demo"),
         ("~/.ssh/star_key", "block", "Host *"),
     ]
-    # Nothing was edited: the draft is the saved text, so a save of an
-    # unrelated field has no inherited key to copy into the host's block.
-    assert drafts.effective == IDENTITY_CONFIG
 
 
 def test_pending_identity_lines_are_counted(tmp_path):
-    drafts = build_drafts(
-        IDENTITY_CONFIG, "demo", [],
-        ["IdentityFile ~/.ssh/new_key", "IdentitiesOnly yes"],
-    )
-    answer = _ask(tmp_path, drafts.effective)
-    assert [(i.path, i.origin) for i in answer.identities] == [
+    result = _edit(tmp_path, IDENTITY_CONFIG, identity_files=["~/.ssh/new_key"])
+    assert [(i.path, i.origin) for i in _identities(result)] == [
         ("~/.ssh/new_key", "host"), ("~/.ssh/star_key", "block"),
     ]
 
@@ -256,3 +240,15 @@ def test_builtin_identity_files_are_named_as_defaults(tmp_path):
     answer = _ask(tmp_path, "Host demo\n    User me\n")
     assert answer.identities
     assert {i.origin for i in answer.identities} == {"default"}
+
+
+def test_the_key_list_caption_counts_the_keys():
+    from sshpilot.connection_dialog_effective import (
+        FAILED, PENDING, WAITING, identity_status_text,
+    )
+
+    assert identity_status_text(PENDING, 3) == "3 keys, tried in this order"
+    assert identity_status_text(PENDING, 1) == "1 key, tried in this order"
+    assert identity_status_text(PENDING, 0) == "No keys"
+    assert identity_status_text(FAILED).startswith("Unknown")
+    assert identity_status_text(WAITING) == "Shown once OpenSSH has read the configuration."

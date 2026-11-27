@@ -15,6 +15,7 @@ import pathlib
 import posixpath
 import re
 import time
+import weakref
 from datetime import datetime
 from gettext import gettext as _, ngettext
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
@@ -413,6 +414,10 @@ def file_pane_for_focus(widget: Optional[Gtk.Widget]) -> Optional["FilePane"]:
 
 
 class FilePane(Gtk.Box):
+    # The pane an in-app drag started in, while it runs. A drop target only
+    # learns the source from the payload at the drop; the pointer must show
+    # move or copy before that.
+    _active_drag_source: Optional["weakref.ReferenceType[FilePane]"] = None
     """Represents a single pane in the manager."""
 
     _TYPEAHEAD_TIMEOUT = 1.0
@@ -605,6 +610,7 @@ class FilePane(Gtk.Box):
         drop_target = Gtk.DropTarget.new(type=GObject.TYPE_STRING, actions=Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
         drop_target.connect("drop", self._on_drop_string)
         drop_target.connect("enter", self._on_drop_enter)
+        drop_target.connect("motion", self._on_drop_motion)
         drop_target.connect("leave", self._on_drop_leave)
         self.add_controller(drop_target)
         
@@ -3624,6 +3630,7 @@ class FilePane(Gtk.Box):
         logger.debug(f"Drag begin: pane={self._is_remote}")
         # Always set a custom icon. On macOS, string ContentProviders are
         # otherwise previewed as the JSON payload text beside the cursor.
+        FilePane._active_drag_source = weakref.ref(self)
         widget = drag_source.get_widget()
         if widget:
             paintable = Gtk.WidgetPaintable.new(widget)
@@ -3631,7 +3638,43 @@ class FilePane(Gtk.Box):
 
     def _on_drag_end(self, drag_source: Gtk.DragSource, drag: Gdk.Drag, delete_data: bool) -> None:
         """Called when drag operation ends."""
-        # Clean up any drag-related state if needed
+        active = FilePane._active_drag_source
+        if active is not None and active() is self:
+            FilePane._active_drag_source = None
+
+    def _drop_moves(self, source_pane: "FilePane", drop_target: Optional[Gtk.DropTarget]) -> bool:
+        """Whether a drop from *source_pane* here moves (True) or copies.
+
+        The drop and the pointer both ask this, so the pointer never shows
+        copy for a move (#1356). Within a pane, or between two panes on one
+        server (one file system), a drag moves and Ctrl copies. Between two
+        servers it copies and Shift moves: a plain drag must not delete the
+        originals on another machine. Nautilus does the same. Upload and
+        download always copy.
+        """
+        if source_pane is self:
+            return not self._drag_copy_modifier_pressed(drop_target)
+        if not (self._is_remote and source_pane._is_remote):
+            return False
+        window = self._get_file_manager_window()
+        if not isinstance(window, _file_manager_window_cls()):
+            return False
+        if window._same_server(source_pane, self):
+            return not self._drag_copy_modifier_pressed(drop_target)
+        return self._drag_move_modifier_pressed(drop_target)
+
+    def _drop_action(self, drop_target: Optional[Gtk.DropTarget]) -> Gdk.DragAction:
+        """The action the pointer shows while a drag is over this pane."""
+        active = FilePane._active_drag_source
+        source_pane = active() if active is not None else None
+        if source_pane is None:
+            return Gdk.DragAction.COPY
+        try:
+            moves = self._drop_moves(source_pane, drop_target)
+        except Exception:
+            logger.debug("Could not tell move from copy for a drag", exc_info=True)
+            return Gdk.DragAction.COPY
+        return Gdk.DragAction.MOVE if moves else Gdk.DragAction.COPY
 
     @staticmethod
     def _drag_copy_modifier_pressed(drop_target: Optional[Gtk.DropTarget]) -> bool:
@@ -3886,13 +3929,7 @@ class FilePane(Gtk.Box):
             destination = self._current_path
             if target_folder is not None:
                 destination = posixpath.join(self._current_path, target_folder.name)
-            # One server in two panes is one file system: move, Ctrl copies.
-            # Two servers: copy, Shift moves; a plain drag must not delete
-            # the originals on another machine. Nautilus does the same.
-            if window._same_server(source_pane, self):
-                move = not self._drag_copy_modifier_pressed(drop_target)
-            else:
-                move = self._drag_move_modifier_pressed(drop_target)
+            move = self._drop_moves(source_pane, drop_target)
             window._perform_pane_to_pane_remote_operation(
                 entries,
                 getattr(source_pane, "_current_path", "") or "/",
@@ -3910,7 +3947,7 @@ class FilePane(Gtk.Box):
                 logger.debug("Drop rejected: file manager window unavailable")
                 return False
             entries = [entry for _source_file_path, entry in resolved_items]
-            move = not self._drag_copy_modifier_pressed(drop_target)
+            move = self._drop_moves(source_pane, drop_target)
             if self._is_remote:
                 # Remote to remote (same pane) - reuse the established remote
                 # copy/move path so progress, refresh and daemon validation
@@ -4057,7 +4094,11 @@ class FilePane(Gtk.Box):
         logger.debug(f"Drop enter: pane={self._is_remote}")
         # Add visual feedback - could highlight the drop area
         self.add_css_class("drop-target-active")
-        return Gdk.DragAction.COPY
+        return self._drop_action(drop_target)
+
+    def _on_drop_motion(self, drop_target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
+        """Keep the pointer's move/copy current as Ctrl or Shift change."""
+        return self._drop_action(drop_target)
 
     def _on_drop_leave(self, drop_target: Gtk.DropTarget) -> None:
         """Called when drag leaves drop target."""

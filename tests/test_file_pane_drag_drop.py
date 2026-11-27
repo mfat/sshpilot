@@ -646,3 +646,102 @@ def test_copy_to_other_pane_copies_into_the_other_panes_folder(load_file_manager
     args, kwargs = calls[0]
     assert args == ([entry], "/srv/data", "/root", False)
     assert kwargs == {"source_pane": left, "destination_pane": right}
+
+
+def _drag_actions(module):
+    return module.Gdk.DragAction
+
+
+def _pointer_action(module, *, source_remote, target_remote, same_pane=False,
+                    same_server=False, modifiers=0, dragging=True):
+    """The move/copy action a pane reports while a drag hovers over it."""
+    _drag_actions(module)
+    FilePane = module.FilePane
+    source_pane = FilePane.__new__(FilePane)
+    source_pane._is_remote = source_remote
+    target_pane = source_pane if same_pane else FilePane.__new__(FilePane)
+    target_pane._is_remote = target_remote
+    target_pane.add_css_class = lambda *_args: None
+
+    DummyWindow = type("DummyWindow", (), {})
+    module.FileManagerWindow = DummyWindow
+    window = DummyWindow()
+    window._same_server = lambda a, b: same_server
+    target_pane._get_file_manager_window = lambda: window
+
+    class FakeEvent:
+        def get_modifier_state(self):
+            return modifiers
+
+    class FakeDropTarget:
+        def get_current_event(self):
+            return FakeEvent()
+
+    if dragging:
+        source_pane._on_drag_begin(type("DS", (), {"get_widget": lambda self: None})(), None)
+    try:
+        entered = target_pane._on_drop_enter(FakeDropTarget(), 0.0, 0.0)
+        moved = target_pane._on_drop_motion(FakeDropTarget(), 0.0, 0.0)
+        assert entered == moved
+        return moved
+    finally:
+        if dragging:
+            source_pane._on_drag_end(None, None, False)
+
+
+def test_pointer_shows_move_between_two_panes_on_one_server(load_file_manager_window):
+    """#1356: the drop moved while the pointer showed the copy "+"."""
+    module = load_file_manager_window()
+    Action = _drag_actions(module)
+    control = module.Gdk.ModifierType.CONTROL_MASK
+    assert _pointer_action(module, source_remote=True, target_remote=True,
+                           same_server=True) == Action.MOVE
+    assert _pointer_action(module, source_remote=True, target_remote=True,
+                           same_server=True, modifiers=control) == Action.COPY
+
+
+def test_pointer_shows_move_within_one_pane(load_file_manager_window):
+    module = load_file_manager_window()
+    Action = _drag_actions(module)
+    control = module.Gdk.ModifierType.CONTROL_MASK
+    for remote in (True, False):
+        assert _pointer_action(module, source_remote=remote, target_remote=remote,
+                               same_pane=True) == Action.MOVE
+        assert _pointer_action(module, source_remote=remote, target_remote=remote,
+                               same_pane=True, modifiers=control) == Action.COPY
+
+
+def test_pointer_shows_copy_between_two_servers_and_move_with_shift(load_file_manager_window):
+    module = load_file_manager_window()
+    Action = _drag_actions(module)
+    shift = module.Gdk.ModifierType.SHIFT_MASK
+    assert _pointer_action(module, source_remote=True, target_remote=True) == Action.COPY
+    assert _pointer_action(module, source_remote=True, target_remote=True,
+                           modifiers=shift) == Action.MOVE
+
+
+def test_pointer_shows_copy_for_upload_and_download(load_file_manager_window):
+    module = load_file_manager_window()
+    Action = _drag_actions(module)
+    shift = module.Gdk.ModifierType.SHIFT_MASK
+    assert _pointer_action(module, source_remote=False, target_remote=True) == Action.COPY
+    assert _pointer_action(module, source_remote=True, target_remote=False,
+                           modifiers=shift) == Action.COPY
+
+
+def test_pointer_shows_copy_for_a_drag_from_outside_the_app(load_file_manager_window):
+    module = load_file_manager_window()
+    module.FilePane._active_drag_source = None
+    assert _pointer_action(module, source_remote=True, target_remote=True,
+                           same_pane=True, dragging=False) == _drag_actions(module).COPY
+
+
+def test_drag_end_forgets_the_source_pane(load_file_manager_window):
+    module = load_file_manager_window()
+    FilePane = module.FilePane
+    pane = FilePane.__new__(FilePane)
+    pane._is_remote = True
+    pane._on_drag_begin(type("DS", (), {"get_widget": lambda self: None})(), None)
+    assert FilePane._active_drag_source() is pane
+    pane._on_drag_end(None, None, False)
+    assert FilePane._active_drag_source is None

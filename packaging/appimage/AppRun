@@ -14,28 +14,54 @@
 
 set -eu
 
+# Everything set below is for the bundled interpreter only. The app hands the
+# programs it starts for the user (their shell, ssh, the external terminal) the
+# host's environment and starting directory instead, so record what is changed:
+# SSHPILOT_APPIMAGE_VARS names each variable, SSHPILOT_APPIMAGE_HOST_<NAME> keeps
+# a host value it replaced. src/sshpilot/appimage_env.py undoes it.
+SSHPILOT_APPIMAGE_VARS=
+remember_host() { # NAME: keep the host's value (if any) before it changes
+    eval "had=\${$1+set}"
+    if [ -n "$had" ]; then
+        eval "export SSHPILOT_APPIMAGE_HOST_$1=\"\$$1\""
+    fi
+    SSHPILOT_APPIMAGE_VARS="$SSHPILOT_APPIMAGE_VARS $1"
+}
+bundled_env() { # NAME VALUE
+    remember_host "$1"
+    export "$1=$2"
+}
+# Set by the AppImage runtime, not the host; never for a host program (another
+# AppImage's AppRun would take our APPDIR for its own).
+for runtime_var in APPDIR APPIMAGE ARGV0 OWD; do
+    SSHPILOT_APPIMAGE_VARS="$SSHPILOT_APPIMAGE_VARS $runtime_var"
+done
+export SSHPILOT_APPIMAGE_CWD="${OWD:-$PWD}"
+
 SELF=$(readlink -f "$0")
 APPDIR=${APPDIR:-$(dirname "$SELF")}
 export APPDIR
 
-export XDG_DATA_DIRS="$APPDIR/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-export GI_TYPELIB_PATH="$APPDIR/usr/lib/girepository-1.0"
+bundled_env XDG_DATA_DIRS "$APPDIR/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+bundled_env GI_TYPELIB_PATH "$APPDIR/usr/lib/girepository-1.0"
 # Additive in GLib: host schemas stay reachable through XDG_DATA_DIRS.
-export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"
-export GIO_MODULE_DIR="$APPDIR/usr/lib/gio/modules"
+bundled_env GSETTINGS_SCHEMA_DIR "$APPDIR/usr/share/glib-2.0/schemas"
+bundled_env GIO_MODULE_DIR "$APPDIR/usr/lib/gio/modules"
 
-# WebKitGTK renders out of process and has the helper paths compiled in, which
-# point at the build host's /usr. Without these two a WebView just never
-# finishes loading: no PyXterm.js terminal and no Host Info tab.
-export WEBKIT_EXEC_PATH="$APPDIR/usr/lib/webkitgtk-6.0"
-export WEBKIT_INJECTED_BUNDLE_PATH="$APPDIR/usr/lib/webkitgtk-6.0/injected-bundle"
+# WebKitGTK renders out of process. Release builds start the helpers from a
+# directory compiled into the library and ignore WEBKIT_EXEC_PATH, so the
+# build rewrites that path to "././webkitgtk-6.0/", resolved against the
+# working directory -- set at the end of this script. The injected bundle's
+# compiled path stays absolute (a relative one breaks bubblewrap) and release
+# builds do honour this override for it.
+bundled_env WEBKIT_INJECTED_BUNDLE_PATH "$APPDIR/usr/lib/webkitgtk-6.0/injected-bundle"
 
 # xterm.js assets: the app prefers the host's /usr/share/javascript/xterm when
 # it exists, which for a self-contained bundle is the wrong copy. The env
 # override the app already supports points it back at our own.
 for xterm_dir in "$APPDIR"/usr/lib/python3*/*-packages/sshpilot/vendor/pyxtermjs/xterm; do
     if [ -f "$xterm_dir/xterm.js" ]; then
-        export PYXTERMJS_ASSETS_DIR="$xterm_dir"
+        bundled_env PYXTERMJS_ASSETS_DIR "$xterm_dir"
         break
     fi
 done
@@ -49,8 +75,8 @@ if [ -f "$pixbuf_template" ]; then
     if mkdir -p "$pixbuf_cache_dir" 2>/dev/null &&
        sed "s|@APPDIR@|$APPDIR|g" "$pixbuf_template" \
            > "$pixbuf_cache_dir/loaders.cache" 2>/dev/null; then
-        export GDK_PIXBUF_MODULEDIR="$APPDIR/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders"
-        export GDK_PIXBUF_MODULE_FILE="$pixbuf_cache_dir/loaders.cache"
+        bundled_env GDK_PIXBUF_MODULEDIR "$APPDIR/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders"
+        bundled_env GDK_PIXBUF_MODULE_FILE "$pixbuf_cache_dir/loaders.cache"
     fi
 fi
 
@@ -85,10 +111,21 @@ use_bundled_libc() {
     version_older "$host" "$bundled"
 }
 
+# The working directory is where WebKit finds its helpers: the library asks for
+# "././webkitgtk-6.0/", so each mode starts in the directory holding the right
+# webkitgtk-6.0 -- the helpers themselves, or same-named wrappers that run them
+# on the bundled C library. The app keeps this directory for its lifetime and
+# starts everything else in SSHPILOT_APPIMAGE_CWD.
 SSHPILOT_PYTHON="$APPDIR/usr/bin/python3"
+WEBKIT_WORKDIR="$APPDIR/usr/lib"
 if use_bundled_libc; then
     SSHPILOT_PYTHON="$APPDIR/usr/bin/python3-bundled-libc"
-    export WEBKIT_EXEC_PATH="$APPDIR/usr/lib/webkitgtk-6.0-bundled-libc"
+    WEBKIT_WORKDIR="$APPDIR/usr/lib/bundled-libc-workdir"
 fi
 
+# cd rewrites both; the user's shell must not inherit the AppImage's directory.
+remember_host PWD
+remember_host OLDPWD
+export SSHPILOT_APPIMAGE_VARS
+cd "$WEBKIT_WORKDIR"
 exec "$SSHPILOT_PYTHON" "$APPDIR/usr/bin/sshpilot" "$@"

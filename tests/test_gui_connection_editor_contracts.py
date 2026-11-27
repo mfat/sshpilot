@@ -462,8 +462,8 @@ KNOWN_GAPS = {
 _names = itertools.count()
 
 
-@pytest.fixture
-def root(gui):
+@pytest.fixture(name="root")
+def root_fixture(gui):
     """The daemon's root SSH config; restored after the test."""
     from sshpilot.api.models.daemon import OperationMode
 

@@ -357,6 +357,21 @@ def build_view_rail(window) -> Gtk.Widget:
         overlay.add_overlay(dot)
         window._view_rail_unsaved_dot = dot
         box.append(overlay)
+    # Settings at the foot of the rail: it opens the Settings window, it is
+    # not a view, so it sits apart from the views and never shows as current.
+    # The gap above it is still empty rail, so it still moves the window.
+    spacer = Gtk.Box()
+    spacer.set_vexpand(True)
+    box.append(spacer)
+    settings = Gtk.Button()
+    settings.add_css_class("flat")
+    settings.set_can_focus(False)
+    icon_utils.set_button_icon(settings, "settings-rail-symbolic")
+    settings.set_tooltip_text(_("Settings"))
+    settings.update_property([Gtk.AccessibleProperty.LABEL], [_("Settings")])
+    settings.set_action_name("app.preferences")
+    box.append(settings)
+    window._view_rail_settings_button = settings
     rail = Gtk.WindowHandle()
     rail.add_css_class("view-rail")
     rail.set_child(box)

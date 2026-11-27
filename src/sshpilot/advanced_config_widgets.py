@@ -71,6 +71,53 @@ def gap_row(height: int) -> Gtk.ListBoxRow:
     return gap
 
 
+#: The look Advanced Configuration and the connection editor share: the
+#: status pills, and a typed value that does not take effect, struck
+#: through and tinted (:func:`mark_unused`).
+_SHARED_CSS = """
+.advcfg-pill { font-size: 0.82em; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+.advcfg-pill.success { background-color: alpha(@success_color, 0.16); color: @success_color; }
+.advcfg-pill.warning { background-color: alpha(@warning_color, 0.18); color: @warning_color; }
+.advcfg-pill.error { background-color: alpha(@error_color, 0.16); color: @error_color; }
+.advcfg-pill.accent { background-color: alpha(@accent_color, 0.15); color: @accent_color; }
+.advcfg-pill.purple { background-color: alpha(@purple_3, 0.18); color: @purple_3; }
+.advcfg-pill.advcfg-pill-link:hover { text-decoration: underline; }
+.advcfg-pill.muted { background-color: alpha(currentColor, 0.08); color: alpha(currentColor, 0.65); }
+row.warning button, row.warning menubutton, row.warning image.edit-icon { color: @view_fg_color; }
+"""
+_shared_css_installed = False
+
+
+def ensure_shared_css() -> None:
+    global _shared_css_installed
+    display = Gdk.Display.get_default()
+    if _shared_css_installed or display is None:
+        return
+    provider = Gtk.CssProvider()
+    provider.load_from_data(_SHARED_CSS.encode("utf-8"))
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _shared_css_installed = True
+
+
+_STRUCK: list = []
+
+
+def struck_attributes(struck: bool = True):
+    """The text attributes of a value that does not take effect (an empty
+    list when *struck* is false: the binding refuses None)."""
+    from gi.repository import Pango
+
+    if not struck:
+        return Pango.AttrList()
+    if not _STRUCK:
+        attrs = Pango.AttrList()
+        attrs.insert(Pango.attr_strikethrough_new(True))
+        _STRUCK.append(attrs)
+    return _STRUCK[0]
+
+
 def pill(text: str = "", style: str = "muted") -> Gtk.Label:
     """A small rounded label: a state, a source, a count."""
     label = Gtk.Label(label=text)
@@ -111,3 +158,57 @@ def set_class(widget: Gtk.Widget, name: str, on: bool) -> None:
         widget.add_css_class(name)
     else:
         widget.remove_css_class(name)
+
+
+# -- a line's mark (ssh_config_answer.LineVerdict), wherever it is shown ------
+
+
+def verdict_pill(on_follow) -> Gtk.Label:
+    """The pill beside a line or field that says what OpenSSH does with it.
+    A "No effect" one is a link: a click calls *on_follow* with the line
+    used instead, ``(file, line)``."""
+    ensure_shared_css()
+    label = pill(style="warning")
+    label._target = None
+    click = Gtk.GestureClick()
+    # The click is the pill's: a row it sits in must not take it too (a
+    # row whose activatable widget is a checkbox would toggle it).
+    click.connect(
+        "pressed",
+        lambda gesture, *_a: gesture.set_state(Gtk.EventSequenceState.CLAIMED),
+    )
+    click.connect(
+        "released",
+        lambda *_a: label._target is not None and on_follow(label._target),
+    )
+    label.add_controller(click)
+    return label
+
+
+def show_verdict(label: Gtk.Label, verdict) -> None:
+    """Show *verdict* (a ``LineVerdict``) on a :func:`verdict_pill`."""
+    set_pill(label, verdict.tag, verdict.style, verdict.tooltip)
+    target = verdict.target if verdict.tag else None
+    if getattr(label, "_target", None) == target:
+        return
+    label._target = target
+    label.set_cursor_from_name("pointer" if target else None)
+    set_class(label, "advcfg-pill-link", target is not None)
+
+
+def mark_unused(widget: Gtk.Widget, unused: bool) -> None:
+    """A typed value that does not take effect: Adwaita's warning tint on
+    *widget*, and its text struck through. Only typed text is struck; a
+    label or a checkbox is only tinted, by the caller's own row.
+
+    GtkText ignores CSS text-decoration, so the text gets a Pango attribute:
+    on the entry itself, or on an entry row's inner text (its delegate).
+    """
+    set_class(widget, "warning", unused)
+    delegate = getattr(widget, "get_delegate", None)
+    text = delegate() if callable(delegate) else widget
+    if text is None or not hasattr(text, "set_attributes"):
+        return
+    if getattr(text, "_sshpilot_struck", False) != unused:
+        text._sshpilot_struck = unused
+        text.set_attributes(struck_attributes(unused))

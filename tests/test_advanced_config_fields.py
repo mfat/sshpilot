@@ -14,9 +14,14 @@ def test_key_file_status(tmp_path):
     key.write_text("k")
     os.chmod(key, 0o644)
     status = fields.key_file_status("~/.ssh/id", home)
-    assert (status.state, status.path, status.mode) == (fields.KEY_OPEN, str(key), 0o644)
+    if os.name == "nt":
+        assert (status.state, status.path) == (fields.KEY_UNCHECKED, str(key))
+    else:
+        assert (status.state, status.path, status.mode) == (fields.KEY_OPEN, str(key), 0o644)
     key.chmod(0o600)
-    assert fields.key_file_status('"~/.ssh/id"', home).state == fields.KEY_OK
+    assert fields.key_file_status('"~/.ssh/id"', home).state == (
+        fields.KEY_UNCHECKED if os.name == "nt" else fields.KEY_OK
+    )
     assert fields.key_file_status("~/.ssh/none", home).state == fields.KEY_MISSING
     for value in ("~/.ssh/id_%h", "${HOME}/.ssh/id", "~other/.ssh/id", ""):
         assert fields.key_file_status(value, home).state == fields.KEY_UNCHECKED
@@ -53,9 +58,10 @@ def test_effective_values_flag_missing_and_readable_key_files(tmp_path):
 
     found = fields.value_file_problems("identityfile", values, default=False,
                                        home=str(tmp_path))
-    assert [(s.state, s.path) for s in found] == [
-        (fields.KEY_OPEN, str(open_key)), (fields.KEY_MISSING, str(missing)),
-    ]
+    expected = [(fields.KEY_MISSING, str(missing))]
+    if os.name != "nt":
+        expected.insert(0, (fields.KEY_OPEN, str(open_key)))
+    assert [(s.state, s.path) for s in found] == expected
     # A certificate is public: only a missing one is a problem.
     found = fields.value_file_problems("certificatefile", [str(open_key), str(missing)],
                                        default=False)

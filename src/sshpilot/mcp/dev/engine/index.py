@@ -183,7 +183,18 @@ class DevIndex:
             except OSError:
                 pass
             db = sqlite3.connect(str(self.path), timeout=120, check_same_thread=False, isolation_level=None)
-            db.execute("PRAGMA journal_mode=WAL")
+            # Concurrent first opens can both hold read locks while switching
+            # journal mode. SQLite returns BUSY immediately on a lock upgrade.
+            deadline = time.monotonic() + 120
+            while True:
+                try:
+                    db.execute("PRAGMA journal_mode=WAL").fetchone()
+                    break
+                except sqlite3.OperationalError as exc:
+                    if exc.sqlite_errorcode != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
+                        db.close()
+                        raise
+                    time.sleep(0.05)
             db.execute("PRAGMA busy_timeout=120000")
             db.execute("PRAGMA synchronous=NORMAL")
             db.executescript(_SCHEMA)

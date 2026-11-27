@@ -15,6 +15,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 <!-- api-method: get_earlier_directives -->
 <!-- api-method: get_inherited_auth -->
 <!-- api-method: evaluate_ssh_config_draft -->
+<!-- api-method: evaluate_connection_edit -->
 <!-- api-method: list_config_conflicts -->
 <!-- api-method: list_config_syntax_errors -->
 <!-- api-method: check_unsaved_host -->
@@ -72,6 +73,7 @@ direct core service compositions are test-only and are not client choices.
 | `get_earlier_directives` | Implemented | `connections.config.read` |
 | `get_inherited_auth` | Implemented | `connections.config.read` |
 | `evaluate_ssh_config_draft` | Implemented | `connections.config.read` |
+| `evaluate_connection_edit` | Implemented | `connections.config.read` |
 | `list_config_conflicts` | Implemented | `connections.config.read` |
 | `list_config_syntax_errors` | Implemented | `connections.config.read` |
 | `check_unsaved_host` | Implemented | `connections.read` |
@@ -201,6 +203,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: get_earlier_directives status=implemented capability=connections.config.read -->
 <!-- api-method-contract: get_inherited_auth status=implemented capability=connections.config.read -->
 <!-- api-method-contract: evaluate_ssh_config_draft status=implemented capability=connections.config.read -->
+<!-- api-method-contract: evaluate_connection_edit status=implemented capability=connections.config.read -->
 <!-- api-method-contract: list_config_conflicts status=implemented capability=connections.config.read -->
 <!-- api-method-contract: list_config_syntax_errors status=implemented capability=connections.config.read -->
 <!-- api-method-contract: check_unsaved_host status=implemented capability=connections.read -->
@@ -510,6 +513,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.get_earlier_directives capability=connections.config.read -->
 <!-- api-daemon-method: connections.get_inherited_auth capability=connections.config.read -->
 <!-- api-daemon-method: connections.evaluate_ssh_config_draft capability=connections.config.read -->
+<!-- api-daemon-method: connections.evaluate_connection_edit capability=connections.config.read -->
 <!-- api-daemon-method: connections.list_config_conflicts capability=connections.config.read -->
 <!-- api-daemon-method: connections.list_config_syntax_errors capability=connections.config.read -->
 <!-- api-daemon-method: connections.check_unsaved_host capability=connections.read -->
@@ -1666,6 +1670,34 @@ details = client.open_transient_connection(
                             plugin_data={"host": "10.0.0.5", "port": 2323})
 )
 client.open_session(OpenSessionRequest(connection_id=details.id))
+```
+
+<!-- api-method: evaluate_connection_edit -->
+## `evaluate_connection_edit`
+
+What OpenSSH would use for a connection once an edit is saved, asked before
+the save. The request carries what a save would send: `connection_id` and
+an `UpdateConnectionRequest` (or no update: the connection as saved), or a
+`CreateConnectionRequest` for a connection not saved yet. The daemon merges
+it into the Host block exactly as `update_connection`/`create_connection`
+would and evaluates the file it would write as `evaluate_ssh_config_draft`
+does. Nothing is written.
+
+`ConnectionEditEvaluation.text` is that file as the save would write it, and
+`own_lines` are the option lines of the host's own blocks in it; the line numbers in `evaluation.lines` refer to the
+same text. `without_own` (keywords, lower case) asks a second question
+about the same text without the host's own lines for those keywords: what
+the host inherits for them. An edit the save would refuse (a name taken, a
+host pattern as the name, a declaration changed meanwhile) comes back with
+`refusal` and no evaluation, not as an error. A client's newer request
+supersedes its earlier ones (`OPERATION_CANCELLED`). Needs
+`connections.config.read`.
+
+```python
+answer = client.evaluate_connection_edit(EvaluateConnectionEditRequest(
+    connection_id=connection_id,
+    update=UpdateConnectionRequest(config_patch={"extra_ssh_config": "Compression no"}),
+))
 ```
 
 <!-- api-method: open_draft_test_connection -->

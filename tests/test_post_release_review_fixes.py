@@ -225,29 +225,34 @@ class _Dialog:
     def __init__(self, parent):
         self.parent_window = parent
         self.fallbacks = []
-        self.earlier = []
+        self.refreshes = []
 
     def _auth_policy_set_fallback(self, inherited):
         self.fallbacks.append(inherited)
 
-    def _set_earlier_directives(self, earlier):
-        self.earlier.append(earlier)
-
-    def _watch_alias_for_earlier_directives(self):
+    def _watch_rows_for_overrides(self):
         pass
 
+    def _schedule_effective_refresh(self, delay=None):
+        self.refreshes.append(delay)
 
-def _load_earlier(dialog):
-    pytest.importorskip("gi")
-    from sshpilot.connection_dialog_overrides import ConnectionDialogOverridesMixin
+    def _selected_protocol_id(self):
+        return "ssh"
 
-    ConnectionDialogOverridesMixin._load_earlier_directives_async(dialog)
+    def _show_effective_identities(self, *_args):
+        pass
+
+    def _edit_evaluation_request(self):
+        return None     # no name typed yet: nothing to ask about
 
 
 def test_new_connection_without_alias_gets_the_builtin_order():
+    pytest.importorskip("gi")
+    from sshpilot.connection_dialog_effective import ConnectionDialogEffectiveMixin
+
     class Client:
-        def get_earlier_directives(self, alias):
-            raise AssertionError("no alias to ask about")
+        def evaluate_connection_edit(self, request):
+            raise AssertionError("no host to ask about")
 
     class Parent:
         client = Client()
@@ -256,11 +261,14 @@ def test_new_connection_without_alias_gets_the_builtin_order():
             return True
 
     dialog = _Dialog(Parent())
-    _load_earlier(dialog)
+    ConnectionDialogEffectiveMixin._run_effective_refresh(dialog)
     assert dialog.fallbacks == [{}]
 
 
 def test_daemon_not_ready_gets_the_builtin_order():
+    pytest.importorskip("gi")
+    from sshpilot.connection_dialog_overrides import ConnectionDialogOverridesMixin
+
     class Parent:
         client = None
 
@@ -268,8 +276,9 @@ def test_daemon_not_ready_gets_the_builtin_order():
             return False
 
     dialog = _Dialog(Parent())
-    _load_earlier(dialog)
+    ConnectionDialogOverridesMixin._start_override_awareness(dialog)
     assert dialog.fallbacks == [{}]
+    assert dialog.refreshes == [0]       # the question waits for no daemon
 
 
 # -- the frontend's copy of the profile fields --------------------------------

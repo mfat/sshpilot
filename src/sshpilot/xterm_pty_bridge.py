@@ -33,6 +33,7 @@ import gi
 
 gi.require_version("Vte", "3.91")
 from gi.repository import GLib, Vte  # noqa: E402
+from .appimage_env import vte_spawn_flags  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ class XtermPtyBridge:
             cwd,
             list(argv),
             list(env) if env is not None else None,
-            GLib.SpawnFlags.DEFAULT,
+            vte_spawn_flags(GLib, Vte),
             None,  # child_setup — VTE puts the child in its own session for the PTY
             None,  # child_setup_data
             -1,    # timeout: no limit

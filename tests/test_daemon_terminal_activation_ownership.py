@@ -155,6 +155,8 @@ class TestDaemonActivationOwnership:
 
         assert manager.reconnect_terminal(terminal) is True
 
+        # #1425: a view scrolled up into the old session follows the new one.
+        terminal.scroll_to_bottom.assert_called_once_with()
         old_controller.close.assert_called_once_with()
         assert old_controller._on_output is None
         assert terminal_output.call_count == 0

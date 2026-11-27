@@ -78,7 +78,7 @@ class _HopDrag(GObject.Object):
         self.index = index
 
 
-class _FlowLayout(Gtk.LayoutManager):
+class FlowLayout(Gtk.LayoutManager):
     """Children left to right at their natural width, wrapping onto a new
     line like words. An arrow is glued to the stop after it, so a line
     never ends on an arrow. (Gtk.FlowBox lines its children up in
@@ -179,7 +179,7 @@ class RouteStrip(Gtk.Widget):
         then has a remove button)."""
         super().__init__()
         _ensure_css()
-        self.set_layout_manager(_FlowLayout())
+        self.set_layout_manager(FlowLayout())
         self.on_hop = on_hop
         self.on_reorder = on_reorder
         self.on_remove = on_remove

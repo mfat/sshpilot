@@ -158,6 +158,7 @@ src/sshpilot/advanced_config_window.py
 src/sshpilot/gtk/advanced_config_messages.py
 src/sshpilot/advanced_config_sidebar.py
 src/sshpilot/advanced_config_structured_view.py
+src/sshpilot/ssh_config_answer.py
 src/sshpilot/route_strip.py
 src/sshpilot/advanced_config_effective_view.py
 src/sshpilot/advanced_config_raw_view.py

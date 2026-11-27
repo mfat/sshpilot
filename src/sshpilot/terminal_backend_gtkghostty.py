@@ -577,6 +577,9 @@ class GtkGhosttyTerminalBackend:
         else:
             self.view.feed_data(b"\x1b[!p" + (b"\x1b[2J\x1b[H" if clear_screen else b""))
 
+    def scroll_to_bottom(self) -> None:
+        self.view.scroll_to_bottom()
+
     def set_font_scale(self, scale: float) -> None:
         self.view.set_font_scale(float(scale))
 

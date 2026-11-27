@@ -9,6 +9,7 @@ token and gets the same treatment.
 
 from __future__ import annotations
 
+import functools
 import getpass
 import logging
 import os
@@ -21,9 +22,39 @@ _CREATE_NO_WINDOW = 0x08000000
 
 
 def _current_principal() -> str:
+    """The current user as icacls names them: ``*<SID>`` when it can be read,
+    else ``DOMAIN\\user``.
+
+    The SID is what the process runs as. The name from the environment can
+    be wrong: in an SSH session Windows sets ``USERDOMAIN`` to WORKGROUP, a
+    name icacls cannot map (exit 1332), so nothing was made private.
+    """
+    sid = _current_user_sid()
+    if sid:
+        return f"*{sid}"
     domain = os.environ.get("USERDOMAIN")
     user = os.environ.get("USERNAME") or getpass.getuser()
     return f"{domain}\\{user}" if domain else user
+
+
+@functools.lru_cache(maxsize=1)
+def _current_user_sid() -> str:
+    """``S-1-5-...`` of this process's user, from ``whoami``; '' if unknown."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        result = subprocess.run(
+            ["whoami", "/user", "/fo", "csv", "/nh"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    # "machine\\user","S-1-5-21-..."
+    sid = result.stdout.strip().rsplit(",", 1)[-1].strip().strip('"')
+    return sid if sid.startswith("S-1-") else ""
 
 
 def restrict_to_current_user(path: os.PathLike) -> bool:

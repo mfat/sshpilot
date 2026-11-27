@@ -63,7 +63,7 @@ def key_path(value: str, home: Optional[str] = None) -> Optional[str]:
         path = (home or os.path.expanduser("~")) + path[1:]
     elif path.startswith("~"):
         return None                     # another user's home: not ours to judge
-    return path
+    return os.path.normpath(path) if os.name == "nt" else path
 
 
 def key_file_status(value: str, home: Optional[str] = None) -> KeyFileStatus:
@@ -74,6 +74,9 @@ def key_file_status(value: str, home: Optional[str] = None) -> KeyFileStatus:
         info = os.stat(path)
     except OSError:
         return KeyFileStatus(KEY_MISSING, path)
+    if os.name == "nt":
+        # Windows uses ACLs. stat() cannot establish who may read the key.
+        return KeyFileStatus(KEY_UNCHECKED, path)
     mode = stat.S_IMODE(info.st_mode)
     if mode & 0o077:
         return KeyFileStatus(KEY_OPEN, path, mode)
@@ -96,7 +99,8 @@ def value_file_problems(key: str, values: List[str], *, default: bool,
         return []
     found = []
     for value in values:
-        if not _unquoted(value).startswith(("/", "~/")):
+        path = _unquoted(value)
+        if not (os.path.isabs(path) or path.startswith(("/", "~/"))):
             continue                        # "none", tokens, another user's home
         status = key_file_status(value, home)
         if status.state == KEY_MISSING or (private and status.state == KEY_OPEN):
@@ -107,6 +111,9 @@ def value_file_problems(key: str, values: List[str], *, default: bool,
 def fix_key_permissions(path: str) -> bool:
     """Make *path* readable and writable by its owner only, as OpenSSH
     requires of a private key. False when it could not be done."""
+    if os.name == "nt":
+        from .platform.windows.acl import restrict_to_current_user
+        return restrict_to_current_user(path)
     try:
         os.chmod(path, 0o600)
     except OSError:

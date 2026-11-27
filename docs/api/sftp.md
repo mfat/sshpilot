@@ -36,11 +36,26 @@ reports byte progress and can be cancelled between blocks (not during a
 server-side `copy-data`). A cancelled or failed single-file copy leaves no
 partial destination. Both report as `sftp_copy_tree`.
 
+Every copied file is written to a hidden sibling unique to that copy,
+`.sshpilot-<id>.part` (a fixed length whatever the file is called, so a
+255-byte name still copies), created exclusively, and published under its
+name with a plain SFTP `RENAME`, which never replaces a file. A file another
+client puts at the destination meanwhile is never truncated, replaced or
+removed: the copy fails as `destination_already_exists`, and cleanup only
+ever removes its own staging file. A server that refuses every rename
+cannot receive copies.
+
 `SftpCopyRequest.destination_service_id` copies to a second SFTP service the
 same client owns, such as another server, and always runs as an operation. The
 daemon streams between the two sessions, or, when both services are on one
 connection, copies through the source session so the server can copy for
 itself. A failure on the receiving side is that service's failure.
+
+A `move` within one connection (one service, or two on the same connection)
+is a plain SFTP `RENAME` first, as `mv` is; an existing destination is still
+refused. When the server cannot rename there (another filesystem, say), the
+move copies and then removes the source. A move between connections always
+copies.
 
 The generic `ServiceFailure` contract was not changed by the SFTP migration.
 Native SCP has its own strict `ScpFailure` contract; unrelated service

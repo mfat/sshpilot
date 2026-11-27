@@ -681,7 +681,6 @@ class WindowTabsMixin:
         if connection is None:
             return
         from .sidebar_views import CONNECTIONS, show_view
-        from .sidebar import GroupRow, SectionHeaderRow
 
         popup = getattr(self, "_search_popup", None)
         if popup is not None and popup.visible:
@@ -692,29 +691,11 @@ class WindowTabsMixin:
             filter_action.set_state(GLib.Variant("s", ""))
         self.search_entry.set_text("")
         show_view(self, CONNECTIONS)
-        self._apply_sidebar_visible(True)
+        self._reveal_sidebar()
         self.rebuild_connection_list()
-        self.complete_pending_connection_rows()
-        ancestors = set()
-        for group_id in self.group_manager.get_connection_groups(connection):
-            while group_id and group_id not in ancestors:
-                ancestors.add(group_id)
-                group_id = self.group_manager.groups.get(group_id, {}).get("parent_id")
-        for row in self.connection_list:
-            if isinstance(row, SectionHeaderRow) and not row._expanded:
-                row._toggle_expand()
-            elif (isinstance(row, GroupRow) and row.group_id in ancestors
-                  and not row.group_info.get("expanded", True)):
-                row._toggle_expand()
-        rows = self._rows_for_connection(connection)
-        if rows:
-            self._select_only_row(rows[0])
-            # Rebuild restores the old scroll position on idle. Focus after
-            # that restoration so GTK brings the revealed row into view.
-            def _focus():
-                rows[0].grab_focus()
-                return False
-            GLib.idle_add(_focus)
+        saved = self.connection_manager.get_connection_by_id(getattr(connection, "id", None))
+        if saved is not None:
+            self._select_opened_connection(saved, focus=True)
 
     def _on_tabmenu_manage_files(self, action, param=None):
         try:
@@ -2355,6 +2336,8 @@ class WindowTabsMixin:
         # Executing a result dismisses search (and re-attaches a sidebar that
         # search had detached). No-op when not searching.
         self._close_search_if_open()
+        self._select_opened_connection(connection)
+        self._dismiss_sidebar_overlay()
         try:
             # Check if there are open tabs for this connection
             terms_for_conn = []
@@ -2400,6 +2383,8 @@ class WindowTabsMixin:
         # Executing a result dismisses search (and re-attaches a sidebar that
         # search had detached). No-op when not searching.
         self._close_search_if_open()
+        self._select_opened_connection(connection)
+        self._dismiss_sidebar_overlay()
         try:
             # Collect current pages in visual/tab order
             terms_for_conn = []
@@ -2452,6 +2437,7 @@ class WindowTabsMixin:
         """
         self._return_to_tab_view_if_welcome()
         self._close_search_if_open()
+        self._dismiss_sidebar_overlay()
         try:
             terms = []
             try:
@@ -2572,62 +2558,22 @@ class WindowTabsMixin:
                         logger.debug(f"Failed to focus terminal on tab switch: {e}")
                 GLib.timeout_add(50, _focus_on_tab_switch)
 
-            # Split-view tabs have no single connection — clear sidebar selection
+            from .rdp_tab import RdpTab
             from .split_view import SplitViewTab
-            if isinstance(child, SplitViewTab):
-                try:
-                    if hasattr(self.connection_list, 'unselect_all'):
-                        self.connection_list.unselect_all()
-                    else:
-                        current = self.connection_list.get_selected_row()
-                        if current is not None:
-                            self.connection_list.unselect_row(current)
-                except Exception:
-                    pass
-                return
 
             connection = self.terminal_to_connection.get(child)
-            if connection:
-                # Check if this is a local terminal
-                host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-                if host_value == 'localhost':
-                    # Local terminal - clear selection
-                    try:
-                        if hasattr(self.connection_list, 'unselect_all'):
-                            self.connection_list.unselect_all()
-                        else:
-                            current = self.connection_list.get_selected_row()
-                            if current is not None:
-                                self.connection_list.unselect_row(current)
-                    except Exception:
-                        pass
-                else:
-                    # Regular connection terminal - select the corresponding row
-                    self.active_terminals[connection] = child
-                    conn_rows = self._rows_for_connection(connection)
-                    if conn_rows:
-                        selected_rows = []
-                        try:
-                            selected_rows = list(self.connection_list.get_selected_rows())
-                        except Exception:
-                            current = self.connection_list.get_selected_row()
-                            if current:
-                                selected_rows = [current]
-                        # Leave the selection alone if any row for this
-                        # connection is already selected; otherwise select the first.
-                        if not any(r in selected_rows for r in conn_rows):
-                            self._select_only_row(conn_rows[0])
-            else:
-                # Other non-connection terminal - clear selection
-                try:
-                    if hasattr(self.connection_list, 'unselect_all'):
-                        self.connection_list.unselect_all()
-                    else:
-                        current = self.connection_list.get_selected_row()
-                        if current is not None:
-                            self.connection_list.unselect_row(current)
-                except Exception:
-                    pass
+            if isinstance(child, SplitViewTab):
+                connection = None
+            elif isinstance(child, RdpTab):
+                connection = child.connection
+            elif connection is not None and not getattr(connection, "is_local_shell", False):
+                self.active_terminals[connection] = child
+
+            # Tabs can outlive the sidebar snapshot that supplied their connection.
+            connection_id = getattr(connection, "id", None)
+            saved = self.connection_manager.get_connection_by_id(connection_id) if connection_id else None
+            if saved is None or not self._select_opened_connection(saved):
+                self.connection_list.unselect_all()
         except Exception as e:
             logger.error(f"Failed to sync tab selection: {e}")
 

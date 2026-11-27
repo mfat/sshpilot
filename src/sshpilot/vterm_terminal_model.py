@@ -208,7 +208,9 @@ def _abi_self_test(lib: ctypes.CDLL) -> Optional[str]:
                 return f"vterm_screen_get_cell({column}) failed"
             try:
                 cells.append(_decode_cell(buffer.raw[:CELL_SIZE]))
-            except (ValueError, IndexError, struct.error) as exc:
+            except (ValueError, OverflowError, IndexError, struct.error) as exc:
+                # chr() of a huge code point: ValueError on newer Pythons,
+                # OverflowError on 3.12.
                 return f"cell layout differs: {exc}"
         first, second, third = cells
         expected = (

@@ -20,8 +20,8 @@ SSH_G = {  # what ``ssh -G`` prints with no order configured
 }
 
 
-@pytest.fixture
-def gtk():
+@pytest.fixture(name="gtk")
+def gtk_fixture():
     try:
         import gi
 

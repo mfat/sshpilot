@@ -248,7 +248,7 @@ def test_a_connection_closes_only_after_its_transfers_end(monkeypatch):
 def test_without_transfers_the_connection_closes_at_once():
     window_module = _module()
     window = _window(window_module)
-    window._running_transfers = lambda: []
+    window._running_transfers = list
     manager = MagicMock()
     window._close_backend_when_idle(manager)
     manager.close.assert_called_once_with()

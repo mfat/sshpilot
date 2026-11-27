@@ -1317,11 +1317,16 @@ class SectionHeaderRow(Gtk.ListBoxRow):
         self._toggle_expand()
 
     def _toggle_expand(self) -> None:
-        self._expanded = not self._expanded
+        self.set_expanded(not self._expanded)
+        self.emit("section-toggled", self.section_id, self._expanded)
+
+    def set_expanded(self, expanded: bool) -> None:
+        if self._expanded == expanded:
+            return
+        self._expanded = expanded
         self._persist_expanded()
         self._update_display()
         self.apply_descendant_visibility()
-        self.emit("section-toggled", self.section_id, self._expanded)
 
 def _set_child_with_grip(row: Gtk.ListBoxRow, main_box: Gtk.Box) -> None:
     """Give *row* its main box, with a drag grip as the first item of its
@@ -1626,10 +1631,22 @@ class GroupRow(Gtk.ListBoxRow):
 
     def _toggle_expand(self):
         expanded = not self.group_info.get("expanded", True)
-        self.group_info["expanded"] = expanded
-        self.group_manager.set_group_expanded(self.group_id, expanded)
-        self._update_display()
+        self._update_expansion(expanded)
+        # The user toggle handler completes pending rows before applying visibility.
         self.emit("group-toggled", self.group_id, expanded)
+
+    def set_expanded(self, expanded: bool) -> None:
+        if self.group_info.get("expanded", True) != expanded:
+            self._update_expansion(expanded)
+            self.apply_descendant_visibility(self.get_visible())
+
+    def _update_expansion(self, expanded: bool) -> None:
+        self.group_info["expanded"] = expanded
+        self._persist_expanded(expanded)
+        self._update_display()
+
+    def _persist_expanded(self, expanded: bool) -> None:
+        self.group_manager.set_group_expanded(self.group_id, expanded)
 
     def set_indentation(self, level: int) -> None:
         """Indent a nested group header to match its depth in the tree."""
@@ -1919,9 +1936,10 @@ class TagGroupRow(GroupRow):
         self.name_label.set_markup(f"<b>{prefix}{name}</b>")
 
     def _toggle_expand(self):
-        # Persist to config, not GroupManager — the group only exists here.
-        expanded = not self.group_info.get("expanded", True)
-        self.group_info["expanded"] = expanded
+        self.set_expanded(not self.group_info.get("expanded", True))
+
+    def _persist_expanded(self, expanded: bool) -> None:
+        # The tag group only exists in the sidebar.
         config = getattr(self.group_manager, "config", None)
         if config is not None:
             try:
@@ -1930,12 +1948,6 @@ class TagGroupRow(GroupRow):
                 config.set_setting(self.EXPANDED_SETTING, state)
             except Exception:
                 logger.debug("Failed to persist tag group state", exc_info=True)
-        self._update_display()
-        # Show/hide member rows in place instead of emitting group-toggled:
-        # a full sidebar rebuild resets the scroll position for a frame, which
-        # reads as flicker (tag groups sit near the bottom of the list).
-        for row in getattr(self, "_member_rows", None) or []:
-            row.set_visible(expanded)
 
 
 class ConnectionRow(Gtk.ListBoxRow):

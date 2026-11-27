@@ -91,6 +91,7 @@
     <file alias="connections-symbolic.svg">icons/scalable/actions/connections-symbolic.svg</file>
     <file alias="connections-rail-symbolic.svg">icons/scalable/actions/connections-rail-symbolic.svg</file>
     <file alias="document-config-rail-symbolic.svg">icons/scalable/actions/document-config-rail-symbolic.svg</file>
+    <file alias="settings-rail-symbolic.svg">icons/scalable/actions/settings-rail-symbolic.svg</file>
     <file alias="system-search-symbolic.svg">icons/scalable/actions/system-search-symbolic.svg</file>
     <file alias="system-run-symbolic.svg">icons/scalable/actions/system-run-symbolic.svg</file>
     <file alias="tag-symbolic.svg">icons/scalable/actions/tag-symbolic.svg</file>

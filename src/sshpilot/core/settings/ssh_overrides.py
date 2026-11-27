@@ -426,6 +426,71 @@ def compose_ssh_overrides(
     return overrides
 
 
+class OverrideSource(str, Enum):
+    """The control of Settings ▸ SSH Options that forces an option."""
+
+    CONNECT_TIMEOUT = "connect_timeout"
+    ADDRESS_FAMILY = "address_family"
+    STRICT_HOST_KEY_CHECKING = "strict_host_key_checking"
+    COMPRESSION = "compression"
+    VERBOSITY = "verbosity"
+    DEBUG = "debug"
+    MULTIPLEXING = "multiplexing"
+    LEGACY_ALGORITHMS = "legacy_algorithms"
+    #: The free-form list (Additional Options).
+    EXTRA = "extra"
+
+
+_MULTIPLEX_KEYWORDS = frozenset({"controlmaster", "controlpath", "controlpersist"})
+_LEGACY_KEYWORDS = frozenset({
+    "kexalgorithms", "hostkeyalgorithms", "pubkeyacceptedalgorithms",
+    "pubkeyacceptedkeytypes", "ciphers",
+})
+
+
+def override_source(ssh_cfg: Mapping[str, Any], keyword: str) -> OverrideSource:
+    """Which control of the settings forces *keyword*, as the composition
+    in :func:`compose_ssh_overrides` decides it: a control that is set
+    comes ahead of the free-form list, so it is the one whose value OpenSSH
+    keeps; anything no set control forces comes from that list."""
+    key = keyword.strip().lower()
+    if key == "connecttimeout":
+        try:
+            if int(ssh_cfg.get("connection_timeout") or 0) > 0:
+                return OverrideSource.CONNECT_TIMEOUT
+        except (TypeError, ValueError):
+            pass
+    elif key == "addressfamily":
+        family = str(ssh_cfg.get("address_family") or "").strip().lower()
+        if family in EXPLICIT_ADDRESS_FAMILY_VALUES:
+            return OverrideSource.ADDRESS_FAMILY
+    elif key == "stricthostkeychecking":
+        if str(ssh_cfg.get("strict_host_key_checking") or "").strip():
+            return OverrideSource.STRICT_HOST_KEY_CHECKING
+    elif key == "compression":
+        try:
+            if coerce_yes_no_unset(ssh_cfg.get("compression")):
+                return OverrideSource.COMPRESSION
+        except (TypeError, ValueError):
+            pass
+    elif key == "loglevel":
+        try:
+            verbosity = int(ssh_cfg.get("verbosity") or 0)
+        except (TypeError, ValueError):
+            verbosity = 0
+        if verbosity > 0:
+            return OverrideSource.VERBOSITY
+        if ssh_cfg.get("debug_enabled"):
+            return OverrideSource.DEBUG
+    elif key in _MULTIPLEX_KEYWORDS:
+        if ssh_cfg.get("controlmaster"):
+            return OverrideSource.MULTIPLEXING
+    elif key in _LEGACY_KEYWORDS:
+        if ssh_cfg.get("legacy_algorithms") is True:
+            return OverrideSource.LEGACY_ALGORITHMS
+    return OverrideSource.EXTRA
+
+
 def select_override_args(
     overrides: Any,
     *,

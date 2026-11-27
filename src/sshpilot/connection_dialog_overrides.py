@@ -1,47 +1,38 @@
-"""What overrides a connection's own settings, shown in the connection editor.
+"""What decides a connection's settings, shown in the connection editor.
 
-Two things can decide an option before the connection's own Host block does.
+The editor asks OpenSSH one question per edit
+(``connection_dialog_effective``): what the host would use if the form were
+saved as it stands. The answer (:class:`~sshpilot.connection_dialog_answer.EditorAnswer`)
+says, for every option, the value in force, where it comes from, and how
+each line of the host's own block fares. This mixin puts that on the
+fields, as Advanced Configuration puts it on its lines:
 
-**Settings ▸ SSH Options.**
+* a value set here that an earlier block decides first, or that Settings ▸
+  SSH Options override, is struck through, tinted, and tagged "No effect"
+  or "Overridden", with what OpenSSH uses instead and where it comes from;
+* a line OpenSSH rejects is red and tagged "Rejected";
+* a field that sets nothing names the block that decides its value.
 
-Everything on that Settings page is sent ahead of a connection's own options,
-and OpenSSH keeps the first value it obtains. A field in this dialog can
-therefore hold a value the app never uses. The dialog says so, next to the
-field, and never does more than that: the value stays editable and is still
-saved, because plain ``ssh`` outside the app reads it from the Host block and
-it is back in force as soon as the override is removed.
-
-The daemon is the only source of *what* is forced
-(``GlobalSshOverrides.forced_options``): it alone knows the legacy-algorithm
-and multiplexing options, and it composes the list the way a launch does.
-This mixin only presents it.
-
-**An earlier block of the SSH configuration.** OpenSSH keeps the first value
-it obtains, so a ``Host *`` or ``Match`` block placed before the host's own
-block decides every option it sets. The app launches exactly ``ssh <alias>``
-and does not repeat the Host block on the command line, so that is also what
-a session uses. The daemon reports those lines
-(``EffectiveConfigComparison.earlier``); a field that sets something else is
-marked with the value that is used and where it comes from. The value stays
-editable and is saved: the file is the user's, and the app never moves
+The value stays editable and is saved: plain ``ssh`` outside the app reads
+it from the Host block, the file is the user's, and the app never moves
 blocks around in it.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 import re
-import threading
-import types
 from gettext import gettext as _
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 try:
     from gi.repository import Adw, GLib, Gtk
 except (ImportError, AttributeError, ValueError):  # pragma: no cover - no GTK
     Adw = GLib = Gtk = None  # type: ignore[assignment]
 
-from .core.settings import EXTRA_OPTIONS_ADDED_NOT_REPLACED, forced_options
+from .core.settings import EXTRA_OPTIONS_ADDED_NOT_REPLACED
+from .ssh_config_answer import NOTHING, LineVerdict
 
 logger = logging.getLogger(__name__)
 
@@ -101,84 +92,35 @@ SWITCH_OFF_VALUE = {
     "port_forwarding_only_row": "default",
 }
 
-#: A switch that is off, on a host whose block spells the option out anyway
-#: (``ForwardX11 no``): the directive and the value the block then holds.
-SWITCH_OFF_AUTHORED = {
-    "x11_row": ("forwardx11", "no"),
-}
-
-
-def inherited_note_text() -> str:
-    """The note on a row that shows a value the Host block did not author."""
+def inherited_note_text(source_note: str = "") -> str:
+    """The note on a row that shows a value the Host block did not author;
+    *source_note* says where it comes from (``EditorAnswer.inherited_note``)."""
+    if source_note:
+        return "\n".join((source_note, _("Edit to set it for this host.")))
     return _("Inherited from your SSH configuration. Edit to set it for this host.")
 
 
-def forced_map(snapshot) -> Dict[str, str]:
-    """``GlobalSshOverrides.forced_options`` as lower-case keyword → value."""
-    args = []
-    for option in getattr(snapshot, "forced_options", ()) or ():
-        args.extend(["-o", str(option)])
-    return forced_options(args)
-
-
-#: The row is set here, and Settings win: the value is not used.
+#: The row is set here and the value is not used (no effect, or Settings
+#: override it): the sidebar and the banner count it.
 OVERRIDDEN = "overridden"
-#: The row is empty, or holds what Settings force: the global value applies.
+#: The row sets nothing and another block decides what it stands for.
 GLOBAL = "global"
+#: OpenSSH rejects the row's line.
+REJECTED = "rejected"
+#: The row is not an SSH option, and what it holds goes unused because of
+#: one (the saved password, with no password login tried): marked like a
+#: value with no effect, but not counted, since the option's row is.
+UNUSED = "unused"
 
-
-def suppressing_option(
-    keyword: str, forced: Dict[str, str]
-) -> Optional[Tuple[str, str]]:
-    """``(keyword, value)`` of the forced option that decides *keyword*.
-
-    Usually the keyword itself. ``ProxyJump`` and ``ProxyCommand`` compete
-    for one slot: whichever OpenSSH obtains first wins, and the forced ones
-    always come before the connection's own. *forced* keeps Settings order
-    (see :func:`forced_options`), so the winner is decided here, once, for
-    both fields.
-    """
-    wanted = keyword.lower()
-    if wanted in _PROXY_KEYWORDS:
-        return _forced_proxy(wanted, forced)
-    if wanted in forced:
-        return keyword, forced[wanted]
-    return None
-
-
-_PROXY_KEYWORDS = frozenset({"proxyjump", "proxycommand"})
-
-
-def _forced_proxy(wanted: str, forced: Dict[str, str]) -> Optional[Tuple[str, str]]:
-    """The forced proxy option that decides the *wanted* proxy field.
-
-    Walks the forced options in order, as OpenSSH reads them. A
-    ``ProxyCommand`` (even ``none``) takes the slot. A ``ProxyJump`` takes it
-    too, except ``ProxyJump none``: that only stops later jump hosts, and a
-    later ``ProxyCommand`` still applies (``ssh -G`` confirms both).
-    """
-    jump_none = None
-    for name, value in forced.items():
-        if name == "proxycommand":
-            return "ProxyCommand", value
-        if name == "proxyjump":
-            if value.strip().lower() != "none":
-                return "ProxyJump", value
-            jump_none = value
-    if wanted == "proxyjump" and jump_none is not None:
-        return "ProxyJump", jump_none
-    return None
+#: Besides its own switch, what decides whether a method is tried.
+_ORDER_KEYWORD = "PreferredAuthentications"
 
 
 _YES_NO_LIKE = frozenset({"yes", "no", "ask", "confirm", "none"})
 
 
 def _normalized(keyword: str, value: str) -> str:
-    """Two spellings of one value compare equal, as they do to OpenSSH.
-
-    The daemon's ``normalized_directive_value`` applies the same rule to the
-    upgrade notice; the frontend keeps its own copy of this pure helper.
-    """
+    """Two spellings of one value compare equal, as they do to OpenSSH."""
     value = str(value).strip()
     if keyword.lower() == "proxyjump":
         return ",".join(part for part in re.split(r"[\s,]+", value) if part)
@@ -187,448 +129,129 @@ def _normalized(keyword: str, value: str) -> str:
     return value
 
 
-def override_state(
-    keyword: str, own: Optional[str], forced: Dict[str, str]
-) -> Tuple[Optional[str], Optional[str]]:
-    """``(state, note)`` for a dialog field, or ``(None, None)``.
+def row_mark(
+    row_name: str, keyword: str, answer, *, empty: bool = False
+) -> Tuple[Optional[str], "LineVerdict"]:
+    """``(kind, verdict)`` for one editor row from OpenSSH's answer.
 
-    *own* is what this connection sets for *keyword*, or None when it sets
-    nothing (an empty row, or a value shown only because it is inherited).
+    *kind* is :data:`OVERRIDDEN`, :data:`REJECTED`, :data:`GLOBAL` or None.
+    For a line the row writes, *verdict* is the line's
+    :class:`~sshpilot.ssh_config_answer.LineVerdict`, the one Advanced
+    Configuration shows for that line (tag, colour, tooltip, note, link).
+    For a row that sets nothing, it names where the value comes from.
+    *empty*: a text row the user left empty, whose tag says what it gets.
     """
-    suppressing = suppressing_option(keyword, forced)
-    if suppressing is None:
-        return None, None
-    forced_keyword, value = suppressing
-    same_option = forced_keyword.lower() == keyword.lower()
-    if own is None or not str(own).strip():
-        if not same_option:
-            # An empty jump-hosts row loses nothing to a forced ProxyCommand.
-            return None, None
-        return GLOBAL, _global_note(forced_keyword, value)
-    if same_option and _normalized(keyword, own) == _normalized(keyword, value):
-        return GLOBAL, _global_note(forced_keyword, value)
-    return OVERRIDDEN, _(
-        "Settings ▸ SSH Options set {keyword} to “{value}” for every "
-        "connection. The value here is saved, but the app does not use it. "
-        "To change it, close this dialog and open Settings ▸ SSH Options."
-    ).format(keyword=forced_keyword, value=value)
-
-
-def earlier_map(comparison) -> Dict[str, object]:
-    """``EffectiveConfigComparison.earlier`` as lower-case keyword → entry."""
-    found: Dict[str, object] = {}
-    for entry in getattr(comparison, "earlier", ()) or ():
-        key = str(getattr(entry, "key", "") or "").lower()
-        if key:
-            found.setdefault(key, entry)
-    return found
-
-
-def _display_path(path: str) -> str:
-    import os
-
-    home = os.path.expanduser("~")
-    if home and (path == home or path.startswith(home + os.sep)):
-        return "~" + path[len(home):]
-    return path
-
-
-def earlier_note(keyword: str, own: Optional[str], earlier: Dict[str, object]) -> Optional[str]:
-    """The note for a field an earlier block of the configuration beats.
-
-    None when no earlier block sets *keyword*, when the field sets nothing
-    (*own* empty: the earlier value is simply the inherited one), or when
-    both hold the same value.
-    """
-    entry = earlier.get(keyword.strip().lower())
-    if entry is None or own is None or not str(own).strip():
-        return None
-    value = str(getattr(entry, "value", "") or "")
-    if _normalized(keyword, own) == _normalized(keyword, value):
-        return None
-    block = str(getattr(entry, "block", "") or "").strip()
-    if block:
-        template = _(
-            "No effect: “{block}” in {file} (line {line}) already sets "
-            "{keyword} to “{value}”, and OpenSSH keeps the first value it "
-            "finds. The value here is saved, but connections use “{value}”."
+    if answer is None:
+        return None, NOTHING
+    verdict = answer.line_verdict(keyword)
+    if row_name == "local_command_row" and not verdict.tag:
+        # The block writes ``PermitLocalCommand yes`` next to the command,
+        # and an earlier ``PermitLocalCommand no`` beats it.
+        extra = answer.line_verdict("PermitLocalCommand")
+        if extra.tag:
+            # Translators: {keyword} is an SSH option name, {note} what
+            # OpenSSH does with it, e.g. "PermitLocalCommand: OpenSSH uses no
+            # from line 4 (Host *)".
+            verdict = replace(extra, note=_("{keyword}: {note}").format(
+                keyword="PermitLocalCommand", note=extra.note
+            ))
+    if verdict.state == REJECTED:  # the row's kind is named as the line's state
+        return REJECTED, verdict
+    if verdict.unused:
+        return OVERRIDDEN, verdict
+    if verdict.state is not None or not answer.available:
+        return None, NOTHING
+    # The row sets nothing. Text rows and the authentication section show
+    # the inherited value themselves; a switch or a selector shows a state
+    # of its own, so the block that decides another one is named.
+    used = answer.used(keyword)
+    note = answer.inherited_note(keyword)
+    # An entry row cannot show a placeholder (libadwaita draws it over the
+    # title), so an empty text row's tag says what it gets.
+    if empty and used and row_name in TEXT_ROWS:
+        # Translators: an empty field and what OpenSSH uses for it, e.g.
+        # "Not set (22, OpenSSH default)" or "Not set (alice, from Host *)".
+        tag = _("Not set ({value}, {source})").format(
+            value=used, source=answer.source_text(keyword)
         )
-    else:
-        template = _(
-            "No effect: line {line} of {file}, above every Host block, already "
-            "sets {keyword} to “{value}”, and OpenSSH keeps the first value "
-            "it finds. The value here is saved, but connections use “{value}”."
-        )
-    return template.format(
-        block=block,
-        file=_display_path(str(getattr(entry, "file", "") or "")),
-        line=int(getattr(entry, "line", 0) or 0),
-        keyword=keyword,
-        value=value,
-    )
-
-
-def earlier_decides_note(keyword: str, entry) -> str:
-    """The note for a field that sets nothing while an earlier block does."""
-    block = str(getattr(entry, "block", "") or "").strip()
-    if block:
-        template = _(
-            "“{block}” in {file} (line {line}) sets {keyword} to “{value}” "
-            "for this host, so connections use that value."
-        )
-    else:
-        template = _(
-            "Line {line} of {file}, above every Host block, sets {keyword} "
-            "to “{value}” for this host, so connections use that value."
-        )
-    return template.format(
-        block=block,
-        file=_display_path(str(getattr(entry, "file", "") or "")),
-        line=int(getattr(entry, "line", 0) or 0),
-        keyword=keyword,
-        value=str(getattr(entry, "value", "") or ""),
-    )
-
-
-def earlier_row_state(
-    row_name: str,
-    keyword: str,
-    own: Optional[str],
-    earlier: Dict[str, object],
-) -> Tuple[Optional[str], Optional[str]]:
-    """``(state, note)`` for one dialog row against the earlier blocks.
-
-    ``OVERRIDDEN`` when the row sets a value an earlier block beats;
-    ``GLOBAL`` when the row sets nothing, cannot show an inherited value
-    (a switch, a selector) and an earlier block decides something other than
-    what it displays; ``(None, None)`` otherwise.
-    """
-    entry = earlier.get(keyword.lower())
-    if own is not None and str(own).strip():
-        note = earlier_note(keyword, own, earlier)
-        if note:
-            return OVERRIDDEN, note
-        if row_name == "local_command_row":
-            # The block writes ``PermitLocalCommand yes`` next to the command.
-            note = earlier_note("PermitLocalCommand", "yes", earlier)
-            if note:
-                return OVERRIDDEN, note
-        return None, None
-    if entry is None or row_name in TEXT_ROWS or row_name in AUTH_ROWS:
-        return None, None
+        return GLOBAL, LineVerdict(tag=tag, tooltip=note, note=note)
+    if not used or answer.is_default(keyword) or row_name in AUTH_ROWS:
+        return None, NOTHING
     shown = SWITCH_OFF_VALUE.get(row_name)
-    value = str(getattr(entry, "value", "") or "")
-    if shown is not None and _normalized(keyword, value) == shown:
-        return None, None
-    return GLOBAL, earlier_decides_note(keyword, entry)
+    if shown is not None and _normalized(keyword, used) == shown:
+        return None, NOTHING
+    return GLOBAL, LineVerdict(tag=answer.source_text(keyword), tooltip=note, note=note)
 
 
-def _global_note(keyword: str, value: str) -> str:
-    return _(
-        "Settings ▸ SSH Options set {keyword} to “{value}” for every "
-        "connection, so this connection uses that value."
-    ).format(keyword=keyword, value=value)
-
-
-def advanced_option_note(
-    keyword: str, value: str, forced: Dict[str, str]
-) -> Optional[str]:
-    """What to say under an Advanced-tab option, or None.
-
-    Nothing when Settings force the very value the row holds: the row then
-    loses nothing.
-    """
-    forced_value = forced.get(keyword.strip().lower())
-    if forced_value is None:
+def added_by_settings_note(keyword: str, answer) -> Optional[str]:
+    """For an Extra option Settings ▸ SSH Options add to rather than
+    replace: both values are used, which is worth saying."""
+    if answer is None or keyword.strip().lower() not in EXTRA_OPTIONS_ADDED_NOT_REPLACED:
         return None
-    if keyword.strip().lower() in EXTRA_OPTIONS_ADDED_NOT_REPLACED:
-        return _(
-            "Settings ▸ SSH Options also add “{value}” to every connection. "
-            "Both are used."
-        ).format(value=forced_value)
-    if forced_value.strip().lower() == value.strip().lower():
+    value = answer.forced.get(keyword.strip().lower())
+    if value is None:
         return None
     return _(
-        "Settings ▸ SSH Options set this to “{value}” for every connection. "
-        "The value here is saved, but the app does not use it. To change it, "
-        "close this dialog and open Settings ▸ SSH Options."
-    ).format(value=forced_value)
+        "Settings ▸ SSH Options also add “{value}” to every connection. "
+        "Both are used."
+    ).format(value=value)
 
 
 class ConnectionDialogOverridesMixin:
-    """Marks the dialog fields that Settings ▸ SSH Options override."""
+    """Marks the editor's fields from OpenSSH's answer for the edit."""
 
-    # -- fetching ---------------------------------------------------------
+    # -- starting ---------------------------------------------------------
 
     def _start_override_awareness(self) -> None:
-        """Load what is forced, once.
+        """Watch the fields and ask OpenSSH about the form as loaded.
 
-        The dialog is modal, so Settings cannot be changed while it is open
-        and one answer holds for its lifetime.
+        Every change asks again (``_schedule_effective_refresh``): what a
+        field holds decides which lines the block would have.
         """
-        self._forced_options = {}
-        self._earlier_directives = {}
-        self._override_fetch_serial = 0
-        self._load_forced_options_async()
-        self._load_earlier_directives_async()
-
-    def _load_forced_options_async(self) -> None:
+        self._editor_answer = None
+        self._watch_rows_for_overrides()
         parent = getattr(self, "parent_window", None)
-        client = getattr(parent, "client", None)
         if not (
             callable(getattr(parent, "_daemon_ready", None))
             and parent._daemon_ready()
-            and callable(getattr(client, "get_global_ssh_overrides", None))
         ):
-            return
-        self._override_fetch_serial = serial = (
-            getattr(self, "_override_fetch_serial", 0) + 1
-        )
+            # Nothing can say what the host inherits (yet): the
+            # authentication section starts from OpenSSH's built-in order,
+            # so it stays editable. A later answer replaces it.
+            fallback = getattr(self, "_auth_policy_set_fallback", None)
+            if callable(fallback):
+                fallback({})
+        refresh = getattr(self, "_schedule_effective_refresh", None)
+        if callable(refresh):
+            refresh(0)
 
-        def apply(forced):
-            # A later request supersedes this one; a daemon that cannot answer
-            # (older build, capability missing) leaves the last answer alone.
-            if forced is None or serial != getattr(self, "_override_fetch_serial", 0):
-                return False
-            self._set_forced_options(forced)
-            return False
-
-        def worker():
-            forced = None
-            try:
-                forced = forced_map(client.get_global_ssh_overrides())
-            except Exception:
-                logger.debug("Global SSH overrides unavailable", exc_info=True)
-            GLib.idle_add(apply, forced)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _load_earlier_directives_async(self) -> None:
-        """Ask which options an earlier block decides for this host.
-
-        A saved host is asked about by id: what precedes its own block. A
-        new connection has no block yet; it is asked about by the alias in
-        the form, since its block will be appended after everything else.
-        The alias is watched, as the answer depends on which ``Host``
-        patterns it matches.
-        """
-        parent = getattr(self, "parent_window", None)
-        client = getattr(parent, "client", None)
-        fallback_hook = getattr(self, "_auth_policy_set_fallback", None)
-        # The same moments call for OpenSSH's answer about the pending block.
+    def _on_override_row_changed(self, *_args) -> None:
+        self._apply_override_notes()
         refresh = getattr(self, "_schedule_effective_refresh", None)
         if callable(refresh):
             refresh()
 
-        def builtin_fallback() -> None:
-            # Nothing can say what the host inherits (yet): the
-            # authentication section starts from OpenSSH's built-in order,
-            # so it stays editable. A later answer replaces it.
-            if callable(fallback_hook):
-                fallback_hook({})
-
-        if not (
-            callable(getattr(parent, "_daemon_ready", None))
-            and parent._daemon_ready()
-        ):
-            builtin_fallback()
-            return
-        connection = getattr(self, "connection", None)
-        editing = connection is not None and getattr(self, "is_editing", False)
-        alias = ""
-        if editing:
-            if not callable(getattr(client, "get_effective_config", None)):
-                builtin_fallback()
-                return
-        else:
-            if not callable(getattr(client, "get_earlier_directives", None)):
-                builtin_fallback()
-                return
-            self._watch_alias_for_earlier_directives()
-            # One host is asked about: the first of several names typed.
-            typed = getattr(self, "_typed_primary_alias", None)
-            if callable(typed):
-                alias = typed()
-            else:
-                row = getattr(self, "nickname_row", None)
-                alias = row.get_text().strip() if row is not None else ""
-        self._earlier_fetch_serial = serial = (
-            getattr(self, "_earlier_fetch_serial", 0) + 1
-        )
-        if not editing and not alias:
-            # No alias yet, so no block can be matched.
-            builtin_fallback()
-            self._set_earlier_directives({})
-            return
-
-        auth_host = (
-            str(getattr(connection, "nickname", "") or "") if editing else alias
-        )
-
-        def apply(earlier, inherited_auth):
-            if serial != getattr(self, "_earlier_fetch_serial", 0):
-                return False
-            if callable(fallback_hook):
-                # None: the lookup failed. Shown as unknown, not as a default.
-                fallback_hook(inherited_auth)
-            if earlier is not None:
-                self._set_earlier_directives(earlier)
-            return False
-
-        def worker():
-            earlier = None
-            # A daemon without the lookup: nothing known to be inherited.
-            inherited_auth = None if (
-                auth_host and callable(getattr(client, "get_inherited_auth", None))
-            ) else {}
-            # What the authentication section shows for a value reset after
-            # loading, or for a host not saved yet: the lines it would
-            # inherit without its own.
-            if auth_host and callable(getattr(client, "get_inherited_auth", None)):
-                try:
-                    inherited_auth = {
-                        str(d.key).lower(): str(d.value)
-                        for d in client.get_inherited_auth(auth_host)
-                    }
-                except Exception:
-                    logger.debug("Inherited authentication unavailable", exc_info=True)
-            try:
-                if editing:
-                    from .api.connection_identity import connection_id_for
-
-                    result = client.get_effective_config(connection_id_for(connection))
-                    # The earlier lines come from the files, so they are
-                    # reported even when OpenSSH rejects the configuration
-                    # and the comparison itself is unavailable.
-                    if getattr(result, "available", False) or getattr(
-                        result, "earlier", None
-                    ):
-                        earlier = earlier_map(result)
-                else:
-                    earlier = earlier_map(
-                        types.SimpleNamespace(
-                            earlier=client.get_earlier_directives(alias)
-                        )
-                    )
-            except Exception:
-                logger.debug("Earlier SSH directives unavailable", exc_info=True)
-            GLib.idle_add(apply, earlier, inherited_auth)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _watch_alias_for_earlier_directives(self) -> None:
-        """Ask again, shortly after the alias of a new connection changes."""
-        if getattr(self, "_earlier_alias_watched", False):
-            return
-        row = getattr(self, "nickname_row", None)
-        if row is None:
-            return
-        self._earlier_alias_watched = True
-
-        def fire():
-            self._earlier_alias_timer = 0
-            if not getattr(self, "is_editing", False):
-                self._load_earlier_directives_async()
-            return False
-
-        def on_changed(*_args):
-            if getattr(self, "is_editing", False):
-                return
-            pending = getattr(self, "_earlier_alias_timer", 0)
-            if pending:
-                GLib.source_remove(pending)
-            self._earlier_alias_timer = GLib.timeout_add(350, fire)
-
-        try:
-            row.connect("changed", on_changed)
-        except Exception:
-            logger.debug("Cannot watch the alias row", exc_info=True)
-
-    # -- presenting -------------------------------------------------------
-
-    def _set_forced_options(self, forced: Dict[str, str]) -> None:
-        self._forced_options = dict(forced or {})
-        hook = getattr(self, "_auth_policy_set_forced", None)
-        if callable(hook):
-            hook(self._forced_options)
-        self._apply_override_notes()
-
-    def _set_earlier_directives(self, earlier: Dict[str, object]) -> None:
-        self._earlier_directives = dict(earlier or {})
-        hook = getattr(self, "_auth_policy_set_earlier", None)
-        if callable(hook):
-            hook(self._earlier_directives)
-        self._apply_override_notes()
-
-    def _apply_override_notes(self, *_args) -> None:
-        """Bring every marker, the Advanced tab and the banner up to date."""
-        forced = getattr(self, "_forced_options", None) or {}
-        earlier = getattr(self, "_earlier_directives", None) or {}
-        if forced or earlier:
-            self._watch_rows_for_overrides()
-        for row_name, keyword in OVERRIDABLE_ROWS:
-            row = getattr(self, row_name, None)
-            if row is None:
-                continue
-            try:
-                own = self._override_row_value(row_name, row)
-                state, note = override_state(keyword, own, forced)
-                if state is None:
-                    # Settings come first on the command line; only when they
-                    # leave the option alone does the file's order decide.
-                    state, note = earlier_row_state(row_name, keyword, own, earlier)
-                self._mark_row_override(row_name, row, state, note)
-            except Exception:
-                logger.debug("Could not mark %s as overridden", row_name, exc_info=True)
-        self._note_auth_preview()
-        option_list = getattr(getattr(self, "advanced_tab", None), "option_list", None)
-        refresh = getattr(option_list, "refresh_notes", None)
-        if callable(refresh):
-            try:
-                refresh()
-            except Exception:
-                logger.debug("Could not refresh option notes", exc_info=True)
-        self._sync_override_banner()
-
-    def _note_auth_preview(self) -> None:
-        """Give the "OpenSSH will try" line the reasons it differs.
-
-        The method rows carry their marks inside a folded list; the line
-        below it is what shows while the list is closed, so it repeats the
-        notes of the authentication rows that are set here and not used.
-        """
-        section = getattr(self, "auth_policy", None)
-        set_notes = getattr(section, "set_preview_notes", None)
-        if not callable(set_notes):
-            return
-        notes = []
-        for row_name, _keyword in OVERRIDABLE_ROWS:
-            if row_name not in AUTH_ROWS:
-                continue
-            row = getattr(self, row_name, None)
-            if getattr(row, "_sshpilot_override_state", None) != OVERRIDDEN:
-                continue
-            note = getattr(row, "_sshpilot_override_note", "") or ""
-            if note:
-                # Each note is about its own row ("No effect: ..."): away
-                # from the row it needs the row's name to say what is not.
-                notes.append((row.get_title(), note))
-        try:
-            set_notes(notes)
-        except Exception:
-            logger.debug("Could not note the authentication preview", exc_info=True)
-
     def _watch_rows_for_overrides(self) -> None:
-        """Re-mark as the user edits: the state depends on what a row holds."""
+        """Ask again as the user edits: the lines depend on what a row holds."""
         if getattr(self, "_override_watchers_connected", False):
             return
         self._override_watchers_connected = True
-        # The authentication section re-marks through its own change callback.
+        # The authentication section asks through its own change callback.
         names = [
             name for name, _keyword in OVERRIDABLE_ROWS if name not in AUTH_ROWS
         ]
-        names += ["forward_agent_value_row", "identity_agent_value_row"]
-        for name in names:
+        names += [
+            "forward_agent_value_row", "identity_agent_value_row",
+            "nickname_row", "certificate_row",
+        ]
+        password = getattr(self, "password_row", None)
+        if password is not None:
+            # Not an SSH option: only its own mark depends on it.
+            try:
+                password.connect("changed", lambda *_a: self._mark_unused_password())
+            except Exception:
+                logger.debug("Cannot watch the password", exc_info=True)
+        for name in dict.fromkeys(names):
             row = getattr(self, name, None)
             if row is None:
                 continue
@@ -641,142 +264,193 @@ class ConnectionDialogOverridesMixin:
             else:
                 signal = "changed"
             try:
-                row.connect(signal, self._apply_override_notes)
+                row.connect(signal, self._on_override_row_changed)
             except Exception:
                 logger.debug("Cannot watch %s", name, exc_info=True)
 
-    def _override_row_value(self, row_name: str, row) -> Optional[str]:
-        """What this connection itself sets through *row*, or None.
+    # -- presenting -------------------------------------------------------
 
-        A row showing an inherited value sets nothing: the value comes from
-        elsewhere. Switches set their option only when on, because that is
-        when the Host block gets the line.
+    def _apply_override_notes(self, *_args) -> None:
+        """Bring every mark, the Extra page and the banner up to date."""
+        answer = getattr(self, "_editor_answer", None)
+        for row_name, keyword in OVERRIDABLE_ROWS:
+            row = getattr(self, row_name, None)
+            if row is None:
+                continue
+            try:
+                empty = row_name in TEXT_ROWS and not row.get_text().strip()
+                kind, verdict = row_mark(row_name, keyword, answer, empty=empty)
+                self._mark_row_override(row_name, row, kind, verdict)
+            except Exception:
+                logger.debug("Could not mark %s", row_name, exc_info=True)
+        self._note_auth_preview()
+        tab = getattr(self, "advanced_tab", None)
+        option_list = getattr(tab, "option_list", None)
+        refresh = getattr(option_list, "refresh_notes", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:
+                logger.debug("Could not refresh option notes", exc_info=True)
+        inherited = getattr(tab, "show_inherited", None)
+        if callable(inherited):
+            try:
+                inherited(answer)
+            except Exception:
+                logger.debug("Could not list inherited options", exc_info=True)
+        self._sync_override_banner()
+
+    def _note_auth_preview(self) -> None:
+        """Tell the authentication section what decides each method a row
+        does not control, in Advanced Configuration's words, and give the
+        "OpenSSH will try" line (shown while the list is closed) the same
+        reasons. Then mark the saved password when it cannot be asked for.
         """
-        if row_name in (getattr(self, "_inherited_row_handlers", None) or {}):
-            return None
-        own_value = getattr(row, "_sshpilot_own_value", None)
-        if callable(own_value):
-            return own_value()
-        if row_name == "port_forwarding_only_row":
-            return "none" if row.get_active() else None
-        if row_name in SWITCH_OFF_AUTHORED:
-            if row.get_active():
-                return "yes"
-            # Off, but the saved block spells the option out: that line is
-            # kept on save, and an earlier block can beat it like any other.
-            directive, off_value = SWITCH_OFF_AUTHORED[row_name]
-            authored = getattr(
-                getattr(self, "connection", None), "authored_directives", None
-            ) or ()
-            if getattr(self, "is_editing", False) and directive in authored:
-                return off_value
-            return None
-        if row_name == "exit_on_forward_failure_row":
-            return "yes" if row.get_active() else None
-        if row_name == "forward_agent_row":
-            from .connection_dialog import forward_agent_text_from_fields
+        section = getattr(self, "auth_policy", None)
+        answer = getattr(self, "_editor_answer", None)
+        set_reasons = getattr(section, "set_reasons", None)
+        if callable(set_reasons):
+            from .connection_dialog_auth import METHOD_KEYWORDS
 
-            return forward_agent_text_from_fields(
-                **self._selected_forward_agent_fields()
-            ) or None
-        if row_name == "add_keys_to_agent_row":
-            return self._selected_add_keys_to_agent() or None
-        if row_name == "identity_agent_row":
-            return self._selected_identity_agent() or None
-        text = row.get_text().strip()
-        if row_name == "port_row" and text == "22":
-            # Port 22 is written only when the block authored it.
-            authored = getattr(getattr(self, "connection", None), "authored_directives", None)
-            adopted = getattr(self, "_adopted_inherited_fields", None) or ()
-            if "port" not in (authored or ()) and "port" not in adopted:
-                return None
-        return text or None
+            reasons = {}
+            if answer is not None and answer.available:
+                order = self._deciding_note(answer, _ORDER_KEYWORD)
+                for method, keyword in METHOD_KEYWORDS:
+                    reasons[method] = {
+                        "switch": self._deciding_note(answer, keyword),
+                        "order": order,
+                    }
+            try:
+                set_reasons(reasons)
+                section.set_preview_notes(section.overruled_notes())
+            except Exception:
+                logger.debug("Could not note the authentication section", exc_info=True)
+        self._mark_unused_password(section)
 
-    def _mark_row_override(
-        self, row_name: str, row, state: Optional[str], note: Optional[str]
-    ) -> None:
-        icon = getattr(row, "_sshpilot_override_icon", None)
-        if state and icon is None:
-            icon = Gtk.Image()
-            icon.set_valign(Gtk.Align.CENTER)
-            row.add_suffix(icon)
-            row._sshpilot_override_icon = icon
-        if icon is not None:
-            overridden = state == OVERRIDDEN
-            icon.set_from_icon_name(
-                "dialog-error-symbolic" if overridden else "dialog-information-symbolic"
-            )
-            # The informational marker is the only sign that another block
-            # decides the value, so it takes the warning colour, not a dim one.
-            # Error stays reserved for a value set here and never used.
-            for css, wanted in (("error", overridden), ("warning", not overridden)):
-                if wanted:
-                    icon.add_css_class(css)
-                else:
-                    icon.remove_css_class(css)
-            icon.set_visible(bool(state))
-            icon.set_tooltip_text(note or None)
-        row._sshpilot_override_state = state
-        # A value that is never used is drawn like a refused one (Adwaita's
-        # error style), though it is still saved.
-        self._set_row_override_error(row, state == OVERRIDDEN)
-        self._set_row_override_note(row, note or "")
-        # "Edit to set it for this host" is false while the option is forced:
-        # the override note replaces it, and it returns with the override gone.
+    @staticmethod
+    def _deciding_note(answer, keyword: str) -> str:
+        """What OpenSSH uses for *keyword* and from where: the note on the
+        host's own line when that line goes unused, else on the value it
+        inherits. Empty when the host's own line is the one used."""
+        verdict = answer.line_verdict(keyword)
+        if verdict.unused:
+            return verdict.note
+        if verdict.state is not None:
+            return ""
+        return answer.inherited_note(keyword)
+
+    def _mark_unused_password(self, section=None) -> None:
+        """"No effect" on the saved password while OpenSSH tries neither
+        password nor keyboard-interactive login, which are what ask for it."""
+        row = getattr(self, "password_row", None)
+        if row is None:
+            return
+        section = section or getattr(self, "auth_policy", None)
+        policy = getattr(section, "policy", None)
+        will_try = None
+        try:
+            will_try = policy.will_try() if policy is not None else None
+        except Exception:
+            logger.debug("Could not read the login order", exc_info=True)
+        unused = (
+            will_try is not None
+            and bool(row.get_text())
+            and not {"password", "keyboard-interactive"} & set(will_try)
+        )
+        if unused == (getattr(row, "_sshpilot_override_state", None) == UNUSED):
+            return
+        from .gtk import advanced_config_messages as messages
+        from .api.models.connections import SshConfigDraftLineState as State
+
+        try:
+            if unused:
+                note = _(
+                    "OpenSSH tries neither password nor keyboard-interactive "
+                    "login for this host, so it never asks for this password."
+                )
+                self._mark_row_override("password_row", row, UNUSED, LineVerdict(
+                    tag=_("No effect"), style=messages.STATE_STYLES[State.SHADOWED],
+                    tooltip=note, note=note,
+                ))
+            else:
+                self._mark_row_override("password_row", row, None, NOTHING)
+        except Exception:
+            logger.debug("Could not mark the password", exc_info=True)
+
+    def _mark_row_override(self, row_name: str, row, kind: Optional[str], verdict) -> None:
+        """Show *verdict* (a :class:`~sshpilot.ssh_config_answer.LineVerdict`)
+        on one row as Advanced Configuration shows it on a line: the tag
+        beside it (a "No effect" one links to the line used instead), the
+        typed value struck through and tinted while it is not used, red
+        while OpenSSH rejects it."""
+        from .advanced_config_widgets import mark_unused, show_verdict, verdict_pill
+
+        label = getattr(row, "_sshpilot_override_pill", None)
+        if kind and label is None:
+            label = verdict_pill(self._reveal_config_line)
+            row.add_suffix(label)
+            row._sshpilot_override_pill = label
+            # Beside the value, ahead of the row's own buttons.
+            before = getattr(row, "_sshpilot_pill_before", None)
+            box = label.get_parent()
+            if before is not None and box is not None and before.get_parent() is box:
+                box.reorder_child_after(label, before.get_prev_sibling())
+        if label is not None:
+            show_verdict(label, verdict if kind else NOTHING)
+        unused = kind in (OVERRIDDEN, UNUSED)
+        row._sshpilot_override_state = kind
+        note = verdict.note if kind else ""
+        try:
+            mark_unused(row, unused)
+        except Exception:
+            logger.debug("Could not mark %s", row_name, exc_info=True)
+        self._set_row_override_error(row, kind == REJECTED)
+        self._set_row_override_note(row, note)
+        # "Edit to set it for this host" is false while Settings force the
+        # option; the note replaces it, and it returns with the override gone.
         if row_name in (getattr(self, "_inherited_row_handlers", None) or {}):
             self._set_row_inherited_note(
-                row, "" if note else inherited_note_text()
+                row, note if kind else self._inherited_advice(row_name)
             )
+
+    def _inherited_advice(self, row_name: str) -> str:
+        """The tooltip of a row showing an inherited value: where it comes
+        from, and that editing it sets it for this host."""
+        keyword = dict(OVERRIDABLE_ROWS).get(row_name)
+        answer = getattr(self, "_editor_answer", None)
+        source = ""
+        if keyword and answer is not None:
+            try:
+                source = answer.inherited_note(keyword)
+            except Exception:
+                source = ""
+        return inherited_note_text(source)
 
     def _advanced_option_note(
         self, keyword: str, value: str
     ) -> Optional[Tuple[str, bool]]:
-        """``(note, unused)`` for an Advanced-tab option, or None.
+        """``(note, unused)`` for an Extra Options row, or None.
 
         *unused* is False only for an option Settings add to rather than
         replace: both values are used there.
         """
-        forced = getattr(self, "_forced_options", None) or {}
-        lowered = keyword.strip().lower()
-        if lowered in forced:
-            note = advanced_option_note(keyword, value, forced)
-            unused = lowered not in EXTRA_OPTIONS_ADDED_NOT_REPLACED
-        else:
-            note = earlier_note(
-                keyword, value, getattr(self, "_earlier_directives", None) or {}
-            )
-            unused = True
-        return (note, unused) if note else None
+        answer = getattr(self, "_editor_answer", None)
+        added = added_by_settings_note(keyword, answer)
+        if added:
+            return added, False
+        if answer is None:
+            return None
+        verdict = answer.line_verdict_of(keyword, value)
+        if verdict.tag and verdict.note:
+            return verdict.note, True
+        return None
 
     def _overridden_field_counts(self) -> Tuple[int, int]:
-        """``(by Settings, by an earlier block)``: fields set here and not used."""
-        forced = getattr(self, "_forced_options", None) or {}
-        earlier = getattr(self, "_earlier_directives", None) or {}
-        by_settings = by_earlier = 0
-        if not forced and not earlier:
+        """``(by Settings, by an earlier block)``: lines set here, not used."""
+        answer = getattr(self, "_editor_answer", None)
+        if answer is None:
             return 0, 0
-        # Only what this connection sets and loses: a field that simply
-        # takes the global value is not a conflict.
-        for row_name, keyword in OVERRIDABLE_ROWS:
-            row = getattr(self, row_name, None)
-            if getattr(row, "_sshpilot_override_state", None) != OVERRIDDEN:
-                continue
-            if suppressing_option(keyword, forced) is not None:
-                by_settings += 1
-            else:
-                by_earlier += 1
-        tab = getattr(self, "advanced_tab", None)
-        entries = tab.get_config_entries() if tab is not None else ()
-        for keyword, value in entries:
-            lowered = keyword.strip().lower()
-            if lowered in forced:
-                if lowered in EXTRA_OPTIONS_ADDED_NOT_REPLACED:
-                    continue
-                if advanced_option_note(keyword, value, forced):
-                    by_settings += 1
-            elif earlier_note(keyword, value, earlier):
-                by_earlier += 1
-        return by_settings, by_earlier
+        return answer.unused_count()
 
     def _overridden_field_count(self) -> int:
         return sum(self._overridden_field_counts())
@@ -824,25 +498,30 @@ class ConnectionDialogOverridesMixin:
             on_saved=self._on_ssh_config_saved,
         )
 
+    def _reveal_config_line(self, target) -> None:
+        """A "No effect" tag was clicked: open Advanced Configuration at the
+        line used instead, as the same tag does in Advanced Configuration."""
+        parent = getattr(self, "parent_window", None)
+        opener = getattr(parent, "open_advanced_config", None)
+        if not callable(opener):
+            return
+        file, line = target
+        connection = getattr(self, "connection", None)
+        host = (getattr(connection, "nickname", "") or "") if connection is not None else ""
+        opener(
+            host=host, line=line, file=file or "",
+            over=self, on_saved=self._on_ssh_config_saved,
+        )
+
     def _on_ssh_config_saved(self) -> None:
-        """The file changed under this dialog: ask again what decides each field.
+        """The file changed under this dialog: ask OpenSSH again.
 
         Only the marks and the inherited values are refreshed. What the user
         typed stays, and a save still writes only the fields changed here.
         """
-        names = ["_load_earlier_directives_async"]
-        if getattr(self, "is_editing", False):
-            # A saved host shows inherited values dimmed in its empty fields.
-            # (A search-box target fills them as its own values instead,
-            # once, when the dialog opens; that is not repeated here.)
-            names.append("_load_inherited_values_async")
-        for name in names:
-            reload = getattr(self, name, None)
-            if callable(reload):
-                try:
-                    reload()
-                except Exception:
-                    logger.debug("Could not refresh after an SSH config save", exc_info=True)
+        refresh = getattr(self, "_schedule_effective_refresh", None)
+        if callable(refresh):
+            refresh(0)
 
     def _sync_override_banner(self) -> None:
         self._sync_config_buttons()
@@ -861,33 +540,26 @@ class ConnectionDialogOverridesMixin:
                 banner.set_use_markup(False)
             except Exception:
                 pass
-            # Solid error colours (style.css): a muted grey banner was easy to
-            # miss above the form.
-            banner.add_css_class("error")
+            # A plain banner: nothing is wrong, the connection works; the
+            # fields are marked. The button shows the lines that decide.
+            banner.set_button_label(_("Advanced Configuration"))
+            banner.connect("button-clicked", self._on_advanced_config_clicked)
             self._override_banner = banner
             try:
                 self.content_mount.prepend(banner)
             except Exception:
                 logger.debug("Could not mount the override banner", exc_info=True)
         if show:
-            # No button: this dialog is modal, so a Settings window opened
-            # from it could not be used until the dialog is closed.
-            if by_settings and by_earlier:
-                title = _(
-                    "Settings ▸ SSH Options and an earlier block of your SSH "
-                    "configuration override some settings of this "
-                    "connection. They are marked below."
-                )
-            elif by_earlier:
-                title = _(
-                    "An earlier block of your SSH configuration overrides "
-                    "some settings of this connection. They are marked below."
-                )
-            else:
-                title = _(
-                    "Settings ▸ SSH Options override some settings of this "
-                    "connection. They are marked below."
-                )
+            # Advanced Configuration's own sentences, counts and all: the
+            # pages holding the marked fields are flagged in the sidebar.
+            from .gtk import advanced_config_messages as messages
+
+            parts = []
+            if by_earlier:
+                parts.append(messages.precedence_problem(by_earlier))
+            if by_settings:
+                parts.append(messages.settings_problem(by_settings))
+            title = " ".join(parts)
             banner.set_title(title)
         banner.set_revealed(show)
         # The marked fields may be on pages other than the one shown.

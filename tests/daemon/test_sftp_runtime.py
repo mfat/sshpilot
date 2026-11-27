@@ -132,7 +132,16 @@ class _FakeSftpClient:
         self.directories.add(path)
 
     def open(self, path, mode):
+        if mode == "xb" and (path in self.files or path in self.directories):
+            raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "exists")
         return _File(self, path, mode)
+
+    def rename(self, old, new):
+        if old not in self.files:
+            raise sftp_proto.SFTPError(sftp_proto.FX_NO_SUCH_FILE, "missing")
+        if new in self.files or new in self.directories:
+            raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "exists")
+        self.files[new] = self.files.pop(old)
 
     def remove(self, path):
         self.remove_calls.append(path)
@@ -314,7 +323,11 @@ def test_remote_copy_uses_server_side_copy_and_falls_back(copy_error):
         client_id=owner,
     )
 
-    assert client.copy_data_calls == [("/source.txt", "/copy.txt")]
+    # The server copies into a staging sibling, published as /copy.txt.
+    [(copied_from, staged)] = client.copy_data_calls
+    assert copied_from == "/source.txt"
+    assert staged.startswith("/.sshpilot-") and staged.endswith(".part")
+    assert set(client.files) == {"/source.txt", "/copy.txt"}
     assert client.files["/copy.txt"] == b"payload"
 
 

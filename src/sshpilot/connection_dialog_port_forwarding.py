@@ -160,6 +160,7 @@ class ConnectionDialogPortForwardingMixin:
 
         # Reload the rules UI
         self.load_port_forwarding_rules()
+        self._autosave_forwarding_changes()
 
         logger.info(f"Deleted port forwarding rule: {rule}")
 
@@ -445,6 +446,7 @@ class ConnectionDialogPortForwardingMixin:
             self.forwarding_rules.append(rule)
 
         self.load_port_forwarding_rules()
+        self._autosave_forwarding_changes()
         return True
 
     def _apply_rule_editor_defaults_for_type(
@@ -653,5 +655,8 @@ class ConnectionDialogPortForwardingMixin:
         dialog.present()
 
     def _autosave_forwarding_changes(self):
-        """Disabled autosave to avoid log floods; saving occurs on dialog Save."""
-        return
+        """The rules changed. Nothing is saved here (that happens on Save);
+        OpenSSH is asked again about the form, as for any other field."""
+        refresh = getattr(self, "_schedule_effective_refresh", None)
+        if callable(refresh):
+            refresh()

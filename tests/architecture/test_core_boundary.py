@@ -139,11 +139,15 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("preferences.py", "settings", "EXTRA_OPTIONS_ADDED_NOT_REPLACED"),
         ("preferences.py", "settings", "EXTRA_OPTIONS_WITH_OWN_SETTING"),
         ("connection_dialog_overrides.py", "settings", "EXTRA_OPTIONS_ADDED_NOT_REPLACED"),
-        ("connection_dialog_overrides.py", "settings", "forced_options"),
         # -- pure normaliser for the tri-state Compression value ------------
         ("ssh_connection_builder.py", "settings.ssh_overrides", "coerce_yes_no_unset"),
         ("ssh_connection_builder.py", "settings.ssh_overrides", "select_override_args"),
         ("ssh_connection_builder.py", "settings.ssh_overrides", "keepalive_fallback_args"),
+        # -- pure: which Settings control forces an option (a code, no I/O;
+        #    the snapshot it reads comes from the daemon) -----------------
+        ("advanced_config_window.py", "settings.ssh_overrides", "override_source"),
+        ("advanced_config_window.py", "settings.ssh_overrides", "OverrideSource"),
+        ("gtk/advanced_config_messages.py", "settings.ssh_overrides", "OverrideSource"),
         # -- pure config.json version policy (no I/O; the daemon migrates) --
         ("config.py", "settings", "SettingsFileError"),
         ("config.py", "settings", "upgrade_settings"),
@@ -292,6 +296,9 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
     ("startup_info.py", "subprocess"): "frontend",
     ("startup_info.py", "ssh_binary"): "frontend",  # ssh -V version probe
     ("sshpilot_agent.py", "subprocess"): "frontend",  # local getent lookups
+    # Wraps Popen so host programs started from the AppImage get the host's
+    # environment back; it launches nothing itself.
+    ("appimage_env.py", "subprocess"): "frontend",
 }
 
 

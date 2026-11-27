@@ -13,6 +13,7 @@ both changes at once, so:
 * editing an older profile keeps the logins of the hosts that use it.
 """
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -77,8 +78,12 @@ def upgraded(tmp_path):
     for name in ("config", "login_profiles.json"):
         shutil.copy(FIXTURE / name, tmp_path / name)
     state = (FIXTURE / "connections.json").read_text(encoding="utf-8")
+    # "@ROOT@/config" sits inside JSON strings: the path goes in as 6.4.4
+    # wrote it on this platform, escaped as json.dump escapes it (Windows
+    # paths carry backslashes).
     (tmp_path / "connections.json").write_text(
-        state.replace("@ROOT@", str(tmp_path)), encoding="utf-8"
+        state.replace("@ROOT@/config", json.dumps(str(tmp_path / "config"))[1:-1]),
+        encoding="utf-8",
     )
     root = tmp_path / "config"
     repo = ConnectionRepository(

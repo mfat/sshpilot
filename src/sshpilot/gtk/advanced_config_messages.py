@@ -92,6 +92,12 @@ def block_status(disabled: bool, matched: Optional[bool], is_global: bool) -> tu
     return ("", "muted", "")
 
 
+def order_skipped_text() -> str:
+    """Matching Order, for a block whose Host or Match line does not take
+    the host checked: OpenSSH reads past it."""
+    return _("Does not match this host: OpenSSH skips it")
+
+
 def related_status(disabled: bool, related: Optional[bool], is_global: bool) -> tuple:
     """A block's pill while the block picked names no host of its own (a
     pattern, a Match rule): whether the two apply to a host in common."""
@@ -108,13 +114,12 @@ def related_note(hosts) -> str:
     if not hosts:
         return _(
             "The picked block applies to none of the hosts this configuration "
-            "names. Search for a host name in the sidebar to see what OpenSSH "
-            "would use for it."
+            "names. Type a host name above to see what OpenSSH would use for it."
         )
     shown = ", ".join(hosts[:12]) + (", …" if len(hosts) > 12 else "")
     return _(
-        "The picked block applies to: {hosts}. Pick one of them to see what "
-        "OpenSSH would use for it."
+        "The picked block applies to: {hosts}. Type one of them, or any host "
+        "name, above to see what OpenSSH would use for it."
     ).format(hosts=shown)
 
 
@@ -127,6 +132,16 @@ def applies_to_none() -> str:
     return _("Applies to none of the hosts this configuration names.")
 
 
+def more_hosts(count: int) -> str:
+    """The button that shows the rest of the hosts a block applies to."""
+    return ngettext("{count} more host", "{count} more hosts", count).format(count=count)
+
+
+def fewer_hosts() -> str:
+    """The button that folds the hosts a block applies to back up."""
+    return _("Show Less")
+
+
 def show_host_block(host: str) -> str:
     """The tooltip of a host a pattern block applies to: a link to it."""
     return _("Show the block of {host}").format(host=host)
@@ -134,7 +149,7 @@ def show_host_block(host: str) -> str:
 
 def no_host_text() -> str:
     """While the block picked names no host and none is kept in question."""
-    return _("Pick a block that names a host to see what OpenSSH would use for it.")
+    return _("Type a host name above to see what OpenSSH would use for it.")
 
 
 def block_title(kind: str, patterns: str) -> str:
@@ -243,10 +258,36 @@ def used_instead_markup(value: str, place: str, forced: bool = False) -> str:
     shown = f"<tt>{escape(value)}</tt>"
     if forced:
         # Translators: {value} is an option's value, e.g. "Settings ▸ SSH Options use 7".
-        return escape(_("Settings ▸ SSH Options use {value}")).replace("{value}", shown)
+        sentence = escape(_("Settings ▸ SSH Options use {value}")).replace("{value}", shown)
+        # A link: the label that shows it opens the setting.
+        title = escape(open_settings_text(), {'"': '&quot;'})
+        return f'<a href="{SETTINGS_LINK}" title="{title}">{sentence}</a>'
     # Translators: e.g. "OpenSSH uses 10.0.0.5 from line 3 (Host zoo)".
     return escape(_("OpenSSH uses {value} from {place}")).replace(
         "{value}", shown).replace("{place}", escape(place))
+
+
+def used_instead_text(value: str, place: str, forced: bool = False) -> str:
+    """:func:`used_instead_markup` as plain text, for a tooltip."""
+    if forced:
+        return _("Settings ▸ SSH Options use {value}").format(value=value)
+    return _("OpenSSH uses {value} from {place}").format(value=value, place=place)
+
+
+def inherited_text(value: str, source, *, forced: bool = False,
+                   default: bool = False) -> str:
+    """What a field the block leaves empty gets, and from where: worded as
+    a line that goes unused is, since the value is decided the same way."""
+    if forced:
+        return used_instead_text(value, "", forced=True)
+    if source is not None:
+        return used_instead_text(
+            value, where(source.file, source.line, source.block)
+        )
+    if default:
+        # Translators: {value} is an option's value, e.g. "OpenSSH default: 22".
+        return _("OpenSSH default: {value}").format(value=value)
+    return ""
 
 
 def jump_text(place: str) -> str:
@@ -270,6 +311,35 @@ def default_source() -> str:
 
 def forced_source() -> str:
     return _("Settings ▸ SSH Options")
+
+
+#: The link a note about Settings ▸ SSH Options carries (see
+#: :func:`used_instead_markup`).
+SETTINGS_LINK = "sshpilot-settings:ssh-options"
+
+
+def open_settings_text() -> str:
+    """The tooltip of whatever opens Settings ▸ SSH Options."""
+    return _("Open Settings ▸ SSH Options")
+
+
+def settings_row_title(source) -> str:
+    """The title of the Settings ▸ SSH Options control that forces an
+    option (an :class:`OverrideSource` other than the free-form list,
+    whose rows have no title): the row Settings highlights. The same
+    strings as the page's own."""
+    from ..core.settings.ssh_overrides import OverrideSource as S
+
+    return {
+        S.CONNECT_TIMEOUT: _("Connect Timeout (s)"),
+        S.ADDRESS_FAMILY: _("AddressFamily"),
+        S.STRICT_HOST_KEY_CHECKING: _("StrictHostKeyChecking"),
+        S.COMPRESSION: _("Compression"),
+        S.VERBOSITY: _("SSH Verbosity (-v)"),
+        S.DEBUG: _("Enable SSH Debug Logging"),
+        S.MULTIPLEXING: _("Enable SSH connection multiplexing"),
+        S.LEGACY_ALGORITHMS: _("Legacy device compatibility"),
+    }.get(source, "")
 
 
 def unknown_source() -> str:

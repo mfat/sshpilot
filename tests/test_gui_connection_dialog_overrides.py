@@ -1,12 +1,14 @@
-"""The real connection dialog marks what Settings ▸ SSH Options override."""
+"""The real connection dialog marks its fields from OpenSSH's answer for the edit.
+
+OpenSSH itself answers (``tests.editor_answer_rig``): the daemon's service on
+a temporary configuration, with Settings ▸ SSH Options as given.
+"""
 from __future__ import annotations
 
 import time
-import types
 
 import pytest
 
-from sshpilot.api.models.settings import GlobalSshOverrides
 
 pytestmark = pytest.mark.gui
 
@@ -23,18 +25,6 @@ class _Manager:
     def get_metadata(self, n): return {}
 
 
-def _icon_name(image):
-    """The icon an image shows. The app's resolver (``icon_utils``) stores a
-    GIcon rather than a plain name once it has patched ``Gtk.Image``."""
-    name = image.get_icon_name()
-    if name:
-        return name
-    gicon = image.get_gicon()
-    if hasattr(gicon, "get_names"):
-        return gicon.get_names()[0]
-    return gicon.get_file().get_basename().rsplit(".", 1)[0]
-
-
 def _pump(until, seconds=3.0):
     from gi.repository import GLib
 
@@ -46,40 +36,78 @@ def _pump(until, seconds=3.0):
         time.sleep(0.01)
 
 
-def _dialog(*forced, ready=True):
+def _parent(text="", forced=(), ready=True):
     from gi.repository import Gtk
-    from sshpilot.connection_dialog import ConnectionDialog
     from sshpilot.plugins.loader import ensure_builtin_protocols
+    from tests.editor_answer_rig import RealConfigClient
 
     ensure_builtin_protocols()
-    snapshot = GlobalSshOverrides(
-        revision="r1", connect_timeout=0, strict_host_key_checking="",
-        compression="", verbosity=0, debug_enabled=False, forced_options=forced,
-    )
     parent = Gtk.Window()
     parent.connection_manager = _Manager()
     parent._daemon_ready = lambda: ready
-    parent.client = types.SimpleNamespace(get_global_ssh_overrides=lambda: snapshot)
-    return ConnectionDialog(
+    # OpenSSH itself answers, through the daemon's service, on *text*.
+    parent.client = RealConfigClient(text, forced=forced)
+    return parent
+
+
+def _dialog(*forced, ready=True, text="", nickname="web"):
+    """A new connection named *nickname* (its block goes to the end of
+    *text*), with *forced* as Settings ▸ SSH Options."""
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    parent = _parent(text, forced, ready)
+    dialog = ConnectionDialog(
         parent, connection=None, connection_manager=parent.connection_manager
     )
+    if nickname:
+        dialog.nickname_row.set_text(nickname)
+    return dialog
+
+
+def _saved(text, **fields):
+    """The dialog on the saved host ``web`` of *text*."""
+    from sshpilot.connection_dialog import ConnectionDialog
+    from sshpilot.connection_model import Connection
+
+    parent = _parent(text)
+    connection = Connection({
+        "nickname": "web", "host": "web", "hostname": "web.example.com",
+        "__authored_directives": ("hostname",) + tuple(fields.pop("authored", ())),
+        **fields,
+    })
+    return ConnectionDialog(
+        parent, connection=connection, connection_manager=parent.connection_manager
+    )
+
+
+def _state(row):
+    return getattr(row, "_sshpilot_override_state", None)
+
+
+def _tag(row):
+    label = getattr(row, "_sshpilot_override_pill", None)
+    return label.get_label() if label is not None and label.get_visible() else ""
 
 
 def test_dialog_marks_forced_fields_and_reveals_the_banner(gui):
     dialog = _dialog("User=deploy", "ForwardX11=yes", "ServerAliveInterval=15")
     dialog.username_row.set_text("alice")
-    dialog.advanced_tab.set_config_entries([("ServerAliveInterval", "90")])
-    _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
+    dialog.advanced_tab.set_option("ServerAliveInterval", "90")
+    _pump(lambda: _state(dialog.username_row) == "overridden")
 
-    assert dialog._forced_options["user"] == "deploy"
-    assert dialog.username_row._sshpilot_override_icon.get_visible()
-    assert dialog.x11_row._sshpilot_override_icon.get_visible()
-    assert getattr(dialog.port_row, "_sshpilot_override_icon", None) is None
+    assert _tag(dialog.username_row) == "Overridden"
+    assert "deploy" in dialog.username_row.get_tooltip_text()
+    assert dialog.username_row.has_css_class("warning")
+    # Off, and Settings forward X11: the row names who decides.
+    assert _state(dialog.x11_row) == "global"
+    assert _tag(dialog.x11_row) == "Settings ▸ SSH Options"
+    assert _state(dialog.port_row) != "overridden"
     (row,) = dialog.advanced_tab.option_list.rows()
     assert "15" in row.note_label.get_label()
     assert dialog._override_banner.get_revealed()
-    # Solid error colours from style.css, so it is not missed.
-    assert dialog._override_banner.has_css_class("error")
+    # A plain banner (nothing is wrong), with a way to the deciding lines.
+    assert not dialog._override_banner.has_css_class("error")
+    assert dialog._override_banner.get_button_label() == "Advanced Configuration"
     # Informing only: the value stays, and stays editable.
     assert dialog.username_row.get_text() == "alice"
     assert dialog.username_row.get_sensitive()
@@ -88,20 +116,21 @@ def test_dialog_marks_forced_fields_and_reveals_the_banner(gui):
 def test_keepalive_alone_does_not_raise_the_banner(gui):
     """The default: keepalive is forced, but this connection sets none."""
     dialog = _dialog("ServerAliveInterval=15", "ServerAliveCountMax=3")
-    _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
+    _pump(lambda: getattr(dialog, "_editor_answer", None) is not None)
 
-    assert dialog._forced_options
+    assert dialog._editor_answer.forced
     assert getattr(dialog, "_override_banner", None) is None
 
-    dialog.advanced_tab.set_config_entries([("ServerAliveInterval", "90")])
-    dialog.advanced_tab.on_entry_changed(None)
+    dialog.advanced_tab.set_option("ServerAliveInterval", "90")
+    _pump(lambda: getattr(dialog, "_override_banner", None) is not None
+          and dialog._override_banner.get_revealed())
     assert dialog._override_banner.get_revealed()
 
 
 def test_banner_is_hidden_for_a_non_ssh_protocol(gui):
     dialog = _dialog("User=deploy")
     dialog.username_row.set_text("alice")
-    _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
+    _pump(lambda: _state(dialog.username_row) == "overridden")
     assert dialog._override_banner.get_revealed()
 
     for index, backend in enumerate(dialog._protocol_backends):
@@ -113,122 +142,102 @@ def test_banner_is_hidden_for_a_non_ssh_protocol(gui):
 
 def test_no_daemon_leaves_the_dialog_unmarked(gui):
     dialog = _dialog("User=deploy", ready=False)
-    _pump(lambda: False, seconds=0.3)
-    assert not getattr(dialog, "_forced_options", None)
+    dialog.username_row.set_text("alice")
+    _pump(lambda: False, seconds=0.5)
+    assert getattr(dialog, "_editor_answer", None) is None
     assert getattr(dialog, "_override_banner", None) is None
 
 
 def test_an_empty_username_takes_the_forced_one_without_a_banner(gui):
     """Settings decide the account, but nothing this connection set is lost."""
     dialog = _dialog("User=deploy")
-    _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
+    _pump(lambda: _state(dialog.username_row) == "global")
 
-    icon = dialog.username_row._sshpilot_override_icon
-    assert icon.get_visible()
-    assert _icon_name(icon) == "dialog-information-symbolic"
+    assert _tag(dialog.username_row) == "Settings ▸ SSH Options"
     assert getattr(dialog, "_override_banner", None) is None
 
     dialog.username_row.set_text("alice")
-    assert _icon_name(icon) == "dialog-error-symbolic"
+    _pump(lambda: _state(dialog.username_row) == "overridden")
+    assert _tag(dialog.username_row) == "Overridden"
     assert dialog._override_banner.get_revealed()
 
 
 def test_jump_host_loses_to_a_forced_proxy_command_in_the_real_dialog(gui):
     dialog = _dialog("ProxyCommand=nc proxy.example.com 22")
     dialog.proxy_jump_row.set_text("bastion")
-    _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
-
-    assert _icon_name(dialog.proxy_jump_row._sshpilot_override_icon) == (
-        "dialog-error-symbolic"
-    )
+    _pump(lambda: _state(dialog.proxy_jump_row) == "overridden")
+    assert _state(dialog.proxy_jump_row) == "overridden"
     assert dialog._override_banner.get_revealed()
 
 
 def test_dialog_marks_a_field_an_earlier_block_beats(gui):
     """`Host *` before the host's own block decides User in OpenSSH, and the
-    app launches plain `ssh <alias>`. The editor says so on the field."""
-    from gi.repository import Gtk
-    from sshpilot.api.models.connections import (
-        EarlierDirective,
-        EffectiveConfigComparison,
+    app launches plain `ssh <alias>`. The editor marks the field as Advanced
+    Configuration marks the line."""
+    dialog = _saved(
+        "Host *\n    User deploy\n\nHost web\n    HostName web.example.com\n"
+        "    User admin\n",
+        username="admin", authored=("user",),
     )
-    from sshpilot.connection_dialog import ConnectionDialog
-    from sshpilot.connection_model import Connection
-    from sshpilot.plugins.loader import ensure_builtin_protocols
+    _pump(lambda: _state(dialog.username_row) == "overridden")
 
-    ensure_builtin_protocols()
-    comparison = EffectiveConfigComparison(
-        connection_id="web", host="web", available=True,
-        full=("user deploy", "hostname web.example.com", "port 22"),
-        earlier=(
-            EarlierDirective(
-                key="user", value="deploy", block="Host *",
-                file="/home/me/.ssh/config", line=2,
-            ),
-        ),
+    assert _tag(dialog.username_row) == "No effect"
+    # The note follows the field's own check ("Valid username").
+    assert dialog.username_row.get_tooltip_text().endswith(
+        "\nOpenSSH uses deploy from line 2 (Host *)"
     )
-    snapshot = GlobalSshOverrides(
-        revision="r1", connect_timeout=0, strict_host_key_checking="",
-        compression="", verbosity=0, debug_enabled=False, forced_options=(),
-    )
-    parent = Gtk.Window()
-    parent.connection_manager = _Manager()
-    parent._daemon_ready = lambda: True
-    parent.client = types.SimpleNamespace(
-        get_global_ssh_overrides=lambda: snapshot,
-        get_effective_config=lambda _cid: comparison,
-    )
-    connection = Connection({
-        "nickname": "web", "host": "web", "hostname": "web.example.com",
-        "username": "admin",
-        "__authored_directives": ("hostname", "user"),
-    })
-    dialog = ConnectionDialog(
-        parent, connection=connection, connection_manager=parent.connection_manager
-    )
-    _pump(lambda: bool(getattr(dialog, "_earlier_directives", None)))
-
-    icon = dialog.username_row._sshpilot_override_icon
-    assert icon.get_visible()
-    assert _icon_name(icon) == "dialog-error-symbolic"
-    tooltip = dialog.username_row.get_tooltip_text()
-    assert "deploy" in tooltip and "Host *" in tooltip and "line 2" in tooltip
     assert dialog._override_banner.get_revealed()
-    assert "earlier block" in dialog._override_banner.get_title()
+    # Advanced Configuration's own sentence for the same line.
+    assert dialog._override_banner.get_title() == (
+        "1 directive will not take effect due to configuration precedence."
+    )
     # Informing only: the value stays, and stays editable.
     assert dialog.username_row.get_text() == "admin"
     assert dialog.username_row.get_sensitive()
-
-    # Drawn like a refused value, but Save is not blocked by it.
-    assert dialog.username_row.has_css_class("error")
+    # Struck and tinted, not red: red is for a line OpenSSH rejects. Save
+    # is not blocked.
+    assert dialog.username_row.has_css_class("warning")
+    assert not dialog.username_row.has_css_class("error")
+    assert dialog.username_row.get_delegate()._sshpilot_struck
     assert dialog.save_button.get_sensitive()
 
-    # Agreeing with the earlier block loses nothing.
-    dialog.username_row.set_text("deploy")
-    assert not icon.get_visible()
-    assert not dialog.username_row.has_css_class("error")
+    # Cleared, the field sets nothing and names the block that decides.
+    dialog.username_row.set_text("")
+    _pump(lambda: _state(dialog.username_row) == "global")
+    # Emptied: the tag says what the row gets, as a placeholder cannot.
+    assert _tag(dialog.username_row) == "Not set (deploy, from Host *)"
     assert not dialog._override_banner.get_revealed()
+
+
+def test_issue_1406_extra_options_lists_what_the_host_inherits(gui):
+    """A `Host *` after the host's block: the Extra Options page lists the
+    option it sets, where it comes from, and can set it for this host."""
+    dialog = _saved(
+        "Host web\n    HostName web.example.com\n\nHost *\n    Compression yes\n"
+    )
+    tab = dialog.advanced_tab
+    _pump(lambda: tab.inherited_group.get_visible())
+
+    assert tab.inherited_group.get_visible()
+    (row,) = tab._inherited_rows
+    assert (row.get_title(), row.get_subtitle()) == ("Compression", "yes")
+    assert tab._inherited_shown == (("Compression", "yes", "line 5 (Host *)"),)
+
+    tab.set_option("Compression", "no")
+    _pump(lambda: not tab.inherited_group.get_visible())
+    assert not tab.inherited_group.get_visible()
+    assert tab.get_extra_ssh_config() == "Compression no"
 
 
 def test_the_config_button_opens_advanced_configuration_over_the_dialog(gui):
     """The dialog is modal, so what it opens must be opened over it to be
     usable. Its one way into the configuration is Advanced Configuration,
-    at this host's block; the fields are re-marked after a save there."""
-    from gi.repository import Gtk
+    at this host's block; OpenSSH is asked again after a save there."""
     from sshpilot.connection_dialog import ConnectionDialog
     from sshpilot.connection_model import Connection
-    from sshpilot.plugins.loader import ensure_builtin_protocols
 
-    ensure_builtin_protocols()
-    snapshot = GlobalSshOverrides(
-        revision="r1", connect_timeout=0, strict_host_key_checking="",
-        compression="", verbosity=0, debug_enabled=False, forced_options=(),
-    )
     opened = []
-    parent = Gtk.Window()
-    parent.connection_manager = _Manager()
-    parent._daemon_ready = lambda: True
-    parent.client = types.SimpleNamespace(get_global_ssh_overrides=lambda: snapshot)
+    parent = _parent()
     parent.open_advanced_config = lambda **target: opened.append(target)
 
     new = ConnectionDialog(parent, connection_manager=parent.connection_manager)
@@ -251,141 +260,63 @@ def test_the_config_button_opens_advanced_configuration_over_the_dialog(gui):
     target = opened[-1]
     assert target["over"] is dialog and target["host"] == "web"
     assert target["file"] == "/home/u/.ssh/conf.d/web.conf"
-    reloads = []
-    dialog._load_earlier_directives_async = lambda: reloads.append("earlier")
-    dialog._load_inherited_values_async = lambda: reloads.append("inherited")
+    asked = []
+    dialog._schedule_effective_refresh = lambda delay=None: asked.append(delay)
     target["on_saved"]()  # Advanced Configuration saved
-    assert reloads == ["earlier", "inherited"]
+    assert asked == [0]
     dialog.close()
 
 
 def test_new_connection_is_checked_against_the_alias_being_typed(gui):
     """A new block goes to the end of the file, so `Host *` anywhere in it
-    decides first. The editor asks for the typed alias and marks the field."""
-    from gi.repository import Gtk
-    from sshpilot.api.models.connections import EarlierDirective
-    from sshpilot.connection_dialog import ConnectionDialog
-    from sshpilot.plugins.loader import ensure_builtin_protocols
-
-    ensure_builtin_protocols()
-    asked = []
-
-    def earlier(host):
-        asked.append(host)
-        if not host.endswith(".lab"):
-            return ()
-        return (
-            EarlierDirective(
-                key="user", value="labuser", block="Host *.lab",
-                file="/home/me/.ssh/config", line=2,
-            ),
-        )
-
-    snapshot = GlobalSshOverrides(
-        revision="r1", connect_timeout=0, strict_host_key_checking="",
-        compression="", verbosity=0, debug_enabled=False, forced_options=(),
-    )
-    parent = Gtk.Window()
-    parent.connection_manager = _Manager()
-    parent._daemon_ready = lambda: True
-    parent.client = types.SimpleNamespace(
-        get_global_ssh_overrides=lambda: snapshot,
-        get_earlier_directives=earlier,
-    )
-    dialog = ConnectionDialog(
-        parent, connection=None, connection_manager=parent.connection_manager
-    )
+    decides first. The editor asks about the typed alias and marks the field."""
+    dialog = _dialog(text="Host *.lab\n    User labuser\n", nickname="")
     dialog.username_row.set_text("admin")
     dialog.nickname_row.set_text("web.lab")
-    _pump(lambda: bool(getattr(dialog, "_earlier_directives", None)))
+    _pump(lambda: _state(dialog.username_row) == "overridden")
 
-    assert asked[-1] == "web.lab"
+    asked = dialog.parent_window.client.questions
+    assert asked[-1].create.nickname == "web.lab"
     tooltip = dialog.username_row.get_tooltip_text()
     assert "labuser" in tooltip and "Host *.lab" in tooltip
     assert dialog._override_banner.get_revealed()
 
     # Another alias, another answer: the mark goes away.
     dialog.nickname_row.set_text("web.prod")
-    _pump(lambda: asked[-1] == "web.prod" and not dialog._earlier_directives)
-    assert not dialog.username_row._sshpilot_override_icon.get_visible()
+    _pump(lambda: _state(dialog.username_row) is None)
+    assert _tag(dialog.username_row) == ""
     assert not dialog._override_banner.get_revealed()
 
 
 def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gui):
     """Not only text fields: every element that writes an option is judged."""
-    from gi.repository import Gtk
-    from sshpilot.api.models.connections import (
-        EarlierDirective,
-        EffectiveConfigComparison,
-    )
-    from sshpilot.connection_dialog import ConnectionDialog
     from sshpilot.connection_dialog_overrides import GLOBAL, OVERRIDDEN
-    from sshpilot.connection_model import Connection
-    from sshpilot.plugins.loader import ensure_builtin_protocols
 
-    ensure_builtin_protocols()
+    dialog = _saved(
+        "Host *\n    ForwardX11 yes\n    PreferredAuthentications publickey\n"
+        "    PermitLocalCommand no\n    ForwardAgent yes\n\n"
+        "Host web\n    HostName web.example.com\n"
+    )
+    _pump(lambda: _state(dialog.x11_row) == GLOBAL)
 
-    def line(key, value, number):
-        return EarlierDirective(
-            key=key, value=value, block="Host *",
-            file="/home/me/.ssh/config", line=number,
-        )
-
-    comparison = EffectiveConfigComparison(
-        connection_id="web", host="web", available=True,
-        full=("hostname web.example.com",),
-        earlier=(
-            line("forwardx11", "yes", 2),
-            line("preferredauthentications", "publickey", 3),
-            line("permitlocalcommand", "no", 4),
-            line("forwardagent", "yes", 5),
-        ),
-    )
-    snapshot = GlobalSshOverrides(
-        revision="r1", connect_timeout=0, strict_host_key_checking="",
-        compression="", verbosity=0, debug_enabled=False, forced_options=(),
-    )
-    parent = Gtk.Window()
-    parent.connection_manager = _Manager()
-    parent._daemon_ready = lambda: True
-    parent.client = types.SimpleNamespace(
-        get_global_ssh_overrides=lambda: snapshot,
-        get_effective_config=lambda _cid: comparison,
-    )
-    connection = Connection({
-        "nickname": "web", "host": "web", "hostname": "web.example.com",
-        "__authored_directives": ("hostname",),
-    })
-    dialog = ConnectionDialog(
-        parent, connection=connection, connection_manager=parent.connection_manager
-    )
-    _pump(lambda: bool(getattr(dialog, "_earlier_directives", None)))
-
-    # Off, nothing authored, yet X11 is forwarded: an information mark.
-    assert dialog.x11_row._sshpilot_override_state == GLOBAL
-    assert "ForwardX11" in dialog.x11_row.get_tooltip_text()
+    # Off, nothing authored, yet X11 is forwarded: the row names the block.
+    assert _tag(dialog.x11_row) == "from Host *"
+    assert "yes" in dialog.x11_row.get_tooltip_text()
     # A selector on Default while the earlier block decides.
-    assert dialog.forward_agent_row._sshpilot_override_state == GLOBAL
+    assert _state(dialog.forward_agent_row) == GLOBAL
     # The host sets no order; the row shows the one in force: nothing to say.
-    assert getattr(dialog.auth_order_row, "_sshpilot_override_state", None) is None
+    assert _state(dialog.auth_order_row) is None
     assert getattr(dialog, "_override_banner", None) is None or (
         not dialog._override_banner.get_revealed()
     )
 
-    # An order set here loses to the earlier list: it is not used. The rows
-    # can be moved once ssh -G has said what the host inherits. The daemon
-    # editor load starts that lookup (the contract suite covers it); this
-    # dialog is built from a bare Connection, so hand the section the
-    # answer the lookup ends in.
-    dialog.auth_policy.policy.set_inherited({"preferredauthentications": "publickey"})
-    dialog.auth_policy.sync()
-    assert dialog.auth_password_row._check.get_sensitive()
     # Password is not in the inherited order: checking it gives the host an
     # order of its own (publickey,password), which the earlier one beats.
+    assert dialog.auth_password_row._check.get_sensitive()
     dialog.auth_password_row._check.set_active(True)
     assert dialog.auth_policy.policy.order == ["publickey", "password"]
-    assert dialog.auth_order_row._sshpilot_override_state == OVERRIDDEN
-    assert dialog.auth_order_row._sshpilot_override_icon.get_visible()
+    _pump(lambda: _state(dialog.auth_order_row) == OVERRIDDEN)
+    assert _tag(dialog.auth_order_row) == "No effect"
     assert "publickey" in dialog.auth_order_row.get_tooltip_text()
     assert dialog._override_banner.get_revealed()
     # The header shows the order set here; the line below the list states
@@ -393,11 +324,12 @@ def test_switches_auth_method_and_local_command_are_marked_in_the_real_dialog(gu
     assert dialog.auth_order_row.get_subtitle() == "publickey, password"
     assert dialog.auth_policy.effective_row.get_subtitle() == "publickey"
     dialog.auth_policy.reset_button.emit("clicked")
+    _pump(lambda: not dialog._override_banner.get_revealed())
     assert not dialog._override_banner.get_revealed()
 
     # A local command cannot run while an earlier block forbids them.
     dialog.local_command_row.set_text("notify-send connected")
-    assert dialog.local_command_row._sshpilot_override_state == OVERRIDDEN
+    _pump(lambda: _state(dialog.local_command_row) == OVERRIDDEN)
     assert "PermitLocalCommand" in dialog.local_command_row.get_tooltip_text()
 
 
@@ -428,3 +360,19 @@ def test_advanced_configuration_opened_from_a_modal_dialog_is_an_ordinary_window
         fresh.close()
     finally:
         editor.destroy()
+
+
+def test_a_key_added_while_an_inherited_value_shows_is_saved(gui, tmp_path):
+    """Regression: an answer refilling an inherited row re-baselined the
+    whole form, so the added key was not in the save."""
+    key = tmp_path / "kwp4"
+    key.write_text("x")
+    dialog = _saved("Host web\n    HostName web.example.com\n\nHost *\n    User shared\n")
+    _pump(lambda: "username_row" in (getattr(dialog, "_inherited_row_handlers", None) or {}))
+    asked = len(dialog.parent_window.client.questions)
+    dialog.key_editor.add_path(str(key))
+    _pump(lambda: len(dialog.parent_window.client.questions) > asked)
+    _pump(lambda: False, seconds=0.5)
+    data = dialog._collect_connection_data()
+    assert "identity_files" in data["__changed_fields"]
+    assert "username" not in data["__changed_fields"]

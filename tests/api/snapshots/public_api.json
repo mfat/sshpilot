@@ -15,7 +15,7 @@
     "TerminalSubscription",
     "ValidationReason"
   ],
-  "api_implementation_version": "0.119",
+  "api_implementation_version": "0.120",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -262,6 +262,10 @@
     },
     "duplicate_connection": {
       "capability": "connections.write",
+      "status": "implemented"
+    },
+    "evaluate_connection_edit": {
+      "capability": "connections.config.read",
       "status": "implemented"
     },
     "evaluate_ssh_config_draft": {
@@ -840,6 +844,7 @@
     "detach_session",
     "detach_sftp",
     "duplicate_connection",
+    "evaluate_connection_edit",
     "evaluate_ssh_config_draft",
     "export_secret_backup",
     "fetch_public_keys",
@@ -1440,6 +1445,16 @@
         }
       ],
       "return": "ConnectionMutationResult"
+    },
+    "evaluate_connection_edit": {
+      "parameters": [
+        {
+          "kind": "positional_or_keyword",
+          "name": "request",
+          "type": "EvaluateConnectionEditRequest"
+        }
+      ],
+      "return": "ConnectionEditEvaluation"
     },
     "evaluate_ssh_config_draft": {
       "parameters": [
@@ -2979,6 +2994,9 @@
     "connections.duplicate": {
       "capability": "connections.write"
     },
+    "connections.evaluate_connection_edit": {
+      "capability": "connections.config.read"
+    },
     "connections.evaluate_ssh_config_draft": {
       "capability": "connections.config.read"
     },
@@ -3705,6 +3723,8 @@
     "ConfigSyntaxError",
     "ConfirmationPrompt",
     "ConnectionDetails",
+    "ConnectionEditEvaluation",
+    "ConnectionEditRefusal",
     "ConnectionEditorCapabilities",
     "ConnectionEditorDetails",
     "ConnectionHealth",
@@ -3752,6 +3772,7 @@
     "EDITABLE_FIELDS",
     "EarlierDirective",
     "EffectiveConfigComparison",
+    "EvaluateConnectionEditRequest",
     "EvaluateSshConfigDraftRequest",
     "ExecutionInteractionMode",
     "ExternalTerminalLaunchSpec",
@@ -3966,6 +3987,7 @@
     "SshConfigDraftSource",
     "SshConfigDraftValue",
     "SshConfigFileRef",
+    "SshConfigOwnLine",
     "SshConfigText",
     "SshConfigUnavailableReason",
     "StartScpTransferRequest",
@@ -4175,6 +4197,15 @@
       "forwarding_rule_count",
       "proxy_jump",
       "plugin_data"
+    ],
+    "ConnectionEditEvaluation": [
+      "host",
+      "file",
+      "text",
+      "own_lines",
+      "evaluation",
+      "without_own",
+      "refusal"
     ],
     "ConnectionEditorCapabilities": [
       "writable_fields",
@@ -4492,6 +4523,12 @@
       "protocol_version",
       "request_id",
       "error"
+    ],
+    "EvaluateConnectionEditRequest": [
+      "connection_id",
+      "update",
+      "create",
+      "without_own"
     ],
     "EvaluateSshConfigDraftRequest": [
       "text",
@@ -5414,6 +5451,11 @@
       "display_name",
       "writable"
     ],
+    "SshConfigOwnLine": [
+      "line",
+      "key",
+      "value"
+    ],
     "SshConfigText": [
       "text",
       "revision",
@@ -5699,6 +5741,13 @@
       "secrets.write",
       "secrets.operate",
       "secrets.transfer"
+    ],
+    "ConnectionEditRefusal": [
+      "invalid",
+      "name_taken",
+      "not_found",
+      "declaration",
+      "unreadable"
     ],
     "ConnectionHealth": [
       "unknown",

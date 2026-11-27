@@ -1064,7 +1064,9 @@ def test_window_f3_toggles_the_selected_file_manager_tab():
 def test_window_f3_leaves_terminal_tabs_and_hidden_tabs_alone():
     """Not a file manager tab, or not on screen: F3 is not handled, so it
     carries on to whatever else wants it."""
-    from sshpilot.terminal import TerminalWidget
+    # The class the handler checks against: other tests reload
+    # sshpilot.terminal, after which its TerminalWidget is a different class.
+    from sshpilot.window_tabs import TerminalWidget
 
     controller = _FileManagerController(False)
     terminal = TerminalWidget.__new__(TerminalWidget)
@@ -1157,51 +1159,89 @@ class _IdentityMap:
 
 def test_reveal_sidebar_expands_memberships_and_clears_filters(monkeypatch):
     from unittest.mock import Mock
-    from sshpilot import sidebar, sidebar_views
+    from sshpilot import sidebar_views, window as window_module
     from sshpilot.window_tabs import WindowTabsMixin
-    from sshpilot import window_tabs
-    monkeypatch.setattr(window_tabs.GLib, "idle_add", lambda fn: fn())
 
-    class Group:
+    class Header:
         def __init__(self, group_id):
             self.group_id = group_id
-            self.group_info = {"expanded": False}
-        def _toggle_expand(self):
-            self.group_info["expanded"] = True
+            self.expanded = False
 
-    class Section:
-        _expanded = False
-        def _toggle_expand(self):
-            self._expanded = True
+        def set_expanded(self, expanded):
+            self.expanded = expanded
 
-    monkeypatch.setattr(sidebar, "GroupRow", Group)
-    monkeypatch.setattr(sidebar, "SectionHeaderRow", Section)
+    class Section(Header):
+        section_id = "groups"
+
+    monkeypatch.setattr(window_module, "GroupRow", Header)
+    monkeypatch.setattr(window_module, "SectionHeaderRow", Section)
+    select_opened = window_module.MainWindow._select_opened_connection
     monkeypatch.setattr(sidebar_views, "show_view", Mock())
-    child, connection = object(), object()
-    root, nested, unrelated, section = Group("root"), Group("nested"), Group("other"), Section()
-    selected = Mock()
+    child, connection = object(), types.SimpleNamespace(id="web")
+    root, nested, unrelated, section = Header("root"), Header("nested"), Header("other"), Section(None)
+    selected = Mock(_group_id="nested")
+    selected.get_visible.return_value = False
+    selected.is_selected.side_effect = [False, True]
+
+    class ListBox(list):
+        add_tick_callback = Mock()
+        get_ancestor = Mock(return_value=None)
+
+    listbox = ListBox([section, root, nested, unrelated])
     window = types.SimpleNamespace(
+        connection_manager=types.SimpleNamespace(get_connection_by_id=lambda key: connection),
         _tab_menu_target=lambda: (None, child),
         terminal_to_connection={child: connection},
         _search_popup=types.SimpleNamespace(visible=True, hide=Mock()),
         _tag_filter="production", search_entry=Mock(),
         lookup_action=lambda name: None,
-        _apply_sidebar_visible=Mock(), rebuild_connection_list=Mock(),
+        _reveal_sidebar=Mock(), rebuild_connection_list=Mock(),
         complete_pending_connection_rows=Mock(),
         group_manager=types.SimpleNamespace(
-            get_connection_groups=lambda conn: ["nested"],
             groups={"nested": {"parent_id": "root"}, "root": {}},
         ),
-        connection_list=[section, root, nested, unrelated],
+        connection_list=listbox,
         _rows_for_connection=lambda conn: [selected],
         _select_only_row=Mock(),
     )
+    window._select_opened_connection = types.MethodType(select_opened, window)
     WindowTabsMixin._on_tabmenu_reveal_sidebar(window, None)
     assert window._tag_filter is None
     window.search_entry.set_text.assert_called_once_with("")
     window._search_popup.hide.assert_called_once_with(animate=False)
-    assert root.group_info["expanded"] and nested.group_info["expanded"]
-    assert not unrelated.group_info["expanded"]
-    assert section._expanded
+    window._reveal_sidebar.assert_called_once_with()
+    assert root.expanded and nested.expanded
+    assert not unrelated.expanded
+    assert section.expanded
     window._select_only_row.assert_called_once_with(selected)
+    callback, = listbox.add_tick_callback.call_args.args
+    callback(listbox, None)
+    callback(listbox, None)
     selected.grab_focus.assert_called_once()
+
+
+def test_selecting_saved_localhost_tab_reveals_current_sidebar_connection():
+    from sshpilot.connection_model import Connection
+
+    child = object()
+    terminal_host = Connection({"id": "loopback", "hostname": "localhost"})
+    sidebar_host = Connection({"id": "loopback", "hostname": "localhost"})
+    revealed = []
+    window = types.SimpleNamespace(
+        _update_content_theme_for_selected_tab=lambda: None,
+        _update_layout_toggle_state=lambda: None,
+        _update_command_snippets_button_visibility=lambda: None,
+        _is_start_tab_page=lambda page: False,
+        terminal_to_connection={child: terminal_host},
+        active_terminals={},
+        connection_manager=types.SimpleNamespace(
+            get_connection_by_id={"loopback": sidebar_host}.get,
+        ),
+        _select_opened_connection=lambda host: revealed.append(host) or True,
+    )
+    page = types.SimpleNamespace(get_child=lambda: child)
+    view = types.SimpleNamespace(get_selected_page=lambda: page)
+    _window_module().MainWindow.on_tab_selected(window, view)
+
+    assert revealed == [sidebar_host]
+    assert window.active_terminals[terminal_host] is child

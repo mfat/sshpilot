@@ -233,6 +233,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "connections.get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
     "connections.evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.evaluate_connection_edit": Capability.CONNECTIONS_CONFIG_READ,
     # Registers a target that can be launched, as connections.open_transient.
     "connections.open_draft_test": Capability.SESSIONS_WRITE,
     "connections.list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
@@ -520,6 +521,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.get_earlier_directives",
         "connections.get_inherited_auth",
         "connections.evaluate_ssh_config_draft",
+        "connections.evaluate_connection_edit",
         "connections.open_draft_test",
         "connections.list_config_conflicts",
         "connections.list_config_syntax_errors",
@@ -808,6 +810,9 @@ class RequestDispatcher:
             "connections.get_effective_config": self._handle_get_effective_config,
             "connections.get_earlier_directives": self._handle_get_earlier_directives,
             "connections.get_inherited_auth": self._handle_get_inherited_auth,
+            "connections.evaluate_connection_edit": (
+                self._handle_evaluate_connection_edit
+            ),
             "connections.evaluate_ssh_config_draft": (
                 self._handle_evaluate_ssh_config_draft
             ),
@@ -1518,6 +1523,43 @@ class RequestDispatcher:
                 )
             return ssh_config_draft_evaluation_to_wire(
                 self._connections.evaluate_ssh_config_draft(draft, superseded)
+            )
+
+        return DeferredResult(
+            operation=operation,
+            command_key=(SSH_CONFIG_DRAFT_COMMAND_KEY, owner),
+            on_rejected=lambda: None,
+        )
+
+    def _handle_evaluate_connection_edit(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.config_draft_codec import (
+            connection_edit_evaluation_to_wire,
+            evaluate_connection_edit_request_from_wire,
+        )
+
+        edit = evaluate_connection_edit_request_from_wire(request.params)
+        # A client's newest edit supersedes its earlier ones, as drafts do;
+        # counted apart from drafts, so the editor and Advanced
+        # Configuration (one client) do not cancel each other.
+        generations = self.__dict__.setdefault("_edit_generations", {})
+        owner = _state.client_id
+        generation = generations[owner] = generations.get(owner, 0) + 1
+
+        def superseded() -> bool:
+            return generations.get(owner) != generation
+
+        def operation():
+            if superseded():
+                raise SshPilotError(
+                    ErrorCode.OPERATION_CANCELLED,
+                    "The connection edit evaluation was superseded",
+                )
+            return connection_edit_evaluation_to_wire(
+                self._connections.evaluate_connection_edit(edit, superseded)
             )
 
         return DeferredResult(

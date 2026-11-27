@@ -1,3 +1,25 @@
+sshpilot (6.5.2-1) unstable; urgency=medium
+
+  * Release v6.5.2.
+  * Advanced Configuration - A new way to see and edit your SSH
+    configuration - Add and modify host blocks, and see how they work in
+    action
+  * Redesigned connection editor - better layout, grouping and visual
+    maps for port forwards and jump hosts
+  * Redesigned authentication options - you can now decide which login
+    methods are tried and set the order
+  * File manager can now work in single-pane or dual-pane mode
+  * Remote-to-remote file transfers are now supported
+  * Background file transfers - Transfers now run in the background,
+    with a progress indicator on the toolbar and on the tab
+  * New style for groups - Colored Grips is a new way to show group
+    colors
+  * Windows portable build - A portable build (zip) is available next to
+    the installer
+  * Many bug fixes and improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 27 Nov 2026 07:57:54 +0000
+
 sshpilot (6.5.1-1) unstable; urgency=medium
 
   * Release v6.5.1.

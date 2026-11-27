@@ -55,6 +55,8 @@ from .models.connections import (
     ConfigConflict,
     ConfigSyntaxError,
     EarlierDirective,
+    ConnectionEditEvaluation,
+    EvaluateConnectionEditRequest,
     EvaluateSshConfigDraftRequest,
     SshConfigDraftEvaluation,
     EffectiveConfigComparison,
@@ -437,6 +439,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_earlier_directives": Capability.CONNECTIONS_CONFIG_READ,
     "get_inherited_auth": Capability.CONNECTIONS_CONFIG_READ,
     "evaluate_ssh_config_draft": Capability.CONNECTIONS_CONFIG_READ,
+    "evaluate_connection_edit": Capability.CONNECTIONS_CONFIG_READ,
     "open_draft_test_connection": Capability.SESSIONS_WRITE,
     "list_config_conflicts": Capability.CONNECTIONS_CONFIG_READ,
     "list_config_syntax_errors": Capability.CONNECTIONS_CONFIG_READ,
@@ -934,6 +937,24 @@ class DaemonClient:
             return ssh_config_draft_evaluation_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid SSH config draft evaluation")
+
+    def evaluate_connection_edit(
+        self, request: EvaluateConnectionEditRequest
+    ) -> ConnectionEditEvaluation:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        from .transport.config_draft_codec import (
+            connection_edit_evaluation_from_wire,
+            evaluate_connection_edit_request_to_wire,
+        )
+
+        result = self._request(
+            "connections.evaluate_connection_edit",
+            evaluate_connection_edit_request_to_wire(request),
+        )
+        try:
+            return connection_edit_evaluation_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid connection edit evaluation")
 
     def open_draft_test_connection(
         self, request: EvaluateSshConfigDraftRequest

@@ -15,6 +15,8 @@ GC — that guarantee stays in manual QA on a real GTK build.
 import sys
 import types
 
+import pytest
+
 
 def _ensure_cairo_stub():
     if 'cairo' not in sys.modules:
@@ -238,6 +240,10 @@ def _fake_embed_with_panel(order):
         remove=lambda w: order.append(('remove', w)),
         append=lambda w: order.append(('append', w)),
     )
+    if not hasattr(FileManagerTabEmbed, '_layout_terminal_panels'):
+        # No Gtk.Box here: the module defines its plain fallback class,
+        # which has no terminal panels to lay out.
+        pytest.skip("needs the GTK FileManagerTabEmbed, not its fallback")
     for name in ('_layout_terminal_panels', '_release_terminal_split'):
         setattr(fake, name, types.MethodType(getattr(FileManagerTabEmbed, name), fake))
     return fake, paned

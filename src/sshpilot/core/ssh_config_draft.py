@@ -41,6 +41,7 @@ import re
 import secrets
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -434,8 +435,16 @@ def _stop(process: "subprocess.Popen") -> None:
         if os.name != "nt":
             os.killpg(process.pid, signal.SIGKILL)
         else:
+            # Windows has no process groups to kill: ending ssh leaves what
+            # a Match exec started running, holding the draft's folder.
+            # taskkill /T ends the whole tree.
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5, check=False, **hidden_console_kwargs(),
+            )
             process.kill()
-    except (OSError, ProcessLookupError):
+    except (OSError, ProcessLookupError, subprocess.SubprocessError):
         pass
     try:
         process.communicate(timeout=2)
@@ -597,7 +606,18 @@ def evaluate_draft(
             pending_exec=pending, forced=forced_values, **base
         )
 
-    with tempfile.TemporaryDirectory(prefix="sshpilot-config-draft-") as directory:
+    # A file still open on Windows (a Match exec command that outlived ssh)
+    # must not turn a finished evaluation into an error.
+    with tempfile.TemporaryDirectory(
+        prefix="sshpilot-config-draft-", ignore_cleanup_errors=True
+    ) as directory:
+        if sys.platform == "win32":
+            # Python 3.13+ gives the folder an OWNER RIGHTS entry that every
+            # file in it inherits; OpenSSH for Windows then refuses the
+            # draft and its included copies ("Bad permissions", exit 255).
+            from ..platform.windows.acl import drop_owner_rights
+
+            drop_owner_rights(directory)
         system_copy = _system_copy(system, directory) if system else None
         context_files = {os.path.abspath(system_copy): system} if system_copy else {}
         draft_file = os.path.join(directory, "config")
@@ -885,3 +905,45 @@ def _walk(
     if system:
         take_file(system)
     return tuple(lines), tuple(winners.values()), tuple(includes)
+
+
+# -- the host's own lines in a rendered file ---------------------------------
+
+
+def own_option_lines(text: str, host: str) -> Tuple[Tuple[int, str, str], ...]:
+    """``(line, keyword, value)`` of every option line of *host*'s own
+    ``Host`` blocks in *text*: the blocks whose ``Host`` line names it
+    literally (a pattern that matches it is another block)."""
+    from ..ssh_config_document import split_host_tokens
+
+    found: List[Tuple[int, str, str]] = []
+    for block in scan_blocks(text):
+        if block.kind != "host":
+            continue
+        try:
+            tokens = split_host_tokens(block.patterns)
+        except Exception:
+            tokens = block.patterns.split()
+        if host not in tokens:
+            continue
+        found.extend((item.line, item.keyword, item.value) for item in block.lines)
+    return tuple(found)
+
+
+def without_own_lines(text: str, host: str, keywords) -> str:
+    """*text* with *host*'s own lines for *keywords* left out: what the host
+    inherits for those keywords. Either spelling of a renamed keyword is
+    one setting."""
+    wanted = {canonical_keyword(keyword) for keyword in keywords}
+    dropped = {
+        line for line, keyword, _value in own_option_lines(text, host)
+        if canonical_keyword(keyword) in wanted
+    }
+    if not dropped:
+        return text
+    return "".join(
+        raw for number, raw in enumerate(
+            split_config_lines(text, keepends=True), start=1
+        )
+        if number not in dropped
+    )

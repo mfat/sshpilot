@@ -125,6 +125,34 @@ def strings_from_options(options: Iterable[Option]) -> Tuple[str, ...]:
     return tuple(f"{keyword}={value}" for keyword, value in options)
 
 
+#: The suggestion lists are menus ("menu" popovers), which mark only the row
+#: under the pointer: a row picked with Up/Down was selected unseen, so the
+#: keys looked dead. The selected row is marked as a menu marks its item.
+_SUGGESTION_CSS = """
+popover.keyword-suggestions list > row { border-radius: 6px; }
+popover.keyword-suggestions list > row:selected {
+  background-color: alpha(currentColor, 0.1);
+  color: inherit;
+}
+"""
+_suggestion_css_installed = False
+
+
+def style_keyword_suggestions(popover: Gtk.Popover) -> None:
+    """Style a keyword suggestion list (here and in Advanced
+    Configuration): the row Up/Down select is marked."""
+    global _suggestion_css_installed
+    display = Gdk.Display.get_default()
+    if not _suggestion_css_installed and display is not None:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(_SUGGESTION_CSS.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _suggestion_css_installed = True
+    popover.add_css_class("keyword-suggestions")
+
+
 class _OptionRow(Gtk.ListBoxRow):
     """One keyword/value pair with its remove button and error line."""
 
@@ -214,23 +242,25 @@ class _OptionRow(Gtk.ListBoxRow):
     def show_note(self, note: Optional[str], *, unused: bool = False) -> None:
         """Show a remark under the row; *unused* says the value is never used.
 
-        An unused value is drawn in Adwaita's error style, like a refused
-        one, though nothing is refused: the option is still saved.
+        An unused value is struck through and tinted, as Advanced
+        Configuration draws a line that has no effect: valid, still saved,
+        just not used. Adwaita's error style stays for a refused value.
         """
+        from .advanced_config_widgets import mark_unused
+
         unused = bool(note) and unused
         self.note_label.set_label(note or "")
         self.note_label.set_visible(bool(note))
         if unused:
             self.note_label.remove_css_class("dim-label")
-            self.note_label.add_css_class("error")
+            self.note_label.add_css_class("warning")
         else:
-            self.note_label.remove_css_class("error")
+            self.note_label.remove_css_class("warning")
             self.note_label.add_css_class("dim-label")
-        if not self.error:
-            if unused:
-                self.value_entry.add_css_class("error")
-            else:
-                self.value_entry.remove_css_class("error")
+        try:
+            mark_unused(self.value_entry, unused and not self.error)
+        except Exception:
+            pass
 
 
 class SshOptionList(Gtk.Box):
@@ -511,6 +541,7 @@ class SshOptionList(Gtk.Box):
             popover.set_position(Gtk.PositionType.BOTTOM)
             popover.set_halign(Gtk.Align.START)
             popover.add_css_class("menu")
+            style_keyword_suggestions(popover)
             names_box = Gtk.ListBox()
             names_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
             names_box.set_can_focus(False)

@@ -25,151 +25,58 @@ from .advanced_config_widgets import (  # noqa: E402
     LineDragItem,
     gap_row,
     lift_row,
-    pill,
+    mark_unused,
     set_class,
-    set_pill,
+    show_verdict,
+    verdict_pill,
 )
-from .api.models.connections import SshConfigDraftLineState as State  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
 from .connection_dialog_auth import canonical_keyword  # noqa: E402
+from .ssh_config_answer import (  # noqa: E402
+    NO_EFFECT,
+    OVERRIDDEN,
+    REJECTED,
+    ConfigAnswer,
+    LineVerdict,
+)
 from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap, block_category  # noqa: E402
-from .ssh_option_list import OPENSSH_KEYWORDS  # noqa: E402
+from .ssh_option_list import OPENSSH_KEYWORDS, style_keyword_suggestions  # noqa: E402
+from .route_strip import FlowLayout  # noqa: E402
 
 
-class AnswerView:
-    """What OpenSSH answered, as the Structured view reads it."""
+class AnswerView(ConfigAnswer):
+    """What OpenSSH answered, as the Structured view reads it: the shared
+    reader (:class:`ConfigAnswer`), plus where each of the draft's lines is."""
 
     def __init__(self, evaluation=None, lines: Optional[LineMap] = None, *,
                  host: str = "", applies=None, related_hosts=None,
                  current: bool = True) -> None:
-        #: The answer when OpenSSH evaluated the draft; None otherwise (no
-        #: host, a rejected draft, a command waiting for consent).
-        self.evaluation = evaluation if evaluation is not None and evaluation.evaluated else None
+        super().__init__(evaluation)
         self.lines = lines or LineMap({}, {})
         self.host = host
         self.applies = applies
         self.related_hosts = related_hosts
         #: The answer is about the text as it is now (not one edit behind).
         self.current = current
-        self.values: Dict[str, List[str]] = {}
-        self.sources: Dict[str, object] = {}
-        self.forced: set = set()
-        self.defaults: set = set()
-        self.states: Dict[int, object] = {}
-        # A rejected line is said whether or not the rest was evaluated.
-        self.errors: Dict[int, object] = {
-            error.line: error for error in getattr(evaluation, "errors", ()) or ()
-            if not error.file
-        }
-        if self.evaluation is not None:
-            for item in self.evaluation.values:
-                self.values.setdefault(item.key, []).append(item.value)
-            self.sources = {source.key: source for source in self.evaluation.sources}
-            self.forced = {item.key for item in self.evaluation.forced}
-            self.defaults = set(self.evaluation.defaults)
-            self.states = {item.line: item for item in self.evaluation.lines}
 
-    def inherited(self, keyword: str) -> tuple:
-        """``(value, where it comes from)`` for a field this block leaves
-        empty. Empty strings when there is no answer."""
-        values = self.values.get(keyword)
-        if not values:
-            return "", ""
-        source = messages.source_label(
-            self.sources.get(keyword),
-            forced=keyword in self.forced, default=keyword in self.defaults,
-        )
-        return ", ".join(values), source
-
-    def line_state(self, uid: int) -> tuple:
-        """``(state item, error)`` of an option line, by its uid."""
-        line = self.lines.options.get(uid, 0)
-        if not line:
-            return None, None
-        return self.states.get(line), self.errors.get(line)
-
-
-def _instead(answer: AnswerView, uid: int, keyword: str) -> str:
-    """While option line *uid* goes unused: markup saying what OpenSSH
-    takes instead and from where ("" when it is used, or when there is no
-    one host's answer to say it from, as for a pattern block)."""
-    item, error = answer.line_state(uid)
-    if error is not None or item is None or item.state not in (State.SHADOWED, State.FORCED):
-        return ""
-    values = answer.values.get(keyword.lower())
-    if not values:
-        return ""
-    value = ", ".join(values)
-    if item.state is State.FORCED:
-        return messages.used_instead_markup(value, "", forced=True)
-    place = messages.where(item.decided_file, item.decided_line, item.decided_block)
-    return messages.used_instead_markup(value, place)
-
-
-_STRUCK_ATTRS: list = []
-
-
-def _struck() -> "Pango.AttrList":
-    """The text attributes of a line that does not take effect (see
-    LineRow.show): made on first use, not at import (gi may be a stub)."""
-    if not _STRUCK_ATTRS:
-        attrs = Pango.AttrList()
-        attrs.insert(Pango.attr_strikethrough_new(True))
-        _STRUCK_ATTRS.append(attrs)
-    return _STRUCK_ATTRS[0]
+    def line_verdict(self, uid: int, keyword: str = "") -> LineVerdict:
+        """The mark of an option line, by its uid."""
+        return self.verdict(self.lines.options.get(uid, 0), keyword)
 
 
 def _state_pill(view: "StructuredView") -> Gtk.Label:
     """The pill that says what OpenSSH does with a line. A "No effect" one
     is a link: a click shows the line that is used instead, as a source
     does in Effective."""
-    label = pill(style="warning")
-    label._target = None
-    click = Gtk.GestureClick()
-    click.connect("released", lambda *_a: _follow_pill(view, label))
-    label.add_controller(click)
-    return label
+    return verdict_pill(lambda target: _follow(view, target))
 
 
-def _follow_pill(view: "StructuredView", label: Gtk.Label) -> None:
-    target = label._target
-    if target is None:
-        return
+def _follow(view: "StructuredView", target) -> None:
     file, line = target
     if file:
         view.controller.reveal_source(file, line)
     else:
         view.controller.reveal_line(line)
-
-
-def _set_pill_target(label: Gtk.Label, target) -> None:
-    if getattr(label, "_target", None) == target:
-        return
-    label._target = target
-    label.set_cursor_from_name("pointer" if target else None)
-    set_class(label, "advcfg-pill-link", target is not None)
-
-
-def _line_pill(label: Gtk.Label, item, error) -> bool:
-    """Say what OpenSSH does with a line: only what needs saying (no effect,
-    overridden, rejected). Returns whether the line is unused."""
-    if error is not None:
-        set_pill(label, _("Rejected"), "error", messages.error_text(error))
-        _set_pill_target(label, None)
-        return False
-    if item is not None and item.state in (State.SHADOWED, State.FORCED):
-        text = _("No effect") if item.state is State.SHADOWED else messages.state_label(item.state)
-        tooltip = messages.state_tooltip(item)
-        target = None
-        if item.state is State.SHADOWED and item.decided_line:
-            target = (item.decided_file, item.decided_line)
-            tooltip += "\n" + messages.show_line_hint()
-        set_pill(label, text, messages.STATE_STYLES[item.state], tooltip)
-        _set_pill_target(label, target)
-        return True
-    set_pill(label, "", "muted")
-    _set_pill_target(label, None)
-    return False
 
 
 class _Syncing:
@@ -280,6 +187,7 @@ class _Suggestions:
             popover.set_position(Gtk.PositionType.BOTTOM)
             popover.set_halign(Gtk.Align.START)
             popover.add_css_class("menu")
+            style_keyword_suggestions(popover)
             box = Gtk.ListBox()
             box.set_can_focus(False)
             box.connect("row-activated", lambda _b, row: self._take(row))
@@ -415,6 +323,8 @@ class LineRow:
         self.instead.add_css_class("dim-label")
         self.instead.set_margin_start(14)
         self.instead.set_margin_bottom(6)
+        self.instead.connect("activate-link", self._on_instead_link)
+        self._keyword = ""
         # Under the fields, for a key file OpenSSH will not use: what is
         # wrong with it, and for a private key others can read, Fix.
         self.key_line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, visible=False)
@@ -464,29 +374,34 @@ class LineRow:
             self._check_key(self.key.get_text(), self.value.get_text())
 
     def show(self, answer: AnswerView) -> None:
-        item, error = answer.line_state(self.uid)
-        unused = _line_pill(self.state, item, error)
-        # A line that does not take effect is struck through, as overridden
-        # declarations are in browser developer tools: valid, just not used.
-        # Red (error) is for a line OpenSSH rejects.
-        struck = unused and error is None
-        for entry in (self.key, self.value):
-            set_class(entry, "error", error is not None)
-            set_class(entry, "advcfg-unused", struck)
-            # GtkText ignores CSS text-decoration: a Pango attribute it is
-            # (cleared with an empty list: the binding refuses None).
-            if getattr(entry, "_struck", False) != struck:
-                entry._struck = struck
-                entry.set_attributes(_struck() if struck else Pango.AttrList())
         option = self.view.controller.editor.find_option(self.uid)[1]
         keyword = canonical_keyword(option.keyword) if option else ""
+        self._keyword = keyword
+        verdict = answer.line_verdict(self.uid, keyword)
+        show_verdict(self.state, verdict)
+        # A line that does not take effect is struck through and tinted
+        # yellow, as overridden declarations are in browser developer tools:
+        # valid, just not used. Red (error) is for a line OpenSSH rejects.
+        for entry in (self.key, self.value):
+            set_class(entry, "error", verdict.state == REJECTED)
+            mark_unused(entry, verdict.unused)
         # Empty: what the host gets from elsewhere, greyed in the field.
         inherited = answer.inherited(keyword)[0] if keyword else ""
         self.value.set_placeholder_text(inherited or _("Value"))
-        text = _instead(answer, self.uid, keyword) if option else ""
+        # Under the fields, while the line goes unused: what is used
+        # instead ("" for a pattern block: no one host's answer says it).
+        text = verdict.note_markup if option and verdict.unused else ""
         if self.instead.get_label() != text:
             self.instead.set_label(text)
         self.instead.set_visible(bool(text))
+
+    def _on_instead_link(self, _label, uri: str) -> bool:
+        """The note says Settings ▸ SSH Options decide the option: open
+        them at its control."""
+        if uri != messages.SETTINGS_LINK:
+            return False
+        self.view.controller.show_forced_setting(self._keyword)
+        return True
 
     def set_place(self, first: bool, last: bool) -> None:
         """Where the line stands in its block: no Up for the first, no
@@ -568,6 +483,30 @@ def _boxed_list() -> Gtk.ListBox:
 #: The kinds of block (ssh_config_blocks.block_category) the title card's
 #: type line is coloured for.
 _KIND_CLASSES = ("connection", "pattern", "match_rule", "all_hosts")
+
+
+class _WrapBox(Gtk.Widget):
+    """Children left to right at their own width, wrapping like words."""
+
+    __gtype_name__ = "SshpilotAdvcfgWrapBox"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_layout_manager(FlowLayout())
+
+    def append(self, child: Gtk.Widget) -> None:
+        child.set_parent(self)
+
+    def remove_all(self) -> None:
+        child = self.get_first_child()
+        while child is not None:
+            following = child.get_next_sibling()
+            child.unparent()
+            child = following
+
+    def do_dispose(self) -> None:
+        self.remove_all()
+        Gtk.Widget.do_dispose(self)
 
 
 def _card_tile(icon: str, title: str) -> tuple:
@@ -721,12 +660,14 @@ class StructuredView(Gtk.Box):
         self.applies_label.add_css_class("dim-label")
         self.applies_label.set_ellipsize(Pango.EllipsizeMode.END)
         content.append(self.applies_label)
-        # The flow box needs the tile width to measure its wrapped height.
-        self.applies_chips = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,
-                                         max_children_per_line=12)
-        self.applies_chips.set_column_spacing(6)
-        self.applies_chips.set_row_spacing(6)
+        # The hosts wrap like words, each a plain button at its own width (a
+        # FlowBox lines them up in columns and hovers a cell wider than the
+        # button).
+        self.applies_chips = _WrapBox()
+        self.applies_chips.set_margin_top(6)            # clear of the heading
         content.append(self.applies_chips)
+        #: Every host shown, not only the first few.
+        self._applies_all = False
         self.tiles.append(self.applies_box)
         # Problems: shown only when there are some; a click shows the first.
         self.problems_tile, content, self.problems_dot = _card_tile(
@@ -1073,12 +1014,12 @@ class StructuredView(Gtk.Box):
         unused = overridden = rejected = 0
         first = None
         for option in (block.options if block is not None and not block.disabled else ()):
-            item, error = answer.line_state(option.uid)
-            if error is not None:
+            state = answer.line_verdict(option.uid).state
+            if state == REJECTED:
                 rejected += 1
-            elif item is not None and item.state is State.SHADOWED:
+            elif state == NO_EFFECT:
                 unused += 1
-            elif item is not None and item.state is State.FORCED:
+            elif state == OVERRIDDEN:
                 overridden += 1
             else:
                 continue
@@ -1121,26 +1062,32 @@ class StructuredView(Gtk.Box):
         self.applies_label.set_label(text)
         self.applies_label.set_visible(bool(text))
         shown = tuple(hosts or ())
-        if getattr(self, "_applies", None) == (hosts is None, shown):
+        state = (hosts is None, shown)
+        if getattr(self, "_applies", None) != state:
+            self._applies_all = False                # a new block starts folded
+        elif getattr(self, "_applies_drawn_all", None) == self._applies_all:
             return
-        self._applies = (hosts is None, shown)
+        self._applies = state
+        self._applies_drawn_all = self._applies_all
         self.applies_chips.set_visible(bool(shown))
-        child = self.applies_chips.get_first_child()
-        while child is not None:
-            following = child.get_next_sibling()
-            self.applies_chips.remove(child)
-            child = following
-        for name in shown[:self._APPLIES_SHOWN]:
-            chip = Gtk.Button(label=name, halign=Gtk.Align.START,
-                              tooltip_text=messages.show_host_block(name))
-            chip.add_css_class("advcfg-host-chip")
+        self.applies_chips.remove_all()
+        folded = len(shown) > self._APPLIES_SHOWN and not self._applies_all
+        for name in shown[:self._APPLIES_SHOWN] if folded else shown:
+            chip = Gtk.Button(label=name, tooltip_text=messages.show_host_block(name))
             chip.connect("clicked", lambda *_a, n=name: self.controller.follow_host(n))
             self.applies_chips.append(chip)
         if len(shown) > self._APPLIES_SHOWN:
-            rest = shown[self._APPLIES_SHOWN:]
-            more = Gtk.Label(label=f"+{len(rest)}", halign=Gtk.Align.START, tooltip_text=", ".join(rest))
-            more.add_css_class("dim-label")
-            self.applies_chips.append(more)
+            label = (messages.more_hosts(len(shown) - self._APPLIES_SHOWN) if folded
+                     else messages.fewer_hosts())
+            toggle = Gtk.Button(label=label)
+            toggle.add_css_class("flat")
+            toggle.connect("clicked", lambda *_a: self._toggle_applies(block, hosts))
+            self.applies_chips.append(toggle)
+            self.applies_more = toggle
+
+    def _toggle_applies(self, block, hosts) -> None:
+        self._applies_all = not self._applies_all
+        self._show_applies(block, hosts)
 
     # -- gestures ----------------------------------------------------------------
 

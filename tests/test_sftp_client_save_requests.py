@@ -16,6 +16,18 @@ from sshpilot.sftp import client as sftp_client
 from sshpilot.sftp import protocol as proto
 
 
+def test_broken_write_pipe_reports_session_loss_before_reader_observes_eof():
+    class BrokenPipe:
+        def write(self, data):
+            raise BrokenPipeError()
+
+    client = sftp_client.OpenSSHSFTPClient(BrokenPipe(), None)
+    with pytest.raises(proto.SFTPError) as caught:
+        client.realpath(".")
+    assert caught.value.code == proto.FX_CONNECTION_LOST
+    assert not client._pending
+
+
 class _FakeServer(threading.Thread):
     def __init__(self, stream_r, stream_w, *, extensions) -> None:
         super().__init__(daemon=True)

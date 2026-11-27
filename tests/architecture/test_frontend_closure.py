@@ -54,6 +54,8 @@ FRONTEND_LOCAL_SUBPROCESS = frozenset(
         "wol.py",
         "sshpilot_agent.py",
         "terminal.py",
+        # The AppImage's spawn guard wraps Popen; it starts nothing.
+        "appimage_env.py",
     }
 )
 

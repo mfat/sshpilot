@@ -237,6 +237,9 @@ class BaseTerminalBackend(Protocol):
     def reset(self, clear_scrollback: bool, clear_screen: bool) -> None:
         """Reset the terminal content."""
 
+    def scroll_to_bottom(self) -> None:
+        """Move the viewport to the newest output (scrollback is kept)."""
+
     def set_font_scale(self, scale: float) -> None:
         """Set the font scale for the terminal."""
 
@@ -396,6 +399,7 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type checking
 # Cursor presentation.  The shared vocabulary and its pure mappings live in
 # terminal_cursor; only the parts that need GTK are here.
 
+from .appimage_env import vte_spawn_flags  # noqa: E402
 from .terminal_cursor import (  # noqa: E402
     DEFAULT_CURSOR_BLINK,
     DEFAULT_CURSOR_SHAPE,
@@ -1070,7 +1074,7 @@ class VTETerminalBackend:
             cwd,
             list(argv),
             env_list,
-            GLib.SpawnFlags.DEFAULT,
+            vte_spawn_flags(GLib, Vte),
         )
         try:
             # Current PyGObject bindings expose the nullable arguments by
@@ -1319,6 +1323,13 @@ class VTETerminalBackend:
         self.vte.reset(False, clear_scrollback)
         if clear_screen:
             self.vte.feed(b"\x1b[2J\x1b[H")
+
+    def scroll_to_bottom(self) -> None:
+        # scroll_on_output is off, so output arriving while the user is
+        # scrolled up never moves the view; once at the bottom VTE follows.
+        adj = self.vte.get_vadjustment()
+        if adj is not None:
+            adj.set_value(max(adj.get_lower(), adj.get_upper() - adj.get_page_size()))
 
     def set_font_scale(self, scale: float) -> None:
         self.vte.set_font_scale(scale)
@@ -1648,6 +1659,9 @@ class PyXtermTerminalBackend:
     def _make_webview_webkit6(self, WebKit):
         """Construct the WebKit 6 WebView. Overridden by the embedded backend to
         attach a UserContentManager for the JS->Python bridge."""
+        from .appimage_env import prepare_webkit
+
+        prepare_webkit(WebKit)
         return WebKit.WebView()
 
     # The pyxterm backend exposes only a subset of the behaviour for now. Each
@@ -2233,6 +2247,11 @@ class PyXtermTerminalBackend:
             manager = getattr(self._pyxterm, "TerminalManager", None)
             if manager:
                 manager().reset(self._terminal_id)  # type: ignore[attr-defined]
+
+    def scroll_to_bottom(self) -> None:
+        self._run_javascript(
+            "if (typeof window.term !== 'undefined') { window.term.scrollToBottom(); }"
+        )
 
     def set_font_scale(self, scale: float) -> None:
         """Set font scale/zoom for xterm.js terminal by changing fontSize option"""

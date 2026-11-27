@@ -269,9 +269,8 @@ def _applies(win):
         return [] if "none of the hosts" in structured.applies_label.get_label() else None
     names, child = [], structured.applies_chips.get_first_child()
     while child is not None:
-        inner = child.get_child()
-        if isinstance(inner, type(structured.duplicate_button)):
-            names.append(inner.get_label())
+        if child is not getattr(structured, "applies_more", None):
+            names.append(child.get_label())
         child = child.get_next_sibling()
     return names
 
@@ -716,25 +715,71 @@ def test_the_effective_view_counts_where_values_come_from(window):
     assert _pump(lambda: [item.key for item in effective.items()] == ["connecttimeout"])
 
 
-def test_effective_is_hidden_for_a_block_that_names_no_host(window):
+def test_effective_has_a_host_field_for_a_block_that_names_no_host(window):
     glob, web, star = window.draft.blocks
     page = window.stack.get_page(window.effective)
+    field = window.effective.host_entry
     window.show_page("effective")
     _check(window, "")                                # the selection says
-    window.select_block(star.uid)                     # Host *: no host to ask about
-    assert _pump(lambda: not page.get_visible())
-    assert window.stack.get_visible_child_name() == "structured"
-    window.show_page("effective")                     # not offered: not shown
-    assert window.stack.get_visible_child_name() == "structured"
-    _check(window, "web1")                            # a host in question: offered again
-    assert _pump(page.get_visible)
-    assert window.stack.get_visible_child_name() == "effective"   # where it was left
-    _check(window, "")
-    assert _pump(lambda: not page.get_visible())
-    window.show_page("raw")                           # another page picked meanwhile
-    window.select_block(web.uid)
-    assert _pump(page.get_visible)
-    assert window.stack.get_visible_child_name() == "raw"
+    window.select_block(star.uid)                     # Host *: no host of its own
+    assert _pump(lambda: window._evaluate_source == 0)
+    assert page.get_visible()                         # still offered
+    assert window.stack.get_visible_child_name() == "effective"
+    assert field.get_text() == ""
+    field.set_text("example.org")                     # any host, typed
+    assert window.target_text() == "example.org"
+    assert _pump(lambda: _command(window) == "ssh -G example.org"
+                 and window._evaluation is not None and window._evaluation.evaluated)
+    field.set_text("alice@example.org")               # a user too
+    assert _pump(lambda: _command(window) == "ssh -G -l alice example.org")
+    field.set_text("")                                # cleared: the block's own again
+    assert _pump(lambda: window._evaluation is None and window._evaluate_source == 0)
+    assert window.target_text() == ""
+    window.block_picked(web.uid)                      # a block picked: its own host
+    assert _pump(lambda: field.get_text() == "web1")
+    field.set_text("example.org")
+    window.block_picked(star.uid)                     # picking a block drops the typed one
+    assert _pump(lambda: window.target_text() == "" and field.get_text() == "")
+
+
+def test_effective_shows_the_order_openssh_reads_the_blocks_in(window):
+    glob, web, star = window.draft.blocks
+    _check(window, "web1")
+    window.show_page("effective")
+    effective = window.effective
+    assert _pump(lambda: window._evaluation is not None and window._evaluation.evaluated)
+    effective.fill()
+    assert effective.order.get_visible()
+    titles = [row.get_title() for row in effective._order_rows]
+    assert [t for t in titles if t.startswith("#")] == [
+        "#1  Global", "#2  Host web1 web2", "#3  Host *",
+    ]
+    (star_row,) = [r for r in effective._order_rows if r.get_title() == "#3  Host *"]
+    assert "Shadowed" in star_row.get_subtitle()        # web's User and Port came first
+    _check(window, "elsewhere")                          # web's block does not match
+    assert _pump(lambda: _command(window) == "ssh -G elsewhere"
+                 and window._evaluation is not None and window._evaluation.evaluated)
+    effective.fill()
+    (web_row,) = [r for r in effective._order_rows if r.get_title() == "#2  Host web1 web2"]
+    assert "Does not match" in web_row.get_subtitle()
+    web_row.emit("activated")                            # a link to the block
+    assert _pump(lambda: window.selected_uid == web.uid)
+
+
+def test_effective_scrolls_as_one_page_with_the_chips_pinned(window):
+    window.show_page("effective")
+    effective = window.effective
+    assert _pump(lambda: any(item.cell for item in effective._items.values()))
+    _show(window)
+    adjustment = effective.page.get_vadjustment()
+    assert _pump(lambda: adjustment.get_upper() > adjustment.get_page_size())
+    assert effective.chips.get_parent() is effective.chips_slot
+    adjustment.set_value(adjustment.get_upper())            # to the bottom: Matching Order
+    assert _pump(lambda: effective.chips.get_parent() is effective.pinned_bar)
+    assert effective.pinned_bar.get_visible()
+    adjustment.set_value(0)
+    assert _pump(lambda: effective.chips.get_parent() is effective.chips_slot)
+    assert not effective.pinned_bar.get_visible()
 
 
 def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
@@ -808,7 +853,9 @@ def test_an_unused_line_says_what_is_used_instead(gtk, tmp_path):
         second_hostname = [r for r in rows if r.key.get_text() == "HostName"][1]
         assert second_hostname.instead.get_label() == "OpenSSH uses <tt>10.0.0.5</tt> from line 5 (Host zoo)"
         timeout = next(r for r in rows if r.key.get_text() == "ConnectTimeout")
-        assert timeout.instead.get_label() == "Settings ▸ SSH Options use <tt>7</tt>"
+        # A link to the setting: the sentence, opening Settings when clicked.
+        assert timeout.instead.get_text() == "Settings ▸ SSH Options use 7"
+        assert 'href="sshpilot-settings:ssh-options"' in timeout.instead.get_label()
         hostname = _field(win, "hostname")                  # used: nothing said
         assert not hostname.instead.get_visible()
     finally:
@@ -821,9 +868,9 @@ def test_lines_that_do_not_take_effect_are_struck_through_and_rejected_ones_red(
         block = win.draft.blocks[0]
         rows = [win.structured.line_rows[o.uid] for o in block.options]
         assert _pump(lambda: rows[1].state.get_label() == "No effect")
-        assert rows[1].value._struck                                  # struck through
+        assert rows[1].value.get_delegate()._sshpilot_struck    # struck through
         assert not rows[1].value.has_css_class("dim-label")          # not dimmed
-        assert not getattr(rows[0].value, "_struck", False)          # used: plain
+        assert not getattr(rows[0].value.get_delegate(), "_sshpilot_struck", False)  # used
         rows[2].value.set_text("abc")                                # OpenSSH rejects it
         assert _pump(lambda: rows[2].state.get_label() == "Rejected")
         assert rows[2].value.has_css_class("error") and rows[2].state.has_css_class("error")
@@ -1146,9 +1193,10 @@ def test_wildcard_host_chips_fit_inside_the_applies_to_tile(gtk, tmp_path):
         _pick(win, "Host *")
         view = win.structured
         assert _pump(lambda: _applies(win) == hosts[:8]
-                     and view.applies_chips.get_child_at_index(8).get_height() > 0)
+                     and _children(view.applies_chips)[8].get_height() > 0)
         chips = _children(view.applies_chips)
-        assert chips[-1].get_child().get_label() == "+13"
+        assert chips[-1] is view.applies_more
+        assert chips[-1].get_label() == "13 more hosts"
         bounds = []
         for child in chips:
             found, rect = child.compute_bounds(view.applies_box)
@@ -1157,6 +1205,15 @@ def test_wildcard_host_chips_fit_inside_the_applies_to_tile(gtk, tmp_path):
             assert rect.get_y() + rect.get_height() <= view.applies_box.get_height() + 1
         assert bounds[0].get_y() == bounds[1].get_y()
         assert bounds[-1].get_y() > bounds[0].get_y()
+        # Each button only as wide as its name: the second starts right
+        # after the first, not a column further on.
+        assert bounds[1].get_x() - (bounds[0].get_x() + bounds[0].get_width()) <= 8
+
+        view.applies_more.emit("clicked")                   # every host, then back
+        assert _pump(lambda: _applies(win) == hosts)
+        assert view.applies_more.get_label() == "Show Less"
+        view.applies_more.emit("clicked")
+        assert _pump(lambda: _applies(win) == hosts[:8])
     finally:
         _close(win)
 
@@ -1188,7 +1245,7 @@ def test_picking_a_pattern_block_marks_the_blocks_related_to_it(gtk, tmp_path):
 
         _pick(win, "Host *.prod")                            # a chip shows that host
         assert _pump(lambda: _applies(win) == ["a.prod", "b.prod"])
-        structured.applies_chips.get_child_at_index(1).get_child().emit("clicked")
+        _children(structured.applies_chips)[1].emit("clicked")
         assert _pump(lambda: win.selected_uid == b.uid)
 
         _pick(win, "Host a.prod")                            # a host: the usual answer

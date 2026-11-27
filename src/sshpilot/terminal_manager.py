@@ -1853,6 +1853,9 @@ class TerminalManager:
         terminal.connection_state_reason = ""
         terminal._set_disconnected_banner_visible(False)
         terminal._set_connecting_overlay_visible(True)
+        # The old scrollback is kept, and output does not move a view the
+        # user scrolled up (#1425): bring the new session's output into view.
+        terminal.scroll_to_bottom()
 
         if isinstance(getattr(connection, "transient_connection_id", None), str):
             # An unsaved target lives in the daemon's memory only: a daemon

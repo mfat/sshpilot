@@ -8,7 +8,6 @@
 """
 from __future__ import annotations
 
-import types
 
 import pytest
 
@@ -17,8 +16,7 @@ from sshpilot.api.models.login_profiles import (
     LoginProfileSnapshot,
     LoginProfileSummary,
 )
-from sshpilot.api.models.settings import GlobalSshOverrides
-from tests.test_gui_auth_section_widgets import gtk  # noqa: F401 - fixture
+from tests.test_gui_auth_section_widgets import gtk_fixture  # noqa: F401 - fixture
 from tests.test_gui_connection_dialog_overrides import _Manager, _pump
 
 pytestmark = pytest.mark.gui
@@ -57,37 +55,22 @@ def _dialog(*earlier, forced=()):
     above it, and ``ssh -G``'s answer for a host with no order of its own."""
     from gi.repository import Gtk
 
-    from sshpilot.api.models.connections import (
-        EarlierDirective,
-        EffectiveConfigComparison,
-    )
     from sshpilot.connection_dialog import ConnectionDialog
     from sshpilot.connection_model import Connection
     from sshpilot.plugins.loader import ensure_builtin_protocols
+    from tests.editor_answer_rig import RealConfigClient
 
     ensure_builtin_protocols()
-    comparison = EffectiveConfigComparison(
-        connection_id="web", host="web", available=True,
-        full=("hostname web.example.com",),
-        earlier=tuple(
-            EarlierDirective(
-                key=key, value=value, block="Host *",
-                file="/home/me/.ssh/config", line=number,
-            )
-            for number, (key, value) in enumerate(earlier, start=2)
-        ),
-    )
-    snapshot = GlobalSshOverrides(
-        revision="r1", connect_timeout=0, strict_host_key_checking="",
-        compression="", verbosity=0, debug_enabled=False, forced_options=forced,
-    )
+    # A ``Host *`` above the host's block sets *earlier*, from line 2 on;
+    # OpenSSH itself answers the dialog's questions.
+    text = "".join(
+        ["Host *\n"] + [f"    {key} {value}\n" for key, value in earlier]
+    ) if earlier else ""
+    text += "\nHost web\n    HostName web.example.com\n"
     parent = Gtk.Window()
     parent.connection_manager = _Manager()
     parent._daemon_ready = lambda: True
-    parent.client = types.SimpleNamespace(
-        get_global_ssh_overrides=lambda: snapshot,
-        get_effective_config=lambda _cid: comparison,
-    )
+    parent.client = RealConfigClient(text, forced=forced)
     connection = Connection({
         "nickname": "web", "host": "web", "hostname": "web.example.com",
         "__authored_directives": ("hostname",),
@@ -100,8 +83,7 @@ def _dialog(*earlier, forced=()):
     blank = dialog.auth_policy.policy
     _pump(lambda: dialog.auth_policy.policy is not blank)
     assert dialog.auth_policy.policy is not blank, "the connection never loaded"
-    if earlier:
-        _pump(lambda: bool(getattr(dialog, "_earlier_directives", None)))
+    _pump(lambda: getattr(dialog, "_editor_answer", None) is not None)
     resolved = dict(SSH_G)
     resolved.update(dict(earlier))
     dialog.auth_policy.policy.set_inherited(resolved)
@@ -144,24 +126,29 @@ def test_an_overruled_method_is_announced_by_the_line_while_the_list_is_folded(g
     # earlier block beats: checked, but not tried.
     check.set_active(True)
     assert "PasswordAuthentication yes" in section.policy.to_lines()
+    # The mark comes with OpenSSH's answer for the edit.
+    _pump(lambda: dialog.auth_password_row._sshpilot_override_state == OVERRIDDEN)
     assert dialog.auth_password_row._sshpilot_override_state == OVERRIDDEN
     assert dialog._override_banner.get_revealed()
 
-    # The row with the mark is inside the folded list. What the banner's
-    # "marked below" points at is the line under it.
+    # The row with the mark is inside the folded list: the line under it
+    # says the same while the list is closed.
     assert not dialog.auth_order_row.get_expanded()
     assert section.preview.get_visible()
     assert section.effective_row.has_css_class("error")
     assert "password" in dialog.auth_order_row.get_subtitle()
     assert "password" not in section.effective_row.get_subtitle()
     tip = section.effective_row.get_tooltip_markup()
-    # It names the row, then gives that row's own note.
-    assert tip.startswith(f"<b>{dialog.auth_password_row.get_title()}</b>\n")
-    assert "PasswordAuthentication" in tip and "Host *" in tip
-    assert "line 2" in tip
+    # It names the row, then gives that row's own note, in Advanced
+    # Configuration's words.
+    assert tip == (
+        f"<b>{dialog.auth_password_row.get_title()}</b>\n"
+        "OpenSSH uses no from line 2 (Host *)"
+    )
 
     # Unchecking removes the line set here: nothing is overruled any more.
     check.set_active(False)
+    _pump(lambda: not dialog._override_banner.get_revealed())
     assert not section.preview.get_visible()
     assert not section.effective_row.has_css_class("error")
     assert section.effective_row.get_tooltip_markup() is None
@@ -173,26 +160,33 @@ def test_an_order_an_earlier_block_beats_is_named_in_the_line(gtk):
     section = dialog.auth_policy
     dialog.auth_password_row._check.set_active(True)
     assert section.policy.order == ["publickey", "password"]
+    _pump(lambda: section.preview.get_visible())
     assert section.preview.get_visible()
     assert section.effective_row.has_css_class("error")
     assert section.effective_row.get_subtitle() == "publickey"
-    tip = section.effective_row.get_tooltip_markup()
-    assert tip.startswith(f"<b>{dialog.auth_order_row.get_title()}</b>\n")
-    assert "PreferredAuthentications" in tip
+    # The row the order leaves out, with the order line that decides.
+    assert section.effective_row.get_tooltip_markup() == (
+        f"<b>{dialog.auth_password_row.get_title()}</b>\n"
+        "OpenSSH uses publickey from line 2 (Host *)"
+    )
 
 
 def test_settings_forcing_the_order_is_named_in_the_line_too(gtk):
     dialog = _dialog(forced=("PreferredAuthentications=publickey",))
     section = dialog.auth_policy
-    _pump(lambda: bool(getattr(dialog, "_forced_options", None)))
+    _pump(lambda: bool(getattr(getattr(dialog, "_editor_answer", None), "forced", None)))
     dialog.auth_password_row._actions.activate_action("top", None)
     assert section.policy.order[0] == "password"
+    _pump(lambda: section.preview.get_visible())
     assert section.preview.get_visible()
     assert section.effective_row.has_css_class("error")
     assert section.effective_row.get_subtitle() == "publickey"
-    tip = section.effective_row.get_tooltip_markup()
-    assert tip.startswith(f"<b>{dialog.auth_order_row.get_title()}</b>\n")
-    assert "Settings" in tip
+    # Every row Settings' order overrules is named (keyboard-interactive,
+    # tried by default, is left out too).
+    assert section.effective_row.get_tooltip_markup().startswith(
+        f"<b>{dialog.auth_password_row.get_title()}</b>\n"
+        "Settings ▸ SSH Options use publickey"
+    )
 
 
 # -- a linked login profile ----------------------------------------------------------

@@ -1156,6 +1156,128 @@ class UpdateConnectionRequest:
 
 
 @dataclass(frozen=True)
+class EvaluateConnectionEditRequest:
+    """Ask what OpenSSH would use for a connection once an edit is saved.
+
+    The daemon renders the file exactly as saving the edit would write it
+    (the same merge of the edit into the Host block), writes nothing, and
+    evaluates that text as :class:`EvaluateSshConfigDraftRequest` does.
+
+    ``connection_id`` with no ``update``: the connection as saved.
+    ``connection_id`` with ``update``: the edit of a saved connection.
+    ``create`` (no ``connection_id``): a connection not saved yet, whose
+    block is appended where a create appends it.
+
+    ``without_own`` names keywords (lower case) to answer a second
+    question for: the same text with the host's own lines for those
+    keywords left out, and without the options Settings ▸ SSH Options
+    force, which is what the host inherits for them from the
+    configuration.
+    """
+
+    connection_id: Optional[str] = None
+    update: Optional["UpdateConnectionRequest"] = None
+    create: Optional["CreateConnectionRequest"] = None
+    without_own: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.connection_id is not None and (
+            type(self.connection_id) is not str or not self.connection_id.strip()
+        ):
+            raise ValueError("connection edit connection_id is invalid")
+        if self.update is not None and type(self.update) is not UpdateConnectionRequest:
+            raise TypeError("connection edit update must be an update request")
+        if self.create is not None and type(self.create) is not CreateConnectionRequest:
+            raise TypeError("connection edit create must be a create request")
+        if self.create is not None:
+            if self.connection_id is not None or self.update is not None:
+                raise ValueError("a connection edit is either a create or an update")
+            if self.create.protocol != "ssh":
+                raise ValueError("only SSH connections have an SSH configuration")
+        elif self.connection_id is None:
+            raise ValueError("a connection edit needs connection_id or create")
+        if type(self.without_own) is not tuple:
+            raise TypeError("connection edit without_own must be a tuple")
+        for keyword in self.without_own:
+            if type(keyword) is not str or not keyword or not keyword.isalnum():
+                raise ValueError("connection edit without_own keyword is invalid")
+
+
+class ConnectionEditRefusal(str, Enum):
+    """Why an edit could not be rendered; saving it would fail the same way."""
+
+    #: A field the edit sets is not valid (a host name pattern, ...).
+    INVALID = "invalid"
+    #: Another connection already has the name the edit gives this one.
+    NAME_TAKEN = "name_taken"
+    #: The connection is not in the configuration (any more).
+    NOT_FOUND = "not_found"
+    #: The Host line is shared or changed, and the edit cannot say how to
+    #: change it.
+    DECLARATION = "declaration"
+    #: The configuration could not be read.
+    UNREADABLE = "unreadable"
+
+
+@dataclass(frozen=True)
+class SshConfigOwnLine:
+    """One option line of the host's own ``Host`` block in the rendered
+    text: its line number, its keyword (lower case) and its value."""
+
+    line: int
+    key: str
+    value: str
+
+    def __post_init__(self) -> None:
+        _draft_line(self.line, "own line", minimum=1)
+        _draft_text(self.key, "own line key", empty=False)
+        _draft_text(self.value, "own line value")
+
+
+@dataclass(frozen=True)
+class ConnectionEditEvaluation:
+    """What OpenSSH would use for the edited connection.
+
+    ``host`` is the name the host has after the edit and ``file`` the file
+    its block is written to (empty: the root; else as
+    ``SshConfigText.files`` lists it), and ``text`` that file as the save
+    would write it. ``own_lines`` are the option lines of the host's own
+    blocks in it; the line numbers of ``evaluation.lines`` and
+    ``evaluation.errors`` (with an empty file) refer to the same text. ``without_own`` is the second answer the
+    request asked for (``None`` when it asked none).
+
+    ``refusal`` is set, and both answers are ``None``, when the edit cannot
+    be rendered: saving it would be refused for the same reason.
+    """
+
+    host: str = ""
+    file: str = ""
+    text: str = field(default="", repr=False)
+    own_lines: Tuple[SshConfigOwnLine, ...] = ()
+    evaluation: Optional[SshConfigDraftEvaluation] = None
+    without_own: Optional[SshConfigDraftEvaluation] = None
+    refusal: Optional[ConnectionEditRefusal] = None
+
+    def __post_init__(self) -> None:
+        _draft_text(self.host, "host")
+        _draft_text(self.file, "file")
+        _draft_text(self.text, "text")
+        if type(self.own_lines) is not tuple or any(
+            type(item) is not SshConfigOwnLine for item in self.own_lines
+        ):
+            raise TypeError("connection edit own lines are invalid")
+        for name in ("evaluation", "without_own"):
+            value = getattr(self, name)
+            if value is not None and type(value) is not SshConfigDraftEvaluation:
+                raise TypeError(f"connection edit {name} is invalid")
+        if self.refusal is not None:
+            if not isinstance(self.refusal, ConnectionEditRefusal):
+                raise TypeError("connection edit refusal is invalid")
+            if self.evaluation is not None or self.without_own is not None:
+                raise ValueError("a refused connection edit has no evaluation")
+
+
+@dataclass(frozen=True)
 class DeleteConnectionRequest:
     connection_id: ConnectionId
 

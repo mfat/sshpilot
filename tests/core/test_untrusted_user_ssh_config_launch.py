@@ -84,6 +84,7 @@ def test_overflow_uid_flatpak_triggers_resolved_dash_f(tmp_path, monkeypatch):
             return _stat_result(65534, stat.S_IFREG | 0o444)
         return real_stat(path, follow_symlinks=follow_symlinks)
 
+    monkeypatch.setattr(os, "geteuid", lambda: 1000, raising=False)
     fake_nix_store = "/nix/store/sshpilot-pytest-hm_.sshconfig"
     real_realpath = os.path.realpath
 
