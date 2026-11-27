@@ -93,6 +93,8 @@ class ConnectionDialogMultiplexMixin:
             _("Terminals and file transfers to this host reuse one connection")
         )
         self.multiplex_row.set_model(model)
+        # Found by every directive it writes, not only ControlMaster.
+        self.multiplex_row._sshpilot_search_keywords = "ControlPath ControlPersist"
         self.multiplex_row.set_selected(DEFAULT)
         group = Adw.PreferencesGroup(title=_("Multiplexing"))
         group.add(self.multiplex_row)
