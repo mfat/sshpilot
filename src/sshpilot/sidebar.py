@@ -348,9 +348,15 @@ def install_sidebar_css():
           transform: scale(0.98);
         }
 
-        /* Full mode keeps libadwaita's row margins (.navigation-sidebar > row:
-           0 6px 2px). Compact mode: denser IDE-style gaps (Cursor/VS Code);
-           horizontal inset still leaves room for the selection pill. */
+        /* Full mode keeps libadwaita's 6px horizontal row inset but restores
+           the roomier 8px gap between rows (libadwaita's own is 2px). */
+        .navigation-sidebar:not(.sidebar-compact) > row:not(.sidebar-section-header) {
+          margin-top: 4px;
+          margin-bottom: 4px;
+        }
+
+        /* Compact mode: denser IDE-style gaps (Cursor/VS Code); horizontal
+           inset still leaves room for the selection pill. */
         .navigation-sidebar.sidebar-compact row {
           margin: 1px 4px;
         }
