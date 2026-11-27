@@ -284,6 +284,11 @@ if TYPE_CHECKING:
         HostCommandResult,
         HostCommandState,
     )
+    from .connection_sharing import (
+        ConnectionSharingNotice,
+        ConnectionSharingOutcome,
+        ConnectionSharingScope,
+    )
     from .pre_command import (
         PreCommandLaunchKind,
         PreCommandMode,
@@ -451,6 +456,9 @@ __all__ = [
     "ConnectionMutationResult",
     "ConnectionPlacementMode",
     "ConnectionProfileLink",
+    "ConnectionSharingNotice",
+    "ConnectionSharingOutcome",
+    "ConnectionSharingScope",
     "ConnectionStoreSnapshot",
     "ConnectionSummary",
     "ConnectionValidationError",
@@ -796,6 +804,9 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ConnectionMetadataSummary": ("connection_store", "ConnectionMetadataSummary"),
     "ConnectionMutationResult": ("connections", "ConnectionMutationResult"),
     "ConnectionPlacementMode": ("connection_store", "ConnectionPlacementMode"),
+    "ConnectionSharingNotice": ("connection_sharing", "ConnectionSharingNotice"),
+    "ConnectionSharingOutcome": ("connection_sharing", "ConnectionSharingOutcome"),
+    "ConnectionSharingScope": ("connection_sharing", "ConnectionSharingScope"),
     "ConnectionStoreSnapshot": ("connection_store", "ConnectionStoreSnapshot"),
     "ConnectionSummary": ("connections", "ConnectionSummary"),
     "ConnectionValidationError": ("connections", "ConnectionValidationError"),

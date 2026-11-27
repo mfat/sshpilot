@@ -27,6 +27,7 @@ class EventType(str, Enum):
     CONNECTION_DELETED = "connection.deleted"
     CONNECTION_STORE_CHANGED = "connection_store.changed"
     PRE_CONNECTION_COMMAND = "connection.pre_command"
+    CONNECTION_SHARING = "connection.sharing"
     LOGIN_PROFILES_CHANGED = "login_profiles.changed"
     SESSION_CREATED = "session.created"
     SESSION_STATE_CHANGED = "session.state_changed"
@@ -134,6 +135,7 @@ _EVENT_PAYLOAD_TYPE_NAMES = {
     EventType.BROADCAST_OUTPUT: ("broadcast", "BroadcastCommandOutput"),
     EventType.DAEMON_STATE_CHANGED: ("daemon", "DaemonStatus"),
     EventType.PRE_CONNECTION_COMMAND: ("pre_command", "PreConnectionCommandNotice"),
+    EventType.CONNECTION_SHARING: ("connection_sharing", "ConnectionSharingNotice"),
     EventType.LOGIN_PROFILES_CHANGED: ("login_profiles", "LoginProfilesChangedEvent"),
     EventType.ERROR_OCCURRED: None,
 }

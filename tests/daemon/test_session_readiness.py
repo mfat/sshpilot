@@ -96,11 +96,13 @@ class _FakeReadiness:
         self.finished: list[str] = []
         self.result_cb = None
         self.grace_cb = None
+        self.sharing_cb = None
 
-    def subscribe(self, session_id, on_result, on_grace_expired=None):
+    def subscribe(self, session_id, on_result, on_grace_expired=None, on_sharing=None):
         self.subscribed.append(session_id)
         self.result_cb = on_result
         self.grace_cb = on_grace_expired
+        self.sharing_cb = on_sharing
         if self._immediate_result is not None:
             on_result(session_id, self._immediate_result)
 

@@ -741,6 +741,8 @@ class SshPilotApplication(Adw.Application):
                 # end. The inline status on the tab or pane is the nicety; the
                 # window toast is the guarantee.
                 GLib.idle_add(self._handle_pre_command_event, event.payload)
+            elif event.type is EventType.CONNECTION_SHARING:
+                GLib.idle_add(self._handle_connection_sharing_event, event.payload)
             elif event.type is EventType.LOGIN_PROFILES_CHANGED:
                 GLib.idle_add(self._handle_login_profiles_event, event.payload)
 
@@ -1284,6 +1286,42 @@ class SshPilotApplication(Adw.Application):
             overlay.add_toast(toast)
         except Exception:
             logger.warning("Unable to display the pre-connection command alert")
+        return False
+
+    def _handle_connection_sharing_event(self, notice) -> bool:
+        """Toast when a host meant to share its connection did not.
+
+        Opened and joined are the normal case and stay silent; ``daemon.log``
+        has every outcome.
+        """
+        from .gtk.connection_sharing_messages import (
+            format_sharing_problem,
+            sharing_needs_attention,
+        )
+
+        window = self.window
+        if window is None or getattr(window, '_is_quitting', False):
+            return False
+        try:
+            if not sharing_needs_attention(notice):
+                return False
+            message = format_sharing_problem(
+                notice,
+                display_name=self._connection_display_name(notice.connection_id),
+            )
+        except (AttributeError, ValueError):
+            logger.warning("Connection sharing notice could not be presented")
+            return False
+        overlay = self._pre_command_toast_overlay()
+        if overlay is None:
+            logger.warning("Connection sharing did not work; no toast surface")
+            return False
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(8)
+            overlay.add_toast(toast)
+        except Exception:
+            logger.warning("Unable to display the connection sharing alert")
         return False
 
     def _pre_command_toast_overlay(self):

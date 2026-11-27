@@ -566,6 +566,9 @@ _BROADCAST_EVENT_TYPES = frozenset({EventType.BROADCAST_OUTPUT})
 #: ConnectionSummary, and connection_event_from_envelope would decode this
 #: payload as one.
 _PRE_COMMAND_EVENT_TYPES = frozenset({EventType.PRE_CONNECTION_COMMAND})
+#: What one launch did with the host's shared connection. Its own set for the
+#: same reason as the pre-command one: the payload is not a ConnectionSummary.
+_CONNECTION_SHARING_EVENT_TYPES = frozenset({EventType.CONNECTION_SHARING})
 #: Login profiles or their links changed (payload: LoginProfilesChangedEvent).
 _LOGIN_PROFILE_EVENT_TYPES = frozenset({EventType.LOGIN_PROFILES_CHANGED})
 _FORWARDED_EVENT_TYPES = (
@@ -579,6 +582,7 @@ _FORWARDED_EVENT_TYPES = (
     | _OPERATION_EVENT_TYPES
     | _BROADCAST_EVENT_TYPES
     | _PRE_COMMAND_EVENT_TYPES
+    | _CONNECTION_SHARING_EVENT_TYPES
     | _LOGIN_PROFILE_EVENT_TYPES
 )
 
@@ -645,6 +649,8 @@ def public_event_to_envelope(
                 "pre-connection command event payload is invalid"
             )
         payload = pre_connection_command_notice_to_wire(event.payload)
+    elif event.type in _CONNECTION_SHARING_EVENT_TYPES:
+        payload = connection_sharing_notice_to_wire(event.payload)
     elif event.type in _LOGIN_PROFILE_EVENT_TYPES:
         from .login_profile_codec import login_profiles_changed_event_to_wire
 
@@ -773,6 +779,15 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             sequence=envelope.sequence,
             connection_id=notice.connection_id,
             session_id=SessionId(notice.scope_id),
+        )
+    if event_type in _CONNECTION_SHARING_EVENT_TYPES:
+        sharing = connection_sharing_notice_from_wire(dict(envelope.payload))
+        return CoreEvent(
+            type=event_type,
+            payload=sharing,
+            sequence=envelope.sequence,
+            connection_id=sharing.connection_id,
+            session_id=SessionId(sharing.scope_id),
         )
     if event_type in _LOGIN_PROFILE_EVENT_TYPES:
         from .login_profile_codec import login_profiles_changed_event_from_wire
@@ -5996,6 +6011,58 @@ def pre_connection_command_notice_from_wire(
         aborted=_boolean(data["aborted"], "pre-connection command abort flag"),
         output=_text(
             data["output"], "pre-connection command output", allow_empty=True
+        ),
+    )
+
+
+def connection_sharing_notice_to_wire(
+    notice: "ConnectionSharingNotice",
+) -> Dict[str, Any]:
+    """Encode one connection-sharing notice: codes and the socket path."""
+    from ..models.connection_sharing import ConnectionSharingNotice
+
+    if type(notice) is not ConnectionSharingNotice:
+        raise TypeError("connection sharing notice is required")
+    return {
+        "connection_id": notice.connection_id,
+        "scope_id": notice.scope_id,
+        "scope": notice.scope.value,
+        "outcome": notice.outcome.value,
+        "control_path": notice.control_path,
+    }
+
+
+def connection_sharing_notice_from_wire(value: Any) -> "ConnectionSharingNotice":
+    from ..models.connection_sharing import (
+        ConnectionSharingNotice,
+        ConnectionSharingOutcome,
+        ConnectionSharingScope,
+    )
+
+    data = _strict_fields(
+        value,
+        required={"connection_id", "scope_id", "scope", "outcome", "control_path"},
+        context="connection sharing notice",
+    )
+    try:
+        scope = ConnectionSharingScope(data["scope"])
+    except (TypeError, ValueError):
+        raise ValueError("connection sharing notice contains an unknown scope") from None
+    try:
+        outcome = ConnectionSharingOutcome(data["outcome"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            "connection sharing notice contains an unknown outcome"
+        ) from None
+    return ConnectionSharingNotice(
+        connection_id=ConnectionId(
+            _identifier(data["connection_id"], "connection sharing connection id")
+        ),
+        scope_id=_identifier(data["scope_id"], "connection sharing scope id"),
+        scope=scope,
+        outcome=outcome,
+        control_path=_text(
+            data["control_path"], "connection sharing control path", allow_empty=True
         ),
     )
 

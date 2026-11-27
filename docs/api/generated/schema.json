@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.120",
+  "api_implementation_version": "0.121",
   "client_method_contract": {
     "acknowledge_terminal_output": {
       "capability": "terminal.flow_control",
@@ -1558,6 +1558,7 @@
       "connection.deleted",
       "connection_store.changed",
       "connection.pre_command",
+      "connection.sharing",
       "login_profiles.changed",
       "session.created",
       "session.state_changed",
