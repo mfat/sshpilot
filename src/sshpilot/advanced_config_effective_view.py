@@ -37,6 +37,8 @@ from .gtk import advanced_config_messages as messages  # noqa: E402
 from .ssh_config_blocks import GLOBAL, Block, LineMap  # noqa: E402
 
 ALL, THIS_BLOCK, OTHER, DEFAULT = "all", "this", "other", "default"
+#: The tallest Matching Order grows before it scrolls (pixels).
+_ORDER_MAX_HEIGHT = 320
 #: The filter of the values that need attention (not a kind: any kind can).
 ATTENTION = "attention"
 
@@ -377,8 +379,6 @@ class EffectiveView(Gtk.Box):
 
         self.summary = self._build_summary()
         self.append(self.summary)
-        self.order = self._build_order()
-        self.append(self.order)
         self.search = Gtk.SearchEntry(placeholder_text=_("Search options or values"))
         self.search.set_width_chars(24)
         self.search.connect("search-changed", lambda *_a: self._refilter())
@@ -421,6 +421,8 @@ class EffectiveView(Gtk.Box):
         self.table.append(Gtk.Separator())
         self.table.append(self.scroller)
         self.append(self.table)
+        self.order = self._build_order()
+        self.append(self.order)
         self.note = Adw.StatusPage(icon_name="system-search-symbolic")
         self.note.set_vexpand(True)
         self.append(self.note)
@@ -453,10 +455,10 @@ class EffectiveView(Gtk.Box):
     # -- the order OpenSSH reads the configuration in ----------------------------
 
     def _build_order(self) -> Gtk.Widget:
-        """A section, folded until opened: the forced options, every block
-        in file order with whether it applies to the host, then the
-        system-wide file. Opened, it stays open from one answer to the
-        next."""
+        """A section under the table, folded until opened: the forced
+        options, every block in file order with whether it applies to the
+        host, then the system-wide file. Opened, it stays open from one
+        answer to the next."""
         box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         box.add_css_class("boxed-list")
         self.order_row = Adw.ExpanderRow(
@@ -469,7 +471,16 @@ class EffectiveView(Gtk.Box):
         self.order_row.set_icon_name("view-list-symbolic")
         box.append(self.order_row)
         self._order_rows: List[Gtk.Widget] = []
-        return box
+        # The page does not scroll, only the table above does: opened, the
+        # section grows to its rows up to a cap, then scrolls on its own.
+        scroller = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            propagate_natural_height=True,
+            max_content_height=_ORDER_MAX_HEIGHT,
+        )
+        scroller.set_child(box)
+        return scroller
 
     def _add_order_row(self, title: str, subtitle: str, suffix=None, line: int = 0) -> None:
         row = Adw.ActionRow(title=GLib.markup_escape_text(title))
