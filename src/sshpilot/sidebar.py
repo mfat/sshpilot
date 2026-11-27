@@ -122,7 +122,14 @@ def _install_sidebar_color_css():
            per-row provider as a full-height background-image strip; bar mode
            squares the rows (sidebar-square-rows), so it meets a straight
            edge rather than a corner curve. */
-        .color-bar { border-left: 3px solid transparent; }
+        .color-bar {
+          border-left: 3px solid transparent;
+          /* Paint the row (and the bar strip) from its outer edge: by
+             default both start inside the border, which left 3px of
+             sidebar showing before the bar. */
+          background-origin: border-box;
+          background-clip: border-box;
+        }
 
         /* Virtual tag group rows use the osd style; the default row hover
            replaces the background with a near-transparent overlay, leaving
