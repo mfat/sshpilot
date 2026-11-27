@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.5.1}
+Version:        %{?version}%{!?version:6.5.2}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -180,6 +180,17 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtkghostty-1.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Fri Nov 27 2026 mFat <newmfat@gmail.com> - 6.5.2-1
+- Advanced Configuration - A new way to see and edit your SSH configuration - Add and modify host blocks, and see how they work in action
+- Redesigned connection editor - better layout, grouping and visual maps for port forwards and jump hosts
+- Redesigned authentication options - you can now decide which login methods are tried and set the order
+- File manager can now work in single-pane or dual-pane mode
+- Remote-to-remote file transfers are now supported
+- Background file transfers - Transfers now run in the background, with a progress indicator on the toolbar and on the tab
+- New style for groups - Colored Grips is a new way to show group colors
+- Windows portable build - A portable build (zip) is available next to the installer
+- Many bug fixes and improvements
+
 * Thu Nov 26 2026 mFat <newmfat@gmail.com> - 6.5.1-1
 - Added Advanced Configuration Manager, a complete sshconfig management and diagnostic suite
 - Redesigned connection dialogs, with better layout and visual maps for jump hosts and port forwards
