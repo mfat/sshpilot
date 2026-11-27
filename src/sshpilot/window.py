@@ -4522,6 +4522,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             refresh_sections(self)
         except Exception:
             logger.debug("Could not refresh the sidebar rules", exc_info=True)
+        # Accent Bars square the rows, so a group colour change restyles
+        # the list itself as well as its rows.
+        try:
+            from .sidebar import _apply_sidebar_list_corner_class
+            _apply_sidebar_list_corner_class(self.connection_list, self.config)
+        except Exception:
+            logger.debug("Failed to apply sidebar corner class", exc_info=True)
         steps = self._rebuild_connection_list_steps()
         if first_rows is None:
             for _visible in steps:

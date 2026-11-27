@@ -119,10 +119,9 @@ def _install_sidebar_color_css():
         /* Accent-bar group colour: a straight vertical bar on the leading edge.
            The transparent border is reserved on every bar-mode row so coloured
            and uncoloured rows stay aligned. The bar itself is painted by the
-           per-row provider as a background-image strip, vertically inset and
-           centered, so it keeps square ends while the row's rounded corners
-           stay intact (a coloured border-left would either curve with the
-           corner or force it square). */
+           per-row provider as a full-height background-image strip; bar mode
+           squares the rows (sidebar-square-rows), so it meets a straight
+           edge rather than a corner curve. */
         .color-bar { border-left: 3px solid transparent; }
 
         /* Virtual tag group rows use the osd style; the default row hover
@@ -574,16 +573,21 @@ def _apply_sidebar_list_compact_class(connection_list, config) -> None:
 
 
 def _use_square_sidebar_rows(config) -> bool:
+    # Accent Bars always square the rows: a straight bar only meets a
+    # straight edge, so the Rounded Corners switch does not apply there.
     if config is None:
         return False
     try:
+        if _get_color_display_mode(config) == 'bar':
+            return True
         return bool(config.get_setting('ui.sidebar_square_rows', False))
     except Exception:
         return False
 
 
 def _apply_sidebar_list_corner_class(connection_list, config) -> None:
-    """Toggle ``sidebar-square-rows`` on the connection ListBox (Rounded Corners off)."""
+    """Toggle ``sidebar-square-rows`` on the connection ListBox (Rounded
+    Corners off, or Accent Bars)."""
     if connection_list is None:
         return
     if _use_square_sidebar_rows(config):
@@ -847,10 +851,11 @@ def _clear_tint(row: Gtk.Widget):
 def _set_bar_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
     """Colour the row's leading accent bar.
 
-    Painted as a no-repeat background strip (not a coloured border) so the
-    bar keeps straight, square ends while the row's rounded corners stay
-    intact. Vertically inset to 90% so it clears the corner curves. The
-    provider is scoped to this widget's style context, same as ``.tinted``.
+    Painted as a full-height, no-repeat background strip along the row's
+    leading edge; bar mode squares the rows (see
+    :func:`_use_square_sidebar_rows`), so the bar runs corner to corner.
+    The provider is scoped to this widget's style context, same as
+    ``.tinted``.
     """
     try:
         color = rgba.to_string()
@@ -861,7 +866,7 @@ def _set_bar_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
         css_data = f"""
         .color-bar-colored {{
             background-image: linear-gradient({color}, {color});
-            background-size: 3px 95%;
+            background-size: 3px 100%;
             background-position: left center;
             background-repeat: no-repeat;
         }}
