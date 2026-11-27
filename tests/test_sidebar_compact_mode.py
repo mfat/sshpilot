@@ -143,3 +143,31 @@ def test_sidebar_list_compact_class_toggles():
     cfg.get_setting.return_value = 'full'
     mod._apply_sidebar_list_compact_class(lb, cfg)
     lb.remove_css_class.assert_called_with('sidebar-compact')
+
+
+def test_sidebar_list_corner_class_toggles():
+    mod = importlib.import_module('sshpilot.sidebar')
+    lb = MagicMock(name='connection_list')
+    lb.has_css_class.return_value = False
+    cfg = MagicMock()
+    cfg.get_setting.return_value = True
+    mod._apply_sidebar_list_corner_class(lb, cfg)
+    lb.add_css_class.assert_called_with('sidebar-square-rows')
+
+    lb.has_css_class.return_value = True
+    cfg.get_setting.return_value = False
+    mod._apply_sidebar_list_corner_class(lb, cfg)
+    lb.remove_css_class.assert_called_with('sidebar-square-rows')
+
+
+def test_accent_bars_force_square_sidebar_rows():
+    mod = importlib.import_module('sshpilot.sidebar')
+    settings = {'ui.group_color_display': 'bar', 'ui.sidebar_square_rows': False}
+    cfg = MagicMock()
+    cfg.get_setting.side_effect = lambda key, default=None: settings.get(key, default)
+    assert mod._use_square_sidebar_rows(cfg) is True
+
+    settings['ui.group_color_display'] = 'dot'
+    assert mod._use_square_sidebar_rows(cfg) is False
+    settings['ui.sidebar_square_rows'] = True
+    assert mod._use_square_sidebar_rows(cfg) is True

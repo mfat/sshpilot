@@ -545,6 +545,26 @@ def test_save_writes_only_what_changed_and_clears_dirty(window):
     assert client.path.read_text() == CONFIG.replace("User deploy", "User root")
 
 
+def test_ctrl_s_saves_from_a_field(window):
+    from gi.repository import Gtk
+
+    client = window._test_client
+    entry = _field(window, "user").value
+    entry.grab_focus()
+    entry.set_text("root")
+    assert _pump(lambda: window.dirty)
+    trigger = Gtk.ShortcutTrigger.parse_string("<Control>s")
+    shortcuts = [
+        controller.get_item(index)
+        for controller in _controllers(window) if isinstance(controller, Gtk.ShortcutController)
+        for index in range(controller.get_n_items())
+    ]
+    save = next(s for s in shortcuts if s.get_trigger().equal(trigger))
+    assert save.get_action().activate(0, window, None)
+    assert _pump(lambda: client.saves == 1 and not window.dirty)
+    assert client.path.read_text() == CONFIG.replace("User deploy", "User root")
+
+
 def test_a_file_changed_on_disk_is_not_overwritten(window):
     client = window._test_client
     client.path.write_text(CONFIG + "# edited elsewhere\n")
@@ -1585,7 +1605,9 @@ def test_the_raw_view_marks_the_selected_block_and_follows_edits(window):
 
 def test_the_cursor_in_the_raw_view_selects_the_block_it_is_in(window):
     buffer = _raw(window)
-    window.raw.view.has_focus = lambda: True                 # the user is in it
+    window.show_page("raw")
+    _show(window)
+    window.raw.view.grab_focus()                             # the user is in it
     glob, web, star = window.draft.blocks
     line = window.editor.lines.options[star.options[0].uid]  # a line of Host *
     found, position = buffer.get_iter_at_line(line - 1)

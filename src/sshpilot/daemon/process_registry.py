@@ -291,7 +291,10 @@ class OwnedProcessRegistry:
         """
 
         identity = identify_process(pid)
-        if identity is None:
+        # An exited child still has a start time while it lingers: unreaped
+        # on POSIX, or on Windows while any handle to it (its Popen's) is
+        # open. matches_live_process already counts that as gone.
+        if identity is None or _is_zombie(pid):
             return None
         entry = RegisteredProcess(
             identity=identity,

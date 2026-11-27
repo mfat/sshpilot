@@ -76,6 +76,16 @@ class DockerError(Exception):
     """Raised when a Docker/Podman command exits non-zero."""
 
 
+def normalize_docker_host(value: Optional[str]) -> str:
+    """A user-entered daemon address as a ``-H``/``--url`` value: blank stays
+    blank, a bare path becomes ``unix://<path>``, anything with a scheme
+    (``unix://``, ``tcp://``, ``ssh://``, ``npipe://``) is kept as-is."""
+    text = (value or "").strip()
+    if text.startswith("/"):
+        return f"unix://{text}"
+    return text
+
+
 class DockerClient:
     # Substrings that mark a Docker-socket permission failure (non-root user not
     # in the ``docker`` group). Used to decide whether to retry with sudo.
@@ -84,6 +94,21 @@ class DockerClient:
         "dial unix",
         "connect: permission denied",
         "got permission denied",
+    )
+
+    # Substrings that mark a daemon socket that does not exist at the address
+    # the CLI tried (e.g. a rootless daemon whose socket lives under
+    # ``$XDG_RUNTIME_DIR``). sudo cannot help with these.
+    _MISSING_SOCKET_MARKERS = (
+        "no such file or directory",
+    )
+
+    # Rootless/desktop socket locations probed when the default socket is
+    # missing, in order. Expanded by ``sh`` on the host.
+    _ROOTLESS_SOCKETS = (
+        '"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock"',
+        '"$HOME/.docker/run/docker.sock"',
+        '"$HOME/.docker/desktop/docker.sock"',
     )
 
     # Substrings in sudo stderr when the user cannot use sudo at all (as opposed
@@ -103,6 +128,7 @@ class DockerClient:
     def __init__(self, run_command: RunCommand, nickname: str,
                  runtime: str = "docker", *, use_sudo: bool = False,
                  sudo_password: Optional[str] = None,
+                 docker_host: Optional[str] = None,
                  timeout: float = 30) -> None:
         self._run_command = run_command
         self.nickname = nickname
@@ -112,6 +138,9 @@ class DockerClient:
         # captured commands feed it to ``sudo -S`` over stdin, interactive
         # commands use ``sudo -p`` so the terminal can auto-type it.
         self.sudo_password = sudo_password
+        # Daemon address passed as ``-H`` (docker) / ``--url`` (podman); empty
+        # means the CLI's own default (``DOCKER_HOST``/context/system socket).
+        self.docker_host = normalize_docker_host(docker_host)
         self.timeout = timeout
         self._command_line: Callable[[Sequence[str]], str] = (
             getattr(run_command, "command_line", None) or shlex.join)
@@ -128,8 +157,18 @@ class DockerClient:
 
     @classmethod
     def is_permission_error(cls, text: str) -> bool:
+        # "dial unix …: connect: no such file or directory" also contains
+        # "dial unix", but that is a missing socket, not a permission problem.
+        if cls.is_missing_socket_error(text):
+            return False
         low = (text or "").lower()
         return any(marker in low for marker in cls._PERMISSION_MARKERS)
+
+    @classmethod
+    def is_missing_socket_error(cls, text: str) -> bool:
+        low = (text or "").lower()
+        return (("dial unix" in low or ".sock" in low)
+                and any(marker in low for marker in cls._MISSING_SOCKET_MARKERS))
 
     @classmethod
     def is_sudo_denied_error(cls, text: str) -> bool:
@@ -142,19 +181,26 @@ class DockerClient:
     # configured. Interactive terminal commands use ``sudo -p <sentinel>`` so the
     # terminal can detect the prompt and auto-type the password, else plain
     # ``sudo`` so the PTY can prompt.
+    def _runtime_cmd(self) -> str:
+        """The runtime plus its daemon-address flag, if one is set."""
+        if not self.docker_host:
+            return self.runtime
+        flag = "--url" if self.runtime == "podman" else "-H"
+        return f"{self.runtime} {flag} {self._q(self.docker_host)}"
+
     def _captured_runtime(self) -> str:
         if not self.use_sudo:
-            return self.runtime
+            return self._runtime_cmd()
         if self._password_mode:
-            return f"sudo -S -p {self._q('')} {self.runtime}"
-        return f"sudo -n {self.runtime}"
+            return f"sudo -S -p {self._q('')} {self._runtime_cmd()}"
+        return f"sudo -n {self._runtime_cmd()}"
 
     def _interactive_runtime(self) -> str:
         if not self.use_sudo:
-            return self.runtime
+            return self._runtime_cmd()
         if self._password_mode:
-            return f"sudo -p {self._q(self.SUDO_PROMPT)} {self.runtime}"
-        return f"sudo {self.runtime}"
+            return f"sudo -p {self._q(self.SUDO_PROMPT)} {self._runtime_cmd()}"
+        return f"sudo {self._runtime_cmd()}"
 
     def _run(self, command: str, *, timeout: Optional[float] = None) -> Any:
         """Invoke the injected ``run_command``, feeding the sudo password to
@@ -269,6 +315,25 @@ class DockerClient:
         logger.debug("docker[%s] detected runtime: none (stdout=%r)",
                      self.nickname, out)
         return None
+
+    def find_rootless_socket(self) -> Optional[str]:
+        """``unix://`` address of the first rootless/desktop Docker socket that
+        exists on the host, else None. POSIX hosts only (``None`` under
+        ``cmd``). Like :meth:`detect_runtime`, this is not a ``<runtime> …``
+        command and never uses sudo."""
+        if self._windows:
+            return None
+        loop = ("for s in " + " ".join(self._ROOTLESS_SOCKETS)
+                + '; do [ -S "$s" ] && { echo "$s"; exit 0; }; done; exit 1')
+        res = self._invoke(f"sh -c {self._q(loop)}", timeout=self.timeout)
+        if getattr(res, "exit_code", 1) != 0:
+            return None
+        lines = (getattr(res, "stdout", "") or "").strip().splitlines()
+        path = lines[-1].strip() if lines else ""
+        if not path.startswith("/"):
+            return None
+        logger.debug("docker[%s] found rootless socket: %s", self.nickname, path)
+        return normalize_docker_host(path)
 
     # -- queries ------------------------------------------------------
     def ps(self, all: bool = True) -> List[dict]:

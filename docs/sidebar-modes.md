@@ -74,6 +74,12 @@ What changed for callers:
   (`_sidebar_hidden_by_toggle`), so search and hover reveal use the floating
   popup, and the header toggle / F9 float it over the content
   (`_toggle_sidebar_overlay`). Opening a connection puts it away again.
+  A toggle click on a popup the hover just revealed keeps it open and
+  claims it from the hover (`SidebarHoverReveal.claim`), which also stops
+  the resting pointer from re-revealing one the click closed. Programmatic
+  show/hide (`_apply_sidebar_visible`) only records the choice while
+  collapsed; widening docks a user-shown sidebar and puts a user-hidden one
+  away unless search is using the popup.
 - **GtkPaned keeps 1px for the sidebar.** `gtk_paned_compute_position`
   never gives the start child less than 1px, so the clip holder claims 1px
   and the start child is not shrinkable; otherwise the paned's minimum left

@@ -262,7 +262,9 @@ def test_recursive_download_of_small_files_pipelines_over_rtt(tmp_path):
 
 
 def test_recursive_upload_creates_directories_per_level(tmp_path):
-    delay = 0.03
+    # As for the download above: on Windows, creating 91 directories varies
+    # by more than a 30 ms link between the two runs (46 "round trips" once).
+    delay = 0.25 if os.name == "nt" else 0.03
     local_root = tmp_path / "local"
     local_root.mkdir()
     for d in range(30):

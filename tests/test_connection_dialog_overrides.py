@@ -86,11 +86,12 @@ HOST = "Host h\n    HostName 192.0.2.1\n"
 
 def test_every_marked_row_is_an_option_the_dialog_owns():
     for _row, keyword in OVERRIDABLE_ROWS:
-        # The two forwarding switches and the login-policy rows write their
-        # option as a plain Host-block line; every other row is a directive
-        # the formatter owns.
+        # The two forwarding switches, connection sharing and the
+        # login-policy rows write their option as a plain Host-block line;
+        # every other row is a directive the formatter owns.
         assert keyword.lower() in MANAGED_HOST_OPTIONS | AUTH_POLICY_KEYWORDS | {
             "exitonforwardfailure", "sessiontype",
+            "controlmaster", "controlpath", "controlpersist",
         }
 
 
@@ -187,6 +188,39 @@ def test_a_selector_on_default_names_the_block_that_decides(tmp_path):
     answer = _answer(tmp_path, HOST + "\nHost *\n    ForwardAgent yes\n")
     kind, tag, _note, _style = _rm("forward_agent_row", "ForwardAgent", answer)
     assert (kind, tag) == (GLOBAL, "from Host *")
+
+
+@needs_ssh
+def test_settings_multiplexing_overrides_a_host_that_turns_sharing_off(tmp_path):
+    # Settings ▸ SSH Options win over the block: its Off goes unused.
+    answer = _answer(
+        tmp_path, HOST, extra=["ControlMaster no", "ControlPath none"],
+        forced=("ControlMaster=auto", "ControlPath=/tmp/cm/%C", "ControlPersist=60"),
+    )
+    kind, tag, _note, style = _rm("multiplex_row", "ControlMaster", answer)
+    assert (kind, tag, style) == (OVERRIDDEN, "Overridden", "purple")
+
+
+@needs_ssh
+def test_sharing_left_at_default_names_settings_when_they_force_it(tmp_path):
+    answer = _answer(
+        tmp_path, HOST,
+        forced=("ControlMaster=auto", "ControlPath=/tmp/cm/%C", "ControlPersist=60"),
+    )
+    kind, _tag, _note, _style = _rm("multiplex_row", "ControlMaster", answer)
+    assert kind == GLOBAL
+    assert answer.unused_count() == (0, 0)
+
+
+@needs_ssh
+def test_sharing_without_settings_or_blocks_needs_no_mark(tmp_path):
+    answer = _answer(tmp_path, HOST)
+    assert _rm("multiplex_row", "ControlMaster", answer)[0] is None
+    on = _answer(
+        tmp_path / "on", HOST,
+        extra=["ControlMaster auto", "ControlPath ~/.ssh/sockets/%C", "ControlPersist 60"],
+    )
+    assert _rm("multiplex_row", "ControlMaster", on)[0] is None
 
 
 @needs_ssh

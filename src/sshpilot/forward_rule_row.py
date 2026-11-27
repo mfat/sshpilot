@@ -2,8 +2,8 @@
 
 This computer is always on the left and the server on the right; the arrow
 between them points the way a forwarded connection travels (right for Local
-and Dynamic, left for Remote). Each side shows the machine over the address
-it plays a part with: an ear where the forward listens, a target where the
+and Dynamic, left for Remote). Each side is a card of its own, the machine
+over the address it plays a part with: an ear where the forward listens, a target where the
 connection is delivered. The type and its ssh flag sit on a line above,
 edit and delete on the right.
 
@@ -138,8 +138,8 @@ def describe_forward(rule: dict) -> Optional[ForwardView]:
 _CSS = """
 .forward-rule { padding: 10px 8px 10px 14px; }
 .forward-title { font-weight: 600; }
-.forward-strip {
-  padding: 8px 14px;
+.forward-machine {
+  padding: 8px 12px;
   border-radius: 10px;
   background-color: alpha(currentColor, 0.04);
   border: 1px solid alpha(currentColor, 0.06);
@@ -204,10 +204,12 @@ def _draw_arrow(area: Gtk.DrawingArea, cr, width: int, height: int, outbound: bo
 
 
 def _side(machine: str, server_name: str, side: Side, kind: str, shrink: bool) -> Gtk.Widget:
-    """*shrink*: let the labels shrink with the row. Only the right side
-    does, so the left side keeps one width and its size group holds on every
-    row; the left side's address is capped at ``LEFT_ADDRESS_CHARS``."""
+    """One machine's card. *shrink*: let the labels shrink with the row.
+    Only the right side does, so the left card keeps one width and its size
+    group holds on every row; the left side's address is capped at
+    ``LEFT_ADDRESS_CHARS``."""
     box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    box.add_css_class("forward-machine")
     icon = _image(
         "computer-symbolic" if machine == THIS_COMPUTER else "network-server-symbolic", 16
     )
@@ -257,7 +259,7 @@ def build_forward_rule_row(
     side_group: Optional[Gtk.SizeGroup] = None,
 ) -> Gtk.Widget:
     """One rule's row: the type and its flag over the strip. *side_group*,
-    shared by every row of the list, keeps the left side the same width, so
+    shared by every row of the list, keeps the left card the same width, so
     the arrows line up from row to row."""
     _ensure_css()
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -282,18 +284,23 @@ def build_forward_rule_row(
     heading.append(flag)
     body.append(heading)
 
-    # This computer, arrow, server.
-    strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-    strip.add_css_class("forward-strip")
+    # This computer's card, arrow, the server's card.
+    # The arrow sits in the middle and the cards fill the row either side
+    # of it; every row is as wide as the next, so the arrows line up.
+    strip = Gtk.CenterBox(orientation=Gtk.Orientation.HORIZONTAL)
     left = _side(THIS_COMPUTER, server_name, view.this_computer, view.kind, shrink=False)
+    left.set_hexpand(True)
     if side_group is not None:
+        # Rows short of room push the middle over by the same amount.
         side_group.add_widget(left)
-    strip.append(left)
+    strip.set_start_widget(left)
 
     arrow = Gtk.DrawingArea()
     arrow.set_content_width(ARROW_WIDTH)
     arrow.set_content_height(10)
     arrow.set_valign(Gtk.Align.CENTER)
+    arrow.set_margin_start(10)
+    arrow.set_margin_end(10)
     arrow.add_css_class(f"forward-{view.kind}")
     arrow.set_draw_func(_draw_arrow, view.outbound)
     arrow.set_tooltip_text(
@@ -301,11 +308,11 @@ def build_forward_rule_row(
         if view.outbound
         else _("From {server}").format(server=server_name)
     )
-    strip.append(arrow)
+    strip.set_center_widget(arrow)
 
     right = _side(SERVER, server_name, view.server, view.kind, shrink=True)
     right.set_hexpand(True)
-    strip.append(right)
+    strip.set_end_widget(right)
     body.append(strip)
     row.append(body)
 

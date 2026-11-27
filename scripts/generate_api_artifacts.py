@@ -970,6 +970,10 @@ def _model_purpose(model: type) -> str:
     """Return explicit model documentation, never a dataclass signature."""
 
     purpose = model.__dict__.get("__doc__")
+    if purpose is not None and not isinstance(purpose, str):
+        # Python 3.15 dataclasses store a lazy docstring object, rendered to
+        # the signature on access.
+        purpose = model.__doc__
     if not purpose:
         return f"Frontend-neutral `{model.__name__}` record."
     purpose = inspect.cleandoc(purpose)

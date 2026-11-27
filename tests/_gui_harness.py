@@ -98,6 +98,11 @@ class GuiApp:
         # NON_UNIQUE: don't hijack a running sshpilot over D-Bus and don't trip
         # single-instance behaviour inside the test process.
         self.app.set_flags(self.app.get_flags() | Gio.ApplicationFlags.NON_UNIQUE)
+        # GLib makes the first application of the process the default and
+        # keeps it until it is finalized, which an earlier test's app may
+        # never be. Code that falls back to Gtk.Application.get_default()
+        # (prompt parents) would then present on that test's dead window.
+        self.app.set_default()
         self.app.register(None)
         self.app.activate()  # runs on_activate -> builds + presents MainWindow
         self.window = self.app.window

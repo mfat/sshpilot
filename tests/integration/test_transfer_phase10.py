@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -141,20 +142,41 @@ def test_transfer_overwrite_reject_and_accept(stack, tmp_path):
     assert downloaded.read_text() == "two"
 
 
+def _cancel_after_progress(stack, start):
+    # Hold the worker after real I/O so a fast loopback transfer cannot finish
+    # between the client's progress check and its cancellation request.
+    copying = threading.Event()
+    resume = threading.Event()
+    runtime = stack.server._transfer_runtime
+    report = runtime._report_progress
+
+    def pause_after_chunk(record, completed):
+        report(record, completed)
+        if completed and not copying.is_set():
+            copying.set()
+            resume.wait(timeout=30)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(runtime, "_report_progress", pause_after_chunk)
+        try:
+            started = start()
+            assert copying.wait(timeout=30), stack.client.get_transfer(started.id)
+            current = stack.client.get_transfer(started.id)
+            assert current.state is TransferState.RUNNING
+            assert 0 < current.bytes_completed < current.bytes_total
+            stack.client.cancel_transfer(CancelTransferRequest(transfer_id=started.id))
+        finally:
+            resume.set()
+    return stack.wait_transfer_terminal(started.id, timeout=60)
+
+
 def test_cancel_mid_upload_cleans_remote_temp(stack, tmp_path):
     ready = _ready_sftp(stack)
     sid = ready.id
     payload = tmp_path / "big-up.bin"
     payload.write_bytes(os.urandom(4 * 1024 * 1024))
     remote = "cancel-upload.bin"
-    started = _start_upload(stack, sid, payload, remote)
-
-    def _running() -> bool:
-        return stack.client.get_transfer(started.id).state is TransferState.RUNNING
-
-    wait_until(_running, timeout=30, message="upload never started running")
-    stack.client.cancel_transfer(CancelTransferRequest(transfer_id=started.id))
-    final = stack.wait_transfer_terminal(started.id, timeout=60)
+    final = _cancel_after_progress(stack, lambda: _start_upload(stack, sid, payload, remote))
     assert final.state is TransferState.CANCELLED
     listing = stack.client.sftp_list_directory(
         ListDirectoryRequest(
@@ -177,14 +199,7 @@ def test_cancel_mid_download_cleans_local_temp(stack, tmp_path):
     stack.wait_transfer_terminal(_start_upload(stack, sid, source, remote).id)
 
     dest = tmp_path / "dest.bin"
-    started = _start_download(stack, sid, remote, dest)
-
-    def _running() -> bool:
-        return stack.client.get_transfer(started.id).state is TransferState.RUNNING
-
-    wait_until(_running, timeout=30, message="download never started running")
-    stack.client.cancel_transfer(CancelTransferRequest(transfer_id=started.id))
-    final = stack.wait_transfer_terminal(started.id, timeout=60)
+    final = _cancel_after_progress(stack, lambda: _start_download(stack, sid, remote, dest))
     assert final.state is TransferState.CANCELLED
     assert not dest.exists()
     leftovers = list(tmp_path.glob(f"{_TEMP_PREFIX}*"))

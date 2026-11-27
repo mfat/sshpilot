@@ -1,3 +1,26 @@
+sshpilot (6.5.3-1) unstable; urgency=medium
+
+  * Release v6.5.3.
+  * Connection sharing (multiplexing) per connection - Turn
+    ControlMaster on or off for each host in the connection editor, with
+    Socket path and Keep open options. Settings > SSH Options still take
+    priority
+  * Clearer multiplexing errors - Problems OpenSSH would fail on, like a
+    missing socket directory or a socket path that's too long, are
+    caught before connecting and explained, so sessions no longer open
+    and then die with "exited with status 255"
+  * Docker Console now finds rootless Docker daemons, and each host can
+    set its own socket path
+  * File manager: Download to This Computer… is available on every
+    server pane, and double-clicking a file with a server in each pane
+    copies it to the other pane
+  * Connection editor search now finds options by their OpenSSH keyword
+    name
+  * Start page: you can now clear Recent connections
+  * Bug fixes and improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 27 Nov 2026 22:16:59 +0000
+
 sshpilot (6.5.2-1) unstable; urgency=medium
 
   * Release v6.5.2.

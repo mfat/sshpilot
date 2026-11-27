@@ -1447,10 +1447,12 @@ class PreferencesWindow(Adw.Window):
             from .sidebar import (
                 ConnectionRow, GroupRow, LocalTerminalRow,
                 _apply_sidebar_list_compact_class,
+                _apply_sidebar_list_corner_class,
             )
 
             listbox.remove_all()
             _apply_sidebar_list_compact_class(listbox, self.config)
+            _apply_sidebar_list_corner_class(listbox, self.config)
 
             groups = {
                 'production': {
@@ -1842,6 +1844,25 @@ class PreferencesWindow(Adw.Window):
         )
         sidebar_group.add(self.sidebar_row_style_row)
         self._sidebar_mode_dependent_rows.append(self.sidebar_row_style_row)
+
+        # Rounded Corners: off squares every sidebar row, cards and the
+        # selection alike. Stored inverted as ui.sidebar_square_rows. Applies
+        # in Compact too (its selection is rounded), so it is not greyed out
+        # there; Accent Bars always square the rows, so it is greyed out then
+        # (_sync_rounded_corners_row).
+        self.sidebar_rounded_corners_row = Adw.SwitchRow()
+        self.sidebar_rounded_corners_row.set_title(_("Rounded Corners"))
+        self.sidebar_rounded_corners_row.set_subtitle(
+            _("Round the corners of connection rows")
+        )
+        self.sidebar_rounded_corners_row.set_active(
+            not self.config.get_setting('ui.sidebar_square_rows', False)
+        )
+        self.sidebar_rounded_corners_row.connect(
+            'notify::active', self.on_sidebar_rounded_corners_changed
+        )
+        sidebar_group.add(self.sidebar_rounded_corners_row)
+        self._sync_rounded_corners_row()
 
         show_local_terminal_switch = Adw.SwitchRow()
         show_local_terminal_switch.set_title(_("Local Terminal Row"))
@@ -4857,6 +4878,7 @@ class PreferencesWindow(Adw.Window):
             logger.error("Failed to update group color display preference: %s", exc)
             return
 
+        self._sync_rounded_corners_row(mode)
         if mode == 'grip':
             self._ensure_drag_handles_shown()
 
@@ -5873,6 +5895,7 @@ class PreferencesWindow(Adw.Window):
             self._sync_terminal_theme_chooser(rebuild=True)
         elif key == 'ui.group_color_display':
             self._sync_group_color_display_row(value)
+            self._sync_rounded_corners_row(value)
             self._trigger_sidebar_refresh()
         elif key == 'ui.group_color_child_rows':
             self._sync_group_color_child_rows(value)
@@ -7189,6 +7212,33 @@ class PreferencesWindow(Adw.Window):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar flat rows preference: %s", exc)
+
+    def _sync_rounded_corners_row(self, mode=None) -> None:
+        """Grey out Rounded Corners while Accent Bars square the rows."""
+        row = getattr(self, 'sidebar_rounded_corners_row', None)
+        if row is None:
+            return
+        if mode is None:
+            try:
+                mode = self.config.get_setting('ui.group_color_display', 'dot')
+            except Exception:
+                mode = 'dot'
+        bar = str(mode).lower() == 'bar'
+        row.set_sensitive(not bar)
+        row.set_subtitle(
+            _("Accent Bars always use square corners") if bar
+            else _("Round the corners of connection rows")
+        )
+
+    def on_sidebar_rounded_corners_changed(self, switch, *args):
+        """Persist Rounded Corners (stored inverted as ui.sidebar_square_rows)."""
+        try:
+            self.config.set_setting('ui.sidebar_square_rows', not switch.get_active())
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+            self._schedule_group_preview_refresh()
+        except Exception as exc:
+            logger.error("Failed to update sidebar rounded corners preference: %s", exc)
 
     def on_sidebar_show_local_terminal_changed(self, switch, *args):
         """Persist and rebuild so the pinned Local Terminal row appears or hides."""

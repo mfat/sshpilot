@@ -110,6 +110,31 @@ port knock finished ports=3 duration_ms=412 kind=terminal
   command itself. A timeout kills the shell but not any
   descendants it left running; the WARNING says so.
 
+## Tracing connection sharing (ControlMaster)
+
+When a host shares one connection (`ControlMaster` with a `ControlPath`, in
+its Host block or through **Settings ▸ SSH Options**), every terminal tab and
+file browser opened to it logs what it did with that connection in
+`daemon.log`, tagged with the connection and the session or SFTP service:
+
+```
+connection sharing opened kind=terminal control_path=…/%C-hash: opened the shared connection (ssh: channel 0: new mux listener [...]) [connection=… session=…]
+connection sharing joined kind=sftp control_path=…: joined the shared connection (ssh: mux_client_request_session: master session id: 2) [connection=… sftp_service=…]
+```
+
+| Outcome | Meaning |
+| --- | --- |
+| `opened` | This launch opened the shared connection; later ones can join it (INFO). |
+| `joined` | It joined a shared connection already open, with no new login (INFO). |
+| `refused` | A shared connection was open but it logged in on its own: `ControlMaster yes` only ever opens one, `auto` joins it (WARNING, and a toast). |
+| `unavailable` | No shared connection was open and the host is not set to open one (`ControlMaster no`), so it logged in on its own (INFO). |
+| `failed` | Its socket could not be created (a missing directory, a path too long); ssh exits and the launch fails (WARNING, and a toast). |
+
+The `(ssh: …)` part is OpenSSH's own line. A host that does not share logs
+nothing here. Terminal tabs read this from their private `-E` diagnostics, so
+a tab launched with `-v`, or a system without inotify, logs nothing either.
+Forwards, SCP transfers and one-shot commands are not traced.
+
 ## Tracing a failed RDP, telnet or serial client
 
 A non-SSH connection's client (FreeRDP, telnet, a serial console) reports its

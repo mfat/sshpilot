@@ -135,6 +135,11 @@
     <file alias="document-open-symbolic.svg">icons/scalable/actions/document-open-symbolic.svg</file>
     <file alias="edit-clear-all-symbolic.svg">icons/scalable/actions/edit-clear-all-symbolic.svg</file>
     <file alias="emblem-ok-symbolic.svg">icons/scalable/actions/emblem-ok-symbolic.svg</file>
+    <!-- App-unique names for widgets that resolve icons only by name
+         (Adw.ViewStack pages), so a system theme cannot shadow them. -->
+    <file alias="sshpilot-advcfg-directives-symbolic.svg">icons/scalable/actions/document-properties-symbolic.svg</file>
+    <file alias="sshpilot-advcfg-effective-symbolic.svg">icons/scalable/actions/emblem-ok-symbolic.svg</file>
+    <file alias="sshpilot-advcfg-raw-symbolic.svg">icons/scalable/actions/text-x-generic-symbolic.svg</file>
     <file alias="folder-download-symbolic.svg">icons/scalable/actions/folder-download-symbolic.svg</file>
     <file alias="go-bottom-symbolic.svg">icons/scalable/actions/go-bottom-symbolic.svg</file>
     <file alias="go-next-symbolic.svg">icons/scalable/actions/go-next-symbolic.svg</file>

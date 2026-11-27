@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 
+from sshpilot.core.connection_sharing import ConnectionSharingTracker
 from sshpilot.sftp.server_limits import parse_remote_software_version
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
@@ -186,20 +187,36 @@ def _argv_with_remote_banner_logging(argv: Tuple[str, ...]) -> Tuple[str, ...]:
 
 
 def _drain_ssh_stderr_for_banner(
-    stream, holder: Dict[str, Optional[str]]
+    stream,
+    holder: Dict[str, Optional[str]],
+    on_sharing: Optional[Callable[[Any], None]] = None,
 ) -> None:
-    """Read ssh stderr until EOF; keep the first remote-software banner token."""
+    """Read ssh stderr until EOF; keep the first remote-software banner token.
+
+    The same DEBUG1 stream says what the launch did with the host's shared
+    connection; *on_sharing* receives that once, when it is settled.
+    """
+    tracker = ConnectionSharingTracker() if on_sharing is not None else None
     try:
         while True:
             line = stream.readline()
             if not line:
                 break
-            if holder.get("software"):
+            if holder.get("software") and (
+                tracker is None or tracker.decided is not None
+            ):
                 continue
             try:
                 text = line.decode("utf-8", errors="replace")
             except AttributeError:
                 text = str(line)
+            if tracker is not None and tracker.feed_line(text) is not None:
+                try:
+                    on_sharing(tracker.take())
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug("SFTP sharing report failed", exc_info=True)
+            if holder.get("software"):
+                continue
             software = parse_remote_software_version(text)
             if software:
                 holder["software"] = software
@@ -341,9 +358,13 @@ class SubprocessSftpProcessRunner:
         *,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         poll_interval: float = DEFAULT_PROCESS_POLL_INTERVAL,
+        sharing_reporter: Optional[Any] = None,
     ) -> None:
         if not callable(command_builder):
             raise TypeError("SFTP command builder must be callable")
+        #: Logs and publishes each launch's connection-sharing outcome
+        #: (``daemon.connection_sharing.ConnectionSharingReporter``).
+        self._sharing_reporter = sharing_reporter
         if poll_interval <= 0:
             raise ValueError("SFTP process poll interval must be positive")
         self._command_builder = command_builder
@@ -385,9 +406,22 @@ class SubprocessSftpProcessRunner:
         # Drain stderr continuously so a DEBUG LogLevel pipe cannot block ssh,
         # and capture the remote software banner for transfer concurrency.
         banner_holder: Dict[str, Optional[str]] = {"software": None}
+        on_sharing = None
+        reporter = self._sharing_reporter
+        if reporter is not None:
+            from sshpilot.api.models.connection_sharing import ConnectionSharingScope
+
+            def on_sharing(observation, _spec=spec):
+                reporter.report(
+                    _spec.connection_id,
+                    str(_spec.session_id),
+                    ConnectionSharingScope.SFTP,
+                    observation,
+                )
+
         stderr_thread = threading.Thread(
             target=_drain_ssh_stderr_for_banner,
-            args=(process.stderr, banner_holder),
+            args=(process.stderr, banner_holder, on_sharing),
             name="sshpilot-sftp-stderr",
             daemon=True,
         )

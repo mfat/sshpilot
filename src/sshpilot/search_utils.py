@@ -6,8 +6,8 @@ from typing import Any
 def connection_matches(connection: Any, query: str) -> bool:
     """Return True if connection matches the search query.
 
-    The search checks the connection's nickname, SSH Host alias, HostName/IP
-    address, and tags in a case-insensitive manner.
+    The search checks the connection's display name, nickname, SSH Host alias,
+    HostName/IP address, and tags in a case-insensitive manner.
 
     The query may contain several whitespace-separated keywords. Every keyword
     must match at least one field (logical AND across keywords, OR across
@@ -21,6 +21,7 @@ def connection_matches(connection: Any, query: str) -> bool:
     if not keywords:
         return True
     fields = [
+        getattr(connection, "display_name", ""),
         getattr(connection, "nickname", ""),
         getattr(connection, "host", ""),
         getattr(connection, "hostname", ""),

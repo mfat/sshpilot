@@ -98,3 +98,16 @@ def test_extra_whitespace_is_ignored():
     setattr(conn, "tags", ["web"])
     assert connection_matches(conn, "  server   web  ")
     assert connection_matches(conn, "   ")
+
+
+def test_matches_display_name():
+    conn = Connection({
+        "nickname": "srv-01",
+        "host": "srv-01",
+        "hostname": "10.1.2.3",
+        "username": "user",
+        "display_name": "Billing Database",
+    })
+    assert connection_matches(conn, "billing")
+    assert connection_matches(conn, "database srv")
+    assert not connection_matches(conn, "payroll")

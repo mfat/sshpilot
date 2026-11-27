@@ -28,7 +28,8 @@ def _recent_page(hide):
         ),
         _connection_title=WelcomePage._connection_title,
         _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle),
-        _min_section=lambda title, rows: (title, rows),
+        _min_section=lambda title, rows, action=None: (title, rows),
+        _attach_recent_context_menu=lambda row, conn: None,
         # Masking is what is under test; the Dashboard gate has its own tests.
         _dashboard_callback=lambda connection: None,
         _connect_connection_summary=lambda connection_summary: None,
@@ -135,3 +136,26 @@ def test_pinned_rows_prefer_display_name_over_nickname():
 
     _title, rows = page._pinned_box.items[0]
     assert rows[0] == ("Pinned Label", "alice@example.test")
+
+
+def test_clear_recent_removes_last_used_and_refreshes():
+    calls = []
+    page = SimpleNamespace(
+        window=SimpleNamespace(
+            client=SimpleNamespace(
+                update_connection_metadata=lambda nickname, meta: calls.append(
+                    (nickname, meta)
+                ),
+            ),
+        ),
+        refresh_recent=lambda: calls.append("refresh"),
+    )
+    conns = [SimpleNamespace(nickname="a"), SimpleNamespace(nickname="b")]
+
+    WelcomePage._clear_recent(page, conns)
+
+    assert calls == [
+        ("a", {"last_used": None}),
+        ("b", {"last_used": None}),
+        "refresh",
+    ]

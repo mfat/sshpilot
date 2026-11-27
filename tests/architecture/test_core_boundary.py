@@ -87,6 +87,13 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("connection_dialog_auth.py", "connections.auth_preferences", "AUTH_KEYWORD_ALIASES"),
         ("connection_dialog_auth.py", "connections.auth_preferences", "canonical_keyword"),
         ("gtk/login_profile_messages.py", "connections.auth_preferences", "password_comes_first"),
+        # -- multiplexing socket and persist values OpenSSH accepts -----
+        ("connection_dialog_multiplex.py", "ssh.control_path", "MAX_CONTROL_PATH_LENGTH"),
+        ("connection_dialog_multiplex.py", "ssh.control_path", "control_path_directory"),
+        ("connection_dialog_multiplex.py", "ssh.control_path", "control_path_too_long"),
+        ("connection_dialog_multiplex.py", "ssh.control_path", "control_persist_valid"),
+        ("ssh_multiplex.py", "ssh.control_path", "MAX_CONTROL_PATH_LENGTH"),
+        ("ssh_multiplex.py", "ssh.control_path", "control_path_too_long"),
         # -- connection field validation --------------------------------
         ("ssh_connection_validator.py", "validation.connection", "SSHConnectionValidator"),
         ("ssh_connection_validator.py", "validation.connection", "ValidationResult"),

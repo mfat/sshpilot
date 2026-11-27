@@ -97,6 +97,8 @@ SETTINGS = (
                  N_("terminal background")),
     SettingEntry("sidebar", N_("Layout"), N_("Sidebar Mode"), N_("compact;full")),
     SettingEntry("sidebar", N_("Layout"), N_("Row Style"), N_("cards;flat")),
+    SettingEntry("sidebar", N_("Layout"), N_("Rounded Corners"),
+                 N_("corners;square;rounded")),
     SettingEntry("sidebar", N_("Layout"), N_("Local Terminal Row")),
     SettingEntry("sidebar", N_("Row Details"), N_("Display user@hostname"),
                  N_("username;hostname")),

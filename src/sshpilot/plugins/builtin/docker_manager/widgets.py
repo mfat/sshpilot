@@ -170,6 +170,8 @@ def describe_docker_failure(text: str) -> str:
             or "is not recognized as an internal or external command" in low):
         name = runtime_missing.group(1).capitalize() if runtime_missing else "Docker"
         return _("{runtime} isn't installed on this host").format(runtime=name)
+    if DockerClient.is_missing_socket_error(text):
+        return _("Docker's socket wasn't found — set it in Docker Console settings")
     if "permission denied" in low and ("docker.sock" in low or "dial unix" in low):
         return _(
             "Permission denied talking to Docker — needs sudo or the docker group"
@@ -296,6 +298,12 @@ def error_text(err: Exception) -> str:
             "\n\nDocker needs elevated access. Enable the “sudo” toggle "
             "above (you may be prompted for your sudo password), or add your "
             "user to the “docker” group on the host."
+        )
+    elif DockerClient.is_missing_socket_error(str(err)):
+        msg += _(
+            "\n\nNo Docker daemon socket at that address. If Docker runs "
+            "rootless or listens elsewhere, set its socket for this host in "
+            "Docker Console settings (the gear button above)."
         )
     return msg
 

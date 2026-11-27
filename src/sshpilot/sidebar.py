@@ -119,11 +119,17 @@ def _install_sidebar_color_css():
         /* Accent-bar group colour: a straight vertical bar on the leading edge.
            The transparent border is reserved on every bar-mode row so coloured
            and uncoloured rows stay aligned. The bar itself is painted by the
-           per-row provider as a background-image strip, vertically inset and
-           centered, so it keeps square ends while the row's rounded corners
-           stay intact (a coloured border-left would either curve with the
-           corner or force it square). */
-        .color-bar { border-left: 3px solid transparent; }
+           per-row provider as a full-height background-image strip; bar mode
+           squares the rows (sidebar-square-rows), so it meets a straight
+           edge rather than a corner curve. */
+        .color-bar {
+          border-left: 3px solid transparent;
+          /* Paint the row (and the bar strip) from its outer edge: by
+             default both start inside the border, which left 3px of
+             sidebar showing before the bar. */
+          background-origin: border-box;
+          background-clip: border-box;
+        }
 
         /* Virtual tag group rows use the osd style; the default row hover
            replaces the background with a near-transparent overlay, leaving
@@ -303,7 +309,7 @@ def install_sidebar_css():
            root connection rows. Flat, non-card, smaller than GroupRow so they
            read as list chrome rather than another folder. */
         .navigation-sidebar row.sidebar-section-header {
-          margin: 6px 8px 0 8px;
+          margin: 6px 6px 0 6px;
           background: transparent;
           box-shadow: none;
         }
@@ -342,9 +348,11 @@ def install_sidebar_css():
           transform: scale(0.98);
         }
 
-        /* Gap between sidebar list rows (GtkListBox has no spacing property) */
-        .navigation-sidebar row {
-          margin: 4px 8px;
+        /* Full mode keeps libadwaita's 6px horizontal row inset but restores
+           the roomier 8px gap between rows (libadwaita's own is 2px). */
+        .navigation-sidebar:not(.sidebar-compact) > row:not(.sidebar-section-header) {
+          margin-top: 4px;
+          margin-bottom: 4px;
         }
 
         /* Compact mode: denser IDE-style gaps (Cursor/VS Code); horizontal
@@ -356,12 +364,24 @@ def install_sidebar_css():
           margin: 1px 4px;
         }
 
+        /* .sidebar-pane draws its trailing border on its own last pixel, so
+           1px of the right margin went under it and the right gap read 1px
+           tighter than the left. Give that pixel back. */
+        .sidebar-pane .navigation-sidebar > row {
+          margin-right: 7px;
+        }
+        .sidebar-pane .navigation-sidebar.sidebar-compact > row {
+          margin-right: 5px;
+        }
+        .sidebar-pane .navigation-sidebar > row.sidebar-section-header {
+          margin-right: 7px;
+        }
+
         /* Selected sidebar row: shared with accent_override_css so hover/press
            survive equal-priority provider reordering after accent changes. */
 """ + NAVIGATION_SIDEBAR_SELECTION_CSS + """
 
         .navigation-sidebar row.tinted {
-          margin: 4px 8px;
           border-radius: 10px;
           transition: background-color 0s ease;
         }
@@ -382,6 +402,16 @@ def install_sidebar_css():
            accent inset so standalone status colours stay readable. */
         .navigation-sidebar row.tinted:selected {
           box-shadow: none;
+        }
+
+        /* Rounded Corners off: square every row, overriding libadwaita's
+           .navigation-sidebar > row radius, .card, tinted rows and the
+           selected-row radius above. */
+        .navigation-sidebar.sidebar-square-rows > row,
+        .navigation-sidebar.sidebar-square-rows > row.tinted,
+        .navigation-sidebar.sidebar-square-rows > row:selected,
+        .navigation-sidebar.sidebar-square-rows > row:selected:focus-within {
+          border-radius: 0;
         }
 
 
@@ -561,6 +591,32 @@ def _apply_sidebar_list_compact_class(connection_list, config) -> None:
     else:
         if connection_list.has_css_class('sidebar-compact'):
             connection_list.remove_css_class('sidebar-compact')
+
+
+def _use_square_sidebar_rows(config) -> bool:
+    # Accent Bars always square the rows: a straight bar only meets a
+    # straight edge, so the Rounded Corners switch does not apply there.
+    if config is None:
+        return False
+    try:
+        if _get_color_display_mode(config) == 'bar':
+            return True
+        return bool(config.get_setting('ui.sidebar_square_rows', False))
+    except Exception:
+        return False
+
+
+def _apply_sidebar_list_corner_class(connection_list, config) -> None:
+    """Toggle ``sidebar-square-rows`` on the connection ListBox (Rounded
+    Corners off, or Accent Bars)."""
+    if connection_list is None:
+        return
+    if _use_square_sidebar_rows(config):
+        if not connection_list.has_css_class('sidebar-square-rows'):
+            connection_list.add_css_class('sidebar-square-rows')
+    else:
+        if connection_list.has_css_class('sidebar-square-rows'):
+            connection_list.remove_css_class('sidebar-square-rows')
 
 
 def _apply_sidebar_row_density(content: Gtk.Box, config) -> None:
@@ -816,10 +872,11 @@ def _clear_tint(row: Gtk.Widget):
 def _set_bar_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
     """Colour the row's leading accent bar.
 
-    Painted as a no-repeat background strip (not a coloured border) so the
-    bar keeps straight, square ends while the row's rounded corners stay
-    intact. Vertically inset to 90% so it clears the corner curves. The
-    provider is scoped to this widget's style context, same as ``.tinted``.
+    Painted as a full-height, no-repeat background strip along the row's
+    leading edge; bar mode squares the rows (see
+    :func:`_use_square_sidebar_rows`), so the bar runs corner to corner.
+    The provider is scoped to this widget's style context, same as
+    ``.tinted``.
     """
     try:
         color = rgba.to_string()
@@ -830,7 +887,7 @@ def _set_bar_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
         css_data = f"""
         .color-bar-colored {{
             background-image: linear-gradient({color}, {color});
-            background-size: 3px 95%;
+            background-size: 3px 100%;
             background-position: left center;
             background-repeat: no-repeat;
         }}
@@ -865,7 +922,7 @@ def _clear_bar(row: Gtk.Widget):
 
 
 def _create_color_dot(icon_name: str = "dot-symbolic") -> Gtk.Image:
-    """Colour dot shown before the row icon ('dot' mode; 'bar'-mode member rows)."""
+    """Colour dot shown before the row icon ('dot' mode)."""
     from sshpilot import icon_utils
     dot = icon_utils.new_image_from_icon_name(icon_name)
     dot.add_css_class("sidebar-color-dot")
@@ -2417,12 +2474,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         except Exception:
             color_children = True
         rgba = self._resolve_group_color() if color_children else None
-        if mode == 'bar':
-            # Bar marks only group headers; member rows show a colour dot
-            # before the title instead.
-            _apply_row_color(self, mode, None)
-            _update_color_dot(self, rgba)
-            return
         _apply_row_color(self, mode, rgba)
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
@@ -4870,7 +4921,7 @@ def _build_sidebar_header(window, sidebar_box):
     # Its own section: a rule is made in Advanced Configuration and shows in
     # the Rules view, not in the connection list.
     rule_section = Gio.Menu()
-    rule_section.append(_('New Host Rule…'), 'win.new-host-rule')
+    rule_section.append(_('New Connection - Advanced'), 'win.new-host-rule')
     add_menu.append_section(None, rule_section)
     add_button = Gtk.MenuButton()
     add_button.add_css_class('flat')
@@ -5087,6 +5138,9 @@ def _create_sidebar_connection_list(window, sidebar_box):
     window.connection_list = Gtk.ListBox()
     window.connection_list.add_css_class("navigation-sidebar")
     _apply_sidebar_list_compact_class(
+        window.connection_list, getattr(window, 'config', None)
+    )
+    _apply_sidebar_list_corner_class(
         window.connection_list, getattr(window, 'config', None)
     )
     # The sidebar has no visible heading, so name the list itself.

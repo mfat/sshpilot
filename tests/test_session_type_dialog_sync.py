@@ -142,7 +142,10 @@ def test_session_type_none_enables_the_switch_and_survives_save():
     reopened = _open_dialog(saved["extra_ssh_config"])
     try:
         assert reopened.port_forwarding_only_row.get_active() is True
-        assert "sessiontype none" in reopened.advanced_tab.get_extra_ssh_config().lower()
+        # The switch owns the line: saved with the block, not listed on
+        # the Extra Options page.
+        assert "sessiontype none" in reopened._combined_extra_ssh_config().lower()
+        assert "sessiontype" not in reopened.advanced_tab.get_extra_ssh_config().lower()
     finally:
         reopened.close()
 

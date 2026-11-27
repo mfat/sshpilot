@@ -197,6 +197,31 @@ local `error.occurred` continuity notification where delivery remains possible.
   and its output never cross the wire: the command line can embed a token or a
   password, and the wording is the frontend's.
 
+<!-- api-event: connection.sharing -->
+## `connection.sharing`
+
+- **Status / introduced:** Daemon implemented / v1, API 0.121.
+- **Trigger / payload:** What one terminal session or SFTP service did with
+  its host's shared connection (OpenSSH `ControlMaster`), read from OpenSSH's
+  own log of the launch; exact `ConnectionSharingNotice` payload. `outcome` is
+  `opened` (it opened the shared connection), `joined` (it joined one already
+  open), `refused` (one was open but it logged in on its own:
+  `ControlMaster yes`), `unavailable` (none was open and it was not set to
+  open one: `ControlMaster no`) or `failed` (its socket could not be
+  created; the launch fails too). `scope` is `terminal` or `sftp`; the scope
+  id is the session or SFTP service id; `control_path` is the expanded socket
+  path when OpenSSH named it, else empty.
+- **Related IDs/order/delivery:** Broadcast to every client in the shared
+  daemon sequence, once per launch, while the launch's own lifecycle events
+  are still being published (it is settled before the session's channel
+  opens). Connection and scope IDs are populated.
+- **Coalescing / dropping:** A launch whose host does not share publishes
+  nothing, and so does a terminal launch without the private diagnostics
+  stream (no inotify, or a user `-v`). Other launch kinds (forwards, SCP,
+  one-shot commands) do not publish it.
+- **Contents:** Codes and the socket path only; the wording is the
+  frontend's. `daemon.log` has OpenSSH's own line for every outcome.
+
 <!-- api-event: login_profiles.changed -->
 ## `login_profiles.changed`
 

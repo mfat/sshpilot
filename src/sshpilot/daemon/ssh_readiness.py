@@ -41,6 +41,7 @@ from sshpilot.core.ssh_diagnostics import (
     SshDiagnosticResult,
     SshDiagnosticState,
 )
+from sshpilot.core.connection_sharing import ConnectionSharingObservation
 from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
 from sshpilot.daemon.ssh_diagnostics_monitor import (
     SshDiagnosticsMonitor,
@@ -75,6 +76,7 @@ _ASKPASS_ENV_KEYS = (
 
 OnResultCallback = Callable[[object, SshDiagnosticResult], None]
 OnGraceExpiredCallback = Callable[[object], None]
+OnSharingCallback = Callable[[object, ConnectionSharingObservation], None]
 
 
 def launch_eligible_for_diagnostics(argv: Sequence[str]) -> bool:
@@ -212,6 +214,7 @@ class _SessionDiagnostics:
     parser: SshDiagnosticParser
     on_result: OnResultCallback
     on_grace_expired: Optional[OnGraceExpiredCallback]
+    on_sharing: Optional[OnSharingCallback] = None
     engaged: bool = False
     decisive: bool = False
     decisive_result: Optional[SshDiagnosticResult] = None
@@ -268,8 +271,13 @@ class SshReadinessManager:
         session_id: object,
         on_result: OnResultCallback,
         on_grace_expired: Optional[OnGraceExpiredCallback] = None,
+        on_sharing: Optional[OnSharingCallback] = None,
     ) -> None:
-        """Register the runtime callbacks before the launch executes."""
+        """Register the runtime callbacks before the launch executes.
+
+        *on_sharing* receives the launch's connection-sharing outcome once,
+        when OpenSSH's log settles it (never, for a host that does not share).
+        """
         if not callable(on_result):
             raise TypeError("diagnostics result callback must be callable")
         deliver = None
@@ -284,11 +292,13 @@ class SshReadinessManager:
                     parser=SshDiagnosticParser(),
                     on_result=on_result,
                     on_grace_expired=on_grace_expired,
+                    on_sharing=on_sharing,
                 )
                 self._sessions[session_id] = record
             else:
                 record.on_result = on_result
                 record.on_grace_expired = on_grace_expired
+                record.on_sharing = on_sharing
                 if record.decisive:
                     deliver = record.decisive_result
         if deliver is not None:
@@ -566,6 +576,8 @@ class SshReadinessManager:
         """
         callback = None
         result = None
+        sharing = None
+        sharing_callback = None
         with self._lock:
             record = self._sessions.get(session_id)
             if record is None or record.finished:
@@ -577,14 +589,23 @@ class SshReadinessManager:
             ):
                 return
             result = record.parser.feed(data)
-            if result is None:
-                return
-            record.decisive = True
-            record.decisive_result = result
-            if record.timer is not None:
-                record.timer.cancel()
-                record.timer = None
-            callback = record.on_result
+            if record.on_sharing is not None:
+                sharing = record.parser.sharing.take()
+                sharing_callback = record.on_sharing
+            if result is not None:
+                record.decisive = True
+                record.decisive_result = result
+                if record.timer is not None:
+                    record.timer.cancel()
+                    record.timer = None
+                callback = record.on_result
+        if sharing is not None:
+            try:
+                sharing_callback(session_id, sharing)
+            except Exception:
+                logger.debug("diagnostics sharing callback failed", exc_info=True)
+        if result is None:
+            return
         if callback is not None:
             try:
                 callback(session_id, result)

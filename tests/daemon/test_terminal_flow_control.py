@@ -26,6 +26,7 @@ from sshpilot.api.models.terminal import (
     TerminalOutputAck,
 )
 from sshpilot.daemon.pty_runner import PtySessionProcessRunner
+from sshpilot.daemon.server import DEFAULT_MAX_CLIENT_TERMINAL_BYTES
 from sshpilot.daemon.terminal_stream import FLOW_CONTROL_HIGH_BYTES
 
 _WAIT_TIMEOUT = 20.0
@@ -66,6 +67,19 @@ def _runner(script):
             (sys.executable, "-u", "-c", script),
             {"PATH": os.environ.get("PATH", "")},
         )
+    )
+
+
+def _daemon(daemon_factory, script):
+    """A daemon running *script*, with the per-client terminal queue the
+    daemon really has. The fixture's 1 MiB is the flow-control window
+    itself: a client slow to drain its socket (a loaded CI runner) then
+    overflows it with a window plus read slack in flight, and the daemon
+    drops the stream as a continuity loss these tests are not about."""
+
+    return daemon_factory(
+        session_runner=_runner(script),
+        max_client_terminal_bytes=DEFAULT_MAX_CLIENT_TERMINAL_BYTES,
     )
 
 
@@ -142,7 +156,7 @@ def _session_ended(client, session_id):
 
 
 def test_daemon_advertises_terminal_flow_control(daemon_factory):
-    server, _manager = daemon_factory(session_runner=_runner(_FLOOD_SCRIPT))
+    server, _manager = _daemon(daemon_factory, _FLOOD_SCRIPT)
     client = DaemonClient(socket_path=server.socket_path)
     try:
         from sshpilot.api import Capability
@@ -155,7 +169,7 @@ def test_daemon_advertises_terminal_flow_control(daemon_factory):
 def test_unacknowledged_output_pauses_the_pty_and_acks_deliver_every_byte(
     daemon_factory,
 ):
-    server, _manager = daemon_factory(session_runner=_runner(_FLOOD_SCRIPT))
+    server, _manager = _daemon(daemon_factory, _FLOOD_SCRIPT)
     client = DaemonClient(socket_path=server.socket_path)
     collector = _Collector()
     try:
@@ -192,7 +206,7 @@ def test_unacknowledged_output_pauses_the_pty_and_acks_deliver_every_byte(
 def test_input_still_reaches_a_paused_session(daemon_factory):
     """Ctrl+C works during a flood the frontend has not caught up with."""
 
-    server, _manager = daemon_factory(session_runner=_runner(_ENDLESS_SCRIPT))
+    server, _manager = _daemon(daemon_factory, _ENDLESS_SCRIPT)
     client = DaemonClient(socket_path=server.socket_path)
     collector = _Collector()
     try:
@@ -216,9 +230,7 @@ def test_input_still_reaches_a_paused_session(daemon_factory):
 
 
 def test_detaching_the_owner_resumes_reading(daemon_factory):
-    server, _manager = daemon_factory(
-        session_runner=_runner(_FLOOD_AND_EXIT_SCRIPT)
-    )
+    server, _manager = _daemon(daemon_factory, _FLOOD_AND_EXIT_SCRIPT)
     client = DaemonClient(socket_path=server.socket_path)
     collector = _Collector()
     try:
@@ -242,9 +254,7 @@ def test_detaching_the_owner_resumes_reading(daemon_factory):
 def test_disconnecting_the_owner_resumes_reading(daemon_factory):
     """A crashed or quit frontend never leaves the remote program stuck."""
 
-    server, _manager = daemon_factory(
-        session_runner=_runner(_FLOOD_AND_EXIT_SCRIPT)
-    )
+    server, _manager = _daemon(daemon_factory, _FLOOD_AND_EXIT_SCRIPT)
     client = DaemonClient(socket_path=server.socket_path)
     observer = DaemonClient(socket_path=server.socket_path)
     collector = _Collector()
@@ -264,9 +274,7 @@ def test_disconnecting_the_owner_resumes_reading(daemon_factory):
 def test_attachment_without_flow_control_never_pauses(daemon_factory):
     """Clients that do not acknowledge keep today's behaviour."""
 
-    server, _manager = daemon_factory(
-        session_runner=_runner(_FLOOD_AND_EXIT_SCRIPT)
-    )
+    server, _manager = _daemon(daemon_factory, _FLOOD_AND_EXIT_SCRIPT)
     client = DaemonClient(socket_path=server.socket_path)
     collector = _Collector()
     try:
@@ -281,9 +289,7 @@ def test_attachment_without_flow_control_never_pauses(daemon_factory):
 def test_view_only_flow_controlled_attachment_does_not_slow_the_session(
     daemon_factory,
 ):
-    server, _manager = daemon_factory(
-        session_runner=_runner(_FLOOD_AND_EXIT_SCRIPT)
-    )
+    server, _manager = _daemon(daemon_factory, _FLOOD_AND_EXIT_SCRIPT)
     owner = DaemonClient(socket_path=server.socket_path)
     viewer = DaemonClient(socket_path=server.socket_path)
     owner_output = _Collector()
@@ -323,7 +329,7 @@ def test_view_only_flow_controlled_attachment_does_not_slow_the_session(
 
 
 def test_acknowledgements_for_unknown_attachments_are_ignored(daemon_factory):
-    server, _manager = daemon_factory(session_runner=_runner(_FLOOD_SCRIPT))
+    server, _manager = _daemon(daemon_factory, _FLOOD_SCRIPT)
     client = DaemonClient(socket_path=server.socket_path)
     other = DaemonClient(socket_path=server.socket_path)
     collector = _Collector()
@@ -370,7 +376,7 @@ def test_a_replay_chunk_short_of_live_reports_no_continuity_loss(daemon_factory)
         "import os,tty;tty.setraw(0);"
         "os.write(1,b'r'*(1536*1024));os.write(1,b'END');os.read(0,1)"
     )
-    server, _manager = daemon_factory(session_runner=_runner(script))
+    server, _manager = _daemon(daemon_factory, script)
     client = DaemonClient(socket_path=server.socket_path)
     collector = _Collector()
     try:
@@ -394,7 +400,7 @@ def test_a_replay_chunk_short_of_live_reports_no_continuity_loss(daemon_factory)
 
 
 def test_closing_a_paused_session_ends_it(daemon_factory):
-    server, _manager = daemon_factory(session_runner=_runner(_ENDLESS_SCRIPT))
+    server, _manager = _daemon(daemon_factory, _ENDLESS_SCRIPT)
     client = DaemonClient(socket_path=server.socket_path)
     collector = _Collector()
     try:
@@ -417,7 +423,7 @@ def test_child_exit_drains_a_paused_session_to_eof(daemon_factory, tmp_path):
         f"import os\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
         "while True: os.write(1, b'y' * 65536)\n"
     )
-    server, _manager = daemon_factory(session_runner=_runner(script))
+    server, _manager = _daemon(daemon_factory, script)
     client = DaemonClient(socket_path=server.socket_path)
     collector = _Collector()
     try:
