@@ -443,8 +443,12 @@ class DockerConsoleSettingsDialog(_DialogBase):
                  on_log_tail_changed: Optional[Callable[[int], None]] = None,
                  max_log_lines: int = 2000,
                  on_max_log_lines_changed: Optional[Callable[[int], None]] = None,
+                 host_name: Optional[str] = None,
+                 docker_host: str = "",
+                 detected_docker_host: str = "",
+                 on_docker_host_changed: Optional[Callable[[str], None]] = None,
                  ) -> None:
-        super().__init__(parent, _("Docker Console Settings"), width=420, height=420)
+        super().__init__(parent, _("Docker Console Settings"), width=420, height=520)
         close = Gtk.Button(icon_name="window-close-symbolic")
         close.set_tooltip_text(_("Close"))
         close.connect("clicked", lambda _b: self.close())
@@ -485,9 +489,30 @@ class DockerConsoleSettingsDialog(_DialogBase):
             )
         logs.add(self._max_lines_row)
 
+        daemon = None
+        if host_name and on_docker_host_changed is not None:
+            daemon = Adw.PreferencesGroup(
+                title=_("Daemon on {name}").format(name=host_name))
+            if detected_docker_host and not docker_host:
+                hint = _("Leave empty to auto-detect (found {socket}). "
+                         "Example: unix:///run/user/1000/docker.sock").format(
+                             socket=detected_docker_host)
+            else:
+                hint = _("Leave empty to auto-detect, e.g. a rootless daemon. "
+                         "Example: unix:///run/user/1000/docker.sock")
+            daemon.set_description(hint)
+            self._docker_host_row = Adw.EntryRow(title=_("Socket"))
+            self._docker_host_row.set_text(docker_host or "")
+            self._docker_host_row.set_show_apply_button(True)
+            self._docker_host_row.connect(
+                "apply", lambda row: on_docker_host_changed(row.get_text()))
+            daemon.add(self._docker_host_row)
+
         scroller = Gtk.ScrolledWindow(vexpand=True)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
                        margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
+        if daemon is not None:
+            body.append(daemon)
         body.append(polling)
         body.append(logs)
         scroller.set_child(body)
