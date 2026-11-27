@@ -25,7 +25,18 @@ from typing import Sequence
 
 from gi.repository import Adw, GLib, Gtk
 
+from ..api.errors import ErrorCode, SshPilotError
+
 logger = logging.getLogger(__name__)
+
+# A check that loses the daemon mid-request is not a failure worth a traceback.
+_TRANSPORT_LOSS = frozenset(
+    {
+        ErrorCode.TRANSPORT_CLOSED,
+        ErrorCode.TRANSPORT_TIMEOUT,
+        ErrorCode.DAEMON_UNAVAILABLE,
+    }
+)
 
 
 # -- wording ----------------------------------------------------------------
@@ -98,8 +109,19 @@ class ConfigSyntaxNotice:
             errors = None
             try:
                 errors = tuple(client.list_config_syntax_errors())
-            except Exception:
-                logger.debug("SSH config syntax errors unavailable", exc_info=True)
+            except Exception as error:
+                if isinstance(error, SshPilotError) and error.code in _TRANSPORT_LOSS:
+                    # The daemon went away (the app is quitting, or it is
+                    # reconnecting and says so itself): the check is moot.
+                    logger.debug(
+                        "SSH config syntax check skipped: daemon transport lost "
+                        "code=%s",
+                        error.code.value,
+                    )
+                else:
+                    logger.debug(
+                        "SSH config syntax errors unavailable", exc_info=True
+                    )
             GLib.idle_add(self._on_checked, errors)
 
         threading.Thread(target=worker, daemon=True).start()
