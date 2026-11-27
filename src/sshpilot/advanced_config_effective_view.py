@@ -37,8 +37,6 @@ from .gtk import advanced_config_messages as messages  # noqa: E402
 from .ssh_config_blocks import GLOBAL, Block, LineMap  # noqa: E402
 
 ALL, THIS_BLOCK, OTHER, DEFAULT = "all", "this", "other", "default"
-#: The tallest Matching Order grows before it scrolls (pixels).
-_ORDER_MAX_HEIGHT = 320
 #: The filter of the values that need attention (not a kind: any kind can).
 ATTENTION = "attention"
 
@@ -350,10 +348,26 @@ class EffectiveView(Gtk.Box):
     ``source_file`` and ``check_host``."""
 
     def __init__(self, controller) -> None:
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.controller = controller
+        # The page scrolls as one, as Directives does: the host field, the
+        # summary, the table and Matching Order. The filter chips are
+        # pinned: scrolled past the top, they move to a bar over the page
+        # (see _sync_pinned) and back when scrolled down to again.
+        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         for side in ("top", "bottom", "start", "end"):
-            getattr(self, f"set_margin_{side}")(16)
+            getattr(self.content, f"set_margin_{side}")(16)
+        self.page = Gtk.ScrolledWindow(vexpand=True)
+        self.page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.page.set_child(self.content)
+        self.page.get_vadjustment().connect("value-changed", lambda *_a: self._sync_pinned())
+        self.pinned_bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.START)
+        self.pinned_bar.add_css_class("advcfg-pinned")
+        self.pinned_bar.set_visible(False)
+        overlay = Gtk.Overlay(vexpand=True)
+        overlay.set_child(self.page)
+        overlay.add_overlay(self.pinned_bar)
+        Gtk.Box.append(self, overlay)
         self._answer = Answer(None, [], LineMap({}, {}))
         self._items: Dict[str, EffectiveItem] = {}
         self._stale = True
@@ -375,10 +389,10 @@ class EffectiveView(Gtk.Box):
             [Gtk.AccessibleProperty.LABEL], [_("Host to check")]
         )
         self.host_entry.connect("changed", self._on_host_changed)
-        self.append(self.host_entry)
+        self.content.append(self.host_entry)
 
         self.summary = self._build_summary()
-        self.append(self.summary)
+        self.content.append(self.summary)
         self.search = Gtk.SearchEntry(placeholder_text=_("Search options or values"))
         self.search.set_width_chars(24)
         self.search.connect("search-changed", lambda *_a: self._refilter())
@@ -400,32 +414,31 @@ class EffectiveView(Gtk.Box):
         spacer = Gtk.Box(hexpand=True)
         self.chips.append(spacer)
         self.chips.append(self.search)              # the controls, together
-        self.append(self.chips)
+        #: Where the chips sit while not pinned; it keeps their height
+        #: while they are, so the page does not jump.
+        self.chips_slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.chips_slot.append(self.chips)
+        self.content.append(self.chips_slot)
 
         self.store = Gio.ListStore(item_type=EffectiveItem)
         self.model = Gtk.FilterListModel(model=self.store, filter=self._filter)
-        factory = Gtk.SignalListItemFactory()
-        factory.connect("setup", self._setup_row)
-        factory.connect("bind", lambda _f, list_item: list_item._cell.bind(list_item.get_item()))
-        self.list = Gtk.ListView(model=Gtk.NoSelection(model=self.model), factory=factory)
+        # Every row built (some hundred at most), so the page, not the
+        # list, scrolls: a ListView only lays out the rows in its own view.
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.list.add_css_class("advcfg-effective-list")
-        self.scroller = Gtk.ScrolledWindow()
-        self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.scroller.set_vexpand(True)
-        self.scroller.set_child(self.list)
+        self.list.bind_model(self.model, self._create_row)
         # The table: column titles over the list, in one card.
         self.table = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.table.add_css_class("card")
-        self.table.set_vexpand(True)
         self.table.append(self._build_header())
         self.table.append(Gtk.Separator())
-        self.table.append(self.scroller)
-        self.append(self.table)
+        self.table.append(self.list)
+        self.content.append(self.table)
         self.order = self._build_order()
-        self.append(self.order)
+        self.content.append(self.order)
         self.note = Adw.StatusPage(icon_name="system-search-symbolic")
         self.note.set_vexpand(True)
-        self.append(self.note)
+        self.content.append(self.note)
         # Offered only while some value needs attention.
         self._chips[ATTENTION].add_css_class("advcfg-chip-attention")
         self._chips[ATTENTION].set_visible(False)
@@ -471,16 +484,7 @@ class EffectiveView(Gtk.Box):
         self.order_row.set_icon_name("view-list-symbolic")
         box.append(self.order_row)
         self._order_rows: List[Gtk.Widget] = []
-        # The page does not scroll, only the table above does: opened, the
-        # section grows to its rows up to a cap, then scrolls on its own.
-        scroller = Gtk.ScrolledWindow(
-            hscrollbar_policy=Gtk.PolicyType.NEVER,
-            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
-            propagate_natural_height=True,
-            max_content_height=_ORDER_MAX_HEIGHT,
-        )
-        scroller.set_child(box)
-        return scroller
+        return box
 
     def _add_order_row(self, title: str, subtitle: str, suffix=None, line: int = 0) -> None:
         row = Adw.ActionRow(title=GLib.markup_escape_text(title))
@@ -637,9 +641,25 @@ class EffectiveView(Gtk.Box):
             self._refilter()
         for position in range(self.model.get_n_items()):
             if self.model.get_item(position) is item:
-                self.list.scroll_to(position, Gtk.ListScrollFlags.FOCUS, None)
-                GLib.idle_add(self._flash, item)
+                GLib.idle_add(self._scroll_to_row, position, item)
                 return
+
+    def _scroll_to_row(self, position: int, item: "EffectiveItem") -> bool:
+        """Bring row *position* into view below the pinned chips, then
+        flash it (once the list has its rows after a filter change)."""
+        row = self.list.get_row_at_index(position)
+        if row is not None:
+            found, bounds = row.compute_bounds(self.content)
+            if found:
+                adjustment = self.page.get_vadjustment()
+                top, bottom = bounds.get_y(), bounds.get_y() + bounds.get_height()
+                above = self.chips_slot.get_height() + 12      # under the pinned chips
+                if top - above < adjustment.get_value():
+                    adjustment.set_value(top - above)
+                elif bottom > adjustment.get_value() + adjustment.get_page_size():
+                    adjustment.set_value(bottom - adjustment.get_page_size())
+        self._flash(item)
+        return False
 
     @staticmethod
     def _flash(item: "EffectiveItem") -> bool:
@@ -671,10 +691,38 @@ class EffectiveView(Gtk.Box):
         holder.append(header)
         return holder
 
-    def _setup_row(self, _factory, list_item) -> None:
+    def _create_row(self, item: EffectiveItem) -> Gtk.Widget:
         cell = _EffectiveCell(self.controller)
-        list_item._cell = cell
-        list_item.set_child(cell.outer)
+        cell.bind(item)
+        # A row filtered out goes; shown again, it is built again.
+        return Gtk.ListBoxRow(activatable=False, child=cell.outer)
+
+    # -- the pinned chips ------------------------------------------------------
+
+    def _sync_pinned(self) -> None:
+        """Move the chips to the bar over the page once the page scrolls
+        past where they sit, and back when it no longer does."""
+        offset = self.page.get_vadjustment().get_value()
+        found, bounds = self.chips_slot.compute_bounds(self.content)
+        stuck = found and self.chips_slot.get_visible() and offset > bounds.get_y()
+        pinned = self.chips.get_parent() is self.pinned_bar
+        if stuck == pinned:
+            return
+        # Typing in the search moves no focus: it stays where it was.
+        typing = bool(self.search.get_state_flags() & Gtk.StateFlags.FOCUS_WITHIN)
+        position = self.search.get_position()
+        if stuck:
+            self.chips_slot.set_size_request(-1, self.chips_slot.get_height())
+            self.chips_slot.remove(self.chips)
+            self.pinned_bar.append(self.chips)
+        else:
+            self.pinned_bar.remove(self.chips)
+            self.chips_slot.append(self.chips)
+            self.chips_slot.set_size_request(-1, -1)
+        self.pinned_bar.set_visible(stuck)
+        if typing:
+            self.search.grab_focus()
+            self.search.select_region(position, position)
 
     # -- filters ---------------------------------------------------------------
 
@@ -748,9 +796,10 @@ class EffectiveView(Gtk.Box):
         evaluation = answer.evaluation
         command = "ssh -G " + (f"-l {answer.user} " if answer.user else "") + answer.host
         self.command.set_label(command if answer.host else "ssh -G")
-        for widget in (self.summary, self.order, self.chips, self.table):
+        for widget in (self.summary, self.order, self.chips_slot, self.table):
             widget.set_visible(answer.answered)
         self.note.set_visible(not answer.answered)
+        self._sync_pinned()
         if not answer.answered:
             if evaluation is None:
                 self.note.set_title(_("No Host Checked"))

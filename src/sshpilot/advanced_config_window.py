@@ -146,6 +146,9 @@ button.advcfg-fix { min-height: 22px; padding: 0 10px; font-size: 0.85em; border
 .advcfg-dot.advcfg-attn-purple { background-color: @purple_3; }
 .advcfg-row-flash { background-color: alpha(@accent_bg_color, 0.18); }
 .advcfg-effective-list { background: none; }
+/* Effective's chips, pinned over the page once it scrolls past them. */
+.advcfg-pinned { background: @window_bg_color; padding: 8px 16px;
+                 box-shadow: 0 1px alpha(@borders, 0.8); }
 .advcfg-effective-list > row { padding: 0; }
 .advcfg-cell { padding: 9px 14px; min-height: 30px; }
 .advcfg-explicit { font-weight: bold; }

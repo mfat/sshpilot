@@ -766,6 +766,22 @@ def test_effective_shows_the_order_openssh_reads_the_blocks_in(window):
     assert _pump(lambda: window.selected_uid == web.uid)
 
 
+def test_effective_scrolls_as_one_page_with_the_chips_pinned(window):
+    window.show_page("effective")
+    effective = window.effective
+    assert _pump(lambda: any(item.cell for item in effective._items.values()))
+    _show(window)
+    adjustment = effective.page.get_vadjustment()
+    assert _pump(lambda: adjustment.get_upper() > adjustment.get_page_size())
+    assert effective.chips.get_parent() is effective.chips_slot
+    adjustment.set_value(adjustment.get_upper())            # to the bottom: Matching Order
+    assert _pump(lambda: effective.chips.get_parent() is effective.pinned_bar)
+    assert effective.pinned_bar.get_visible()
+    adjustment.set_value(0)
+    assert _pump(lambda: effective.chips.get_parent() is effective.chips_slot)
+    assert not effective.pinned_bar.get_visible()
+
+
 def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
     window.show_page("effective")
     effective = window.effective
