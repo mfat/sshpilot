@@ -3516,28 +3516,50 @@ class FilePane(Gtk.Box):
             )
 
     def _offer_remote_file_actions(self, position: int, entry: FileEntry) -> None:
-        """Ask whether to download or edit a remote file that was activated."""
+        """Ask what to do with a remote file that was activated: download it
+        to this computer, or with a server in the other pane too, copy it
+        there (#1431); text files can also be edited."""
         editable = _is_editable_as_text(entry.name)
-        if editable:
-            body = _("Download the file to this computer or open it in the editor?")
+        if self._download_available():
+            transfer = "download"
+            transfer_label = _("Download")
+            if editable:
+                body = _("Download the file to this computer or open it in the editor?")
+            else:
+                body = _("Download the file to this computer?")
+        elif self._copy_to_other_available():
+            transfer = "copy_to_other"
+            transfer_label = _("Copy to Other Pane")
+            if editable:
+                body = _("Copy the file to the other pane or open it in the editor?")
+            else:
+                body = _("Copy the file to the other pane?")
+        elif editable:
+            transfer = None
+            transfer_label = None
+            body = _("Open the file in the editor?")
         else:
-            body = _("Download the file to this computer?")
+            return
         dialog = Adw.AlertDialog.new(safe_display_text(entry.name), body)
         dialog.add_response("cancel", _("Cancel"))
         if editable:
             dialog.add_response("edit", _("Edit as Text"))
-        dialog.add_response("download", _("Download"))
-        dialog.set_response_appearance("download", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("download")
+        default = transfer or "edit"
+        if transfer is not None:
+            dialog.add_response(transfer, transfer_label)
+        dialog.set_response_appearance(default, Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response(default)
         dialog.set_close_response("cancel")
 
         def _on_response(_dialog, response: str) -> None:
-            if response not in ("download", "edit"):
+            if response not in ("download", "copy_to_other", "edit"):
                 return
-            # Both actions work on the selection; make it the activated file.
+            # Every action works on the selection; make it the activated file.
             self._selection_model.select_item(position, True)
             if response == "download":
                 self._on_menu_download()
+            elif response == "copy_to_other":
+                self._on_copy_to_other_clicked()
             else:
                 self._on_menu_edit()
 
