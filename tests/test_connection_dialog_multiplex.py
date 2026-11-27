@@ -6,6 +6,7 @@ a ``ControlPersist``, Off ``ControlMaster no`` with ``ControlPath none``.
 """
 
 import os
+import sys
 
 import pytest
 
@@ -39,6 +40,7 @@ def test_the_row_s_lines_are_split_from_the_other_extra_lines():
         assert own == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no POSIX mode bits")
 def test_the_socket_directory_is_created_private(tmp_path):
     target = tmp_path / "ssh" / "sockets"
     multiplex.ensure_socket_dir(str(target))
