@@ -56,6 +56,9 @@ OVERRIDABLE_ROWS = (
     ("identity_agent_row", "IdentityAgent"),
     ("exit_on_forward_failure_row", "ExitOnForwardFailure"),
     ("port_forwarding_only_row", "SessionType"),
+    # Connection sharing writes ControlPath and ControlPersist beside it;
+    # the row stands for the choice, which ControlMaster makes.
+    ("multiplex_row", "ControlMaster"),
     # The authentication section: the order, and each method's switch.
     ("auth_order_row", "PreferredAuthentications"),
     ("auth_gssapi_row", "GSSAPIAuthentication"),

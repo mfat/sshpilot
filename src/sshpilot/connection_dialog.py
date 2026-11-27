@@ -78,6 +78,7 @@ from .connection_dialog_field_helpers import ConnectionDialogFieldHelpersMixin
 from .connection_dialog_port_forwarding import ConnectionDialogPortForwardingMixin
 from .connection_dialog_effective import ConnectionDialogEffectiveMixin
 from .connection_dialog_route import ConnectionDialogRouteMixin
+from .connection_dialog_multiplex import ConnectionDialogMultiplexMixin
 from .connection_dialog_search import ConnectionDialogSearchMixin
 from .connection_dialog_host_names import ConnectionDialogHostNamesMixin
 from .connection_dialog_overrides import (
@@ -731,6 +732,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         for name in (
             '_sync_session_type_toggle_from_advanced',
             '_sync_exit_on_forward_failure_toggle_from_advanced',
+            '_sync_multiplex_row_from_advanced',
         ):
             try:
                 callback = getattr(parent, name, None)
@@ -1682,6 +1684,7 @@ class ConnectionDialog(
     ConnectionDialogSearchMixin,
     ConnectionDialogHostNamesMixin,
     ConnectionDialogRouteMixin,
+    ConnectionDialogMultiplexMixin,
 ):
     """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
 
@@ -1901,6 +1904,7 @@ class ConnectionDialog(
         advanced_page.append(advanced_group)
         self._wire_session_type_toggle()
         self._wire_exit_on_forward_failure_toggle()
+        self._wire_multiplex_row()
 
         # Wake on LAN on its own page (built by build_connection_groups above).
         wol_page = _page_box()
@@ -4048,7 +4052,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # _build_connection_tab_pages. Wake on LAN is shown only for
         # protocols that target a host, Routing only for SSH
         # (_apply_protocol_to_ui).
-        return [basic_group, organize_group]
+        # Connection sharing writes the Host block like the rows above;
+        # absent where OpenSSH cannot multiplex (Windows).
+        multiplex_group = self._build_multiplex_group()
+        if multiplex_group is None:
+            return [basic_group, organize_group]
+        return [basic_group, multiplex_group, organize_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -4638,7 +4647,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     _SSH_ONLY_PAGES = ("authentication", "routing", "forwarding", "advanced")
     #: Groups on the Commands page that are OpenSSH directives, so they mean
     #: nothing to a protocol sshPilot does not build an ssh command for.
-    _SSH_ONLY_GROUPS = ("_ssh_commands_group",)
+    _SSH_ONLY_GROUPS = ("_ssh_commands_group", "_multiplex_group")
 
     @staticmethod
     def _backend_field_keys(backend):
@@ -5811,7 +5820,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if not self.nickname_row.get_text().strip():
             self.show_error(_("Please enter a nickname for this connection"))
             return
-            
+        self._prepare_multiplex_save()
+
         connection_data = self._collect_connection_data()
         try:
             logger.info(
