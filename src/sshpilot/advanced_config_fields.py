@@ -129,10 +129,14 @@ KEY_FILE_KEYWORDS = {"identityfile": True, "certificatefile": False}
 def home_relative(path: str, home: Optional[str] = None) -> str:
     """*path* written as a configuration usually writes it: ``~/...`` under
     the home directory, and quoted when it holds a space."""
-    home = (home or os.path.expanduser("~")).rstrip("/")
-    if path == home:
+    home = home or os.path.expanduser("~")
+    # OpenSSH config uses forward slashes even when the file picker or
+    # key_path supplies a native Windows path.
+    path = path.replace(os.path.sep, "/")
+    home = home.replace(os.path.sep, "/").rstrip("/")
+    if os.path.normcase(path) == os.path.normcase(home):
         path = "~"
-    elif home and path.startswith(home + "/"):
+    elif home and os.path.normcase(path).startswith(os.path.normcase(home + "/")):
         path = "~" + path[len(home):]
     return f'"{path}"' if any(char.isspace() for char in path) else path
 

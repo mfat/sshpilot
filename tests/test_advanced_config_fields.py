@@ -33,6 +33,19 @@ def test_paths_are_written_as_a_configuration_writes_them():
     assert fields.home_relative("/etc/ssh/key", "/home/me") == "/etc/ssh/key"
 
 
+def test_windows_key_paths_are_written_relative_to_home(monkeypatch):
+    import ntpath
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(fields, "os", SimpleNamespace(path=ntpath, name="nt"))
+    home = r"C:\Users\Me"
+    summary = fields.connection_summary(
+        {"identityfile": [r"c:\Users\Me\.ssh\id", "~/my keys/id", r"C:\Users\Me2\id"]},
+        defaults=(), home=home,
+    )
+    assert summary.keys == ["~/.ssh/id", '"~/my keys/id"', "C:/Users/Me2/id"]
+
+
 def test_jump_hops():
     assert fields.jump_hops("none") == [] and fields.jump_hops("") == []
     assert fields.jump_hops("a, admin@b:2222") == ["a", "admin@b:2222"]
