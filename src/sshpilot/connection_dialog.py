@@ -705,7 +705,12 @@ class SSHConfigAdvancedTab(Gtk.Box):
             row.set_subtitle_selectable(True)
             row.add_css_class("property")
             source = pill(where, "muted")
-            source.set_tooltip_text(where)
+            source._tooltip = where
+            # A long source (a system file's path) would take the row's width
+            # and wrap the keyword and value a few letters a line: it is cut
+            # at its start, keeping the line and block, and whole in the tooltip.
+            source.set_ellipsize(Pango.EllipsizeMode.START)
+            source.set_max_width_chars(28)
             row.add_suffix(source)
             self.inherited_group.add(row)
             self._inherited_rows.append(row)
