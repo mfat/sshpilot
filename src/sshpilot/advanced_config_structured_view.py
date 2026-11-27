@@ -171,7 +171,9 @@ class _Suggestions:
         return found[:40]
 
     def typed(self) -> None:
-        if not self.entry.get_delegate().has_focus():
+        # The focus of its window, not has_focus(): that one also needs the
+        # window active, which a window just presented may not be yet.
+        if not self.entry.get_delegate().is_focus():
             return
         self.show(self.matches(self.entry.get_text()))
 
