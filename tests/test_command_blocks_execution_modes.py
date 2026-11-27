@@ -202,3 +202,23 @@ def test_custom_command_dialog_routes_through_terminal_session():
         group=None,
         connections=None,
     )
+
+
+def test_rename_folder_updates_store_and_refreshes():
+    panel = object.__new__(CommandBlocksPanel)
+    panel.store = Mock()
+    panel.refresh = Mock()
+    panel._rename_folder({"id": "f1", "name": "Old"}, "New")
+    panel.store.update_folder.assert_called_once_with("f1", name="New")
+    panel.refresh.assert_called_once()
+
+
+def test_delete_folder_removes_it_and_refreshes():
+    panel = object.__new__(CommandBlocksPanel)
+    panel.store = Mock()
+    panel.refresh = Mock()
+    panel._show_toast = Mock()
+    panel._delete_folder({"id": "f1", "name": "Old"})
+    panel.store.delete_folder.assert_called_once_with("f1")
+    panel.refresh.assert_called_once()
+    panel._show_toast.assert_called_once()
