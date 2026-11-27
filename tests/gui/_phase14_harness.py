@@ -1092,23 +1092,39 @@ class Phase14Harness:
             for index in range(toplevels.get_n_items()):
                 yield toplevels.get_item(index)
 
+        def _dialogs():
+            for root in _roots():
+                for widget in _descendants(root):
+                    if isinstance(widget, Adw.Dialog) and not isinstance(
+                        widget, Adw.AlertDialog
+                    ):
+                        yield widget
+
+        # Only a dialog that opens after this point, and not in another
+        # test's window, is the one asked for. The toplevels are the whole
+        # process's: a prompt an earlier test left open (in CI, the
+        # passphrase test's) was otherwise answered in place of this one,
+        # and this one left to expire.
+        stale = set(_dialogs())
+
+        def _elsewhere(widget):
+            root = widget.get_root()
+            return isinstance(root, Adw.ApplicationWindow) and root is not self.gui.window
+
         def _try_answer():
             if self.gui is None:
                 return GLib.SOURCE_REMOVE
-            for root in _roots():
-                for widget in _descendants(root):
-                    if not isinstance(widget, Adw.Dialog) or isinstance(
-                        widget, Adw.AlertDialog
-                    ):
-                        continue
-                    rows = [w for w in _descendants(widget) if isinstance(w, Adw.PasswordEntryRow)]
-                    if not rows:
-                        continue
-                    state["title"] = widget.get_title()
-                    rows[0].set_text(password)
-                    rows[0].emit("entry-activated")
-                    state["answered"] = True
-                    return GLib.SOURCE_REMOVE
+            for widget in _dialogs():
+                if widget in stale or _elsewhere(widget):
+                    continue
+                rows = [w for w in _descendants(widget) if isinstance(w, Adw.PasswordEntryRow)]
+                if not rows:
+                    continue
+                state["title"] = widget.get_title()
+                rows[0].set_text(password)
+                rows[0].emit("entry-activated")
+                state["answered"] = True
+                return GLib.SOURCE_REMOVE
             return GLib.SOURCE_CONTINUE
 
         GLib.timeout_add(100, _try_answer)
