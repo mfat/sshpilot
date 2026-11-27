@@ -48,6 +48,10 @@ class _AsyncPage:
     _render_recent_connections = WelcomePage._render_recent_connections
     _connection_title = staticmethod(WelcomePage._connection_title)
     _dashboard_callback = WelcomePage._dashboard_callback
+
+    def _attach_recent_context_menu(self, row, conn):
+        pass
+
     schedule_connection_refresh = WelcomePage.schedule_connection_refresh
     _run_scheduled_connection_refresh = WelcomePage._run_scheduled_connection_refresh
     close = WelcomePage.close
@@ -81,7 +85,8 @@ def test_recent_listing_reads_dtos_from_client_not_manager():
         ),
         _connection_title=WelcomePage._connection_title,
         _min_row=lambda title, subtitle, callback, on_info=None: (title, subtitle, callback),
-        _min_section=lambda title, rows: (title, rows),
+        _min_section=lambda title, rows, action=None: (title, rows),
+        _attach_recent_context_menu=lambda row, conn: None,
         _dashboard_callback=lambda connection: None,
         _connect_connection_summary=lambda connection_summary: None,
     )
@@ -279,7 +284,7 @@ def test_daemon_backed_recent_read_is_submitted_without_blocking(monkeypatch):
         ),
     )
     page._min_row = lambda title, subtitle, callback, on_info=None: (title, subtitle, callback)
-    page._min_section = lambda title, rows: (title, rows)
+    page._min_section = lambda title, rows, action=None: (title, rows)
     page._connect_connection_summary = lambda _summary: None
 
     WelcomePage._populate_recent_box(page)
