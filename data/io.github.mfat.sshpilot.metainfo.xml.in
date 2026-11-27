@@ -35,6 +35,19 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
+    <release version="6.5.2" date="2026-11-27">
+      <description>
+        <p>Advanced Configuration - A new way to see and edit your SSH configuration - Add and modify host blocks, and see how they work in action</p>
+        <p>Redesigned connection editor - better layout, grouping and visual maps for port forwards and jump hosts</p>
+        <p>Redesigned authentication options - you can now decide which login methods are tried and set the order</p>
+        <p>File manager can now work in single-pane or dual-pane mode</p>
+        <p>Remote-to-remote file transfers are now supported</p>
+        <p>Background file transfers - Transfers now run in the background, with a progress indicator on the toolbar and on the tab</p>
+        <p>New style for groups - Colored Grips is a new way to show group colors</p>
+        <p>Windows portable build - A portable build (zip) is available next to the installer</p>
+        <p>Many bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="6.5.1" date="2026-11-26">
       <description>
         <p>Added Advanced Configuration Manager, a complete sshconfig management and diagnostic suite</p>

@@ -6,7 +6,7 @@
 
 
 
-__version__ = "6.5.1"
+__version__ = "6.5.2"
 
 # Inside the AppImage, programs the app starts for the user must not inherit the
 # bundled GTK/WebKit environment or AppRun's working directory. Every bundled
