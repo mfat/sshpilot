@@ -28,6 +28,14 @@ from sshpilot.terminal_session_controller import (
 )
 
 
+#: The request budget for an open that must be acknowledged before start()
+#: returns. The runners below hold start() for 5s, so an open that waited for
+#: it would still time out; anything shorter is a latency target, and a
+#: loaded CI runner missed 0.4s (an ack at 0.63s, "The session change may have
+#: completed").
+_ACK_TIMEOUT = 2.0
+
+
 def _wait_until(predicate, timeout=2.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -175,7 +183,7 @@ def test_open_session_returns_starting_while_runner_blocked(
     server, _manager = daemon_factory(session_runner=runner)
     client = DaemonClient(
         socket_path=server.socket_path,
-        timeout=0.4,
+        timeout=_ACK_TIMEOUT,
     )
     try:
         opened = client.open_session(
@@ -215,7 +223,7 @@ def test_open_session_returns_while_interaction_pending(
     client = DaemonClient(
         socket_path=server.socket_path,
         client_id=f"client:{interaction_type_name.lower()}:{_repeat}",
-        timeout=0.4,
+        timeout=_ACK_TIMEOUT,
     )
     try:
         opened = client.open_session(
@@ -242,7 +250,7 @@ def test_startup_failure_after_acknowledgement_is_async(
 ):
     runner = _BlockingStartRunner(fail=True)
     server, _manager = daemon_factory(session_runner=runner)
-    client = DaemonClient(socket_path=server.socket_path, timeout=0.4)
+    client = DaemonClient(socket_path=server.socket_path, timeout=_ACK_TIMEOUT)
     events = []
     client.subscribe_events(events.append)
     try:
@@ -313,12 +321,12 @@ def test_two_simultaneous_opens_create_distinct_sessions(
     client_a = DaemonClient(
         socket_path=server.socket_path,
         client_id="client:a",
-        timeout=0.4,
+        timeout=_ACK_TIMEOUT,
     )
     client_b = DaemonClient(
         socket_path=server.socket_path,
         client_id="client:b",
-        timeout=0.4,
+        timeout=_ACK_TIMEOUT,
     )
     try:
         first = client_a.open_session(
@@ -353,12 +361,12 @@ def test_control_rpc_remains_responsive_while_startup_blocked(
     opener = DaemonClient(
         socket_path=server.socket_path,
         client_id="client:opener",
-        timeout=0.4,
+        timeout=_ACK_TIMEOUT,
     )
     reader = DaemonClient(
         socket_path=server.socket_path,
         client_id="client:reader",
-        timeout=0.4,
+        timeout=_ACK_TIMEOUT,
     )
     try:
         opened = opener.open_session(
