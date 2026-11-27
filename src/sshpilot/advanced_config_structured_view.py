@@ -40,7 +40,7 @@ from .ssh_config_answer import (  # noqa: E402
     LineVerdict,
 )
 from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap, block_category  # noqa: E402
-from .ssh_option_list import OPENSSH_KEYWORDS  # noqa: E402
+from .ssh_option_list import OPENSSH_KEYWORDS, style_keyword_suggestions  # noqa: E402
 from .route_strip import FlowLayout  # noqa: E402
 
 
@@ -187,6 +187,7 @@ class _Suggestions:
             popover.set_position(Gtk.PositionType.BOTTOM)
             popover.set_halign(Gtk.Align.START)
             popover.add_css_class("menu")
+            style_keyword_suggestions(popover)
             box = Gtk.ListBox()
             box.set_can_focus(False)
             box.connect("row-activated", lambda _b, row: self._take(row))

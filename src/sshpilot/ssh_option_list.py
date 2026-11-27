@@ -125,6 +125,34 @@ def strings_from_options(options: Iterable[Option]) -> Tuple[str, ...]:
     return tuple(f"{keyword}={value}" for keyword, value in options)
 
 
+#: The suggestion lists are menus ("menu" popovers), which mark only the row
+#: under the pointer: a row picked with Up/Down was selected unseen, so the
+#: keys looked dead. The selected row is marked as a menu marks its item.
+_SUGGESTION_CSS = """
+popover.keyword-suggestions list > row { border-radius: 6px; }
+popover.keyword-suggestions list > row:selected {
+  background-color: alpha(currentColor, 0.1);
+  color: inherit;
+}
+"""
+_suggestion_css_installed = False
+
+
+def style_keyword_suggestions(popover: Gtk.Popover) -> None:
+    """Style a keyword suggestion list (here and in Advanced
+    Configuration): the row Up/Down select is marked."""
+    global _suggestion_css_installed
+    display = Gdk.Display.get_default()
+    if not _suggestion_css_installed and display is not None:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(_SUGGESTION_CSS.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _suggestion_css_installed = True
+    popover.add_css_class("keyword-suggestions")
+
+
 class _OptionRow(Gtk.ListBoxRow):
     """One keyword/value pair with its remove button and error line."""
 
@@ -513,6 +541,7 @@ class SshOptionList(Gtk.Box):
             popover.set_position(Gtk.PositionType.BOTTOM)
             popover.set_halign(Gtk.Align.START)
             popover.add_css_class("menu")
+            style_keyword_suggestions(popover)
             names_box = Gtk.ListBox()
             names_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
             names_box.set_can_focus(False)
