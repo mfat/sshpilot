@@ -611,6 +611,12 @@ class TerminalManager:
             forwarding_only_tab_title,
         )
 
+        # Register the connection before appending: the first tab replaces
+        # the Start tab and is selected during append, and the tab-selected
+        # handler needs the connection to highlight its sidebar row.
+        window.connection_to_terminals.setdefault(connection, []).append(terminal)
+        window.terminal_to_connection[terminal] = connection
+        window.active_terminals[connection] = terminal
         page = window.tab_view.append(terminal)
         default_title = (
             tab_title
@@ -625,9 +631,6 @@ class TerminalManager:
             setattr(terminal, "group_name", group_name)
         self._apply_tab_group_color(page, group_color, tooltip=group_name)
 
-        window.connection_to_terminals.setdefault(connection, []).append(terminal)
-        window.terminal_to_connection[terminal] = connection
-        window.active_terminals[connection] = terminal
         window.show_tab_view()
         window.tab_view.set_selected_page(page)
         try:
