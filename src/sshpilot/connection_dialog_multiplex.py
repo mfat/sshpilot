@@ -13,6 +13,10 @@ back on save and for OpenSSH's answer (``_combined_extra_ssh_config``):
 * Off writes ``ControlMaster no`` and ``ControlPath none``. ``no`` alone still
   rides a master another session left on the socket.
 
+Under the row, Socket path and Keep open edit the block's ``ControlPath`` and
+``ControlPersist``: shown while sharing is On, or while the block sets them
+with no ``ControlMaster`` of its own, so no line the row owns is out of sight.
+
 Settings ▸ SSH Options always win: with multiplexing on there, the app's own
 ``-o`` options come first on the command line, and the row is marked
 Overridden like any other option they force (``connection_dialog_overrides``).
@@ -134,6 +138,30 @@ class ConnectionDialogMultiplexMixin:
         self.multiplex_row.connect("notify::selected", self._on_multiplex_row_changed)
         group = Adw.PreferencesGroup(title=_("Multiplexing"))
         group.add(self.multiplex_row)
+
+        # Adw.EntryRow has no subtitle: the hint lives in the tooltip.
+        self.multiplex_path_row = Adw.EntryRow(title=_("Socket path"))
+        self.multiplex_path_row.set_tooltip_text(
+            _("Where the shared connection's socket is kept (ControlPath). "
+              "%C names it after the host, user and port.")
+        )
+        self.multiplex_path_row._sshpilot_search_keywords = "socket"
+        self.multiplex_persist_row = Adw.EntryRow(
+            title=_("Keep open after last session")
+        )
+        self.multiplex_persist_row.set_tooltip_text(
+            _("How long the shared connection stays up once its last terminal "
+              "or transfer closes (ControlPersist): seconds, a time such as "
+              "10m, or yes to keep it until stopped.")
+        )
+        self.multiplex_persist_row._sshpilot_search_keywords = "persist timeout"
+        for row, keyword in (
+            (self.multiplex_path_row, "ControlPath"),
+            (self.multiplex_persist_row, "ControlPersist"),
+        ):
+            row.connect("changed", self._on_multiplex_detail_changed, keyword)
+            group.add(row)
+        self._sync_multiplex_detail_rows()
         self._multiplex_group = group
         return group
 
@@ -174,6 +202,7 @@ class ConnectionDialogMultiplexMixin:
             row.set_selected(mode_of(self._multiplex_get("ControlMaster")))
         finally:
             self._multiplex_syncing = False
+        self._sync_multiplex_detail_rows()
 
     def _multiplex_extra_lines(self) -> List[str]:
         """The row's lines, to join with the other extra lines."""
@@ -199,10 +228,47 @@ class ConnectionDialogMultiplexMixin:
             self._multiplex_remove("ControlPersist")
         else:
             self._multiplex_lines = []
-        # The lines changed: ask OpenSSH what the host uses with them.
+        self._sync_multiplex_detail_rows()
+        self._multiplex_changed()
+
+    def _on_multiplex_detail_changed(self, row, keyword):
+        """Socket path or Keep open edited: its line follows (none if empty)."""
+        if getattr(self, "_multiplex_syncing", False):
+            return
+        value = row.get_text().strip()
+        if value:
+            self._multiplex_set(keyword, value)
+        else:
+            self._multiplex_remove(keyword)
+        self._multiplex_changed()
+
+    def _multiplex_changed(self):
+        """The lines changed: ask OpenSSH what the host uses with them."""
         refresh = getattr(self, "_schedule_effective_refresh", None)
         if callable(refresh):
             refresh()
+
+    def _sync_multiplex_detail_rows(self):
+        """Show the block's path and persist time under the row, and only
+        where they mean something: while sharing is On, or while the block
+        sets them without a ControlMaster (Off writes ``ControlPath none``,
+        which says nothing to show)."""
+        mode = mode_of(self._multiplex_get("ControlMaster"))
+        self._multiplex_syncing = True
+        try:
+            for name, keyword in (
+                ("multiplex_path_row", "ControlPath"),
+                ("multiplex_persist_row", "ControlPersist"),
+            ):
+                row = getattr(self, name, None)
+                if row is None:
+                    continue
+                value = self._multiplex_get(keyword) or ""
+                if row.get_text() != value:
+                    row.set_text(value)
+                row.set_visible(mode == ON or (mode == DEFAULT and bool(value)))
+        finally:
+            self._multiplex_syncing = False
 
     def _prepare_multiplex_save(self):
         """Before a save: the directory the block's sockets go in exists."""

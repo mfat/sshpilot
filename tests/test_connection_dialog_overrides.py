@@ -90,7 +90,8 @@ def test_every_marked_row_is_an_option_the_dialog_owns():
         # login-policy rows write their option as a plain Host-block line;
         # every other row is a directive the formatter owns.
         assert keyword.lower() in MANAGED_HOST_OPTIONS | AUTH_POLICY_KEYWORDS | {
-            "exitonforwardfailure", "sessiontype", "controlmaster",
+            "exitonforwardfailure", "sessiontype",
+            "controlmaster", "controlpath", "controlpersist",
         }
 
 

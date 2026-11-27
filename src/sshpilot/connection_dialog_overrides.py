@@ -56,9 +56,11 @@ OVERRIDABLE_ROWS = (
     ("identity_agent_row", "IdentityAgent"),
     ("exit_on_forward_failure_row", "ExitOnForwardFailure"),
     ("port_forwarding_only_row", "SessionType"),
-    # Multiplexing writes ControlPath and ControlPersist beside it;
-    # the row stands for the choice, which ControlMaster makes.
+    # Multiplexing: Share connection is the choice ControlMaster makes; the
+    # rows under it set the socket path and how long the master stays up.
     ("multiplex_row", "ControlMaster"),
+    ("multiplex_path_row", "ControlPath"),
+    ("multiplex_persist_row", "ControlPersist"),
     # The authentication section: the order, and each method's switch.
     ("auth_order_row", "PreferredAuthentications"),
     ("auth_gssapi_row", "GSSAPIAuthentication"),

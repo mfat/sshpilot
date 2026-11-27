@@ -186,3 +186,50 @@ def test_the_extra_options_page_neither_lists_nor_takes_the_row_s_options():
         assert check_ssh_option(
             keyword, "auto", reserved=multiplex.OWN_KEYWORDS, reserved_message="own",
         ) == "own"
+
+
+@_gtk
+def test_socket_path_and_keep_open_show_under_the_row_while_it_is_on():
+    dialog = _open_dialog("")
+    try:
+        path, persist = dialog.multiplex_path_row, dialog.multiplex_persist_row
+        assert not path.get_visible() and not persist.get_visible()
+        dialog.multiplex_row.set_selected(ON)
+        assert path.get_visible() and persist.get_visible()
+        assert path.get_text() == multiplex.CONTROL_PATH
+        assert persist.get_text() == multiplex.CONTROL_PERSIST
+        dialog.multiplex_row.set_selected(OFF)
+        # Off's "ControlPath none" says nothing to show.
+        assert not path.get_visible() and not persist.get_visible()
+    finally:
+        dialog.close()
+
+
+@_gtk
+def test_editing_socket_path_and_keep_open_rewrites_their_lines():
+    dialog = _open_dialog("controlmaster auto\ncontrolpath ~/x/%C\ncontrolpersist 60")
+    try:
+        assert dialog.multiplex_path_row.get_text() == "~/x/%C"
+        dialog.multiplex_path_row.set_text("~/.ssh/cm-%C")
+        dialog.multiplex_persist_row.set_text("10m")
+        assert sorted(_lines(dialog)) == [
+            "controlmaster auto", "controlpath ~/.ssh/cm-%c", "controlpersist 10m",
+        ]
+        dialog.multiplex_persist_row.set_text("")
+        assert sorted(_lines(dialog)) == ["controlmaster auto", "controlpath ~/.ssh/cm-%c"]
+    finally:
+        dialog.close()
+
+
+@_gtk
+def test_a_path_set_without_control_master_stays_in_sight():
+    # The block rides masters others open, without opening one: nothing on
+    # the row says so, so the path row shows what the block sets.
+    dialog = _open_dialog("controlpath ~/x/%C")
+    try:
+        assert dialog.multiplex_row.get_selected() == DEFAULT
+        assert dialog.multiplex_path_row.get_visible()
+        assert dialog.multiplex_path_row.get_text() == "~/x/%C"
+        assert not dialog.multiplex_persist_row.get_visible()
+    finally:
+        dialog.close()
