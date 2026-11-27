@@ -838,11 +838,11 @@ def test_activating_a_server_file_beside_this_computer_offers_download(
     dialog = _RecordingAlertDialog.last
     assert dialog.default == "download"
     assert "copy_to_other" not in dialog.responses
-    assert "download_to_computer" not in dialog.responses
+    assert dialog.responses["download_to_computer"] == "Download to This Computer…"
     assert "this computer" in dialog.body
 
 
-def test_download_to_this_computer_is_offered_only_between_two_servers(load_file_manager_window):
+def test_download_to_this_computer_is_offered_on_every_server_pane(load_file_manager_window):
     module = load_file_manager_window()
     left, right, _entry, _calls = _copy_to_other_panes(module, left_local=False)
     assert left._download_to_computer_available()
@@ -850,7 +850,7 @@ def test_download_to_this_computer_is_offered_only_between_two_servers(load_file
 
     left, right, _entry, _calls = _copy_to_other_panes(module, left_local=True)
     assert not left._download_to_computer_available()
-    assert not right._download_to_computer_available()
+    assert right._download_to_computer_available()
 
 
 def test_download_to_this_computer_downloads_into_the_picked_folder(

@@ -2648,9 +2648,9 @@ class FilePane(Gtk.Box):
         return True
 
     def _download_to_computer_available(self) -> bool:
-        """Download to This Computer…: a server pane beside another server,
-        where plain Download has no local pane to save into (#1431)."""
-        return bool(self._is_remote) and self._copy_to_other_available()
+        """Download to This Computer… asks for a folder, so every server
+        pane offers it, whatever the other pane shows (#1431)."""
+        return bool(self._is_remote)
 
     def _copy_to_other_available(self) -> bool:
         """Copy to Other Pane: this pane and the other both show a server."""
@@ -3588,11 +3588,11 @@ class FilePane(Gtk.Box):
         dialog.add_response("cancel", _("Cancel"))
         if editable:
             dialog.add_response("edit", _("Edit as Text"))
+        if self._download_to_computer_available():
+            dialog.add_response("download_to_computer", _("Download to This Computer…"))
         default = transfer or "edit"
         if transfer is not None:
             dialog.add_response(transfer, transfer_label)
-        if transfer == "copy_to_other" and self._download_to_computer_available():
-            dialog.add_response("download_to_computer", _("Download to This Computer…"))
         dialog.set_response_appearance(default, Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response(default)
         dialog.set_close_response("cancel")
