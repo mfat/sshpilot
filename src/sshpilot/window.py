@@ -1890,6 +1890,50 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return list(rows)
         return [rows]
 
+    def _select_opened_connection(self, connection):
+        """Select the opened host after search has restored the sidebar rows."""
+        self.complete_pending_connection_rows()
+        rows = self._rows_for_connection(connection)
+        if not rows:
+            return
+        visible = [row for row in rows if row.get_visible()]
+        if visible:
+            target = next((row for row in visible if row.is_selected()), visible[0])
+        else:
+            target = rows[0]
+            # GTK lists the section and group headers before their descendants.
+            # Walk back from the target to find just its containing headers.
+            child = target
+            collapsed = []
+            for header in reversed(list(self.connection_list)):
+                if isinstance(header, GroupRow) and (
+                    child in header._member_rows or child in header._child_group_rows
+                ):
+                    child = header
+                    if not header.group_info.get("expanded", True):
+                        collapsed.append(header)
+                elif isinstance(header, SectionHeaderRow) and child in header._child_rows:
+                    if not header._expanded:
+                        collapsed.append(header)
+                    break
+            for header in reversed(collapsed):
+                header._toggle_expand()
+        if not target.is_selected():
+            self._select_only_row(target)
+
+        # The list rebuild restores its previous scroll position on idle.
+        # Reveal the current selection after that restoration and GTK layout.
+        def scroll_to_match():
+            for row in self._rows_for_connection(connection):
+                if row.is_selected() and row.get_visible():
+                    viewport = row.get_ancestor(Gtk.Viewport)
+                    if viewport is not None:
+                        viewport.scroll_to(row, None)
+                    break
+            return GLib.SOURCE_REMOVE
+
+        GLib.idle_add(scroll_to_match)
+
     def _primary_row_for_connection(self, connection) -> Optional[Gtk.ListBoxRow]:
         """Return the first row representing ``connection`` (or ``None``)."""
         rows = self._rows_for_connection(connection)
@@ -4992,7 +5036,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle search text changes and update connection list."""
         self.rebuild_connection_list()
         first_row = self.connection_list.get_row_at_index(0)
-        if first_row:
+        if first_row and entry.get_text().strip():
             self._select_only_row(first_row)
 
     def on_search_stopped(self, entry):
@@ -5417,9 +5461,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         if getattr(self, 'search_entry', None):
             self.search_entry.set_text('')
-        self.rebuild_connection_list()
         self.search_container.set_visible(False)
         self._restore_sidebar_after_search()
+        self.rebuild_connection_list()
 
     def activate_search_entry(self):
         """Show (if hidden) and focus the connection search entry.

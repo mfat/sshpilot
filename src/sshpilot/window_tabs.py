@@ -2355,6 +2355,7 @@ class WindowTabsMixin:
         # Executing a result dismisses search (and re-attaches a sidebar that
         # search had detached). No-op when not searching.
         self._close_search_if_open()
+        self._select_opened_connection(connection)
         self._dismiss_sidebar_overlay()
         try:
             # Check if there are open tabs for this connection
@@ -2401,6 +2402,7 @@ class WindowTabsMixin:
         # Executing a result dismisses search (and re-attaches a sidebar that
         # search had detached). No-op when not searching.
         self._close_search_if_open()
+        self._select_opened_connection(connection)
         self._dismiss_sidebar_overlay()
         try:
             # Collect current pages in visual/tab order
