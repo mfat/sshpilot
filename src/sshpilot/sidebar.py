@@ -901,7 +901,7 @@ def _clear_bar(row: Gtk.Widget):
 
 
 def _create_color_dot(icon_name: str = "dot-symbolic") -> Gtk.Image:
-    """Colour dot shown before the row icon ('dot' mode; 'bar'-mode member rows)."""
+    """Colour dot shown before the row icon ('dot' mode)."""
     from sshpilot import icon_utils
     dot = icon_utils.new_image_from_icon_name(icon_name)
     dot.add_css_class("sidebar-color-dot")
@@ -2453,12 +2453,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         except Exception:
             color_children = True
         rgba = self._resolve_group_color() if color_children else None
-        if mode == 'bar':
-            # Bar marks only group headers; member rows show a colour dot
-            # before the title instead.
-            _apply_row_color(self, mode, None)
-            _update_color_dot(self, rgba)
-            return
         _apply_row_color(self, mode, rgba)
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
