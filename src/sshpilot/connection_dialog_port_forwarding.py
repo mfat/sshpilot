@@ -87,13 +87,15 @@ class ConnectionDialogPortForwardingMixin:
         if self.placeholder.get_parent():
             self.placeholder.unparent()
 
-        # A card per rule, as the Routing page sets its blocks. The size group
+        # One card for all rules, a separator between rows. The size group
         # gives every row the same left side, so the arrows
         # line up down the list.
         from sshpilot.forward_rule_row import build_forward_rule_row, describe_forward
 
         server_name = self._forwarding_server_name()
         side_group = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.add_css_class("card")
         shown = 0
         for rule in self.forwarding_rules:
             if not rule.get('enabled', True):
@@ -101,8 +103,8 @@ class ConnectionDialogPortForwardingMixin:
             view = describe_forward(rule)
             if view is None:
                 continue
-            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            card.add_css_class("card")
+            if shown:
+                card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             card.append(build_forward_rule_row(
                 view,
                 server_name,
@@ -110,9 +112,10 @@ class ConnectionDialogPortForwardingMixin:
                 on_delete=lambda r=rule: self.on_delete_forwarding_rule_clicked(None, r),
                 side_group=side_group,
             ))
-            self.rules_list.append(card)
             shown += 1
-        if not shown:
+        if shown:
+            self.rules_list.append(card)
+        else:
             # Every rule is disabled or of a kind the list cannot draw.
             self.rules_list.append(self.placeholder)
 

@@ -4091,8 +4091,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         rules_group.add(button_box)
         
         # Rules list
-        # A card per rule; the gap between them as in a separate boxed list.
-        self.rules_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.rules_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         rules_group.add(self.rules_list)
         
         # Add a placeholder if no rules
