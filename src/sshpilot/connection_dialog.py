@@ -5782,7 +5782,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if not self.nickname_row.get_text().strip():
             self.show_error(_("Please enter a nickname for this connection"))
             return
-        self._prepare_multiplex_save()
+        if not self._prepare_multiplex_save():
+            return
 
         connection_data = self._collect_connection_data()
         try:

@@ -29,18 +29,52 @@ def test_socket_dir_falls_back_to_ssh(monkeypatch):
     assert mux.socket_dir() == os.path.expanduser("~/.ssh/sockets")
 
 
-def test_controlmaster_args_tokens(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+def test_controlmaster_args_tokens(short_runtime_dir):
     assert mux.controlmaster_args() == [
         "-o", "ControlMaster=auto",
-        "-o", f"ControlPath={tmp_path / 'sshpilot' / 'cm' / '%C'}",
+        "-o", f"ControlPath={os.path.join(short_runtime_dir, 'sshpilot', 'cm', '%C')}",
         "-o", "ControlPersist=60",
     ]
 
 
-def test_controlmaster_args_custom_persist(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+def test_controlmaster_args_custom_persist(short_runtime_dir):
     assert "ControlPersist=120" in mux.controlmaster_args(persist="120")
+
+
+@pytest.mark.skipif(not mux.MULTIPLEXING_SUPPORTED, reason="no multiplexing")
+def test_controlmaster_args_are_left_out_when_sockets_would_be_too_long(
+    monkeypatch, tmp_path, caplog
+):
+    # ssh would authenticate and then exit on every launch: unshared beats
+    # failed.
+    runtime = tmp_path / ("r" * (mux.MAX_CONTROL_PATH_LENGTH - 40))
+    runtime.mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    assert mux.control_path_problem() is not None
+    assert mux.controlmaster_args() == []
+    assert "multiplexing disabled" in caplog.text
+
+
+@pytest.mark.skipif(not mux.MULTIPLEXING_SUPPORTED, reason="no multiplexing")
+def test_controlmaster_args_are_left_out_when_the_directory_is_missing(
+    monkeypatch, short_runtime_dir
+):
+    # ensure_private_runtime_directory failed (or was refused): nothing to
+    # listen in.
+    missing = os.path.join(short_runtime_dir, "gone")
+    monkeypatch.setattr(mux, "socket_dir", lambda: missing)
+    assert "could not be created" in mux.control_path_problem()
+    assert mux.controlmaster_args() == []
+
+
+@pytest.mark.skipif(not mux.MULTIPLEXING_SUPPORTED, reason="no multiplexing")
+def test_controlmaster_args_are_left_out_when_the_directory_is_not_writable(
+    monkeypatch, short_runtime_dir
+):
+    monkeypatch.setattr(mux, "socket_dir", lambda: short_runtime_dir)
+    monkeypatch.setattr(mux.os, "access", lambda path, mode: False)
+    assert "not writable" in mux.control_path_problem()
+    assert mux.controlmaster_args() == []
 
 
 def test_expire_all_masters_stops_each_socket(monkeypatch, tmp_path):

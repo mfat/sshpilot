@@ -40,12 +40,25 @@ def test_the_row_s_lines_are_split_from_the_other_extra_lines():
         assert own == []
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no POSIX mode bits")
-def test_the_socket_directory_is_created_private(tmp_path):
-    target = tmp_path / "ssh" / "sockets"
-    multiplex.ensure_socket_dir(str(target))
-    assert target.is_dir()
-    assert (target.stat().st_mode & 0o777) == 0o700
+def test_keep_open_takes_what_openssh_reads():
+    for value in ("yes", "true", "no", "false", "0", "60", "10m", "1h30m", "2W", " 60 "):
+        assert multiplex.detail_problem("ControlPersist", value) == "", value
+    # OpenSSH compares the words in lower case, and refuses the launch.
+    for value in ("Yes", "abc", "5x", "m", "-5", "99999999999"):
+        assert multiplex.detail_problem("ControlPersist", value), value
+    assert multiplex.detail_problem("ControlPersist", "") == ""
+
+
+def test_a_socket_path_too_long_to_listen_on_is_refused():
+    limit = multiplex.MAX_CONTROL_PATH_LENGTH
+    fits = "/" + "d" * (limit - 42) + "/%C"
+    assert len(fits) - 2 + 40 == limit
+    assert multiplex.detail_problem("ControlPath", fits) == ""
+    longer = "/" + "d" * (limit - 41) + "/%C"
+    assert multiplex.detail_problem("ControlPath", longer)
+    # A token known only on connecting: the length cannot be told.
+    assert multiplex.detail_problem("ControlPath", "/" + "d" * 200 + "/%h") == ""
+    assert multiplex.detail_problem("ControlPath", "none") == ""
 
 
 def _real_gtk_available():
@@ -90,6 +103,21 @@ def _lines(dialog):
         for line in dialog._combined_extra_ssh_config().splitlines()
         if line.strip().lower().startswith("control")
     ]
+
+
+@pytest.fixture
+def short_home(monkeypatch):
+    """A HOME short enough for sockets under it: ``tmp_path`` alone can make
+    ``~/.ssh/sockets/%C`` longer than a socket may be, which the editor
+    refuses."""
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    path = tempfile.mkdtemp(prefix="sp-", dir="/tmp" if os.path.isdir("/tmp") else None)
+    monkeypatch.setenv("HOME", path)
+    yield Path(path)
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def _gtk(test):
@@ -149,8 +177,8 @@ def test_on_keeps_a_path_and_persist_the_block_already_sets():
 
 
 @_gtk
-def test_the_choice_survives_save_and_creates_the_socket_directory(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
+def test_the_choice_survives_save_and_creates_the_socket_directory(short_home):
+    tmp_path = short_home
     dialog = _open_dialog("")
     try:
         dialog.multiplex_row.set_selected(ON)
@@ -235,3 +263,67 @@ def test_a_path_set_without_control_master_stays_in_sight():
         assert not dialog.multiplex_persist_row.get_visible()
     finally:
         dialog.close()
+
+
+@_gtk
+def test_keep_open_openssh_would_refuse_is_marked_and_refuses_the_save():
+    dialog = _open_dialog("controlmaster auto\ncontrolpath ~/x/%C\ncontrolpersist 60")
+    try:
+        row = dialog.multiplex_persist_row
+        dialog.multiplex_persist_row.set_text("ten minutes")
+        assert row._sshpilot_validation_error is True
+        assert row.get_tooltip_text()
+        assert _save(dialog) == {}
+        dialog.multiplex_persist_row.set_text("10m")
+        assert row._sshpilot_validation_error is False
+    finally:
+        dialog.close()
+
+
+@_gtk
+def test_a_socket_path_too_long_is_marked_and_refuses_the_save():
+    dialog = _open_dialog("controlmaster auto\ncontrolpersist 60")
+    try:
+        row = dialog.multiplex_path_row
+        row.set_text("/" + "d" * multiplex.MAX_CONTROL_PATH_LENGTH + "/%C")
+        assert row._sshpilot_validation_error is True
+        assert _save(dialog) == {}
+    finally:
+        dialog.close()
+
+
+@_gtk
+def test_save_creates_the_directory_of_a_custom_socket_path(short_home):
+    tmp_path = short_home
+    dialog = _open_dialog("controlmaster auto")
+    try:
+        dialog.multiplex_path_row.set_text("~/cm/%C")
+        saved = _save(dialog)
+    finally:
+        dialog.close()
+    assert "controlpath ~/cm/%c" in saved["extra_ssh_config"].lower()
+    sockets = tmp_path / "cm"
+    assert sockets.is_dir()
+    if sys.platform != "win32":
+        assert (os.stat(sockets).st_mode & 0o777) == 0o700
+
+
+@_gtk
+def test_a_socket_directory_that_cannot_be_created_refuses_the_save(
+    short_home, monkeypatch
+):
+    tmp_path = short_home
+    # ssh would authenticate and then exit on every connection to the host.
+    (tmp_path / "file").write_text("")
+    errors = []
+    dialog = _open_dialog("controlmaster auto")
+    try:
+        monkeypatch.setattr(
+            dialog, "show_error", lambda message, heading=None: errors.append(message)
+        )
+        dialog.multiplex_path_row.set_text(str(tmp_path / "file" / "cm" / "%C"))
+        assert _save(dialog) == {}
+    finally:
+        dialog.close()
+    assert len(errors) == 1
+    assert str(tmp_path / "file" / "cm") in errors[0]

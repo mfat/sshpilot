@@ -14,8 +14,12 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
+from sshpilot.core.ssh.control_path import (
+    MAX_CONTROL_PATH_LENGTH,
+    control_path_too_long,
+)
 from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
 
 logger = logging.getLogger(__name__)
@@ -122,15 +126,42 @@ def control_path() -> str:
     return os.path.join(socket_dir(), "%C")
 
 
+def control_path_problem() -> Optional[str]:
+    """Why a master could not listen on :func:`control_path`, or None.
+
+    :func:`socket_dir` is best effort, so its directory may be missing or
+    unwritable; and a long ``$XDG_RUNTIME_DIR`` or home directory can push
+    the socket name past what ``sun_path`` holds.
+    """
+    directory = socket_dir()
+    if not os.path.isdir(directory):
+        return f"{directory} could not be created"
+    if not os.access(directory, os.W_OK | os.X_OK):
+        return f"{directory} is not writable"
+    if control_path_too_long(control_path()):
+        return (f"socket paths in {directory} are longer than "
+                f"{MAX_CONTROL_PATH_LENGTH} bytes")
+    return None
+
+
 def controlmaster_args(persist: str = DEFAULT_PERSIST) -> List[str]:
     """The ssh ``-o`` options that enable multiplexing on the shared socket.
 
     Where multiplexing is unsupported this pins it *off* instead, so a forced
     master (Host Info) or a Host block carrying ``ControlMaster`` cannot break
-    the launch.
+    the launch. Where the sockets cannot be created (see
+    :func:`control_path_problem`) it returns nothing, leaving the host's own
+    configuration to decide.
     """
     if not MULTIPLEXING_SUPPORTED:
         return ["-o", "ControlMaster=no", "-o", "ControlPath=none"]
+    problem = control_path_problem()
+    if problem:
+        # A master that cannot listen makes ssh exit after authenticating,
+        # so every launch would fail. Without the options the launches go
+        # unshared, as if the preference were off.
+        logger.warning("Connection multiplexing disabled: %s", problem)
+        return []
     return [
         "-o", "ControlMaster=auto",
         "-o", f"ControlPath={control_path()}",

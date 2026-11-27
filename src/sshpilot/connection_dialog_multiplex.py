@@ -16,6 +16,11 @@ back on save and for OpenSSH's answer (``_combined_extra_ssh_config``):
 Under the row, Socket path and Keep open edit the block's ``ControlPath`` and
 ``ControlPersist``: shown while sharing is On, or while the block sets them
 with no ``ControlMaster`` of its own, so no line the row owns is out of sight.
+Values OpenSSH would refuse only once a connection is tried -- a
+``ControlPersist`` it cannot read, a socket path too long to listen on -- are
+marked there and refuse the save, and the save creates the socket directory
+(``_prepare_multiplex_save``): ssh does not, and exits after authenticating
+when it is missing.
 
 Settings ▸ SSH Options always win: with multiplexing on there, the app's own
 ``-o`` options come first on the command line, and the row is marked
@@ -44,6 +49,12 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk
 
+from .core.ssh.control_path import (
+    MAX_CONTROL_PATH_LENGTH,
+    control_path_directory,
+    control_path_too_long,
+    control_persist_valid,
+)
 from .platform.fs import makedirs_private
 from .platform_utils import is_windows
 
@@ -105,13 +116,22 @@ def mode_of(control_master) -> int:
     return OFF if str(control_master).strip().lower() == "no" else ON
 
 
-def ensure_socket_dir(path: str = SOCKET_DIR) -> None:
-    """Create the sockets directory, private as ssh wants it. Best effort: a
-    missing directory only makes ssh connect without sharing."""
-    try:
-        makedirs_private(os.path.expanduser(path))
-    except OSError:
-        logger.debug("Could not create %s", path, exc_info=True)
+def detail_problem(keyword: str, value: str) -> str:
+    """Why OpenSSH would refuse *value* for the Socket path or Keep open row
+    (``""`` when it would not). Both fail only once a connection is tried:
+    a bad ``ControlPersist`` refuses the launch, and a socket path too long
+    to listen on makes ssh exit after authenticating."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if keyword == "ControlPersist" and not control_persist_valid(value):
+        return _("Use seconds, a time such as 10m or 1h30m, yes, or no")
+    if keyword == "ControlPath" and control_path_too_long(value):
+        return _(
+            "Too long for a socket: at most {count} characters once %C "
+            "becomes the 40-character host hash"
+        ).format(count=MAX_CONTROL_PATH_LENGTH)
+    return ""
 
 
 class ConnectionDialogMultiplexMixin:
@@ -160,6 +180,7 @@ class ConnectionDialogMultiplexMixin:
             (self.multiplex_persist_row, "ControlPersist"),
         ):
             row.connect("changed", self._on_multiplex_detail_changed, keyword)
+            row._sshpilot_multiplex_keyword = keyword
             group.add(row)
         self._sync_multiplex_detail_rows()
         self._multiplex_group = group
@@ -240,6 +261,7 @@ class ConnectionDialogMultiplexMixin:
             self._multiplex_set(keyword, value)
         else:
             self._multiplex_remove(keyword)
+        self._validate_multiplex_rows()
         self._multiplex_changed()
 
     def _multiplex_changed(self):
@@ -269,12 +291,54 @@ class ConnectionDialogMultiplexMixin:
                 row.set_visible(mode == ON or (mode == DEFAULT and bool(value)))
         finally:
             self._multiplex_syncing = False
+        self._validate_multiplex_rows()
 
-    def _prepare_multiplex_save(self):
-        """Before a save: the directory the block's sockets go in exists."""
+    def _validate_multiplex_rows(self):
+        """Mark Socket path and Keep open when OpenSSH would refuse them;
+        the first such row in sight, or None (the save is refused on it)."""
+        first = None
+        mark = getattr(self, "_row_set_message", None)
+        for name in ("multiplex_path_row", "multiplex_persist_row"):
+            row = getattr(self, name, None)
+            if row is None:
+                continue
+            problem = ""
+            if row.get_visible():
+                problem = detail_problem(
+                    row._sshpilot_multiplex_keyword, row.get_text()
+                )
+            if callable(mark):
+                mark(row, problem, is_error=bool(problem))
+            if problem and first is None:
+                first = row
+        return first
+
+    def _prepare_multiplex_save(self) -> bool:
+        """Before a save: the directory the block's sockets go in exists.
+
+        OpenSSH does not create it, and a master that cannot listen there
+        makes ssh exit after authenticating, on every connection to the
+        host. So it is created here, for any path whose directory is known
+        before connecting; False, once the user is told, when it cannot be.
+        """
         if not MULTIPLEXING_SUPPORTED:
-            return
-        if mode_of(self._multiplex_get("ControlMaster")) != ON:
-            return
-        if (self._multiplex_get("ControlPath") or "").strip() == CONTROL_PATH:
-            ensure_socket_dir()
+            return True
+        if mode_of(self._multiplex_get("ControlMaster")) == OFF:
+            return True
+        directory = control_path_directory(self._multiplex_get("ControlPath") or "")
+        if directory is None or os.path.isdir(directory):
+            return True
+        try:
+            makedirs_private(directory)
+        except OSError as error:
+            logger.warning("Could not create the socket directory %s: %s",
+                           directory, error)
+            self.show_error(
+                _("The socket directory {path} could not be created ({reason}). "
+                  "Connections to this host fail while they share one, so "
+                  "choose another socket path.").format(
+                      path=directory, reason=error.strerror or error),
+                heading=_("Cannot Share Connection"),
+            )
+            return False
+        return True

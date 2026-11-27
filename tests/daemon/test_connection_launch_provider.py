@@ -251,7 +251,7 @@ def test_require_master_is_off_unless_asked(provider):
     assert not any("controlmaster" in str(token).lower() for token in command)
 
 
-def test_require_master_places_multiplex_before_target_not_after_command(provider):
+def test_require_master_places_multiplex_before_target_not_after_command(provider, short_runtime_dir):
     """Regression: multiplex options appended after the remote command are
     read by OpenSSH as remote shell text -- host-info probes failed with
     ``remote_command_failed`` one second after authentication."""
@@ -271,7 +271,7 @@ def test_require_master_places_multiplex_before_target_not_after_command(provide
     assert any(token.startswith("ControlPath=") for token in tokens)
 
 
-def test_require_master_coexists_with_preference_multiplex(provider):
+def test_require_master_coexists_with_preference_multiplex(provider, short_runtime_dir):
     """When the global preference already provided the identical fragment,
     the forced copy is inert: OpenSSH takes the first value and both come
     from the same source. What matters is position, not count."""
@@ -298,7 +298,7 @@ def test_require_master_coexists_with_preference_multiplex(provider):
     assert {t for t in tokens if "ControlMaster" in t} == {"ControlMaster=auto"}
 
 
-def test_require_master_overrides_authored_controlmaster_no(provider):
+def test_require_master_overrides_authored_controlmaster_no(provider, short_runtime_dir):
     """Host Info must hold a master even when the Host block disabled mux.
 
     The forced fragment is on the command line, which beats the Host block
@@ -397,7 +397,7 @@ def test_terminal_forwarding_only_disables_preference_multiplex(provider):
     assert tokens[-1]  # destination host / alias
 
 
-def test_terminal_shell_host_keeps_preference_multiplex(provider):
+def test_terminal_shell_host_keeps_preference_multiplex(provider, short_runtime_dir):
     """Ordinary shell tabs still receive ControlMaster=auto when preferred."""
     from types import SimpleNamespace
 
