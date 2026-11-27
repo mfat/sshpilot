@@ -1890,49 +1890,66 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return list(rows)
         return [rows]
 
-    def _select_opened_connection(self, connection) -> bool:
-        """Select and reveal a sidebar row for the connection, if present."""
+    def _select_opened_connection(self, connection, *, focus=False) -> bool:
+        """Reveal one occurrence of the connection, optionally focusing its row."""
         self.complete_pending_connection_rows()
+        pending = getattr(self, "_sidebar_reveal_tick", None)
+        if pending:
+            self.connection_list.remove_tick_callback(pending)
+            self._sidebar_reveal_tick = None
         rows = self._rows_for_connection(connection)
         if not rows:
             return False
+        self._sidebar_scroll_request = object()
         visible = [row for row in rows if row.get_visible()]
         if visible:
             target = next((row for row in visible if row.is_selected()), visible[0])
         else:
             target = rows[0]
-            # GTK lists the section and group headers before their descendants.
-            # Walk back from the target to find just its containing headers.
-            child = target
-            collapsed = []
-            for header in reversed(list(self.connection_list)):
-                if isinstance(header, GroupRow) and (
-                    child in header._member_rows or child in header._child_group_rows
-                ):
-                    child = header
-                    if not header.group_info.get("expanded", True):
-                        collapsed.append(header)
-                elif isinstance(header, SectionHeaderRow) and child in header._child_rows:
-                    if not header._expanded:
-                        collapsed.append(header)
-                    break
-            for header in reversed(collapsed):
-                header._toggle_expand()
-        if not target.is_selected():
+            group_id = getattr(target, "_group_id", None)
+            section_id = "groups" if group_id else "ungrouped"
+            ancestors = set()
+            while group_id and group_id not in ancestors:
+                ancestors.add(group_id)
+                group_id = self.group_manager.groups.get(group_id, {}).get("parent_id")
+            # Headers precede their children, so parents expand first.
+            for header in self.connection_list:
+                if isinstance(header, SectionHeaderRow) and header.section_id == section_id:
+                    header.set_expanded(True)
+                elif isinstance(header, GroupRow) and header.group_id in ancestors:
+                    header.set_expanded(True)
+        if not target.is_selected() or focus:
             self._select_only_row(target)
 
-        # The list rebuild restores its previous scroll position on idle.
-        # Reveal the current selection after that restoration and GTK layout.
-        def scroll_to_match():
+        # A tick runs before layout. Let one layout pass after expansion, then
+        # clamp the adjustment to the allocated row without moving terminal focus.
+        frames = 0
+        target_group = getattr(target, "_group_id", None)
+
+        def reveal(listbox, _clock):
+            nonlocal frames
+            frames += 1
+            if frames == 1:
+                return GLib.SOURCE_CONTINUE
+            # Clearing search can rebuild the list again before the next frame.
             for row in self._rows_for_connection(connection):
-                if row.is_selected() and row.get_visible():
-                    viewport = row.get_ancestor(Gtk.Viewport)
-                    if viewport is not None:
-                        viewport.scroll_to(row, None)
-                    break
+                if not row.is_selected() or getattr(row, "_group_id", None) != target_group:
+                    continue
+                viewport = listbox.get_ancestor(Gtk.Viewport)
+                if viewport is not None:
+                    ok, bounds = row.compute_bounds(viewport.get_child())
+                    if ok and bounds.get_height() > 0:
+                        top = bounds.get_y()
+                        viewport.get_vadjustment().clamp_page(top, top + bounds.get_height())
+                    elif frames < 5:
+                        return GLib.SOURCE_CONTINUE
+                if focus:
+                    row.grab_focus()
+                break
+            self._sidebar_reveal_tick = None
             return GLib.SOURCE_REMOVE
 
-        GLib.idle_add(scroll_to_match)
+        self._sidebar_reveal_tick = self.connection_list.add_tick_callback(reveal)
         return True
 
     def _primary_row_for_connection(self, connection) -> Optional[Gtk.ListBoxRow]:
@@ -4454,8 +4471,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     break
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
             vadj = self.connection_scrolled.get_vadjustment()
-            if vadj:
-                GLib.idle_add(lambda: vadj.set_value(scroll_position))
+            if vadj and not getattr(self, "_sidebar_reveal_tick", None):
+                request = self._sidebar_scroll_request = object()
+
+                def restore_scroll():
+                    if self._sidebar_scroll_request is request:
+                        vadj.set_value(scroll_position)
+                    return GLib.SOURCE_REMOVE
+
+                GLib.idle_add(restore_scroll)
 
     def _append_command_matches(self) -> None:
         """When the search popup is open with a query, append in-app commands

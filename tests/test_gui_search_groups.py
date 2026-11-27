@@ -70,7 +70,8 @@ def test_opened_search_match_stays_selected_when_filter_clears():
     assert match.is_selected()
 
 
-def test_opened_offscreen_match_scrolls_into_view_without_taking_focus(gui):
+@pytest.mark.parametrize("collapsed", [False, True])
+def test_opened_offscreen_match_scrolls_into_view_without_taking_focus(gui, collapsed):
     from gi.repository import Gtk
     from sshpilot.window import MainWindow
 
@@ -81,7 +82,15 @@ def test_opened_offscreen_match_scrolls_into_view_without_taking_focus(gui):
     sidebar = Gtk.ListBox()
     for index in range(30):
         sidebar.append(Gtk.Label(label=str(index), height_request=32))
-    target = sidebar.get_row_at_index(29)
+    from sshpilot.sidebar import SectionHeaderRow
+
+    section = SectionHeaderRow("ungrouped", "Ungrouped")
+    sidebar.append(section)
+    target = Gtk.ListBoxRow(child=Gtk.Label(label="Match", height_request=32))
+    sidebar.append(target)
+    section.add_child_row(target)
+    if collapsed:
+        section.set_expanded(False)
     scroll.set_child(sidebar)
     content.append(entry)
     content.append(scroll)
@@ -89,7 +98,8 @@ def test_opened_offscreen_match_scrolls_into_view_without_taking_focus(gui):
     try:
         window.present()
         entry.grab_focus()
-        sidebar.select_row(target)
+        if not collapsed:
+            sidebar.select_row(target)
         adjustment = scroll.get_vadjustment()
         deadline = monotonic() + 3
         while adjustment.get_page_size() == 0 or adjustment.get_upper() <= adjustment.get_page_size():
@@ -98,11 +108,17 @@ def test_opened_offscreen_match_scrolls_into_view_without_taking_focus(gui):
         assert adjustment.get_value() == 0
         focus = window.get_focus()
 
-        MainWindow._select_opened_connection(SimpleNamespace(
+        reveal_window = SimpleNamespace(
             connection_list=sidebar,
+            connection_scrolled=scroll,
+            _attach_staged_connection_rows=lambda: None,
+            _apply_sidebar_row_actions=lambda force: None,
+            _select_only_row=sidebar.select_row,
             complete_pending_connection_rows=lambda: None,
             _rows_for_connection=lambda connection: [target],
-        ), object())
+        )
+        MainWindow._finish_rebuild(reveal_window, 0)
+        MainWindow._select_opened_connection(reveal_window, object())
         deadline = monotonic() + 3
         while adjustment.get_value() + adjustment.get_page_size() < adjustment.get_upper() - 1:
             if monotonic() >= deadline:

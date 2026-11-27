@@ -681,7 +681,6 @@ class WindowTabsMixin:
         if connection is None:
             return
         from .sidebar_views import CONNECTIONS, show_view
-        from .sidebar import GroupRow, SectionHeaderRow
 
         popup = getattr(self, "_search_popup", None)
         if popup is not None and popup.visible:
@@ -694,27 +693,9 @@ class WindowTabsMixin:
         show_view(self, CONNECTIONS)
         self._reveal_sidebar()
         self.rebuild_connection_list()
-        self.complete_pending_connection_rows()
-        ancestors = set()
-        for group_id in self.group_manager.get_connection_groups(connection):
-            while group_id and group_id not in ancestors:
-                ancestors.add(group_id)
-                group_id = self.group_manager.groups.get(group_id, {}).get("parent_id")
-        for row in self.connection_list:
-            if isinstance(row, SectionHeaderRow) and not row._expanded:
-                row._toggle_expand()
-            elif (isinstance(row, GroupRow) and row.group_id in ancestors
-                  and not row.group_info.get("expanded", True)):
-                row._toggle_expand()
-        rows = self._rows_for_connection(connection)
-        if rows:
-            self._select_only_row(rows[0])
-            # Rebuild restores the old scroll position on idle. Focus after
-            # that restoration so GTK brings the revealed row into view.
-            def _focus():
-                rows[0].grab_focus()
-                return False
-            GLib.idle_add(_focus)
+        saved = self.connection_manager.get_connection_by_id(getattr(connection, "id", None))
+        if saved is not None:
+            self._select_opened_connection(saved, focus=True)
 
     def _on_tabmenu_manage_files(self, action, param=None):
         try:

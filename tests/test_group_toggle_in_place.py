@@ -63,6 +63,28 @@ def test_group_row_apply_descendant_visibility_recurses():
     assert child._member_rows[0].visible is False
 
 
+def test_programmatic_group_expansion_reveals_members_without_selecting_header():
+    from unittest.mock import Mock
+
+    row = GroupRow.__new__(GroupRow)
+    member = _VisibleStub()
+    row.group_id = "nested"
+    row.group_info = {"expanded": False}
+    row.group_manager = Mock()
+    row._member_rows = [member]
+    row._child_group_rows = []
+    row._update_display = Mock()
+    row.get_visible = lambda: True
+    row.emit = Mock()
+
+    row.set_expanded(True)
+    row.set_expanded(True)
+
+    assert member.visible
+    row.group_manager.set_group_expanded.assert_called_once_with("nested", True)
+    row.emit.assert_not_called()
+
+
 def test_group_toggle_updates_visibility_without_rebuild():
     selected = []
 
