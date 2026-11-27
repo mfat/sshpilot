@@ -3046,9 +3046,9 @@ class FileManagerWindow(Adw.Window):
             remote_pane = getattr(self, "_right_pane", None)
             if isinstance(remote_pane, FilePane):
                 pane = remote_pane
-        if self._local_pane() is None:
-            pane.show_toast(_("Local pane is unavailable"))
-            return
+        # With a server in each pane the payload names the destination (the
+        # Downloads folder); there is no local listing to refresh.
+        shows_local = self._local_pane() is not None
 
         move_remote_sources: List[str] = []
         move_remote_pane: Optional[FilePane] = None
@@ -3099,8 +3099,8 @@ class FileManagerWindow(Adw.Window):
                 future = self._start_transfer_batch(
                     "download",
                     items,
-                    refresh_local_path=str(destination_base),
-                    highlight_name=os.path.basename(items[-1][0]),
+                    refresh_local_path=str(destination_base) if shows_local else None,
+                    highlight_name=os.path.basename(items[-1][0]) if shows_local else None,
                     remote_pane=pane,
                 )
             except Exception as e:
