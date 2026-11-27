@@ -285,16 +285,22 @@ def build_forward_rule_row(
     body.append(heading)
 
     # This computer's card, arrow, the server's card.
-    strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    # The arrow sits in the middle and the cards fill the row either side
+    # of it; every row is as wide as the next, so the arrows line up.
+    strip = Gtk.CenterBox(orientation=Gtk.Orientation.HORIZONTAL)
     left = _side(THIS_COMPUTER, server_name, view.this_computer, view.kind, shrink=False)
+    left.set_hexpand(True)
     if side_group is not None:
+        # Rows short of room push the middle over by the same amount.
         side_group.add_widget(left)
-    strip.append(left)
+    strip.set_start_widget(left)
 
     arrow = Gtk.DrawingArea()
     arrow.set_content_width(ARROW_WIDTH)
     arrow.set_content_height(10)
     arrow.set_valign(Gtk.Align.CENTER)
+    arrow.set_margin_start(10)
+    arrow.set_margin_end(10)
     arrow.add_css_class(f"forward-{view.kind}")
     arrow.set_draw_func(_draw_arrow, view.outbound)
     arrow.set_tooltip_text(
@@ -302,13 +308,11 @@ def build_forward_rule_row(
         if view.outbound
         else _("From {server}").format(server=server_name)
     )
-    strip.append(arrow)
+    strip.set_center_widget(arrow)
 
     right = _side(SERVER, server_name, view.server, view.kind, shrink=True)
-    # The row's spare width goes after the card, not into it.
     right.set_hexpand(True)
-    right.set_halign(Gtk.Align.START)
-    strip.append(right)
+    strip.set_end_widget(right)
     body.append(strip)
     row.append(body)
 
