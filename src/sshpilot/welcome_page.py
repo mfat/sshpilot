@@ -340,7 +340,17 @@ class WelcomePage(Gtk.Overlay):
         return row
 
     def _attach_pinned_context_menu(self, row, conn):
-        """Right-click a pinned row for a single label-only "Unpin" action.
+        """Right-click a pinned row for a single label-only "Unpin" action."""
+        self._attach_row_context_menu(
+            row, _('Unpin'), lambda: self.window._toggle_pin_connections([conn]))
+
+    def _attach_recent_context_menu(self, row, conn):
+        """Right-click a Recent row to drop just that host from the list."""
+        self._attach_row_context_menu(
+            row, _('Remove from Recent'), lambda: self._clear_recent([conn]))
+
+    def _attach_row_context_menu(self, row, label, action):
+        """Right-click ``row`` for a single label-only menu item running ``action``.
 
         A plain popover with a flat button (direct ``clicked`` callback) — no Gio
         action muxer, whose resolution is finicky for a detached popover."""
@@ -353,17 +363,16 @@ class WelcomePage(Gtk.Overlay):
             pop.add_css_class('menu')
             pop.set_has_arrow(False)
             item = Gtk.Button()
-            item.set_child(Gtk.Label(label=_('Unpin'), xalign=0))
+            item.set_child(Gtk.Label(label=label, xalign=0))
             item.add_css_class('flat')
 
-            def _do_unpin(_b):
+            def _do_action(_b):
                 pop.popdown()
-                # _toggle_pin_connections rebuilds the pinned box (destroying this
-                # row + popover), so let the popover finish closing first.
-                GLib.idle_add(
-                    lambda: (self.window._toggle_pin_connections([conn]), False)[1])
+                # The action rebuilds the section (destroying this row +
+                # popover), so let the popover finish closing first.
+                GLib.idle_add(lambda: (action(), False)[1])
 
-            item.connect('clicked', _do_unpin)
+            item.connect('clicked', _do_action)
             pop.set_child(item)
             pop.set_parent(row)
             pop.connect('closed', lambda p: p.unparent())
@@ -375,14 +384,47 @@ class WelcomePage(Gtk.Overlay):
         gesture.connect('pressed', _on_pressed)
         row.add_controller(gesture)
 
-    def _min_section(self, heading_text, rows):
+    def _clear_recent(self, connections):
+        """Forget the last-used time of ``connections`` so they leave Recent."""
+        client = getattr(self.window, 'client', None)
+        if client is None:
+            return
+        for conn in connections:
+            nickname = getattr(conn, 'nickname', None)
+            if not nickname:
+                continue
+            try:
+                # A ``None`` value removes the key from the stored metadata.
+                client.update_connection_metadata(nickname, {'last_used': None})
+            except Exception:
+                logger.debug("Failed to clear last-used time", exc_info=True)
+        self.refresh_recent()
+
+    def _min_section(self, heading_text, rows, *, action=None):
+        """A headed list of rows; ``action`` is an optional ``(label, callback)``
+        shown as a small link at the right end of the heading."""
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         box.set_hexpand(True)
         heading = Gtk.Label(label=heading_text, xalign=0)
         heading.set_hexpand(True)
-        heading.add_css_class('startpage-recent-head')
-        heading.set_margin_bottom(4)
-        box.append(heading)
+        if action is None:
+            heading.add_css_class('startpage-recent-head')
+            heading.set_margin_bottom(4)
+            box.append(heading)
+        else:
+            action_label, action_callback = action
+            head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            head.add_css_class('startpage-recent-head')
+            head.set_margin_bottom(4)
+            head.append(heading)
+            action_btn = Gtk.Button(label=action_label)
+            action_btn.add_css_class('flat')
+            action_btn.add_css_class('startpage-recent-head-action')
+            action_btn.set_valign(Gtk.Align.CENTER)
+            action_btn.set_can_focus(False)
+            action_btn.connect('clicked', lambda *_a: action_callback())
+            head.append(action_btn)
+            box.append(head)
         for row in rows:
             box.append(row)
         return box
@@ -550,16 +592,24 @@ class WelcomePage(Gtk.Overlay):
             return
 
         hide = hosts_hidden(getattr(self, 'window', None))
-        rows = [
-            self._min_row(
+        rows = []
+        for conn in recent:
+            row = self._min_row(
                 self._connection_title(conn),
                 mask_host_display(conn.display_target, hide),
                 lambda _b, c=conn: self._connect_connection_summary(c),
                 on_info=self._dashboard_callback(conn),
             )
-            for conn in recent
-        ]
-        box.append(self._min_section(_('Recent'), rows))
+            self._attach_recent_context_menu(row, conn)
+            rows.append(row)
+        # Clear every host with a last-used time, not just the four shown, so
+        # older ones do not move up into the emptied list.
+        used = [c for c in connections if _last_used(c) > 0]
+        box.append(self._min_section(
+            _('Recent'),
+            rows,
+            action=(_('Clear'), lambda: self._clear_recent(used)),
+        ))
 
     def apply_hide_hosts(self, hide: bool | None = None):
         """Re-render Recent/Pinned so host text follows the privacy toggle."""
