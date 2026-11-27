@@ -1,9 +1,6 @@
 import json
 import os
 import posixpath
-import sys
-
-import pytest
 
 
 def test_drop_rejects_stale_drag_metadata(load_file_manager_window, monkeypatch):
@@ -627,49 +624,17 @@ def _copy_to_other_panes(module, *, left_local):
 
 
 def test_copy_to_other_pane_is_offered_only_between_two_servers(load_file_manager_window):
-    """With a server in each pane the transfer is Copy to Other Pane (#1356);
-    Download is still offered and saves to the Downloads folder (#1431)."""
+    """Upload and Download need this computer on one side; with a server in
+    each pane the transfer is Copy to Other Pane (#1356)."""
     module = load_file_manager_window()
     left, right, _entry, _calls = _copy_to_other_panes(module, left_local=False)
     assert left._copy_to_other_available() and right._copy_to_other_available()
-    assert left._download_available()
+    assert not left._download_available()
 
     left, right, _entry, _calls = _copy_to_other_panes(module, left_local=True)
     assert not left._copy_to_other_available()
     assert not right._copy_to_other_available()
     assert right._download_available()
-
-
-def test_download_between_two_servers_saves_to_downloads(load_file_manager_window, monkeypatch, tmp_path):
-    """Double-clicking a file with a server in each pane offers Download;
-    it must land in the Downloads folder, not be dropped (#1431)."""
-    module = load_file_manager_window()
-    left, _right, entry, _calls = _copy_to_other_panes(module, left_local=False)
-    emitted = []
-    left.emit = lambda *args: emitted.append(args)
-    monkeypatch.setattr(sys.modules[module.FilePane.__module__], "_downloads_directory", lambda: str(tmp_path))
-
-    left._on_menu_download()
-
-    assert emitted == [(
-        "request-operation", "download",
-        {"entries": [entry], "directory": "/srv/data", "destination": tmp_path},
-    )]
-
-
-def test_download_between_two_servers_asks_for_a_folder_without_downloads(
-    load_file_manager_window, monkeypatch
-):
-    module = load_file_manager_window()
-    left, _right, entry, _calls = _copy_to_other_panes(module, left_local=False)
-    left.emit = lambda *args: pytest.fail("download must wait for a folder")
-    chosen = []
-    left._choose_download_folder = chosen.append
-    monkeypatch.setattr(sys.modules[module.FilePane.__module__], "_downloads_directory", lambda: None)
-
-    left._on_menu_download()
-
-    assert chosen == [[entry]]
 
 
 def test_copy_to_other_pane_copies_into_the_other_panes_folder(load_file_manager_window):

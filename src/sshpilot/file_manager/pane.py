@@ -356,16 +356,6 @@ _TEXT_EXTENSIONS = {
 _TEXT_NAME_PATTERNS = ("readme", "license", "changelog", "authors", "contributors", "makefile")
 
 
-def _downloads_directory() -> Optional[str]:
-    """The user's Downloads folder when this process can write to it."""
-    path = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
-    if not path:
-        path = os.path.join(os.path.expanduser("~"), "Downloads")
-    if os.path.isdir(path) and os.access(path, os.W_OK):
-        return path
-    return None
-
-
 def _is_editable_as_text(name: str) -> bool:
     """Whether the text editor should be offered for a file called *name*.
 
@@ -2295,8 +2285,8 @@ class FilePane(Gtk.Box):
                 if single is not None and not single.is_dir
                 and _is_editable_as_text(single.name) else None,
                 _item(_("Download"), "download") if self._download_available()
-                else _item(_("Upload…"), "upload") if not self._is_remote else None,
-                _item(_("Copy to Other Pane"), "copy_to_other")
+                else _item(_("Upload…"), "upload") if not self._is_remote
+                else _item(_("Copy to Other Pane"), "copy_to_other")
                 if self._copy_to_other_available() else None,
             )
             _section(
@@ -2638,10 +2628,17 @@ class FilePane(Gtk.Box):
         self._selection_model.select_all()
 
     def _download_available(self) -> bool:
-        """Download is offered on every server pane. With this computer in
-        the other pane it saves into that pane's folder; with a server in
-        each pane, into the Downloads folder (#1431)."""
-        return bool(self._is_remote)
+        """Download needs this computer in the other pane."""
+        if not self._is_remote:
+            return False
+        try:
+            window = self._get_file_manager_window()
+        except Exception:
+            window = None
+        local_pane = getattr(window, "_local_pane", None)
+        if callable(local_pane):
+            return local_pane() is not None
+        return True
 
     def _copy_to_other_available(self) -> bool:
         """Copy to Other Pane: this pane and the other both show a server."""
@@ -2705,13 +2702,9 @@ class FilePane(Gtk.Box):
         upload = getattr(self, "_upload_button", None)
         if upload is not None:
             upload.set_visible(not self._is_remote)
-        # Between two servers the bar's transfer is Copy to Other Pane;
-        # Download stays in the context menu.
         download = getattr(self, "_download_button", None)
         if download is not None:
-            download.set_visible(
-                self._download_available() and not self._copy_to_other_available()
-            )
+            download.set_visible(self._download_available())
         copy_to_other = getattr(self, "_copy_to_other_button", None)
         if copy_to_other is not None:
             copy_to_other.set_visible(self._copy_to_other_available())
@@ -2834,13 +2827,7 @@ class FilePane(Gtk.Box):
 
         local_pane = window._local_pane()
         if local_pane is None:
-            # Both panes show servers: save into the Downloads folder, or a
-            # folder the user picks when it is not reachable (Flatpak).
-            downloads = _downloads_directory()
-            if downloads is not None:
-                self._emit_download(entries, downloads)
-            else:
-                self._choose_download_folder(entries)
+            self.show_toast(_("Local pane is unavailable"))
             return
 
         # Use the actual current path instead of the display path from path entry
@@ -2853,28 +2840,6 @@ class FilePane(Gtk.Box):
         if not os.path.isdir(destination_root):
             self.show_toast(_("Local destination is not accessible"))
             return
-        self._emit_download(entries, destination_root)
-
-    def _choose_download_folder(self, entries: List[FileEntry]) -> None:
-        """Ask for the folder to download *entries* into."""
-        dialog = Gtk.FileDialog()
-        dialog.set_title(_("Download To"))
-
-        def _picked(dlg, result) -> None:
-            try:
-                folder = dlg.select_folder_finish(result)
-            except GLib.Error:
-                return  # cancelled
-            path = folder.get_path() if folder is not None else None
-            if not path or not os.path.isdir(path):
-                self.show_toast(_("Local destination is not accessible"))
-                return
-            self._emit_download(entries, path)
-
-        root = self.get_root()
-        dialog.select_folder(root if isinstance(root, Gtk.Window) else None, None, _picked)
-
-    def _emit_download(self, entries: List[FileEntry], destination_root: str) -> None:
         payload = {
             "entries": entries,
             "directory": self._current_path,
