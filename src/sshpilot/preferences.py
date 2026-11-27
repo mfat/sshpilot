@@ -1447,10 +1447,12 @@ class PreferencesWindow(Adw.Window):
             from .sidebar import (
                 ConnectionRow, GroupRow, LocalTerminalRow,
                 _apply_sidebar_list_compact_class,
+                _apply_sidebar_list_corner_class,
             )
 
             listbox.remove_all()
             _apply_sidebar_list_compact_class(listbox, self.config)
+            _apply_sidebar_list_corner_class(listbox, self.config)
 
             groups = {
                 'production': {
@@ -1842,6 +1844,22 @@ class PreferencesWindow(Adw.Window):
         )
         sidebar_group.add(self.sidebar_row_style_row)
         self._sidebar_mode_dependent_rows.append(self.sidebar_row_style_row)
+
+        # Rounded Corners: off squares every sidebar row, cards and the
+        # selection alike. Stored inverted as ui.sidebar_square_rows. Applies
+        # in Compact too (its selection is rounded), so it is not greyed out.
+        self.sidebar_rounded_corners_row = Adw.SwitchRow()
+        self.sidebar_rounded_corners_row.set_title(_("Rounded Corners"))
+        self.sidebar_rounded_corners_row.set_subtitle(
+            _("Round the corners of connection rows")
+        )
+        self.sidebar_rounded_corners_row.set_active(
+            not self.config.get_setting('ui.sidebar_square_rows', False)
+        )
+        self.sidebar_rounded_corners_row.connect(
+            'notify::active', self.on_sidebar_rounded_corners_changed
+        )
+        sidebar_group.add(self.sidebar_rounded_corners_row)
 
         show_local_terminal_switch = Adw.SwitchRow()
         show_local_terminal_switch.set_title(_("Local Terminal Row"))
@@ -7189,6 +7207,16 @@ class PreferencesWindow(Adw.Window):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar flat rows preference: %s", exc)
+
+    def on_sidebar_rounded_corners_changed(self, switch, *args):
+        """Persist Rounded Corners (stored inverted as ui.sidebar_square_rows)."""
+        try:
+            self.config.set_setting('ui.sidebar_square_rows', not switch.get_active())
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+            self._schedule_group_preview_refresh()
+        except Exception as exc:
+            logger.error("Failed to update sidebar rounded corners preference: %s", exc)
 
     def on_sidebar_show_local_terminal_changed(self, switch, *args):
         """Persist and rebuild so the pinned Local Terminal row appears or hides."""

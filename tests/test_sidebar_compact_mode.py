@@ -143,3 +143,18 @@ def test_sidebar_list_compact_class_toggles():
     cfg.get_setting.return_value = 'full'
     mod._apply_sidebar_list_compact_class(lb, cfg)
     lb.remove_css_class.assert_called_with('sidebar-compact')
+
+
+def test_sidebar_list_corner_class_toggles():
+    mod = importlib.import_module('sshpilot.sidebar')
+    lb = MagicMock(name='connection_list')
+    lb.has_css_class.return_value = False
+    cfg = MagicMock()
+    cfg.get_setting.return_value = True
+    mod._apply_sidebar_list_corner_class(lb, cfg)
+    lb.add_css_class.assert_called_with('sidebar-square-rows')
+
+    lb.has_css_class.return_value = True
+    cfg.get_setting.return_value = False
+    mod._apply_sidebar_list_corner_class(lb, cfg)
+    lb.remove_css_class.assert_called_with('sidebar-square-rows')

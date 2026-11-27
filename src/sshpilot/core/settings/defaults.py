@@ -136,6 +136,8 @@ def get_default_config() -> Dict[str, Any]:
             # Pinned Local Terminal row at the top of the connection list
             'sidebar_show_local_terminal': False,
             'sidebar_flat_rows': True,
+            # Rounded Corners switch off (Settings ▸ Sidebar ▸ Layout)
+            'sidebar_square_rows': False,
             # When True, the whole UI uses a monospace face — the family from
             # terminal.font when set, otherwise Monospace.
             'monospace_font': False,

@@ -116,6 +116,17 @@ def test_appearance_and_sidebar_have_their_own_pages(gui):
     finally:
         config.set_setting('ui.sidebar_flat_rows', old_flat)
 
+    old_square = config.get_setting('ui.sidebar_square_rows', False)
+    try:
+        prefs.sidebar_rounded_corners_row.set_active(False)
+        assert config.get_setting('ui.sidebar_square_rows') is True
+        assert gui.window.connection_list.has_css_class('sidebar-square-rows')
+        prefs.sidebar_rounded_corners_row.set_active(True)
+        assert config.get_setting('ui.sidebar_square_rows') is False
+        assert not gui.window.connection_list.has_css_class('sidebar-square-rows')
+    finally:
+        config.set_setting('ui.sidebar_square_rows', old_square)
+
 
 def test_group_preview_follows_group_settings_live(gui):
     """The preview is built from real sidebar rows and rebuilds on a settings change."""

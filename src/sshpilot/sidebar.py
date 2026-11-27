@@ -384,6 +384,16 @@ def install_sidebar_css():
           box-shadow: none;
         }
 
+        /* Rounded Corners off: square every row, overriding libadwaita's
+           .navigation-sidebar > row radius, .card, tinted rows and the
+           selected-row radius above. */
+        .navigation-sidebar.sidebar-square-rows > row,
+        .navigation-sidebar.sidebar-square-rows > row.tinted,
+        .navigation-sidebar.sidebar-square-rows > row:selected,
+        .navigation-sidebar.sidebar-square-rows > row:selected:focus-within {
+          border-radius: 0;
+        }
+
 
 
 
@@ -561,6 +571,27 @@ def _apply_sidebar_list_compact_class(connection_list, config) -> None:
     else:
         if connection_list.has_css_class('sidebar-compact'):
             connection_list.remove_css_class('sidebar-compact')
+
+
+def _use_square_sidebar_rows(config) -> bool:
+    if config is None:
+        return False
+    try:
+        return bool(config.get_setting('ui.sidebar_square_rows', False))
+    except Exception:
+        return False
+
+
+def _apply_sidebar_list_corner_class(connection_list, config) -> None:
+    """Toggle ``sidebar-square-rows`` on the connection ListBox (Rounded Corners off)."""
+    if connection_list is None:
+        return
+    if _use_square_sidebar_rows(config):
+        if not connection_list.has_css_class('sidebar-square-rows'):
+            connection_list.add_css_class('sidebar-square-rows')
+    else:
+        if connection_list.has_css_class('sidebar-square-rows'):
+            connection_list.remove_css_class('sidebar-square-rows')
 
 
 def _apply_sidebar_row_density(content: Gtk.Box, config) -> None:
@@ -5087,6 +5118,9 @@ def _create_sidebar_connection_list(window, sidebar_box):
     window.connection_list = Gtk.ListBox()
     window.connection_list.add_css_class("navigation-sidebar")
     _apply_sidebar_list_compact_class(
+        window.connection_list, getattr(window, 'config', None)
+    )
+    _apply_sidebar_list_corner_class(
         window.connection_list, getattr(window, 'config', None)
     )
     # The sidebar has no visible heading, so name the list itself.

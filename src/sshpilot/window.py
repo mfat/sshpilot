@@ -2788,8 +2788,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
         try:
-            from sshpilot.sidebar import _apply_sidebar_list_compact_class
+            from sshpilot.sidebar import (
+                _apply_sidebar_list_compact_class,
+                _apply_sidebar_list_corner_class,
+            )
             _apply_sidebar_list_compact_class(self.connection_list, self.config)
+            _apply_sidebar_list_corner_class(self.connection_list, self.config)
         except Exception:
             logger.debug(
                 "Failed to apply sidebar-compact list class",
