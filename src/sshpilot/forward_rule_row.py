@@ -151,7 +151,8 @@ _CSS = """
 """
 _css_installed = False
 
-#: Arrow length in px: the same on every row, so the rows line up.
+#: Shortest the arrow gets, in px; on a row whose left side is narrower than
+#: another row's, it grows to fill the difference.
 ARROW_WIDTH = 36
 #: Widest the left side's address gets, in characters: past it the address
 #: ends in an ellipsis (the full text is its tooltip), so one long address
@@ -205,7 +206,7 @@ def _draw_arrow(area: Gtk.DrawingArea, cr, width: int, height: int, outbound: bo
 
 def _side(machine: str, server_name: str, side: Side, kind: str, shrink: bool) -> Gtk.Widget:
     """*shrink*: let the labels shrink with the row. Only the right side
-    does, so the left side keeps one width and its size group holds on every
+    does, so the left side keeps its width and the size group holds on every
     row; the left side's address is capped at ``LEFT_ADDRESS_CHARS``."""
     box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
     icon = _image(
@@ -237,7 +238,7 @@ def _side(machine: str, server_name: str, side: Side, kind: str, shrink: bool) -
     if not shrink:
         # As wide as the address (up to the cap) at the least, not only by
         # nature: a row short of room would otherwise squeeze this side
-        # more on some rows than on others, and the arrows would not line up.
+        # more on some rows than on others, and the servers would not line up.
         chars = min(len(side.address), LEFT_ADDRESS_CHARS)
         address.set_width_chars(chars)
         address.set_max_width_chars(chars)
@@ -257,8 +258,8 @@ def build_forward_rule_row(
     side_group: Optional[Gtk.SizeGroup] = None,
 ) -> Gtk.Widget:
     """One rule's row: the type and its flag over the strip. *side_group*,
-    shared by every row of the list, keeps the left side the same width, so
-    the arrows line up from row to row."""
+    shared by every row of the list, keeps the left side and arrow the same
+    width together, so the server side lines up from row to row."""
     _ensure_css()
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
     row.add_css_class("forward-rule")
@@ -282,17 +283,24 @@ def build_forward_rule_row(
     heading.append(flag)
     body.append(heading)
 
-    # This computer, arrow, server.
+    # This computer, arrow, server. The left side and the arrow share one
+    # box, and *side_group* gives that box the same width on every row: the
+    # arrow takes up whatever the left side leaves, so it starts the same
+    # gap after the text and ends the same gap before the server, and the
+    # server lines up from row to row.
     strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
     strip.add_css_class("forward-strip")
-    left = _side(THIS_COMPUTER, server_name, view.this_computer, view.kind, shrink=False)
+    lead = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    # Set, not inherited from the arrow: the server side takes the row's slack.
+    lead.set_hexpand(False)
     if side_group is not None:
-        side_group.add_widget(left)
-    strip.append(left)
+        side_group.add_widget(lead)
+    lead.append(_side(THIS_COMPUTER, server_name, view.this_computer, view.kind, shrink=False))
 
     arrow = Gtk.DrawingArea()
     arrow.set_content_width(ARROW_WIDTH)
     arrow.set_content_height(10)
+    arrow.set_hexpand(True)
     arrow.set_valign(Gtk.Align.CENTER)
     arrow.add_css_class(f"forward-{view.kind}")
     arrow.set_draw_func(_draw_arrow, view.outbound)
@@ -301,7 +309,8 @@ def build_forward_rule_row(
         if view.outbound
         else _("From {server}").format(server=server_name)
     )
-    strip.append(arrow)
+    lead.append(arrow)
+    strip.append(lead)
 
     right = _side(SERVER, server_name, view.server, view.kind, shrink=True)
     right.set_hexpand(True)
