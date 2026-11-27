@@ -742,6 +742,30 @@ def test_effective_has_a_host_field_for_a_block_that_names_no_host(window):
     assert _pump(lambda: window.target_text() == "" and field.get_text() == "")
 
 
+def test_effective_shows_the_order_openssh_reads_the_blocks_in(window):
+    glob, web, star = window.draft.blocks
+    _check(window, "web1")
+    window.show_page("effective")
+    effective = window.effective
+    assert _pump(lambda: window._evaluation is not None and window._evaluation.evaluated)
+    effective.fill()
+    assert effective.order.get_visible()
+    titles = [row.get_title() for row in effective._order_rows]
+    assert [t for t in titles if t.startswith("#")] == [
+        "#1  Global", "#2  Host web1 web2", "#3  Host *",
+    ]
+    (star_row,) = [r for r in effective._order_rows if r.get_title() == "#3  Host *"]
+    assert "Shadowed" in star_row.get_subtitle()        # web's User and Port came first
+    _check(window, "elsewhere")                          # web's block does not match
+    assert _pump(lambda: _command(window) == "ssh -G elsewhere"
+                 and window._evaluation is not None and window._evaluation.evaluated)
+    effective.fill()
+    (web_row,) = [r for r in effective._order_rows if r.get_title() == "#2  Host web1 web2"]
+    assert "Does not match" in web_row.get_subtitle()
+    web_row.emit("activated")                            # a link to the block
+    assert _pump(lambda: window.selected_uid == web.uid)
+
+
 def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
     window.show_page("effective")
     effective = window.effective

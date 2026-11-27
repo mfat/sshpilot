@@ -92,6 +92,12 @@ def block_status(disabled: bool, matched: Optional[bool], is_global: bool) -> tu
     return ("", "muted", "")
 
 
+def order_skipped_text() -> str:
+    """Matching Order, for a block whose Host or Match line does not take
+    the host checked: OpenSSH reads past it."""
+    return _("Does not match this host: OpenSSH skips it")
+
+
 def related_status(disabled: bool, related: Optional[bool], is_global: bool) -> tuple:
     """A block's pill while the block picked names no host of its own (a
     pattern, a Match rule): whether the two apply to a host in common."""

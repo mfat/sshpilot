@@ -34,7 +34,7 @@ from .api.models.connections import (  # noqa: E402
 )
 from .connection_dialog_auth import canonical_keyword  # noqa: E402
 from .gtk import advanced_config_messages as messages  # noqa: E402
-from .ssh_config_blocks import Block, LineMap  # noqa: E402
+from .ssh_config_blocks import GLOBAL, Block, LineMap  # noqa: E402
 
 ALL, THIS_BLOCK, OTHER, DEFAULT = "all", "this", "other", "default"
 #: The filter of the values that need attention (not a kind: any kind can).
@@ -377,6 +377,8 @@ class EffectiveView(Gtk.Box):
 
         self.summary = self._build_summary()
         self.append(self.summary)
+        self.order = self._build_order()
+        self.append(self.order)
         self.search = Gtk.SearchEntry(placeholder_text=_("Search options or values"))
         self.search.set_width_chars(24)
         self.search.connect("search-changed", lambda *_a: self._refilter())
@@ -447,6 +449,90 @@ class EffectiveView(Gtk.Box):
             entry.set_text(host)
         finally:
             self._setting_host = False
+
+    # -- the order OpenSSH reads the configuration in ----------------------------
+
+    def _build_order(self) -> Gtk.Widget:
+        """A section, folded until opened: the forced options, every block
+        in file order with whether it applies to the host, then the
+        system-wide file. Opened, it stays open from one answer to the
+        next."""
+        box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        box.add_css_class("boxed-list")
+        self.order_row = Adw.ExpanderRow(
+            title=_("Matching Order"),
+            subtitle=GLib.markup_escape_text(_(
+                "The order OpenSSH reads the configuration in for this host. "
+                "The first value it obtains for an option is the one it keeps."
+            )),
+        )
+        self.order_row.set_icon_name("view-list-symbolic")
+        box.append(self.order_row)
+        self._order_rows: List[Gtk.Widget] = []
+        return box
+
+    def _add_order_row(self, title: str, subtitle: str, suffix=None, line: int = 0) -> None:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(title))
+        row.set_subtitle(GLib.markup_escape_text(subtitle))
+        if suffix is not None:
+            row.add_suffix(suffix)
+        if line:
+            # A block is a link to where it is written.
+            row.set_activatable(True)
+            row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+            row.connect("activated", lambda _r, n=line: self.controller.reveal_line(n))
+        self.order_row.add_row(row)
+        self._order_rows.append(row)
+
+    def _fill_order(self, answer: Answer) -> None:
+        for row in self._order_rows:
+            self.order_row.remove(row)
+        self._order_rows = []
+        evaluation = answer.evaluation
+        states = {item.line: item.state for item in evaluation.lines}
+        matched = set(evaluation.matched_blocks)
+        if evaluation.forced:
+            self._add_order_row(
+                messages.forced_source(),
+                ", ".join(f"{item.key}={item.value}" for item in evaluation.forced),
+                pill(_("First"), "purple"),
+            )
+        for index, block in enumerate(answer.blocks):
+            header = answer.lines.headers.get(block.uid, 0)
+            is_global = block.kind == GLOBAL
+            applies = None if block.disabled else (is_global or header in matched)
+            label, style, tip = messages.block_status(block.disabled, applies, is_global)
+            counts: Dict[State, int] = {}
+            for option in block.options:
+                state = states.get(answer.lines.options.get(option.uid, 0))
+                if state is not None:
+                    counts[state] = counts.get(state, 0) + 1
+            parts = [
+                f"{messages.state_label(state)}: {counts[state]}"
+                for state in (State.APPLIED, State.ACCUMULATED, State.INCLUDE,
+                              State.SHADOWED, State.FORCED)
+                if counts.get(state)
+            ]
+            if applies is False:
+                parts = [messages.order_skipped_text()]
+            badge = pill(label, style) if label else None
+            if badge is not None and tip:
+                badge.set_tooltip_text(tip)
+            first_line = header or next(
+                (answer.lines.options.get(option.uid, 0) for option in block.options
+                 if answer.lines.options.get(option.uid, 0)), 0,
+            )
+            self._add_order_row(
+                f"#{index + 1}  {messages.block_title(block.kind, block.patterns)}",
+                " · ".join(parts), badge, first_line,
+            )
+        if evaluation.system_config:
+            supplied = sum(1 for s in evaluation.sources if s.file == evaluation.system_config)
+            self._add_order_row(
+                _("System-wide configuration"),
+                f"{evaluation.system_config} · {messages.state_label(State.APPLIED)}: {supplied}",
+                pill(_("Last"), "muted"),
+            )
 
     # -- the summary ---------------------------------------------------------------
 
@@ -651,7 +737,7 @@ class EffectiveView(Gtk.Box):
         evaluation = answer.evaluation
         command = "ssh -G " + (f"-l {answer.user} " if answer.user else "") + answer.host
         self.command.set_label(command if answer.host else "ssh -G")
-        for widget in (self.summary, self.chips, self.table):
+        for widget in (self.summary, self.order, self.chips, self.table):
             widget.set_visible(answer.answered)
         self.note.set_visible(not answer.answered)
         if not answer.answered:
@@ -669,6 +755,7 @@ class EffectiveView(Gtk.Box):
                     "\n".join(messages.error_text(e) for e in evaluation.errors)
                 ))
             return
+        self._fill_order(answer)
         values: Dict[str, List[str]] = {}
         for item in evaluation.values:
             values.setdefault(item.key, []).append(item.value)
