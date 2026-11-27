@@ -335,9 +335,9 @@ class AdvancedConfigBase:
         self.stack = Adw.ViewStack()
         self.stack.set_vexpand(True)
         for name, widget, title, icon in (
-            ("structured", self.structured, _("Directives"), "document-properties-symbolic"),
-            ("effective", self.effective, _("Effective"), "emblem-ok-symbolic"),
-            ("raw", self.raw, _("Raw"), "text-x-generic-symbolic"),
+            ("structured", self.structured, _("Directives"), "sshpilot-advcfg-directives-symbolic"),
+            ("effective", self.effective, _("Effective"), "sshpilot-advcfg-effective-symbolic"),
+            ("raw", self.raw, _("Raw"), "sshpilot-advcfg-raw-symbolic"),
         ):
             self.stack.add_titled_with_icon(widget, name, title, icon)
         self.stack.connect("notify::visible-child-name", self._on_page_shown)
