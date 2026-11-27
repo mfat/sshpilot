@@ -344,8 +344,8 @@ class _EffectiveCell:
 
 
 class EffectiveView(Gtk.Box):
-    """*controller* supplies ``reveal_line``, ``reveal_source`` and
-    ``source_file``."""
+    """*controller* supplies ``reveal_line``, ``reveal_source``,
+    ``source_file`` and ``check_host``."""
 
     def __init__(self, controller) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -356,6 +356,22 @@ class EffectiveView(Gtk.Box):
         self._items: Dict[str, EffectiveItem] = {}
         self._stale = True
         self._shown = False
+        #: True while the window puts its own host in the field.
+        self._setting_host = False
+
+        # The host OpenSSH is asked about: the selected block's own, or one
+        # typed here (any host, for a block that names none: Host *, a
+        # pattern, a Match rule, the global options).
+        self.host_entry = Gtk.Entry(
+            placeholder_text=_("Host to check, e.g. server or user@server"),
+            hexpand=True,
+        )
+        self.host_entry.set_primary_icon_name("network-server-symbolic")
+        self.host_entry.update_property(
+            [Gtk.AccessibleProperty.LABEL], [_("Host to check")]
+        )
+        self.host_entry.connect("changed", self._on_host_changed)
+        self.append(self.host_entry)
 
         self.summary = self._build_summary()
         self.append(self.summary)
@@ -408,6 +424,27 @@ class EffectiveView(Gtk.Box):
         self._chips[ATTENTION].add_css_class("advcfg-chip-attention")
         self._chips[ATTENTION].set_visible(False)
         self._set_chip_labels({ALL: 0, THIS_BLOCK: 0, OTHER: 0, DEFAULT: 0, ATTENTION: 0})
+
+    # -- the host checked -----------------------------------------------------------
+
+    def _on_host_changed(self, entry) -> None:
+        if not self._setting_host:
+            self.controller.check_host(entry.get_text())
+
+    def set_host(self, host: str) -> None:
+        """Show the host the window asks about. Text being typed is left
+        alone: a field cleared while focused keeps empty, not filled with
+        the selected block's own host under the cursor."""
+        entry = self.host_entry
+        if entry.get_text().strip() == host:
+            return
+        if entry.get_state_flags() & Gtk.StateFlags.FOCUS_WITHIN:
+            return
+        self._setting_host = True
+        try:
+            entry.set_text(host)
+        finally:
+            self._setting_host = False
 
     # -- the summary ---------------------------------------------------------------
 

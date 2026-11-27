@@ -108,13 +108,12 @@ def related_note(hosts) -> str:
     if not hosts:
         return _(
             "The picked block applies to none of the hosts this configuration "
-            "names. Search for a host name in the sidebar to see what OpenSSH "
-            "would use for it."
+            "names. Type a host name above to see what OpenSSH would use for it."
         )
     shown = ", ".join(hosts[:12]) + (", …" if len(hosts) > 12 else "")
     return _(
-        "The picked block applies to: {hosts}. Pick one of them to see what "
-        "OpenSSH would use for it."
+        "The picked block applies to: {hosts}. Type one of them, or any host "
+        "name, above to see what OpenSSH would use for it."
     ).format(hosts=shown)
 
 
@@ -144,7 +143,7 @@ def show_host_block(host: str) -> str:
 
 def no_host_text() -> str:
     """While the block picked names no host and none is kept in question."""
-    return _("Pick a block that names a host to see what OpenSSH would use for it.")
+    return _("Type a host name above to see what OpenSSH would use for it.")
 
 
 def block_title(kind: str, patterns: str) -> str:

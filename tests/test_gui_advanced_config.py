@@ -715,25 +715,31 @@ def test_the_effective_view_counts_where_values_come_from(window):
     assert _pump(lambda: [item.key for item in effective.items()] == ["connecttimeout"])
 
 
-def test_effective_is_hidden_for_a_block_that_names_no_host(window):
+def test_effective_has_a_host_field_for_a_block_that_names_no_host(window):
     glob, web, star = window.draft.blocks
     page = window.stack.get_page(window.effective)
+    field = window.effective.host_entry
     window.show_page("effective")
     _check(window, "")                                # the selection says
-    window.select_block(star.uid)                     # Host *: no host to ask about
-    assert _pump(lambda: not page.get_visible())
-    assert window.stack.get_visible_child_name() == "structured"
-    window.show_page("effective")                     # not offered: not shown
-    assert window.stack.get_visible_child_name() == "structured"
-    _check(window, "web1")                            # a host in question: offered again
-    assert _pump(page.get_visible)
-    assert window.stack.get_visible_child_name() == "effective"   # where it was left
-    _check(window, "")
-    assert _pump(lambda: not page.get_visible())
-    window.show_page("raw")                           # another page picked meanwhile
-    window.select_block(web.uid)
-    assert _pump(page.get_visible)
-    assert window.stack.get_visible_child_name() == "raw"
+    window.select_block(star.uid)                     # Host *: no host of its own
+    assert _pump(lambda: window._evaluate_source == 0)
+    assert page.get_visible()                         # still offered
+    assert window.stack.get_visible_child_name() == "effective"
+    assert field.get_text() == ""
+    field.set_text("example.org")                     # any host, typed
+    assert _pump(lambda: window._evaluation is not None and window._evaluation.evaluated)
+    assert window.target_text() == "example.org"
+    assert _command(window) == "ssh -G example.org"
+    field.set_text("alice@example.org")               # a user too
+    assert _pump(lambda: _command(window) == "ssh -G -l alice example.org")
+    field.set_text("")                                # cleared: the block's own again
+    assert _pump(lambda: window._evaluation is None and window._evaluate_source == 0)
+    assert window.target_text() == ""
+    window.block_picked(web.uid)                      # a block picked: its own host
+    assert _pump(lambda: field.get_text() == "web1")
+    field.set_text("example.org")
+    window.block_picked(star.uid)                     # picking a block drops the typed one
+    assert _pump(lambda: window.target_text() == "" and field.get_text() == "")
 
 
 def test_effective_values_are_not_dimmed_and_problems_are_marked(window):
