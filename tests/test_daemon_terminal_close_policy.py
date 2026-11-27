@@ -93,7 +93,6 @@ class TestDaemonTerminalClosePolicy:
         silently keeping work alive.
         """
         from sshpilot.daemon_terminal_policy import (
-            TerminalClosePolicy,
             resolve_app_close_policy,
         )
 

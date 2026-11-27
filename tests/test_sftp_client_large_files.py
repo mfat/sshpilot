@@ -461,7 +461,8 @@ def test_read_capped_below_the_advertised_limit_follows_up_in_parallel(tmp_path)
 
 
 def test_adaptive_write_grows_window_over_a_slow_link(tmp_path):
-    delay = 0.05
+    # Keep simulated network latency dominant over local pipe and filesystem I/O.
+    delay = 0.25 if os.name == "nt" else 0.05
     size = 2 * 1024 * 1024
     content = os.urandom(size)
     path = tmp_path / "out.bin"

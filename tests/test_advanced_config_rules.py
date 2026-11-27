@@ -9,7 +9,6 @@ from sshpilot.api.models.connections import (
     SshConfigDraftLineState as State,
 )
 from sshpilot.gtk import advanced_config_messages as messages
-from sshpilot.ssh_config_blocks import GLOBAL, HOST, MATCH, Block
 
 ROOT = Path(__file__).resolve().parents[1]
 

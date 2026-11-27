@@ -17,7 +17,7 @@ import pytest
 from tests.test_gui_connection_editor_contracts import (  # noqa: F401 - fixtures
     _block,
     _open,
-    root,
+    root_fixture,
 )
 from tests.test_gui_editor_openssh_roundtrip import _find, _pump, _save, _ssh_g
 

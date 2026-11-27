@@ -22,11 +22,11 @@ __all__ = [
     "ErrorCode",
     "EventType",
     "MutationRefusal",
-    "ValidationReason",
     "SshPilotClient",
     "SshPilotError",
     "Subscription",
     "TerminalSubscription",
+    "ValidationReason",
 ]
 
 _LAZY_EXPORTS = {

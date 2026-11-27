@@ -16,7 +16,7 @@ from sshpilot.api.models.login_profiles import (
     LoginProfileSnapshot,
     LoginProfileSummary,
 )
-from tests.test_gui_auth_section_widgets import gtk  # noqa: F401 - fixture
+from tests.test_gui_auth_section_widgets import gtk_fixture  # noqa: F401 - fixture
 from tests.test_gui_connection_dialog_overrides import _Manager, _pump
 
 pytestmark = pytest.mark.gui

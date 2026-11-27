@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from http.client import HTTPResponse
 import select
 import socket
 import struct
@@ -139,8 +140,10 @@ def test_local_forward_active_and_payload(stack):
 
     with socket.create_connection(("127.0.0.1", bind_port), timeout=5) as sock:
         sock.sendall(b"GET / HTTP/1.0\r\n\r\n")
-        data = sock.recv(256)
-    assert b"OK" in data
+        with HTTPResponse(sock) as response:
+            response.begin()
+            assert response.status == 200
+            assert response.read() == b"OK"
 
     record = stack.server._forward_runtime._records[opened.id]
     process = record.handle._process

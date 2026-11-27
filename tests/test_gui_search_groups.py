@@ -90,8 +90,11 @@ def test_opened_offscreen_match_scrolls_into_view_without_taking_focus(gui):
         window.present()
         entry.grab_focus()
         sidebar.select_row(target)
-        gui.pump(100)
         adjustment = scroll.get_vadjustment()
+        deadline = monotonic() + 3
+        while adjustment.get_page_size() == 0 or adjustment.get_upper() <= adjustment.get_page_size():
+            assert monotonic() < deadline, "offscreen row never received its initial layout"
+            gui.pump(20)
         assert adjustment.get_value() == 0
         focus = window.get_focus()
 

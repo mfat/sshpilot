@@ -501,11 +501,9 @@ PermitOpen any
 PrintMotd no
 Subsystem sftp /usr/lib/ssh/sftp-server
 EOF
-(
-  while true; do
-    printf 'HTTP/1.0 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nOK' | nc -l -p {remote_echo_port} -s 127.0.0.1 || true
-  done
-) >/dev/null 2>&1 &
+mkdir -p /tmp/forward-http
+printf OK > /tmp/forward-http/index.html
+httpd -p 127.0.0.1:{remote_echo_port} -h /tmp/forward-http
 /usr/sbin/sshd -t
 exec /usr/sbin/sshd -D -e
 """

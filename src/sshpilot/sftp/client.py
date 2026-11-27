@@ -292,7 +292,13 @@ class OpenSSHSFTPClient:
         # slots, so a slot registered after that sweep is woken here.
         if self._closed:
             slot.event.set()
-        self._write_packet(proto.build_request(ptype, rid, payload))
+        packet = proto.build_request(ptype, rid, payload)
+        try:
+            self._write_packet(packet)
+        except (OSError, ValueError) as exc:
+            # The write pipe may close before the reader observes EOF.
+            self._pending.pop(rid, None)
+            raise proto.SFTPError(proto.FX_CONNECTION_LOST, "SFTP session lost") from exc
         return slot
 
     @staticmethod

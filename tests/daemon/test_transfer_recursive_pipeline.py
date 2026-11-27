@@ -227,7 +227,8 @@ def _make_tree(root, *, dirs=10, files_per_dir=8):
 
 
 def test_recursive_download_of_small_files_pipelines_over_rtt(tmp_path):
-    delay = 0.03
+    # Keep simulated network latency dominant over local pipe and filesystem I/O.
+    delay = 0.25 if os.name == "nt" else 0.03
     remote_root = tmp_path / "remote"
     payloads = _make_tree(remote_root)
     target = remote_root / "d00" / "inner" / "f0.bin"

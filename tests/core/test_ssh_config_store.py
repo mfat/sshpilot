@@ -29,7 +29,7 @@ from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
 
 def _write(root: Path, text: str) -> Path:
     root.parent.mkdir(parents=True, exist_ok=True)
-    root.write_text(text, encoding="utf-8")
+    root.write_bytes(text.encode("utf-8"))
     return root
 
 

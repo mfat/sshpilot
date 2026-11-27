@@ -260,7 +260,8 @@ def used_instead_markup(value: str, place: str, forced: bool = False) -> str:
         # Translators: {value} is an option's value, e.g. "Settings ▸ SSH Options use 7".
         sentence = escape(_("Settings ▸ SSH Options use {value}")).replace("{value}", shown)
         # A link: the label that shows it opens the setting.
-        return f'<a href="{SETTINGS_LINK}" title="{escape(open_settings_text(), {'"': '&quot;'})}">{sentence}</a>'
+        title = escape(open_settings_text(), {'"': '&quot;'})
+        return f'<a href="{SETTINGS_LINK}" title="{title}">{sentence}</a>'
     # Translators: e.g. "OpenSSH uses 10.0.0.5 from line 3 (Host zoo)".
     return escape(_("OpenSSH uses {value} from {place}")).replace(
         "{value}", shown).replace("{place}", escape(place))
