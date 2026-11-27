@@ -4359,7 +4359,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         new_section = Gio.Menu()
         new_section.append(_('New Connection'), 'app.new-connection')
         new_section.append(_('New Group'), 'win.create-group')
-        new_section.append(_('New Host Rule…'), 'win.new-host-rule')
+        new_section.append(_('New Connection - Advanced'), 'win.new-host-rule')
         new_section.append(_('New Local Terminal'), 'app.local-terminal')
         new_section.append(_('New Split View'), 'win.new-split-view')
         menu.append_section(None, new_section)
