@@ -904,9 +904,11 @@ def test_settings_dialog_exposes_refresh_interval():
 
     seen = {}
     dlg = DockerConsoleSettingsDialog(
-        None, reuse_ssh=True, on_reuse_ssh_changed=lambda v: None,
-        refresh_interval=12, on_refresh_interval_changed=lambda n: seen.__setitem__("n", n))
+        None, refresh_interval=12,
+        on_refresh_interval_changed=lambda n: seen.__setitem__("n", n))
     assert dlg._interval_row.get_value() == 12
+    dlg._interval_row.set_value(20)
+    assert seen == {"n": 20}
 
 
 def test_create_dialog_rejects_unbalanced_command():
@@ -944,41 +946,6 @@ def test_page_host_button_shows_initial_host():
     assert page._host_label.get_label() == "beta"
 
 
-def test_page_reuse_ssh_toggle_defaults_on_and_persists():
-    _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
-
-    store = {}
-    acquired, released = [], []
-
-    class Conn:
-        def __init__(self, n):
-            self.nickname = n
-            self.protocol = "ssh"
-
-    ctx = types.SimpleNamespace(
-        run_command=lambda *a, **k: FakeResult(),
-        run_on_ui_thread=lambda fn, *a: fn(*a),
-        settings=types.SimpleNamespace(
-            get=lambda k, d=None: store.get(k, d), set=store.__setitem__),
-        list_connections=lambda: [Conn("web")],
-        open_command_terminal=lambda *a, **k: True,
-        acquire_multiplex=lambda n: acquired.append(n),
-        release_multiplex=lambda n: released.append(n),
-        ui=types.SimpleNamespace(notify=lambda *a, **k: None),
-    )
-    page = DockerConsolePage(ctx, initial_host="web")
-    # Default ON.
-    assert page._multiplex_enabled() is True
-    # Acquire keeps the master for the current host.
-    page._acquire_multiplex("web")
-    assert acquired == ["web"] and page._mux_nick == "web"
-    # Toggling off persists the setting and releases.
-    page._set_multiplex_enabled(False)
-    assert store.get("controlmaster") is False
-    assert released == ["web"] and page._mux_nick is None
-
-
 def test_details_dialog_renders_inspect_data():
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.dialogs import ContainerDetailsDialog
@@ -997,20 +964,6 @@ def test_details_dialog_renders_inspect_data():
     assert titles == ["General", "State", "Ports", "Networks",
                       "Mounts / volumes", "Labels"]
     assert ContainerDetailsDialog._env_pairs(data) == [("TZ", "UTC")]
-
-
-def test_settings_dialog_reuse_ssh_switch():
-    _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.dialogs import (
-        DockerConsoleSettingsDialog)
-
-    changes = []
-    dlg = DockerConsoleSettingsDialog(
-        None, reuse_ssh=True, on_reuse_ssh_changed=changes.append)
-    assert dlg._reuse_row.get_active() is True
-    assert dlg._reuse_row.get_title() == "Reuse SSH connection"
-    dlg._reuse_row.set_active(False)
-    assert changes == [False]
 
 
 def test_create_and_textview_dialogs_construct():
