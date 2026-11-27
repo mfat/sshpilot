@@ -114,7 +114,15 @@ an alternative to Putty, Termius and Mobaxterm.
 # which for any tag older than the change is a tree with no such option in it,
 # and meson setup would abort with "Unknown option". A built-in works on every
 # tarball, including ones that predate this comment.
-%meson -Dpython.purelibdir=%{_datadir}/%{name}
+#
+# gtkghostty is set explicitly because %%meson passes --auto-features=enabled,
+# which turns the option's "auto" into "required": on COPR, where no
+# libghostty-vt exists, meson setup then aborts. Enable it only when
+# pkg-config finds the library (the GitHub build puts it on PKG_CONFIG_PATH);
+# the GitHub workflow checks the widget's files are in the RPM, so a broken
+# fetch there still fails loudly instead of silently dropping the backend.
+%meson -Dpython.purelibdir=%{_datadir}/%{name} \
+  -Dgtkghostty=%(pkg-config --exists 'libghostty-vt >= 1.0.0' && echo enabled || echo disabled)
 %meson_build
 
 # po/LINGUAS now lists de, so %%find_lang below does find the installed .mo and
