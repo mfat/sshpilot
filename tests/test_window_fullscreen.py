@@ -333,6 +333,7 @@ class _FullscreenWindow:
             '_update_tab_button_visibility',
             '_update_command_snippets_button_visibility',
             '_toggle_sidebar_visibility',
+            '_sidebar_collapsed',
             'toggle_fullscreen',
         ):
             setattr(self, name, getattr(MainWindow, name).__get__(self, type(self)))

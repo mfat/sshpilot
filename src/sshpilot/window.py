@@ -7225,13 +7225,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return bool(getattr(self, '_sidebar_visible', True))
 
     def _toggle_sidebar_overlay(self) -> None:
-        """Header toggle / F9 while collapsed: float the sidebar or put it away."""
-        if self._sidebar_overlay_shown():
+        """Header toggle / F9 while collapsed: float the sidebar or put it away.
+
+        Resting on the toggle on the way to clicking it hover-reveals the
+        popup first; that click means "show", so it keeps the popup open
+        instead of closing it again."""
+        hover = getattr(self, '_sidebar_hover_reveal', None)
+        if hover is not None and hover.revealed:
+            pass
+        elif self._sidebar_overlay_shown():
             self._dismiss_search_popup()
         else:
             popup = self._ensure_search_popup()
             if popup is not None:
                 popup.show()
+        if hover is not None:
+            hover.claim()
         self._cancel_pending_sidebar_hide()
         self._sync_sidebar_toggle_button(self._sidebar_shown())
 
@@ -7254,12 +7263,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _on_sidebar_collapsed_changed(self, collapsed: bool) -> None:
         if not collapsed:
-            # Wide enough again: dock it (the popup would otherwise keep the
-            # sidebar's widgets and leave the docked pane empty).
             popup = getattr(self, '_search_popup', None)
-            if popup is not None and popup.visible and getattr(self, '_sidebar_visible', True):
-                self._search_expanded_sidebar = False
-                popup.hide(animate=False)
+            if popup is not None and popup.visible:
+                if getattr(self, '_sidebar_visible', True):
+                    # Wide enough again: dock it (the popup would otherwise
+                    # keep the sidebar's widgets and leave the docked pane
+                    # empty).
+                    self._search_expanded_sidebar = False
+                    popup.hide(animate=False)
+                elif not getattr(self, '_search_expanded_sidebar', False):
+                    # Hidden by the user: it only floated because it could
+                    # not dock. A search keeps it, as with F9.
+                    popup.hide()
         self._sync_sidebar_toggle_button(self._sidebar_shown())
 
     def _sync_sidebar_toggle_button(self, visible: bool) -> None:
@@ -7290,7 +7305,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         sync (used by the behavior hooks)."""
         try:
             self._toggle_sidebar_visibility(visible)
-            self._sync_sidebar_toggle_button(visible)
+            # Collapsed, the choice is only recorded (it docks so once the
+            # window widens); the button shows what is actually on screen.
+            self._sync_sidebar_toggle_button(self._sidebar_shown())
         except Exception:
             logger.debug("apply_sidebar_visible failed", exc_info=True)
 
@@ -7339,9 +7356,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
         try:
-            if is_visible:
+            if is_visible and not self._sidebar_collapsed():
                 # Re-dock a sidebar that is floating in the popup first, or
-                # the pane comes back empty.
+                # the pane comes back empty. Collapsed it cannot dock, so a
+                # floating one stays where the user put it.
                 popup = getattr(self, '_search_popup', None)
                 if popup is not None:
                     self._search_expanded_sidebar = False
