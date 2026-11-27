@@ -4921,7 +4921,7 @@ def _build_sidebar_header(window, sidebar_box):
     # Its own section: a rule is made in Advanced Configuration and shows in
     # the Rules view, not in the connection list.
     rule_section = Gio.Menu()
-    rule_section.append(_('New Host Rule…'), 'win.new-host-rule')
+    rule_section.append(_('New Connection - Advanced'), 'win.new-host-rule')
     add_menu.append_section(None, rule_section)
     add_button = Gtk.MenuButton()
     add_button.add_css_class('flat')
