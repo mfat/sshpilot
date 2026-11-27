@@ -29,11 +29,11 @@ import hashlib
 import logging
 import os
 import posixpath
+import secrets
 import stat as stat_module
 import subprocess
 import threading
 import time
-import uuid
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -665,7 +665,7 @@ def _staging_path(destination: str) -> str:
     filesystem that limits a name to 255 bytes.
     """
     directory = posixpath.dirname(destination)
-    return posixpath.join(directory, f".sshpilot-{uuid.uuid4().hex}.part")
+    return posixpath.join(directory, f".sshpilot-{secrets.token_hex(16)}.part")
 
 
 def _server_side_copy(client: Any, source_file: Any, destination_file: Any) -> bool:
