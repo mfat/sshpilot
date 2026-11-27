@@ -291,7 +291,9 @@ class _EffectiveCell:
         item = self.item
         if item is None:
             return
-        if item.line:
+        if item.forced:
+            self.controller.show_forced_setting(item.key)
+        elif item.line:
             self.controller.reveal_line(item.line)
         elif item.file:
             self.controller.reveal_source(item.file, item.file_line)
@@ -332,8 +334,10 @@ class _EffectiveCell:
         )
         set_pill(self.problem, text, shown or "error", "\n".join(problems))
         self.label.set_label(item.source)
-        self.source.set_tooltip_text(item.tooltip or None)
-        reachable = bool(item.line) or (
+        self.source.set_tooltip_text(
+            messages.open_settings_text() if item.forced else item.tooltip or None
+        )
+        reachable = item.forced or bool(item.line) or (
             bool(item.file) and self.controller.source_file(item.file) is not None
         )
         # A source that cannot be shown (OpenSSH's default, the system-wide
@@ -345,7 +349,7 @@ class _EffectiveCell:
 
 class EffectiveView(Gtk.Box):
     """*controller* supplies ``reveal_line``, ``reveal_source``,
-    ``source_file`` and ``check_host``."""
+    ``source_file``, ``check_host`` and ``show_forced_setting``."""
 
     def __init__(self, controller) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -486,16 +490,19 @@ class EffectiveView(Gtk.Box):
         self._order_rows: List[Gtk.Widget] = []
         return box
 
-    def _add_order_row(self, title: str, subtitle: str, suffix=None, line: int = 0) -> None:
+    def _add_order_row(self, title: str, subtitle: str, suffix=None, line: int = 0,
+                       on_activate=None) -> None:
         row = Adw.ActionRow(title=GLib.markup_escape_text(title))
         row.set_subtitle(GLib.markup_escape_text(subtitle))
         if suffix is not None:
             row.add_suffix(suffix)
-        if line:
+        if line and on_activate is None:
             # A block is a link to where it is written.
+            on_activate = lambda n=line: self.controller.reveal_line(n)  # noqa: E731
+        if on_activate is not None:
             row.set_activatable(True)
             row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
-            row.connect("activated", lambda _r, n=line: self.controller.reveal_line(n))
+            row.connect("activated", lambda _r: on_activate())
         self.order_row.add_row(row)
         self._order_rows.append(row)
 
@@ -507,10 +514,14 @@ class EffectiveView(Gtk.Box):
         states = {item.line: item.state for item in evaluation.lines}
         matched = set(evaluation.matched_blocks)
         if evaluation.forced:
+            keys = list(dict.fromkeys(item.key for item in evaluation.forced))
+            # One option: its control; several: the page.
+            key = keys[0] if len(keys) == 1 else ""
             self._add_order_row(
                 messages.forced_source(),
                 ", ".join(f"{item.key}={item.value}" for item in evaluation.forced),
                 pill(_("First"), "purple"),
+                on_activate=lambda: self.controller.show_forced_setting(key),
             )
         for index, block in enumerate(answer.blocks):
             header = answer.lines.headers.get(block.uid, 0)

@@ -143,6 +143,11 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("ssh_connection_builder.py", "settings.ssh_overrides", "coerce_yes_no_unset"),
         ("ssh_connection_builder.py", "settings.ssh_overrides", "select_override_args"),
         ("ssh_connection_builder.py", "settings.ssh_overrides", "keepalive_fallback_args"),
+        # -- pure: which Settings control forces an option (a code, no I/O;
+        #    the snapshot it reads comes from the daemon) -----------------
+        ("advanced_config_window.py", "settings.ssh_overrides", "override_source"),
+        ("advanced_config_window.py", "settings.ssh_overrides", "OverrideSource"),
+        ("gtk/advanced_config_messages.py", "settings.ssh_overrides", "OverrideSource"),
         # -- pure config.json version policy (no I/O; the daemon migrates) --
         ("config.py", "settings", "SettingsFileError"),
         ("config.py", "settings", "upgrade_settings"),

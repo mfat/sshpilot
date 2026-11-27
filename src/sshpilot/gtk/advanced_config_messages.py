@@ -258,7 +258,9 @@ def used_instead_markup(value: str, place: str, forced: bool = False) -> str:
     shown = f"<tt>{escape(value)}</tt>"
     if forced:
         # Translators: {value} is an option's value, e.g. "Settings ▸ SSH Options use 7".
-        return escape(_("Settings ▸ SSH Options use {value}")).replace("{value}", shown)
+        sentence = escape(_("Settings ▸ SSH Options use {value}")).replace("{value}", shown)
+        # A link: the label that shows it opens the setting.
+        return f'<a href="{SETTINGS_LINK}" title="{escape(open_settings_text(), {'"': '&quot;'})}">{sentence}</a>'
     # Translators: e.g. "OpenSSH uses 10.0.0.5 from line 3 (Host zoo)".
     return escape(_("OpenSSH uses {value} from {place}")).replace(
         "{value}", shown).replace("{place}", escape(place))
@@ -308,6 +310,35 @@ def default_source() -> str:
 
 def forced_source() -> str:
     return _("Settings ▸ SSH Options")
+
+
+#: The link a note about Settings ▸ SSH Options carries (see
+#: :func:`used_instead_markup`).
+SETTINGS_LINK = "sshpilot-settings:ssh-options"
+
+
+def open_settings_text() -> str:
+    """The tooltip of whatever opens Settings ▸ SSH Options."""
+    return _("Open Settings ▸ SSH Options")
+
+
+def settings_row_title(source) -> str:
+    """The title of the Settings ▸ SSH Options control that forces an
+    option (an :class:`OverrideSource` other than the free-form list,
+    whose rows have no title): the row Settings highlights. The same
+    strings as the page's own."""
+    from ..core.settings.ssh_overrides import OverrideSource as S
+
+    return {
+        S.CONNECT_TIMEOUT: _("Connect Timeout (s)"),
+        S.ADDRESS_FAMILY: _("AddressFamily"),
+        S.STRICT_HOST_KEY_CHECKING: _("StrictHostKeyChecking"),
+        S.COMPRESSION: _("Compression"),
+        S.VERBOSITY: _("SSH Verbosity (-v)"),
+        S.DEBUG: _("Enable SSH Debug Logging"),
+        S.MULTIPLEXING: _("Enable SSH connection multiplexing"),
+        S.LEGACY_ALGORITHMS: _("Legacy device compatibility"),
+    }.get(source, "")
 
 
 def unknown_source() -> str:

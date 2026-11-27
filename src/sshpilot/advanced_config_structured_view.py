@@ -322,6 +322,8 @@ class LineRow:
         self.instead.add_css_class("dim-label")
         self.instead.set_margin_start(14)
         self.instead.set_margin_bottom(6)
+        self.instead.connect("activate-link", self._on_instead_link)
+        self._keyword = ""
         # Under the fields, for a key file OpenSSH will not use: what is
         # wrong with it, and for a private key others can read, Fix.
         self.key_line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, visible=False)
@@ -373,6 +375,7 @@ class LineRow:
     def show(self, answer: AnswerView) -> None:
         option = self.view.controller.editor.find_option(self.uid)[1]
         keyword = canonical_keyword(option.keyword) if option else ""
+        self._keyword = keyword
         verdict = answer.line_verdict(self.uid, keyword)
         show_verdict(self.state, verdict)
         # A line that does not take effect is struck through and tinted
@@ -390,6 +393,14 @@ class LineRow:
         if self.instead.get_label() != text:
             self.instead.set_label(text)
         self.instead.set_visible(bool(text))
+
+    def _on_instead_link(self, _label, uri: str) -> bool:
+        """The note says Settings ▸ SSH Options decide the option: open
+        them at its control."""
+        if uri != messages.SETTINGS_LINK:
+            return False
+        self.view.controller.show_forced_setting(self._keyword)
+        return True
 
     def set_place(self, first: bool, last: bool) -> None:
         """Where the line stands in its block: no Up for the first, no

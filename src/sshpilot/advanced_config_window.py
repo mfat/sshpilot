@@ -67,6 +67,7 @@ from .api.models.connections import (  # noqa: E402
     SshConfigDraftEvaluation,
 )
 from .gtk import advanced_config_messages as messages  # noqa: E402
+from .core.settings.ssh_overrides import OverrideSource, override_source  # noqa: E402
 from .ssh_config_blocks import GLOBAL, HOST, LineMap  # noqa: E402
 from .ssh_config_document import declared_hosts  # noqa: E402
 
@@ -92,6 +93,8 @@ _PREFETCH_DELAY_MS = 350
 _PREFETCH_HOSTS = 150
 
 PAGES = ("structured", "effective", "raw")
+#: Settings' page of SSH options (PreferencesWindow._page_id("SSH Options")).
+SSH_OPTIONS_PAGE = "ssh-options"
 
 _CSS = """
 .advcfg-context { padding: 12px 16px 0 16px; }
@@ -503,6 +506,47 @@ class AdvancedConfigBase:
         """Make one of the three views the one on screen."""
         if name in PAGES and self.stack.get_visible_child_name() != name:
             self.stack.set_visible_child_name(name)
+
+    def show_forced_setting(self, keyword: str = "") -> None:
+        """Open Settings ▸ SSH Options at the control that forces *keyword*
+        (the page alone for "", or while the settings cannot be read).
+        Settings belong to the main window: it opens them."""
+        main = self._parent_window
+        show = getattr(main, "show_preferences", None)
+        if show is None:
+            return
+        if keyword:
+            ssh = self._ssh_settings(main)
+            source = override_source(ssh, keyword) if ssh is not None else None
+            if source is OverrideSource.EXTRA:
+                show(SSH_OPTIONS_PAGE, extra_ssh_option=keyword)
+                return
+            if source is not None:
+                show(SSH_OPTIONS_PAGE, messages.settings_row_title(source))
+                return
+        show(SSH_OPTIONS_PAGE)
+
+    @staticmethod
+    def _ssh_settings(main) -> Optional[dict]:
+        """The settings Settings ▸ SSH Options shows, as the daemon has
+        them (multiplexing is the app's own setting). None: unreadable."""
+        builder = getattr(main, "_build_ssh_overrides_controller", None)
+        try:
+            controller = builder() if builder is not None else None
+            snapshot = controller.load() if controller is not None else None
+        except Exception:
+            logger.debug("SSH options unreadable", exc_info=True)
+            return None
+        if snapshot is None:
+            return None
+        ssh = {key: getattr(snapshot, key, None) for key in (
+            "connect_timeout", "strict_host_key_checking", "compression", "verbosity",
+            "debug_enabled", "address_family", "legacy_algorithms",
+        )}
+        config = getattr(main, "config", None)
+        if config is not None:
+            ssh["controlmaster"] = bool(config.get_setting("ssh.controlmaster", False))
+        return ssh
 
     def check_host(self, text: str) -> None:
         """A host typed in Effective's field: OpenSSH is asked about it,
