@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.5.2}
+Version:        %{?version}%{!?version:6.5.3}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -188,6 +188,15 @@ rm -f %{buildroot}%{_libdir}/%{name}/libgtkghostty-1.so
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Fri Nov 27 2026 mFat <newmfat@gmail.com> - 6.5.3-1
+- Connection sharing (multiplexing) per connection - Turn ControlMaster on or off for each host in the connection editor, with Socket path and Keep open options. Settings > SSH Options still take priority
+- Clearer multiplexing errors - Problems OpenSSH would fail on, like a missing socket directory or a socket path that's too long, are caught before connecting and explained, so sessions no longer open and then die with "exited with status 255"
+- Docker Console now finds rootless Docker daemons, and each host can set its own socket path
+- File manager: Download to This Computer… is available on every server pane, and double-clicking a file with a server in each pane copies it to the other pane
+- Connection editor search now finds options by their OpenSSH keyword name
+- Start page: you can now clear Recent connections
+- Bug fixes and improvements
+
 * Fri Nov 27 2026 mFat <newmfat@gmail.com> - 6.5.2-1
 - Advanced Configuration - A new way to see and edit your SSH configuration - Add and modify host blocks, and see how they work in action
 - Redesigned connection editor - better layout, grouping and visual maps for port forwards and jump hosts

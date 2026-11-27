@@ -35,6 +35,17 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
+    <release version="6.5.3" date="2026-11-27">
+      <description>
+        <p>Connection sharing (multiplexing) per connection - Turn ControlMaster on or off for each host in the connection editor, with Socket path and Keep open options. Settings &gt; SSH Options still take priority</p>
+        <p>Clearer multiplexing errors - Problems OpenSSH would fail on, like a missing socket directory or a socket path that&#x27;s too long, are caught before connecting and explained, so sessions no longer open and then die with &quot;exited with status 255&quot;</p>
+        <p>Docker Console now finds rootless Docker daemons, and each host can set its own socket path</p>
+        <p>File manager: Download to This Computer… is available on every server pane, and double-clicking a file with a server in each pane copies it to the other pane</p>
+        <p>Connection editor search now finds options by their OpenSSH keyword name</p>
+        <p>Start page: you can now clear Recent connections</p>
+        <p>Bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="6.5.2" date="2026-11-27">
       <description>
         <p>Advanced Configuration - A new way to see and edit your SSH configuration - Add and modify host blocks, and see how they work in action</p>
