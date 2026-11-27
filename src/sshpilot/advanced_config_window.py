@@ -317,6 +317,17 @@ class AdvancedConfigBase:
                 Gtk.CallbackAction.new(lambda *_a, s=step: self._history_key(s)),
             ))
         self.add_controller(history_keys)
+        # Ctrl+S saves from anywhere in the window, the Raw view's text
+        # included: typed text is applied first (see save).
+        save_keys = Gtk.ShortcutController()
+        save_keys.set_scope(Gtk.ShortcutScope.LOCAL)
+        save_keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        for trigger in ("<Control>s", "<Meta>s"):
+            save_keys.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(trigger),
+                Gtk.CallbackAction.new(lambda *_a: (self.save(), True)[1]),
+            ))
+        self.add_controller(save_keys)
         self._load()
 
     # ------------------------------------------------------------------
@@ -365,7 +376,7 @@ class AdvancedConfigBase:
         self.redo_button.connect("clicked", lambda *_a: self.redo())
         header.pack_start(self.undo_button)
         header.pack_start(self.redo_button)
-        self.save_button = Gtk.Button(label=_("Save"))
+        self.save_button = Gtk.Button(label=_("Save"), tooltip_text=_("Save") + " (Ctrl+S)")
         self.save_button.add_css_class("suggested-action")
         self.save_button.connect("clicked", lambda *_a: self.save())
         header.pack_end(self.save_button)
