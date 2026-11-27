@@ -366,7 +366,9 @@ class EffectiveView(Gtk.Box):
             placeholder_text=_("Host to check, e.g. server or user@server"),
             hexpand=True,
         )
-        self.host_entry.set_primary_icon_name("network-server-symbolic")
+        self.host_entry.set_icon_from_icon_name(
+            Gtk.EntryIconPosition.PRIMARY, "network-server-symbolic"
+        )
         self.host_entry.update_property(
             [Gtk.AccessibleProperty.LABEL], [_("Host to check")]
         )
