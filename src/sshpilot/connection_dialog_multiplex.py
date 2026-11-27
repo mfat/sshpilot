@@ -1,4 +1,4 @@
-"""Connection sharing (OpenSSH multiplexing) for one host, in its Host block.
+"""Connection multiplexing (OpenSSH ControlMaster) for one host, in its Host block.
 
 Like every other field of the editor, the choice is written as directives of
 the host's own block, so plain ``ssh`` outside the app shares the connection
@@ -77,7 +77,7 @@ def ensure_socket_dir(path: str = SOCKET_DIR) -> None:
 
 
 class ConnectionDialogMultiplexMixin:
-    """The Connection Sharing row of the connection editor."""
+    """The Multiplexing group of the connection editor: its Share connection row."""
 
     def _build_multiplex_group(self):
         """The group holding the row, or None where ssh cannot multiplex."""
@@ -94,7 +94,7 @@ class ConnectionDialogMultiplexMixin:
         )
         self.multiplex_row.set_model(model)
         self.multiplex_row.set_selected(DEFAULT)
-        group = Adw.PreferencesGroup(title=_("Connection Sharing"))
+        group = Adw.PreferencesGroup(title=_("Multiplexing"))
         group.add(self.multiplex_row)
         self._multiplex_group = group
         return group

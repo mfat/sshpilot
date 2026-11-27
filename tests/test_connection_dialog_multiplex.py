@@ -1,4 +1,4 @@
-"""Connection sharing in the connection editor, written to the Host block.
+"""Connection multiplexing in the connection editor, written to the Host block.
 
 The row is a view over the Extra Options list: Default writes nothing, On
 ``ControlMaster auto`` with a ``ControlPath`` and a ``ControlPersist``, Off

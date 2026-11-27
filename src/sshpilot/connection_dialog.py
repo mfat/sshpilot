@@ -4052,7 +4052,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # _build_connection_tab_pages. Wake on LAN is shown only for
         # protocols that target a host, Routing only for SSH
         # (_apply_protocol_to_ui).
-        # Connection sharing writes the Host block like the rows above;
+        # Multiplexing writes the Host block like the rows above;
         # absent where OpenSSH cannot multiplex (Windows).
         multiplex_group = self._build_multiplex_group()
         if multiplex_group is None:
