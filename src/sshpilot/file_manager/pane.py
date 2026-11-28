@@ -3601,7 +3601,15 @@ class FilePane(Gtk.Box):
             if response not in ("download", "copy_to_other", "download_to_computer", "edit"):
                 return
             # Every action works on the selection; make it the activated file.
-            self._selection_model.select_item(position, True)
+            # Find its row again: a transfer finishing while the dialog was
+            # open reloads the listing, and the old row may hold another file.
+            row = self._row_of_entry_named(entry.name, position)
+            if row is None:
+                self.show_toast(
+                    _("{name} no longer exists").format(name=safe_display_text(entry.name))
+                )
+                return
+            self._selection_model.select_item(row, True)
             if response == "download":
                 self._on_menu_download()
             elif response == "copy_to_other":
@@ -3613,6 +3621,16 @@ class FilePane(Gtk.Box):
 
         dialog.connect("response", _on_response)
         dialog.present(self)
+
+    def _row_of_entry_named(self, name: str, hint: int) -> Optional[int]:
+        """The row that now shows the file *name*, trying *hint* first."""
+        entries = self._entries
+        if 0 <= hint < len(entries) and entries[hint].name == name:
+            return hint
+        for row, candidate in enumerate(entries):
+            if candidate.name == name:
+                return row
+        return None
 
     def _on_list_activate(self, _list_view, position: int) -> None:
         self._navigate_to_entry(position)

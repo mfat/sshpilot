@@ -606,6 +606,7 @@ def _copy_to_other_panes(module, *, left_local):
     right._current_path = "/root"
     left._partner_pane, right._partner_pane = right, left
     entry = FileEntry("report.txt", False, 0, 0)
+    left._entries = right._entries = [entry]
     left.get_selected_entries = lambda: [entry]
     left.show_toast = lambda *a, **k: None
 
@@ -891,3 +892,76 @@ def test_download_to_this_computer_downloads_into_the_picked_folder(
         "request-operation", "download",
         {"entries": [entry], "directory": "/srv/data", "destination": tmp_path},
     )]
+
+
+class _IndexSelection:
+    """Selection by row index, as Gtk.MultiSelection keeps it."""
+
+    def __init__(self):
+        self.rows = set()
+
+    def select_item(self, index, unselect_rest):
+        if unselect_rest:
+            self.rows = set()
+        self.rows.add(index)
+
+    def is_selected(self, index):
+        return index in self.rows
+
+
+def test_a_listing_reload_under_the_file_dialog_acts_on_the_activated_file(
+    load_file_manager_window, monkeypatch
+):
+    """The dialog stays open while a transfer into this pane can finish and
+    reload it. A new file sorted above the activated one moved it down a row,
+    and the choice then acted on whatever took its old row (#1431)."""
+    module = load_file_manager_window()
+    from sshpilot.file_manager import pane as pane_module
+    monkeypatch.setattr(pane_module.Adw, "AlertDialog", _RecordingAlertDialog, raising=False)
+    monkeypatch.setattr(
+        pane_module.Adw, "ResponseAppearance",
+        type("ResponseAppearance", (), {"SUGGESTED": 1}), raising=False,
+    )
+    left, _right, entry, calls = _copy_to_other_panes(module, left_local=False)
+    del left.get_selected_entries  # use the pane's own, over its rows
+    FileEntry = module.FileEntry
+    left._entries = [FileEntry("notes.txt", False, 0, 0), entry]
+    left._selection_model = _IndexSelection()
+
+    left._offer_remote_file_actions(1, entry)
+    # A copy into this pane finishes: the listing reloads with a new file
+    # sorted above the activated one.
+    left._entries = [FileEntry("notes.txt", False, 0, 0),
+                     FileEntry("photo.jpg", False, 0, 0), entry]
+
+    _RecordingAlertDialog.last.handler(_RecordingAlertDialog.last, "copy_to_other")
+
+    args, _kwargs = calls[0]
+    assert [e.name for e in args[0]] == ["report.txt"]
+
+
+def test_a_file_gone_under_the_file_dialog_is_left_alone(
+    load_file_manager_window, monkeypatch
+):
+    """Deleted meanwhile: say so, and copy nothing in its place."""
+    module = load_file_manager_window()
+    from sshpilot.file_manager import pane as pane_module
+    monkeypatch.setattr(pane_module.Adw, "AlertDialog", _RecordingAlertDialog, raising=False)
+    monkeypatch.setattr(
+        pane_module.Adw, "ResponseAppearance",
+        type("ResponseAppearance", (), {"SUGGESTED": 1}), raising=False,
+    )
+    left, _right, entry, calls = _copy_to_other_panes(module, left_local=False)
+    del left.get_selected_entries
+    toasts = []
+    left.show_toast = toasts.append
+    FileEntry = module.FileEntry
+    left._entries = [FileEntry("notes.txt", False, 0, 0), entry]
+    left._selection_model = _IndexSelection()
+
+    left._offer_remote_file_actions(1, entry)
+    left._entries = [FileEntry("notes.txt", False, 0, 0)]
+    _RecordingAlertDialog.last.handler(_RecordingAlertDialog.last, "copy_to_other")
+
+    assert calls == []
+    assert toasts == ["report.txt no longer exists"]
