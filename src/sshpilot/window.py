@@ -6395,7 +6395,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def open_advanced_config(self, *, host='', line=0, option='', file='',
                              pin=False, over=None, on_saved=None,
-                             new_block=None):
+                             new_block=None, own_window=False):
         """Open Advanced Configuration at a place of the SSH configuration.
 
         The one way in for the rest of the app (and, through the
@@ -6420,13 +6420,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         up over it (*over* without *new_block*: the connection editor's
         dialog closes once it has handed a new block over), or the view rail
         is not on screen (Settings ▸ Sidebar ▸ View Rail): the view needs it
-        to lead back to the connections.
+        to lead back to the connections. *own_window* asks for the window
+        whatever the rail: the menu's Advanced Configuration (the
+        ``app.advanced-ssh-config`` action) does.
 
         Returns the window or the view, or None when it could not be opened.
         """
         window = None
         from .sidebar_views import opens_in_window
-        if (over is None or new_block) and not opens_in_window(self):
+        if (over is None or new_block) and not own_window and not opens_in_window(self):
             try:
                 from .sidebar_views import open_sections
                 view = open_sections(

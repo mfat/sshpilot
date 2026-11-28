@@ -133,3 +133,19 @@ def test_advanced_configuration_opens_where_the_rail_allows(monkeypatch, rail_sh
     )
     result = MainWindow.open_advanced_config(win)
     assert (result if result == "view" else result.kind) == expected
+
+
+def test_the_menu_item_always_opens_the_window(monkeypatch):
+    """app.advanced-ssh-config asks for its own window, rail or not."""
+    from sshpilot.main import SshPilotApplication
+    from sshpilot.window import MainWindow
+
+    win = _window(RAIL_ALWAYS)
+    monkeypatch.setattr(sidebar_views, "open_sections", lambda *_a, **_k: "view")
+    win._open_advanced_config = lambda: types.SimpleNamespace(kind="window")
+    calls = []
+    win.open_advanced_config = lambda **kw: calls.append(
+        MainWindow.open_advanced_config(win, **kw))
+    app = types.SimpleNamespace(_action_window=lambda: win)
+    SshPilotApplication.on_advanced_ssh_config(app)
+    assert [c if c == "view" else c.kind for c in calls] == ["window"]

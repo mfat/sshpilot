@@ -2065,10 +2065,12 @@ class SshPilotApplication(Adw.Application):
         self.add_action(action)
 
     def on_advanced_ssh_config(self, action=None, param=None):
-        """Open Advanced Configuration (the SSH configuration as blocks)."""
+        """Open Advanced Configuration (the SSH configuration as blocks) in
+        its own window: the menu item, its shortcut and the command search.
+        The rail's Configuration button is the way to the in-window view."""
         win = self._action_window()
         if win and hasattr(win, 'open_advanced_config'):
-            win.open_advanced_config()
+            win.open_advanced_config(own_window=True)
 
     def on_advanced_ssh_config_at(self, action=None, param=None):
         """Open Advanced Configuration at a place: ``app.advanced-ssh-config-at``.
