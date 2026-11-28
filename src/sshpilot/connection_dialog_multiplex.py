@@ -147,7 +147,10 @@ class ConnectionDialogMultiplexMixin:
         model = Gtk.StringList()
         for label in (_("Default"), _("On"), _("Off")):
             model.append(label)
-        self.multiplex_row = Adw.ComboRow(title=_("Share connection"))
+        # The OpenSSH option name is a literal, never translated.
+        self.multiplex_row = Adw.ComboRow(
+            title=f'{_("Share connection")} (ControlMaster)'
+        )
         self.multiplex_row.set_subtitle(
             _("Terminals and file transfers to this host reuse one connection")
         )
