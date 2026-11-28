@@ -198,6 +198,111 @@ modules:
         sha256: 4d5ea5e448e4c7ea8fb55ccbaa8668f2a97d44f438cee831e2b7ecd162d85c29
         dest: deps
 
+  # Mosh protocol. The `mosh` command is a Perl script that starts mosh-server
+  # over the bundled ssh above (so saved passwords and askpass keep working) and
+  # then runs mosh-client; the GNOME runtime ships neither Perl nor Protocol
+  # Buffers. Only the client is built: mosh-server runs on the target.
+  #
+  # Protocol Buffers is needed only to build mosh-client and is linked in
+  # statically; 21.x is the last series without the Abseil dependency.
+  - name: protobuf
+    buildsystem: autotools
+    config-opts:
+      - --disable-shared
+      - --enable-static
+      - --with-pic
+    cleanup:
+      - '*'
+    sources:
+      - type: archive
+        url: https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protobuf-cpp-3.21.12.tar.gz
+        sha256: 4eab9b524aa5913c6fffb20b2a8abf5ef7f95a80bc0701f3a6dbb4c607f73460
+
+  - name: perl
+    buildsystem: simple
+    build-commands:
+      - >-
+        ./Configure -des
+        -Dprefix=/app
+        -Dman1dir=none
+        -Dman3dir=none
+        -Dinstallstyle=lib/perl5
+      - make -j${FLATPAK_BUILDER_N_JOBS:-2}
+      - make install
+      # Perl installs its files read-only, which stops flatpak-builder stripping them.
+      - chmod -R u+w /app/lib/perl5
+      - /app/bin/perl -MGetopt::Long -MIO::Socket::IP -MText::ParseWords -MPOSIX -e 1
+    # Only the interpreter and its core library are used (by the mosh script).
+    cleanup:
+      - /bin/corelist
+      - /bin/cpan
+      - /bin/enc2xs
+      - /bin/encguess
+      - /bin/h2ph
+      - /bin/h2xs
+      - /bin/instmodsh
+      - /bin/json_pp
+      - /bin/libnetcfg
+      - /bin/perlbug
+      - /bin/perldoc
+      - /bin/perlivp
+      - /bin/perlthanks
+      - /bin/piconv
+      - /bin/pl2pm
+      - /bin/pod2*
+      - /bin/podchecker
+      - /bin/prove
+      - /bin/ptar*
+      - /bin/shasum
+      - /bin/splain
+      - /bin/streamzip
+      - /bin/xsubpp
+      - /bin/zipdetails
+      - '*.pod'
+      - .packlist
+      - /lib/perl5/*/pod
+      - /lib/perl5/*/*/CORE/*.h
+      # Toolchain, tests, docs, CJK encodings and collation: mosh loads none of them.
+      - /lib/perl5/*/App
+      - /lib/perl5/*/Archive
+      - /lib/perl5/*/CPAN*
+      - /lib/perl5/*/ExtUtils
+      - /lib/perl5/*/Module
+      - /lib/perl5/*/Pod
+      - /lib/perl5/*/TAP
+      - /lib/perl5/*/Test
+      - /lib/perl5/*/Test2*
+      - /lib/perl5/*/Unicode/Collate*
+      - /lib/perl5/*/perl5db.pl
+      - /lib/perl5/*/*/Encode/CN*
+      - /lib/perl5/*/*/Encode/JP*
+      - /lib/perl5/*/*/Encode/KR*
+      - /lib/perl5/*/*/Encode/TW*
+      - /lib/perl5/*/*/auto/Encode/CN
+      - /lib/perl5/*/*/auto/Encode/JP
+      - /lib/perl5/*/*/auto/Encode/KR
+      - /lib/perl5/*/*/auto/Encode/TW
+      - /lib/perl5/*/*/auto/Unicode/Collate
+    sources:
+      - type: archive
+        url: https://www.cpan.org/src/5.0/perl-5.44.0.tar.gz
+        sha256: 3b855066b92491cb40e86affb1ca57d1a388aa43e51b91c7806a32c2f65f96c3
+
+  - name: mosh
+    buildsystem: autotools
+    config-opts:
+      - --enable-client
+      - --disable-server
+      - --disable-completion
+    post-install:
+      - test -x /app/bin/mosh
+      - test -x /app/bin/mosh-client
+      - /app/bin/mosh --version
+    sources:
+      - type: archive
+        url: https://github.com/mobile-shell/mosh/releases/download/mosh-1.4.0/mosh-1.4.0.tar.gz
+        sha256: 872e4b134e5df29c8933dff12350785054d2fd2839b5ae6b5587b14db1465ddd
+
   - python3-deps.yml
 
   - name: sshpilot

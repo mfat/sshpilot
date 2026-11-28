@@ -103,8 +103,9 @@ class MoshProtocolBackend(ProtocolBackend):
         # NOT routed through flatpak-spawn --host. It carries the resolved SSH
         # auth env (askpass/sshpass helpers from resolve_native_auth) whose paths
         # live inside the sandbox and can't be forwarded to a host process
-        # unchanged — host-spawning mosh would break the single auth path. A
-        # Flatpak that needs mosh should include it in the runtime.
+        # unchanged — host-spawning mosh would break the single auth path. The
+        # Flathub manifest bundles mosh (client only) and the Perl it runs on
+        # for this reason (#1432).
         mosh = shutil.which("mosh")
         if not mosh:
             raise BuiltinProtocolError(
