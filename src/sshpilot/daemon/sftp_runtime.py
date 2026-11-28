@@ -738,6 +738,9 @@ def _unwrap_destination_error(exc: BaseException) -> BaseException:
     return exc.error if isinstance(exc, _DestinationSideError) else exc
 
 
+_DESTINATION_OBJECT_FACTORIES = frozenset({"open", "stream_writer"})
+
+
 class _DestinationSide:
     """Proxy for the destination client (and the files it opens) of a copy
     between services: every failure is re-raised tagged with its record."""
@@ -758,7 +761,9 @@ class _DestinationSide:
         attr = getattr(self._target, name)
         if not callable(attr):
             return attr
-        if name == "open":
+        if name in _DESTINATION_OBJECT_FACTORIES:
+            # What these return writes to the destination too: its failures
+            # must stay tagged with the destination's record.
             return lambda *a, **k: _DestinationSide(self._call(attr, *a, **k), self._record)
         return lambda *a, **k: self._call(attr, *a, **k)
 
@@ -2219,25 +2224,44 @@ class SftpServiceRuntime:
         def _copy_bytes(source_file: Any, destination_file: Any, size: Optional[int]) -> None:
             """Stream *source_file* into *destination_file*, unless the server
             copies for us; *size* turns on byte progress."""
-            if not (
-                same_server
-                and _server_side_copy(client, source_file, destination_file)
-            ):
-                done = 0
-                reported = 0.0
-                while True:
+            if same_server and _server_side_copy(client, source_file, destination_file):
+                return
+            done = 0
+            reported = 0.0
+
+            def _advance(count: int) -> None:
+                nonlocal done, reported
+                done += count
+                if progress is not None and size:
+                    fraction = min(done / size, 0.99)
+                    if fraction - reported >= 0.01:
+                        reported = fraction
+                        progress(fraction)
+
+            iter_chunks = getattr(source_file, "iter_chunks", None)
+            stream_writer = getattr(destination_file, "stream_writer", None)
+            if callable(iter_chunks) and callable(stream_writer):
+                # One read-ahead and one write window for the whole file, so
+                # both sides stay busy (#1431). Reading and writing a block at
+                # a time waited out both windows per block: a tenth of a
+                # download's speed over a 50 ms link.
+                writer = stream_writer()
+                for chunk in iter_chunks():
                     if cancel is not None and cancel():
                         raise OperationCancelled()
-                    chunk = source_file.read(_COPY_BLOCK)
-                    if not chunk:
-                        break
-                    destination_file.write(chunk)
-                    done += len(chunk)
-                    if progress is not None and size:
-                        fraction = min(done / size, 0.99)
-                        if fraction - reported >= 0.01:
-                            reported = fraction
-                            progress(fraction)
+                    writer.write(chunk)
+                    _advance(len(chunk))
+                writer.flush()
+                return
+            # A plain file object (paramiko-style) has only read and write.
+            while True:
+                if cancel is not None and cancel():
+                    raise OperationCancelled()
+                chunk = source_file.read(_COPY_BLOCK)
+                if not chunk:
+                    break
+                destination_file.write(chunk)
+                _advance(len(chunk))
 
         def _moved_by_rename() -> bool:
             """Move within one server by renaming, as ``mv`` does (#1356).

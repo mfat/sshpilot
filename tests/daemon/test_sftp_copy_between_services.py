@@ -447,3 +447,85 @@ def test_move_between_two_panes_on_one_server_is_a_rename():
     assert source.files["/srv/tree/sub/b.txt"] == b"world!"
     assert "/tree" not in source.dirs
 
+
+
+# --- Speed over a slow link, against the real sftp-server (#1431) ----------
+
+from tests.test_sftp_client_large_files import (  # noqa: E402
+    _SFTP_SERVER,
+    _start_client,
+    _stop_client,
+)
+
+_needs_sftp_server = pytest.mark.skipif(
+    _SFTP_SERVER is None, reason="OpenSSH sftp-server not installed"
+)
+
+
+def _timed_real_copy(tmp_path, monkeypatch, *, same_connection):
+    """Copy 16 MiB through the runtime between two real sftp-server sessions
+    whose replies arrive one round trip late; returns the round trips taken."""
+    import os
+    import time
+
+    # Windows' local work is worth a few 50 ms round trips on its own.
+    delay = 0.25 if os.name == "nt" else 0.05
+    if same_connection:
+        # Two sessions on one server stream only when it cannot copy for us.
+        from sshpilot.sftp.client import OpenSSHSFTPClient
+        monkeypatch.setattr(OpenSSHSFTPClient, "supports_copy_data", lambda self: False)
+    content = os.urandom(16 * 1024 * 1024)
+    source = tmp_path / "source.bin"
+    source.write_bytes(content)
+    destination = tmp_path / "copy.bin"
+    sessions = [_start_client(delay), _start_client(delay)]
+    try:
+        runtime, ops, a, b = _two_services(
+            sessions[0][0], sessions[1][0], same_connection=same_connection
+        )
+        started = time.monotonic()
+        done = _run(runtime, ops, SftpCopyRequest(
+            a, str(source), str(destination), as_operation=True,
+            destination_service_id=b,
+        ))
+        round_trips = (time.monotonic() - started) / delay
+    finally:
+        for session in sessions:
+            _stop_client(*session)
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert destination.read_bytes() == content
+    return round_trips
+
+
+@_needs_sftp_server
+def test_copy_to_another_server_streams_over_a_slow_link(tmp_path, monkeypatch):
+    """#1431: reading and writing 1 MiB at a time waited out both request
+    windows per block: ~47 round trips here, against ~13 streamed."""
+    round_trips = _timed_real_copy(tmp_path, monkeypatch, same_connection=False)
+    assert round_trips < 24, f"copy took {round_trips:.1f} round trips"
+
+
+@_needs_sftp_server
+def test_copy_on_one_server_without_copy_data_streams_too(tmp_path, monkeypatch):
+    round_trips = _timed_real_copy(tmp_path, monkeypatch, same_connection=True)
+    assert round_trips < 24, f"copy took {round_trips:.1f} round trips"
+
+
+def test_a_failed_streamed_write_is_the_destinations_failure():
+    """The stream writer writes to the destination: its failures must carry
+    the destination's record, as the files it opens do."""
+    from sshpilot.daemon.sftp_runtime import _DestinationSide, _DestinationSideError
+
+    class _Writer:
+        def write(self, _data):
+            raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "disk full")
+
+    class _File:
+        def stream_writer(self):
+            return _Writer()
+
+    record = object()
+    writer = _DestinationSide(_File(), record).stream_writer()
+    with pytest.raises(_DestinationSideError) as raised:
+        writer.write(b"x")
+    assert raised.value.record is record

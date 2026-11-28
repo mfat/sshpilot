@@ -1421,6 +1421,25 @@ class OpenSSHSFTPFile:
         writer.flush()
         self._offset = writer.offset
 
+    def iter_chunks(self) -> Iterator[bytes]:
+        """Yield the rest of the file through one read-ahead window.
+
+        ``read(size)`` starts a new window per call and waits for it to empty,
+        so a copy built on it pays round trips per block; this window keeps
+        growing across the whole file, as a download's does.
+        """
+        for chunk in self._client.iter_read(self._handle, self._offset, None):
+            self._offset += len(chunk)
+            yield chunk
+
+    def stream_writer(self) -> "PipelinedWriter":
+        """One WRITE window for a whole stream from the current offset.
+
+        ``write()`` waits for its WRITEs per call; this one stays full across
+        calls. Flush it before closing; the file's own offset does not follow.
+        """
+        return self._client.pipelined_writer(self._handle, self._offset)
+
     def close(self) -> None:
         if not self._closed:
             self._closed = True
