@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from sshpilot.api.errors import ErrorCode
@@ -307,10 +308,9 @@ def test_newer_clean_close_supersedes_retained_failure():
         )
     )
 
-    assert store.status_for("connection-1") == ConnectionRuntimeStatus(
-        ConnectionState.DISCONNECTED,
-        "clean close",
-    )
+    # Status 0 is the user typing ``exit``: the tab closes itself, and the
+    # host has nothing to report, not even the older failure.
+    assert store.status_for("connection-1").state is ConnectionState.UNKNOWN
 
 
 def test_reconnect_replaces_status_and_ignores_old_daemon_events():
@@ -616,3 +616,183 @@ def test_in_process_sessions_are_kept_apart_by_key_and_connection():
 
     assert store.status_for("connection-1").state is ConnectionState.CONNECTED
     assert store.status_for("connection-2").state is ConnectionState.CONNECTED
+
+
+# --- a close the user asked for ---------------------------------------------
+
+
+def _close_sequence(client, session_id, connection_id, start):
+    """What the daemon sends when a tab is closed: CLOSING, the exit, CLOSED."""
+    client.emit(
+        EventType.SESSION_STATE_CHANGED,
+        session(session_id, connection_id, SessionState.CLOSING),
+        start,
+    )
+    client.emit(
+        EventType.SESSION_EXITED,
+        SessionExitInfo(signal=15, reason="process_signal"),
+        start + 1,
+        session_id=session_id,
+    )
+    client.emit(
+        EventType.SESSION_CLOSED,
+        session(
+            session_id, connection_id, SessionState.CLOSED,
+            exit_info=SessionExitInfo(signal=15, reason="process_signal"),
+        ),
+        start + 2,
+    )
+
+
+def test_closing_a_tab_clears_the_indicator():
+    """The user closed it: the SIGTERM exit it causes is not a lost session."""
+    changed = []
+    client = Client(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.RUNNING)],
+    )
+    store = ConnectionRuntimeStatusStore(
+        on_changed=lambda cid, status: changed.append(status.state)
+    )
+    store.attach_client(client)
+
+    _close_sequence(client, "session-1", "connection-1", 1)
+
+    assert store.status_for("connection-1").state is ConnectionState.UNKNOWN
+    assert ConnectionState.DISCONNECTED not in changed
+    assert ConnectionState.FAILED not in changed
+
+
+def test_session_ending_by_itself_still_reports_disconnected():
+    """No CLOSING step: the remote end went away, which is worth showing."""
+    client = Client(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.RUNNING)],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(client)
+
+    client.emit(
+        EventType.SESSION_EXITED,
+        SessionExitInfo(exit_code=255, reason="process_exit"),
+        1,
+        session_id="session-1",
+    )
+
+    assert store.status_for("connection-1").state is ConnectionState.DISCONNECTED
+
+
+def test_a_close_that_failed_is_still_reported():
+    client = Client(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.RUNNING)],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(client)
+    client.emit(
+        EventType.SESSION_STATE_CHANGED,
+        session("session-1", "connection-1", SessionState.CLOSING),
+        1,
+    )
+
+    client.emit(
+        EventType.SESSION_STATE_CHANGED,
+        session(
+            "session-1", "connection-1", SessionState.FAILED,
+            failure=SessionFailure(
+                SessionFailureCode.TERMINATION_FAILED,
+                ErrorCode.SESSION_TERMINATION_FAILED,
+            ),
+        ),
+        2,
+    )
+
+    assert store.status_for("connection-1").state is ConnectionState.FAILED
+
+
+def test_closing_a_newer_tab_supersedes_an_earlier_lost_session():
+    """As with any newer result: the latest end of a session decides."""
+    client = Client(
+        "daemon-a",
+        [
+            session("lost", "connection-1", SessionState.CLOSED,
+                    exit_info=SessionExitInfo(exit_code=255, reason="process_exit")),
+            session("open", "connection-1", SessionState.RUNNING),
+        ],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(client)
+
+    _close_sequence(client, "open", "connection-1", 1)
+
+    assert store.status_for("connection-1").state is ConnectionState.UNKNOWN
+
+
+def test_close_seen_while_refreshing_still_counts():
+    """Events queued during a snapshot are applied together; CLOSING must stick."""
+    client = Client(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.RUNNING)],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(client)
+    with store._lock:
+        store._refreshing = True
+    _close_sequence(client, "session-1", "connection-1", 1)
+    with store._lock:
+        store._refreshing = False
+        for event in store._pending_events:
+            store._apply_event_locked(event)
+        store._pending_events = []
+        store._statuses = store._aggregate_locked()
+
+    assert store.status_for("connection-1").state is ConnectionState.UNKNOWN
+
+
+def test_requested_closes_are_forgotten_for_a_new_daemon():
+    store = ConnectionRuntimeStatusStore()
+    client = Client(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.RUNNING)],
+    )
+    store.attach_client(client)
+    _close_sequence(client, "session-1", "connection-1", 1)
+
+    store.attach_client(Client(
+        "daemon-b",
+        [session("session-1", "connection-1", SessionState.CLOSED,
+                 exit_info=SessionExitInfo(exit_code=255, reason="process_exit"))],
+    ))
+
+    assert store.status_for("connection-1").state is ConnectionState.DISCONNECTED
+
+
+@pytest.mark.parametrize(
+    ("exit_info", "expected"),
+    [
+        # ``exit``: the shell left with 0, the tab closes itself.
+        (SessionExitInfo(exit_code=0, reason="process_exit"), ConnectionState.UNKNOWN),
+        # ``false; exit`` passes 1 on: the tab keeps its banner, and so the dot.
+        (SessionExitInfo(exit_code=1, reason="process_exit"), ConnectionState.DISCONNECTED),
+        # ssh's own "connection lost" status.
+        (SessionExitInfo(exit_code=255, reason="process_exit"), ConnectionState.DISCONNECTED),
+        (SessionExitInfo(signal=9, reason="process_signal"), ConnectionState.DISCONNECTED),
+    ],
+)
+def test_typed_exit_follows_the_tab(exit_info, expected):
+    """The dot agrees with the tab: it closes on status 0 and nothing else."""
+    client = Client(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.RUNNING)],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(client)
+
+    client.emit(EventType.SESSION_EXITED, exit_info, 1, session_id="session-1")
+    client.emit(
+        EventType.SESSION_CLOSED,
+        session("session-1", "connection-1", SessionState.CLOSED, exit_info=exit_info),
+        2,
+    )
+
+    assert store.status_for("connection-1").state is expected

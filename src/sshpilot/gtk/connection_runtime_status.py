@@ -77,6 +77,12 @@ class ConnectionRuntimeStatusStore:
         # (the embedded RDP tab): key -> (connection id, status, report order).
         self._local: Dict[str, Tuple[str, ConnectionRuntimeStatus, int]] = {}
         self._local_order = 0
+        # Sessions sshPilot itself ended (a closed tab, a quit): the daemon
+        # takes them through CLOSING, which a session ending on its own never
+        # enters. Their exit is not news, so they report nothing afterwards.
+        # Kept per daemon instance: session ids are only unique within one.
+        self._close_requested: set = set()
+        self._close_requested_instance: Optional[str] = None
         self._client = None
         self._subscription = None
         self._generation = 0
@@ -133,6 +139,10 @@ class ConnectionRuntimeStatusStore:
             old_subscription.unsubscribe()
 
         instance_id = getattr(client, "server_instance_id", None)
+        with self._lock:
+            if instance_id != self._close_requested_instance:
+                self._close_requested = set()
+                self._close_requested_instance = instance_id
         subscription = client.subscribe_events(
             lambda event: self._accept_event(event, generation, instance_id)
         )
@@ -175,6 +185,8 @@ class ConnectionRuntimeStatusStore:
             self._sessions = {}
             self._sftp = {}
             self._local = {}
+            self._close_requested = set()
+            self._close_requested_instance = None
             self._statuses = {}
             self._pending_events = []
             self._refreshing = False
@@ -230,8 +242,38 @@ class ConnectionRuntimeStatusStore:
 
         if not isinstance(event.payload, SessionSummary):
             return False
+        if event.payload.state is SessionState.CLOSING:
+            # Remember it now: queued events can move it on before the
+            # next aggregation looks.
+            self._close_requested.add(str(event.payload.id))
         self._sessions[str(event.payload.id)] = event.payload
         return True
+
+    def _ended_deliberately(self, record) -> bool:
+        """The session was ended on purpose and nothing went wrong.
+
+        Two ways: sshPilot closed it (a closed tab, a quit), which the daemon
+        takes through CLOSING; or the user typed ``exit`` and the shell left
+        with status 0, the same test the tab uses to close itself
+        (``TerminalWidget._handle_daemon_session_exit``). Either way the
+        process exit the daemon records is not a lost connection.
+        """
+        if isinstance(record, SftpServiceSummary) or record.failure is not None:
+            return False
+        if record.state is SessionState.CLOSING:
+            # Only a requested close (tab close, quit) enters CLOSING.
+            self._close_requested.add(str(record.id))
+            return True
+        if record.state not in {SessionState.EXITED, SessionState.CLOSED}:
+            return False
+        if str(record.id) in self._close_requested:
+            return True
+        exit_info = record.exit_info
+        return (
+            exit_info is not None
+            and exit_info.exit_code == 0
+            and not exit_info.signal
+        )
 
     def _aggregate_locked(self) -> Dict[str, ConnectionRuntimeStatus]:
         grouped: Dict[str, list] = {}
@@ -240,7 +282,7 @@ class ConnectionRuntimeStatusStore:
 
         statuses = {}
         for connection_id, records in grouped.items():
-            status = self._aggregate_records(records)
+            status = self._aggregate_records(records, self._ended_deliberately)
             if status.state is not ConnectionState.UNKNOWN:
                 statuses[connection_id] = status
 
@@ -321,7 +363,7 @@ class ConnectionRuntimeStatusStore:
         )
 
     @classmethod
-    def _aggregate_records(cls, records) -> ConnectionRuntimeStatus:
+    def _aggregate_records(cls, records, ended_deliberately=None) -> ConnectionRuntimeStatus:
         """Fold a connection's sessions and SFTP services into one status.
 
         Both are connections to the host, so either kind being live makes the
@@ -338,6 +380,10 @@ class ConnectionRuntimeStatusStore:
         ]
         if terminal_outcomes:
             latest = max(terminal_outcomes, key=lambda record: record.created_at)
+            if ended_deliberately is not None and ended_deliberately(latest):
+                # A closed tab or a typed ``exit`` is no news: like a newer
+                # clean result, it also clears an older one.
+                return UNKNOWN_RUNTIME_STATUS
             if latest.failure is not None or cls._is_failed(latest):
                 if latest.failure is None:
                     reason = ""
