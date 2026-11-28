@@ -13,7 +13,7 @@ name: Flatpak tests
 
 on:
   push:
-    branches: [dev, main]
+    branches: [main]
     tags:
       - 'v*'
   workflow_dispatch:

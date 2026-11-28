@@ -101,8 +101,8 @@ results are in [dev-intelligence.md](dev-intelligence.md).
 | --- | --- |
 | A test or the app fails | `diagnose_bug(symptoms=..., traceback=...)`, then `get_context(reference=<top candidate id>)` |
 | Plan a feature | `plan_feature(request=..., subsystem=...)` |
-| Understand a change | `inspect_impact(base="origin/dev")` or `inspect_impact(paths=[...])` |
-| Check it before committing | `verify_change(base="origin/dev", mode="focused")`; add the `suites` it recommends |
+| Understand a change | `inspect_impact(base="origin/main")` or `inspect_impact(paths=[...])` |
+| Check it before committing | `verify_change(base="origin/main", mode="focused")`; add the `suites` it recommends |
 | Look closer at one symbol | `get_context(reference="path::Class.method")` (or `wire:sessions.open`) |
 | Rebuild or inspect the index | `index_status(rebuild=False)` |
 

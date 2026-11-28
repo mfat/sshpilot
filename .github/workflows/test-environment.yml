@@ -2,14 +2,14 @@ name: Test environment
 
 # Builds the test-environment image (real mosh/kubectl/kind/docker/socat/picocom)
 # and runs the integration tests against those real tools, plus a real login
-# and every non-SSH protocol tab in a real window, on every push to dev and
-# main and when a release is tagged. The rest of the headless suite runs in
+# and every non-SSH protocol tab in a real window, on every push to main
+# and when a release is tagged. The rest of the headless suite runs in
 # tests.yml. The virtual-FIDO job needs runner kernel modules GitHub keeps
 # changing: it runs only when started by hand.
 
 on:
   push:
-    branches: [dev, main]
+    branches: [main]
     tags:
       - 'v*'
   workflow_dispatch:

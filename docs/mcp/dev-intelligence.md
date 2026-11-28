@@ -25,9 +25,9 @@ The same operations are available without the MCP SDK:
 python -m sshpilot.mcp.dev.cli index-status
 python -m sshpilot.mcp.dev.cli diagnose-bug --symptoms "..." --traceback-file trace.txt
 python -m sshpilot.mcp.dev.cli plan-feature "rename a port forward" --subsystem daemon
-python -m sshpilot.mcp.dev.cli inspect-impact --base origin/dev
+python -m sshpilot.mcp.dev.cli inspect-impact --base origin/main
 python -m sshpilot.mcp.dev.cli get-context src/sshpilot/daemon/dispatch.py::RequestDispatcher._handle_open_session
-python -m sshpilot.mcp.dev.cli verify-change --base origin/dev --mode focused
+python -m sshpilot.mcp.dev.cli verify-change --base origin/main --mode focused
 ```
 
 The CLI prints JSON. It exits 2 for invalid input; `verify-change` exits 0

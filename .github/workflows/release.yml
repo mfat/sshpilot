@@ -1,8 +1,8 @@
 name: Release
 
-# Manual, non-interactive twin of scripts/release.sh: bump the version on the
-# dev branch, merge it into main, tag, and push. The tag push is what makes the
-# existing build-deb / build-rpm / macOS / flathub workflows run.
+# Manual, non-interactive twin of scripts/release.sh: bump the version on
+# main, tag, and push. The tag push is what makes the existing build-deb /
+# build-rpm / macOS / flathub workflows run.
 on:
   workflow_dispatch:
     inputs:
@@ -19,12 +19,8 @@ on:
         required: false
         type: boolean
         default: false
-      dev_branch:
-        description: 'Branch to release from'
-        default: dev
-        type: string
-      main_branch:
-        description: 'Branch to merge into and tag'
+      branch:
+        description: 'Branch to bump, tag and release'
         default: main
         type: string
 
@@ -52,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.RELEASE_TOKEN || secrets.PPA_TRIGGER_TOKEN }}
-          ref: ${{ inputs.dev_branch }}
+          ref: ${{ inputs.branch }}
           fetch-depth: 0
 
       # dch writes debian/changelog, which is the version of record for the PPA.
@@ -76,9 +72,9 @@ jobs:
             echo "::error::Tag v$VERSION already exists."
             exit 1
           fi
-          # Read the version currently on the release branch. An interrupted
-          # previous run may have already pushed the bump (and nothing else),
-          # in which case we skip re-bumping and resume at merge/tag.
+          # Read the version currently on the release branch. If the bump is
+          # already there (committed by hand, or by an older run that pushed
+          # it without the tag), skip re-bumping and just tag.
           CURRENT=$(python3 - <<'PY'
           import re
           from pathlib import Path
@@ -96,7 +92,7 @@ jobs:
               echo "::error::Could not determine the previous release tag."
               exit 1
             fi
-            echo "Version already bumped to $VERSION; resuming merge/tag."
+            echo "Version already bumped to $VERSION; tagging it."
           else
             ALREADY_BUMPED=false
             # Same semver + must-increase rules the interactive helper applies.
@@ -134,30 +130,23 @@ jobs:
         if: steps.check.outputs.already_bumped != 'true'
         run: scripts/bump-version.sh '${{ steps.check.outputs.version }}' < ${RUNNER_TEMP}/changelog.txt
 
-      - name: Push the bump to ${{ inputs.dev_branch }}
+      - name: Commit the bump
         if: steps.check.outputs.already_bumped != 'true'
-        run: |
-          set -eu
-          git commit -am "Bump version to ${{ steps.check.outputs.version }}"
-          git push origin '${{ inputs.dev_branch }}'
+        run: git commit -am "Bump version to ${{ steps.check.outputs.version }}"
 
-      - name: Merge into ${{ inputs.main_branch }} and tag
+      # Branch and tag go up in one atomic push: a rejected branch push (main
+      # moved while this ran) leaves no orphan tag behind. Rerun the release
+      # after pulling; the version check then starts from the new main.
+      - name: Tag and push
         run: |
           set -eu
           VERSION='${{ steps.check.outputs.version }}'
-          git checkout '${{ inputs.main_branch }}'
-          git pull --ff-only origin '${{ inputs.main_branch }}'
-          # Unlike the interactive helper there is nobody here to judge a
-          # conflict, so fail rather than guess which side is right.
-          git merge --no-ff '${{ inputs.dev_branch }}' \
-            -m "Merge ${{ inputs.dev_branch }} into ${{ inputs.main_branch }} for v$VERSION"
           # Match scripts/release.sh: two -m paragraphs (title + body).
           # Git rejects combining -m with -F.
           git tag -a "v$VERSION" \
             -m "SSH Pilot v$VERSION" \
             -m "$(cat "${RUNNER_TEMP}/changelog.txt")"
-          git push origin '${{ inputs.main_branch }}'
-          git push origin "v$VERSION"
+          git push --atomic origin 'HEAD:${{ inputs.branch }}' "v$VERSION"
 
       - name: Create GitHub release
         env:
@@ -198,15 +187,14 @@ jobs:
           gh "${ARGS[@]}"
 
       # Runs after the tag is pushed: the PKGBUILD checksum covers the tarball
-      # GitHub generates for the tag. main-only, so the merge above can never
-      # conflict over it.
+      # GitHub generates for the tag, so it lands one commit after the tag.
       - name: Update the Arch PKGBUILD
         run: |
           set -eu
           VERSION='${{ steps.check.outputs.version }}'
           scripts/update-arch-pkgbuild.sh "$VERSION"
           git commit -am "Update Arch PKGBUILD for v$VERSION"
-          git push origin '${{ inputs.main_branch }}'
+          git push origin 'HEAD:${{ inputs.branch }}'
 
       # Publish that PKGBUILD to the AUR package `sshpilot`. Nothing on the AUR
       # side follows releases: users' AUR helpers only see a new version once

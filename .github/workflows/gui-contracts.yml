@@ -10,7 +10,7 @@ name: GUI contracts
 
 on:
   push:
-    branches: [dev, main]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

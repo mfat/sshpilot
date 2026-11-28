@@ -4,14 +4,13 @@ set -euo pipefail
 
 # Interactive front-end for the Release workflow (.github/workflows/release.yml).
 # Collects the version/changelog and dispatches the workflow, which owns the
-# whole release: bump (scripts/bump-version.sh), merge dev into main, tag,
+# whole release: bump (scripts/bump-version.sh) on main, tag,
 # GitHub release, Arch PKGBUILD, and the Launchpad PPA nudge.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-DEFAULT_DEV_BRANCH="dev"
-DEFAULT_MAIN_BRANCH="main"
+DEFAULT_BRANCH="main"
 WORKFLOW="release.yml"
 
 echo "sshPilot release helper"
@@ -26,10 +25,8 @@ if ! gh auth status >/dev/null 2>&1; then
   exit 1
 fi
 
-read -rp "Dev branch to release from [$DEFAULT_DEV_BRANCH]: " DEV_BRANCH
-DEV_BRANCH=${DEV_BRANCH:-$DEFAULT_DEV_BRANCH}
-read -rp "Main branch to merge into [$DEFAULT_MAIN_BRANCH]: " MAIN_BRANCH
-MAIN_BRANCH=${MAIN_BRANCH:-$DEFAULT_MAIN_BRANCH}
+read -rp "Branch to release from [$DEFAULT_BRANCH]: " BRANCH
+BRANCH=${BRANCH:-$DEFAULT_BRANCH}
 
 read -rp "Publish as [R]elease or [P]re-release? [R]: " RELEASE_KIND
 RELEASE_KIND=${RELEASE_KIND:-R}
@@ -105,7 +102,7 @@ CHANGELOG=$(sed '/^#/d' "$CHANGELOG_FILE")
 echo
 echo "Ready to dispatch the Release workflow:"
 echo "  Version:      v$VERSION"
-echo "  Branches:     $DEV_BRANCH -> $MAIN_BRANCH"
+echo "  Branch:       $BRANCH"
 echo "  Pre-release:  $PRERELEASE"
 if [[ -z "${CHANGELOG//[[:space:]]/}" ]]; then
   echo "  Changelog:    (derived from commits since the last release)"
@@ -121,22 +118,19 @@ if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
   exit 1
 fi
 
-# Dispatch the workflow as it exists on the dev branch, so a release picks up
-# workflow changes that have not been merged to main yet (the release itself
-# does that merge).
-gh workflow run "$WORKFLOW" --ref "$DEV_BRANCH" \
+# Dispatch the workflow as it exists on the release branch.
+gh workflow run "$WORKFLOW" --ref "$BRANCH" \
   -f "version=$VERSION" \
   -f "changelog=$CHANGELOG" \
   -f "prerelease=$PRERELEASE" \
-  -f "dev_branch=$DEV_BRANCH" \
-  -f "main_branch=$MAIN_BRANCH"
+  -f "branch=$BRANCH"
 
 # The dispatch API returns nothing; poll for the run it created.
 echo "Waiting for the run to appear..."
 RUN_ID=""
 for _ in $(seq 1 10); do
   sleep 3
-  RUN_ID=$(gh run list --workflow "$WORKFLOW" --branch "$DEV_BRANCH" \
+  RUN_ID=$(gh run list --workflow "$WORKFLOW" --branch "$BRANCH" \
     --limit 1 --json databaseId,status \
     --jq '.[0] | select(.status != "completed") | .databaseId' || true)
   [[ -n "$RUN_ID" ]] && break

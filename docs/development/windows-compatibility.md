@@ -18,10 +18,9 @@ that rule and do affect Linux. Treat them as product decisions:
 ## How Windows is tested
 
 - `.github/workflows/windows.yml` runs the unit tests and a few GUI tests on
-  `windows-latest`. It runs **only on pull requests and manual dispatch.**
-  Commits pushed straight to `dev` or `main` are not tested on Windows. For
-  anything that touches the areas below, open a PR, or start the workflow by
-  hand (`gh workflow run windows.yml --ref <branch>`).
+  `windows-latest` on every push to `main`, on pull requests and by hand
+  (`gh workflow run windows.yml --ref <branch>`). Run it by hand on a branch
+  before merging anything that touches the areas below.
 - `tests/windows_posix_only.txt` lists tests that assume POSIX. On Windows,
   `tests/conftest.py` runs each one as a non-strict xfail, and does not
   collect modules listed with `collect:`. On Linux and macOS the file is not
