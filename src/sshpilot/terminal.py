@@ -1429,6 +1429,10 @@ class TerminalWidget(Gtk.Box):
                 self._show_post_connect_overlay()
             elif self._overlay_mode in ("none", "forwarding"):
                 self._set_session_overlay_mode("connecting")
+        elif getattr(self, "is_connected", False) and self._overlay_mode == "connecting":
+            # The session came up while this answer was pending, and
+            # _show_post_connect_overlay kept the veil for it: lift it now.
+            self._show_post_connect_overlay()
 
     def ensure_forwarding_only_context(self, client=None, bridge=None) -> None:
         """Resolve SessionType none + rules as OpenSSH resolves them.
@@ -1447,16 +1451,21 @@ class TerminalWidget(Gtk.Box):
         )
 
         connection = getattr(self, "connection", None)
+        if connection is not None and (
+            getattr(connection, "is_local_shell", False)
+            or str(getattr(connection, "protocol", None) or "ssh").casefold() != "ssh"
+        ):
+            # SessionType none is an SSH setting: a local shell or a protocol
+            # plugin tab (mosh, telnet, ...) is never forwarding-only. Left
+            # unresolved, the tab kept its Connecting veil forever (#1432).
+            self.apply_forwarding_only_context(forwarding_only=False)
+            return
         flagged = connection_forwarding_only(connection)
         if flagged is not None:
             self._forwarding_only_known = flagged
             if flagged:
                 self._update_forwarding_only_tab_title()
         if client is None or bridge is None or connection is None:
-            return
-        if getattr(connection, "is_local_shell", False) or (
-            str(getattr(connection, "protocol", None) or "ssh").casefold() != "ssh"
-        ):
             return
         try:
             from .api.connection_identity import connection_id_for

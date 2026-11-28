@@ -296,3 +296,48 @@ def test_forwarding_only_falls_back_to_authored_without_effective(monkeypatch):
     term.ensure_forwarding_only_context(client, _ImmediateBridge())
 
     assert term.is_forwarding_only_session() is True
+
+
+@pytest.mark.parametrize("protocol", ["mosh", "telnet", "docker", "k8s", "serial"])
+def test_protocol_plugin_tab_is_never_forwarding_only(protocol):
+    """SessionType none is SSH-only; a plugin tab must not wait for it (#1432).
+
+    The daemon reports the session ACTIVE first; the veil was kept because
+    the forwarding-only answer stayed unresolved for non-SSH protocols.
+    """
+    term = _bare_terminal(SimpleNamespace(nickname="m", protocol=protocol))
+    term.is_connected = True
+    term.connection_state = ConnectionState.CONNECTED
+    term._show_post_connect_overlay()
+    assert term._overlay_mode == "connecting"
+
+    client = Mock()
+    term.ensure_forwarding_only_context(client, _ImmediateBridge())
+
+    assert term.is_forwarding_only_session() is False
+    assert term._overlay_mode == "none"
+    term.connecting_box.set_visible.assert_called_with(False)
+    client.get_effective_config.assert_not_called()
+    client.get_connection_editor.assert_not_called()
+
+
+def test_late_shell_answer_lifts_the_veil(monkeypatch):
+    """An SSH host resolved as a shell after the session came up shows the terminal."""
+    from sshpilot.api.models.connections import EffectiveConfigComparison
+
+    term = _bare_terminal(SimpleNamespace(nickname="h", display_name="h"))
+    term.is_connected = True
+    term.connection_state = ConnectionState.CONNECTED
+    term._show_post_connect_overlay()
+    assert term._overlay_mode == "connecting"
+    monkeypatch.setattr(
+        "sshpilot.api.connection_identity.connection_id_for", lambda _c: "h"
+    )
+    client = Mock()
+    client.get_effective_config.return_value = EffectiveConfigComparison(
+        connection_id="h", host="h", available=True, full=("hostname example.com", "sessiontype default")
+    )
+
+    term.ensure_forwarding_only_context(client, _ImmediateBridge())
+
+    assert term._overlay_mode == "none"
