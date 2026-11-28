@@ -167,7 +167,8 @@ class ConnectionDialogMultiplexMixin:
         )
         self.multiplex_path_row._sshpilot_search_keywords = "socket"
         self.multiplex_persist_row = Adw.EntryRow(
-            title=_("Keep open after last session")
+            # The OpenSSH option name is a literal, never translated.
+            title=f'{_("Keep open after last session")} (ControlPersist)'
         )
         self.multiplex_persist_row.set_tooltip_text(
             _("How long the shared connection stays up once its last terminal "
