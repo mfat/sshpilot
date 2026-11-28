@@ -1395,4 +1395,7 @@ class PyteTerminalBackend:
             "daemon_resize",
             "save_output",
             "hyperlinks",
+            # It runs local shells too (spawn_async), so snippets, broadcast
+            # and a local tab's start command may type into them.
+            "local_process",
         }

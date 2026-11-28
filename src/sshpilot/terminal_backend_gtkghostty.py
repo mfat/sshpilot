@@ -729,5 +729,8 @@ class GtkGhosttyTerminalBackend:
             "daemon_resize",
             "save_output",
             "hyperlinks",
+            # It runs local shells too (spawn_async), so snippets, broadcast
+            # and a local tab's start command may type into them.
+            "local_process",
             "clipboard-html",
         } or (feature == "encoding" and hasattr(self.view, "set_encoding"))
