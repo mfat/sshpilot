@@ -19186,6 +19186,21 @@ msgstr "{view} (alterações não guardadas)"
 msgid "{kind} · off"
 msgstr "{kind} · desligado"
 
+msgid "Make this a Host or a Match block"
+msgstr "Tornar este bloco um bloco Host ou Match"
+
+msgid "Block type"
+msgstr "Tipo de bloco"
+
+msgid "These host patterns contain quotes or commas, which a Match line reads differently. Change the line in the Raw view."
+msgstr "Estes padrões de anfitrião contêm aspas ou vírgulas, que uma linha Match lê de outra forma. Altere a linha na vista «Dados não formatados»."
+
+msgid "Match host checks the name after HostName has replaced it, which a Host block cannot do. Use Match originalhost to check the name as typed."
+msgstr "Match host verifica o nome depois de HostName o ter substituído, algo que um bloco Host não consegue fazer. Utilize Match originalhost para verificar o nome tal como foi escrito."
+
+msgid "This Match block checks more than the host name, so it cannot become a Host block without applying to different connections."
+msgstr "Este bloco Match verifica mais do que o nome do anfitrião, pelo que não pode tornar-se um bloco Host sem se aplicar a outras ligações."
+
 #~ msgid "Pick a block that names a host to see what OpenSSH would use for it."
 #~ msgstr ""
 #~ "Escolha um bloco que indique um anfitrião para ver o que o OpenSSH usaria "

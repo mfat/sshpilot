@@ -165,3 +165,79 @@ def test_the_hosts_a_pattern_block_is_asked_about(editor):
     ]
     assert sample_hosts(Block(kind=MATCH, patterns="host *.prod")) == []   # criteria
     assert sample_hosts(None) == []
+
+
+# -- Host to Match and back -----------------------------------------------------
+
+from sshpilot.advanced_config_model import converted_patterns  # noqa: E402
+
+
+@pytest.mark.parametrize("patterns, match", [
+    ("web1 web2", "originalhost web1,web2"),
+    ("*", "all"),
+    ("", ""),
+    ("*.example !bastion", "originalhost *.example,!bastion"),
+])
+def test_host_patterns_become_the_same_match(patterns, match):
+    assert converted_patterns(HOST, patterns, MATCH) == match
+    assert converted_patterns(MATCH, match, HOST) == patterns
+
+
+@pytest.mark.parametrize("patterns", ['"web 1"', "a,b"])
+def test_host_patterns_a_match_line_reads_otherwise_are_refused(patterns):
+    assert converted_patterns(HOST, patterns, MATCH) is Refusal.HOST_PATTERNS_UNCONVERTIBLE
+
+
+@pytest.mark.parametrize("conditions, expected", [
+    ("host web1", Refusal.MATCH_HOST_AFTER_HOSTNAME),
+    ("user admin", Refusal.MATCH_NOT_HOST_NAMES),
+    ("originalhost a user b", Refusal.MATCH_NOT_HOST_NAMES),
+    ("!originalhost a", Refusal.MATCH_NOT_HOST_NAMES),
+    ("originalhost a,,b", Refusal.MATCH_NOT_HOST_NAMES),
+    ("exec true", Refusal.MATCH_NOT_HOST_NAMES),
+])
+def test_match_conditions_no_host_line_says_are_refused(conditions, expected):
+    assert converted_patterns(MATCH, conditions, HOST) is expected
+
+
+def test_quoted_and_capitalised_originalhost_become_a_host_line():
+    assert converted_patterns(MATCH, 'OriginalHost "a,b"', HOST) == "a b"
+    assert converted_patterns(MATCH, "ALL", HOST) == "*"
+
+
+def test_set_kind_rewrites_the_header_and_keeps_the_rest(editor):
+    _glob, web, _star = editor.blocks
+    assert editor.set_kind(web.uid, MATCH) is True
+    assert "Match originalhost web1,web2\n    User deploy\n    Port 2222\n" in editor.text
+    assert "Host web1" not in editor.text
+    assert editor.set_kind(web.uid, HOST) is True
+    assert editor.text == TEXT
+    editor.undo()
+    assert "Match originalhost web1,web2" in editor.text
+    editor.undo()
+    assert editor.text == TEXT
+
+
+def test_set_kind_keeps_a_comment_and_a_switched_off_block():
+    editor = DraftEditor()
+    editor.load("# [disabled] Host old # retired\n# [disabled]     User x\n")
+    block = editor.blocks[0]
+    assert block.disabled
+    assert editor.set_kind(block.uid, MATCH) is True
+    assert editor.text == (
+        "# [disabled] Match originalhost old # retired\n# [disabled]     User x\n"
+    )
+
+
+def test_set_kind_refusals_change_nothing(editor):
+    editor.load("Match user admin\n    Port 22\n")
+    block = editor.blocks[0]
+    assert editor.set_kind(block.uid, HOST) is Refusal.MATCH_NOT_HOST_NAMES
+    assert editor.text == "Match user admin\n    Port 22\n" and not editor.dirty
+    assert editor.set_kind(block.uid, MATCH) is False      # already one
+
+
+def test_global_options_have_no_kind_to_change(editor):
+    glob = editor.blocks[0]
+    assert editor.set_kind(glob.uid, HOST) is False
+    assert editor.text == TEXT

@@ -19339,6 +19339,21 @@ msgstr "{view} (ungespeicherte Änderungen)"
 msgid "{kind} · off"
 msgstr "{kind} · aus"
 
+msgid "Make this a Host or a Match block"
+msgstr "Diesen Block zu einem Host- oder Match-Block machen"
+
+msgid "Block type"
+msgstr "Blocktyp"
+
+msgid "These host patterns contain quotes or commas, which a Match line reads differently. Change the line in the Raw view."
+msgstr "Diese Host-Muster enthalten Anführungszeichen oder Kommas, die eine Match-Zeile anders liest. Ändern Sie die Zeile in der Ansicht „Rohdaten“."
+
+msgid "Match host checks the name after HostName has replaced it, which a Host block cannot do. Use Match originalhost to check the name as typed."
+msgstr "Match host prüft den Namen, nachdem HostName ihn ersetzt hat; das kann ein Host-Block nicht. Verwenden Sie Match originalhost, um den eingegebenen Namen zu prüfen."
+
+msgid "This Match block checks more than the host name, so it cannot become a Host block without applying to different connections."
+msgstr "Dieser Match-Block prüft mehr als den Hostnamen und kann daher kein Host-Block werden, ohne für andere Verbindungen zu gelten."
+
 #~ msgid "Pick a block that names a host to see what OpenSSH would use for it."
 #~ msgstr ""
 #~ "Wählen Sie einen Block, der einen Host benennt, um zu sehen, was OpenSSH "

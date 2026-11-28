@@ -180,11 +180,16 @@ class Block:
             if not self.disabled:
                 return None
             return self.raw if self.raw is not None else DISABLED_GLOBAL + eol
-        if self.raw is not None and (self.patterns, self.disabled) == self._parsed:
+        written = self._written
+        # The kind may have changed since the line was read (Host to Match):
+        # the keyword as written is kept only while it still says the kind.
+        same_kind = written is None or written.keyword.strip('"').lower() == self.kind
+        if (self.raw is not None and same_kind
+                and (self.patterns, self.disabled) == self._parsed):
             return self.raw
         default = "*" if self.kind == HOST else "all"
-        written = self._written
-        keyword = written.keyword if written else ("Host" if self.kind == HOST else "Match")
+        keyword = (written.keyword if written and same_kind
+                   else ("Host" if self.kind == HOST else "Match"))
         indent = written.indent if written else ""
         separator = written.separator if written else " "
         text = f"{indent}{keyword}{separator}{self.patterns.strip() or default}"

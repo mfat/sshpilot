@@ -19249,6 +19249,21 @@ msgstr "{view} (несохранённые изменения)"
 msgid "{kind} · off"
 msgstr "{kind} · выкл."
 
+msgid "Make this a Host or a Match block"
+msgstr "Сделать этот блок блоком Host или Match"
+
+msgid "Block type"
+msgstr "Тип блока"
+
+msgid "These host patterns contain quotes or commas, which a Match line reads differently. Change the line in the Raw view."
+msgstr "Эти шаблоны узлов содержат кавычки или запятые, которые строка Match читает иначе. Измените строку в представлении «Необработанные данные»."
+
+msgid "Match host checks the name after HostName has replaced it, which a Host block cannot do. Use Match originalhost to check the name as typed."
+msgstr "Match host проверяет имя после того, как HostName заменил его, а блок Host так не умеет. Используйте Match originalhost, чтобы проверять имя в том виде, в каком оно введено."
+
+msgid "This Match block checks more than the host name, so it cannot become a Host block without applying to different connections."
+msgstr "Этот блок Match проверяет не только имя узла, поэтому его нельзя превратить в блок Host, не изменив набор подключений, к которым он применяется."
+
 #~ msgid "Pick a block that names a host to see what OpenSSH would use for it."
 #~ msgstr ""
 #~ "Выберите блок, в котором указан узел, чтобы увидеть, что OpenSSH "

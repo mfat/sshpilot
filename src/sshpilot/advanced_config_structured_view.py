@@ -39,7 +39,7 @@ from .ssh_config_answer import (  # noqa: E402
     ConfigAnswer,
     LineVerdict,
 )
-from .ssh_config_blocks import GLOBAL, HOST, Block, LineMap, block_category  # noqa: E402
+from .ssh_config_blocks import GLOBAL, HOST, MATCH, Block, LineMap, block_category  # noqa: E402
 from .ssh_option_list import OPENSSH_KEYWORDS, style_keyword_suggestions  # noqa: E402
 from .route_strip import FlowLayout  # noqa: E402
 
@@ -317,6 +317,8 @@ class LineRow:
         self.down = _icon_button("go-down-symbolic", _("Move Down"), lambda: view.move_line(self.uid, 1))
         remove = _icon_button("user-trash-symbolic", _("Remove option"),
                               lambda: view.controller.delete_option(self.uid))
+        # One column with the block's Host/Match chooser above.
+        view.keyword_column.add_widget(self.key)
         for widget in (self.key, self.value, self.browse, self.state, self.up, self.down, remove):
             box.append(widget)
         # Under the fields, while the line goes unused: what is used instead.
@@ -713,9 +715,17 @@ class StructuredView(Gtk.Box):
         grip_space.add_css_class("advcfg-drag-handle")
         grip_space.set_opacity(0)
         header_fields.append(grip_space)
-        self.header_keyword = _entry(width=24)
-        self.header_keyword.set_editable(False)
-        self.header_keyword.update_property([Gtk.AccessibleProperty.LABEL], [_("Option")])
+        # Host or Match: the chooser converts what follows, so the block
+        # stays for the same hosts (or refuses, see DraftEditor.set_kind).
+        # The words are OpenSSH's own: not translated.
+        self.keyword_column = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+        self.header_keyword = Gtk.DropDown.new_from_strings(["Host", "Match"])
+        self.header_keyword.set_valign(Gtk.Align.CENTER)
+        self.header_keyword.add_css_class("monospace")
+        self.header_keyword.set_tooltip_text(_("Make this a Host or a Match block"))
+        self.header_keyword.update_property([Gtk.AccessibleProperty.LABEL], [_("Block type")])
+        self.header_keyword.connect("notify::selected", self._on_kind_chosen)
+        self.keyword_column.add_widget(self.header_keyword)
         header_fields.append(self.header_keyword)
         self.patterns_row = _entry()
         self.patterns_row.set_hexpand(True)
@@ -884,6 +894,7 @@ class StructuredView(Gtk.Box):
 
     def _drop_row(self, uid: int) -> None:
         row = self._rows.pop(uid)
+        self.keyword_column.remove_widget(row.key)
         self.options_list.remove(row.row)
         if hasattr(row, "destroy"):
             row.destroy()
@@ -911,9 +922,17 @@ class StructuredView(Gtk.Box):
         is_global = block.kind == GLOBAL
         # Global options have no Host or Match line.
         self.header_row.set_visible(not is_global)
-        keyword = "Host" if block.kind == HOST else "Match"
-        if self.header_keyword.get_text() != keyword:
-            self.header_keyword.set_text(keyword)
+        selected = 0 if block.kind == HOST else 1
+        if self.header_keyword.get_selected() != selected:
+            self.syncing.on = True
+            try:
+                self.header_keyword.set_selected(selected)
+            finally:
+                self.syncing.on = False
+        if self.patterns_row.get_tooltip_text() != (
+            _("The names and patterns this block is for") if block.kind == HOST
+            else _("The conditions this block is for")
+        ):
             self.patterns_row.set_tooltip_text(
                 _("The names and patterns this block is for") if block.kind == HOST
                 else _("The conditions this block is for")
@@ -1092,6 +1111,13 @@ class StructuredView(Gtk.Box):
         self._show_applies(block, hosts)
 
     # -- gestures ----------------------------------------------------------------
+
+    def _on_kind_chosen(self, dropdown, _pspec) -> None:
+        if self.syncing.on or self.uid is None or self.kind == GLOBAL:
+            return
+        kind = HOST if dropdown.get_selected() == 0 else MATCH
+        if kind != self.kind:
+            self.controller.set_block_kind(self.uid, kind)
 
     def _on_patterns_changed(self, row) -> None:
         if not self.syncing.on and self.uid is not None:

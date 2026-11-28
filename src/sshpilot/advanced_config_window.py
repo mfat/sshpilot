@@ -1220,10 +1220,29 @@ class AdvancedConfigBase:
 
     def _toast_refusal(self, refusal) -> None:
         if refusal is Refusal.GLOBAL_ORDER:
-            self._toasts.add_toast(Adw.Toast.new(_(
+            text = _(
                 "Global options must stay above every Host and Match block: "
                 "OpenSSH reads an option below a Host line as that host's."
-            )))
+            )
+        elif refusal is Refusal.HOST_PATTERNS_UNCONVERTIBLE:
+            text = _(
+                "These host patterns contain quotes or commas, which a Match "
+                "line reads differently. Change the line in the Raw view."
+            )
+        elif refusal is Refusal.MATCH_HOST_AFTER_HOSTNAME:
+            text = _(
+                "Match host checks the name after HostName has replaced it, "
+                "which a Host block cannot do. Use Match originalhost to check "
+                "the name as typed."
+            )
+        elif refusal is Refusal.MATCH_NOT_HOST_NAMES:
+            text = _(
+                "This Match block checks more than the host name, so it cannot "
+                "become a Host block without applying to different connections."
+            )
+        else:
+            return
+        self._toasts.add_toast(Adw.Toast.new(text))
 
     # ------------------------------------------------------------------
     # edits (called by the views and by keys)
@@ -1282,6 +1301,11 @@ class AdvancedConfigBase:
         if blocks.index(source) < index:
             index -= 1
         return self.move_block(uid, index)
+
+    def set_block_kind(self, uid: int, kind: str) -> None:
+        """Host to Match or back, for the same hosts."""
+        if not self._after_structure(self.editor.set_kind(uid, kind)):
+            self._show_draft()              # refused: the chooser goes back
 
     def toggle_block(self, uid: int) -> None:
         if not self._after_structure(self.editor.toggle_block(uid)):

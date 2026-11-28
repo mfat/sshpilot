@@ -14,6 +14,7 @@ from typing import List, Optional, Sequence
 from .ssh_config_blocks import (
     GLOBAL,
     HOST,
+    MATCH,
     Block,
     ConfigDraft,
     LineMap,
@@ -30,6 +31,49 @@ class Refusal(str, Enum):
 
     #: The order would put global options under a block that is on.
     GLOBAL_ORDER = "global_order"
+    #: Host patterns with quotes or commas: a Match line reads them otherwise.
+    HOST_PATTERNS_UNCONVERTIBLE = "host_patterns_unconvertible"
+    #: ``Match host``: it checks the name after HostName replaced it, which
+    #: no Host line can.
+    MATCH_HOST_AFTER_HOSTNAME = "match_host_after_hostname"
+    #: A Match line that checks more than the host name typed.
+    MATCH_NOT_HOST_NAMES = "match_not_host_names"
+
+
+def converted_patterns(kind: str, patterns: str, to: str):
+    """What follows the header when a block of *kind* becomes one of *to*,
+    meaning the same hosts; or a :class:`Refusal` when no such line exists.
+
+    ``Host a b`` is ``Match originalhost a,b``: ``Host`` checks the name as
+    typed, and so does ``originalhost`` (``Match host`` checks the name
+    after a HostName line replaced it). ``Host *`` is ``Match all``.
+    """
+    tokens = (patterns or "").split()
+    if kind == to:
+        return patterns
+    if not tokens:
+        return ""                       # the default of each: every host
+    if kind == HOST and to == MATCH:
+        if '"' in patterns or "," in patterns:
+            return Refusal.HOST_PATTERNS_UNCONVERTIBLE
+        if tokens == ["*"]:
+            return "all"
+        return "originalhost " + ",".join(tokens)
+    if kind == MATCH and to == HOST:
+        if [t.lower() for t in tokens] == ["all"]:
+            return "*"
+        if len(tokens) == 2 and tokens[0].lower() in ("originalhost", "host"):
+            if tokens[0].lower() == "host":
+                return Refusal.MATCH_HOST_AFTER_HOSTNAME
+            names = tokens[1]
+            if len(names) >= 2 and names[0] == names[-1] == '"':
+                names = names[1:-1]
+            pieces = names.split(",")
+            if '"' in names or not all(pieces):
+                return Refusal.MATCH_NOT_HOST_NAMES
+            return " ".join(pieces)
+        return Refusal.MATCH_NOT_HOST_NAMES
+    return Refusal.MATCH_NOT_HOST_NAMES
 
 
 def can_place(blocks: Sequence[Block]) -> bool:
@@ -292,6 +336,22 @@ class DraftEditor:
             return False
         block.patterns = text
         self.typed()
+        return True
+
+    def set_kind(self, uid: int, kind: str):
+        """Make a Host block a Match block or back, for the same hosts
+        (see :func:`converted_patterns`). True, False or a Refusal."""
+        block = self.find_block(uid)
+        if block is None or block.kind == GLOBAL or kind not in (HOST, MATCH):
+            return False
+        if block.kind == kind:
+            return False
+        patterns = converted_patterns(block.kind, block.patterns, kind)
+        if isinstance(patterns, Refusal):
+            return patterns
+        block.kind = kind
+        block.patterns = patterns
+        self._structural()
         return True
 
     def set_note(self, uid: int, text: str) -> bool:

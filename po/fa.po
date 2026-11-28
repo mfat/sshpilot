@@ -18929,6 +18929,21 @@ msgstr "{view} (تغییرات ذخیره‌نشده)"
 msgid "{kind} · off"
 msgstr "{kind} · خاموش"
 
+msgid "Make this a Host or a Match block"
+msgstr "تبدیل این بلوک به بلوک Host یا Match"
+
+msgid "Block type"
+msgstr "نوع بلوک"
+
+msgid "These host patterns contain quotes or commas, which a Match line reads differently. Change the line in the Raw view."
+msgstr "این الگوهای میزبان دارای نقل‌قول یا ویرگول هستند که خط Match آن‌ها را به شکل دیگری می‌خواند. خط را در نمای «خام» تغییر دهید."
+
+msgid "Match host checks the name after HostName has replaced it, which a Host block cannot do. Use Match originalhost to check the name as typed."
+msgstr "Match host نام را پس از جایگزینی با HostName بررسی می‌کند، کاری که بلوک Host نمی‌تواند انجام دهد. برای بررسی نام همان‌طور که تایپ شده از Match originalhost استفاده کنید."
+
+msgid "This Match block checks more than the host name, so it cannot become a Host block without applying to different connections."
+msgstr "این بلوک Match چیزی بیش از نام میزبان را بررسی می‌کند، بنابراین نمی‌تواند بدون اعمال شدن بر اتصال‌های دیگر به بلوک Host تبدیل شود."
+
 #~ msgid "Pick a block that names a host to see what OpenSSH would use for it."
 #~ msgstr ""
 #~ "بلوکی را که نام یک میزبان را دارد انتخاب کنید تا ببینید OpenSSH برای آن "

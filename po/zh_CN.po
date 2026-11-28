@@ -18345,6 +18345,21 @@ msgstr "{view}（未保存的更改）"
 msgid "{kind} · off"
 msgstr "{kind} · 已关闭"
 
+msgid "Make this a Host or a Match block"
+msgstr "将此块设为 Host 或 Match 块"
+
+msgid "Block type"
+msgstr "块类型"
+
+msgid "These host patterns contain quotes or commas, which a Match line reads differently. Change the line in the Raw view."
+msgstr "这些主机模式包含引号或逗号，Match 行会以不同方式读取它们。请在“原始”视图中修改该行。"
+
+msgid "Match host checks the name after HostName has replaced it, which a Host block cannot do. Use Match originalhost to check the name as typed."
+msgstr "Match host 检查的是被 HostName 替换后的名称，Host 块无法做到这一点。请使用 Match originalhost 来检查输入时的名称。"
+
+msgid "This Match block checks more than the host name, so it cannot become a Host block without applying to different connections."
+msgstr "此 Match 块检查的不只是主机名，因此无法在不改变其适用连接的情况下转换为 Host 块。"
+
 #~ msgid "Pick a block that names a host to see what OpenSSH would use for it."
 #~ msgstr "选择一个指明主机的块，查看 OpenSSH 会为其使用什么。"
 
