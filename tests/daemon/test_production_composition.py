@@ -237,7 +237,7 @@ def test_production_composition_connections_capabilities(tmp_path, monkeypatch):
 
 
 def test_production_overrides_service_always_injects_controlmaster_args(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, short_runtime_dir
 ):
     """Task 6: the multiplex args are injected unconditionally; the loaded
     ``ssh.controlmaster`` value decides whether the fragment is composed."""

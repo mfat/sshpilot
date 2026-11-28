@@ -186,3 +186,29 @@ def test_real_overlay_takes_a_capture_motion_controller():
                            _toggle_zone)
     assert r._motion.get_propagation_phase() == Gtk.PropagationPhase.CAPTURE
     assert r._motion.get_widget() is overlay
+
+
+def test_claim_keeps_a_hover_revealed_popup_open():
+    r, popup = _reveal()
+    r._on_motion(_controller(), 10, 10)
+    _fire(r, '_reveal_id', r._reveal)
+    assert popup.visible and r.revealed
+    r.claim()
+    r._on_motion(_controller(), 400, 300)  # off the panel
+    assert not r._hide_id
+    assert popup.visible
+
+
+def test_claim_disarms_the_zone_under_the_resting_pointer():
+    # Collapsed, the sidebar stays "hidden" through the toggle's clicks, so
+    # closing it from the toggle must not let the hover pop it back out.
+    r, popup = _reveal()
+    r._on_motion(_controller(), 10, 10)
+    r.claim()
+    assert not r._reveal_id
+    r._on_motion(_controller(), 12, 10)    # the hand rests, jitters
+    assert not r._reveal_id
+    r._on_motion(_controller(), 30, 300)   # leave the zone ...
+    r._on_motion(_controller(), 30, 20)    # ... and come back: armed
+    assert r._reveal_id
+    r._cancel_reveal()

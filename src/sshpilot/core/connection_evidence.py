@@ -49,7 +49,24 @@ SSH_FAILURE_MARKERS = (
     "cannot listen to port",
     "master forward request failed",
     "remote forward failure",
+    # Multiplexing: the master could not listen on its ControlPath (missing
+    # directory, path too long). ssh exits only after authenticating.
+    "unix_listener:",
+    "controlpath too long",
+    # A refused ssh_config or -o value ("Bad ControlPersist argument.",
+    # "Bad configuration option: x", "terminating, 1 bad configuration
+    # options"): ssh exits before connecting.
+    "bad controlpersist argument",
+    "bad configuration option",
 )
+
+# ssh's closing line after the refused options it named above it.
+_FAILURE_SUMMARY_MARKER = "terminating, "
+
+
+def _is_failure_summary(lowered: str) -> bool:
+    """Whether a failure line only sums up failures named before it."""
+    return _FAILURE_SUMMARY_MARKER in lowered and "bad configuration option" in lowered
 
 # Positive login evidence from SSH diagnostics or a remote login banner.
 SSH_SUCCESS_MARKERS = (
@@ -142,6 +159,9 @@ def classify_connection_evidence(text: str) -> ConnectionEvidence:
         if not stripped:
             continue
         if any(marker in stripped for marker in SSH_FAILURE_MARKERS):
+            # The line naming the bad option says more than the summary.
+            if evidence.verdict == "failed" and _is_failure_summary(stripped):
+                continue
             # Keep ssh's own casing: this text is shown to the user verbatim.
             evidence = ConnectionEvidence("failed", original)
             continue
@@ -190,7 +210,8 @@ def post_auth_exit_failure_reason(
             continue
         lower = stripped.lower()
         if any(marker in lower for marker in SSH_FAILURE_MARKERS):
-            last_hint = stripped
+            if not (last_hint and _is_failure_summary(lower)):
+                last_hint = stripped
             continue
         if any(hint in lower for hint in _POST_AUTH_FAILURE_HINTS):
             # Skip pure debug chatter that happens to mention \"forward\".

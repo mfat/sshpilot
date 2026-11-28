@@ -6,7 +6,10 @@ selected protocol, and the results take the place of the section list.
 Choosing one opens its page, scrolls to the field and flashes it.
 
 The rows are read from the live pages, so a field added to a page is found
-without a table to keep in step. ``rank_matches`` is the matching itself,
+without a table to keep in step. A row that writes an OpenSSH option is also
+found by the option's keyword (``ControlMaster``, ``ProxyJump``), as a match
+in its subtitle: the keyword the override marks already know it by
+(``OVERRIDABLE_ROWS``), and any a row lists in ``_sshpilot_search_keywords``. ``rank_matches`` is the matching itself,
 free of widgets.
 """
 
@@ -15,7 +18,7 @@ from __future__ import annotations
 import logging
 import unicodedata
 from gettext import gettext as _
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import gi
 
@@ -188,12 +191,19 @@ class ConnectionDialogSearchMixin:
         ``row`` is ``None`` for a page matched by its name.
         """
         found = list(self._iter_page_rows())
+        keywords = self._option_keywords()
         described = []
         for page_id, group, row in found:
             subtitle = ""
             get_subtitle = getattr(row, "get_subtitle", None)
             if callable(get_subtitle):
                 subtitle = get_subtitle() or ""
+            # Matched as the subtitle is, never shown.
+            subtitle = " ".join(filter(None, (
+                subtitle,
+                keywords.get(id(row), ""),
+                getattr(row, "_sshpilot_search_keywords", ""),
+            )))
             described.append((page_id, group, row.get_title() or "", subtitle))
         results = []
         for page_id, index in rank_matches(query, self._searchable_pages(), described):
@@ -202,6 +212,17 @@ class ConnectionDialogSearchMixin:
             else:
                 results.append((page_id, found[index][1], found[index][2]))
         return results
+
+    def _option_keywords(self) -> Dict[int, str]:
+        """The OpenSSH keyword of each row that writes one, by ``id(row)``."""
+        from .connection_dialog_overrides import OVERRIDABLE_ROWS
+
+        keywords = {}
+        for row_name, keyword in OVERRIDABLE_ROWS:
+            row = getattr(self, row_name, None)
+            if row is not None:
+                keywords[id(row)] = keyword
+        return keywords
 
     def _on_search_changed(self, entry) -> None:
         query = entry.get_text()

@@ -63,3 +63,47 @@ def test_a_row_on_a_page_that_is_not_shown_is_left_out():
 
 def test_the_extra_options_page_is_found_by_its_name():
     assert _found("extra") == [("advanced", None)]
+
+
+# -- OpenSSH keywords, on the real dialog --------------------------------------
+
+import pytest
+
+
+def _real_gtk_available():
+    try:
+        import gi
+
+        gi.require_version("Gtk", "4.0")
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw
+
+        Adw.init()
+        return type(Adw.PreferencesGroup()).__name__ == "PreferencesGroup"
+    except Exception:
+        return False
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _real_gtk_available(), reason="needs real libadwaita")
+def test_a_row_is_found_by_the_openssh_option_it_writes():
+    from sshpilot.connection_dialog_multiplex import MULTIPLEXING_SUPPORTED
+    from tests.test_session_type_dialog_sync import _open_dialog
+
+    dialog = _open_dialog("")
+    try:
+        def first(query):
+            found = dialog.search_fields(query)
+            return found[0][2] if found else None
+
+        assert first("proxyjump") is dialog.proxy_jump_row
+        assert first("IdentitiesOnly") is dialog.key_only_row
+        if MULTIPLEXING_SUPPORTED:
+            for query in ("controlmaster", "ControlPath", "controlpersist", "control master"):
+                assert first(query) is dialog.multiplex_row, query
+        # A keyword ranks as a subtitle does: below a row titled with the word.
+        # (Pages matched by name come first and carry no row.)
+        rows = [row for _page, _group, row in dialog.search_fields("port") if row]
+        assert rows[0].get_title().lower().startswith("port")
+    finally:
+        dialog.close()

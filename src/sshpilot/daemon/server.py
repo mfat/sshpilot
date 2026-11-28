@@ -94,6 +94,7 @@ from .config_reload import (
     ConfigurationReloadCoordinator,
     ConfigurationWatcher,
 )
+from .connection_sharing import ConnectionSharingReporter
 from .dispatch import (
     ClientProtocolState,
     DeferredResult,
@@ -182,6 +183,9 @@ _FORWARDED_EVENT_TYPES = frozenset(
         # connecting to the same host is about to be affected by whether the
         # knock landed.
         EventType.PRE_CONNECTION_COMMAND,
+        # Likewise per connection: whether a host's launches share one
+        # connection concerns every client that opens one to it.
+        EventType.CONNECTION_SHARING,
         # Profiles are shared configuration: every client refreshes, and a
         # drift auto-detach is surfaced by whichever frontend is open.
         EventType.LOGIN_PROFILES_CHANGED,
@@ -399,6 +403,11 @@ class DaemonServer:
         self._pre_command_runner: Optional[Any] = None
         self._pre_command_subscription: Optional[Subscription] = None
         self._broadcast_publisher = EventPublisher()
+        # Each SSH launch's connection-sharing outcome, from terminal sessions
+        # and SFTP services alike: logged, and published on the broadcast bus.
+        self._sharing_reporter = ConnectionSharingReporter(
+            self._broadcast_publisher.publish
+        )
         self._broadcast_subscription: Optional[Subscription] = None
         self._command_input_condition = threading.Condition()
         # Protected inputs are registered before a request is dispatched and
@@ -689,6 +698,11 @@ class DaemonServer:
                     self._session_runtime._readiness_manager = (
                         self._readiness_manager
                     )
+            set_reporter = getattr(
+                self._session_runtime, "set_connection_sharing_reporter", None
+            )
+            if callable(set_reporter):
+                set_reporter(self._sharing_reporter)
             set_in_use = getattr(
                 self._connection_service, "set_transient_in_use", None
             )
@@ -730,7 +744,8 @@ class DaemonServer:
                 self._operation_runtime = OperationRuntime()
             if callable(sftp_builder):
                 sftp_runner = SubprocessSftpProcessRunner(
-                    lambda spec: self._prepare_sftp_launch(spec, sftp_builder)
+                    lambda spec: self._prepare_sftp_launch(spec, sftp_builder),
+                    sharing_reporter=self._sharing_reporter,
                 )
                 privileged_runner = self._build_privileged_file_runner()
                 self._sftp_runtime = SftpServiceRuntime(

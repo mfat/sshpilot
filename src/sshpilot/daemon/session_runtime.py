@@ -529,6 +529,9 @@ class SessionRuntime:
         self._auth_gate_timeout_seconds = 60.0
         self._connection_evidence_gate = False
         self._readiness_manager = readiness_manager
+        # Logs and publishes each launch's connection-sharing outcome, read
+        # from the same -E diagnostics (see set_connection_sharing_reporter).
+        self._sharing_reporter: Optional[Any] = None
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
         self._records: Dict[SessionId, _SessionRecord] = {}
@@ -735,6 +738,7 @@ class SessionRuntime:
                     session_id,
                     self._on_ssh_diagnostic_result,
                     self._on_ssh_grace_expired,
+                    on_sharing=self._on_ssh_sharing,
                 )
             if runner_is_terminal_capable(self._runner):
                 handle = self._runner.start(
@@ -1055,6 +1059,32 @@ class SessionRuntime:
             self._authenticated_callback(session_id)
         if events:
             self._flush_deferred_output(session_id)
+
+    def set_connection_sharing_reporter(self, reporter: Optional[Any]) -> None:
+        """Report what each SSH launch did with the host's shared connection.
+
+        The outcome comes from the session's ``-E`` diagnostics, so a launch
+        without them (no inotify, a user ``-v``) reports nothing.
+        """
+
+        self._sharing_reporter = reporter
+
+    def _on_ssh_sharing(self, session_id: SessionId, observation) -> None:
+        """Runs on the diagnostics monitor thread; reads only the connection id."""
+
+        reporter = self._sharing_reporter
+        if reporter is None:
+            return
+        with self._lock:
+            record = self._records.get(session_id)
+            connection_id = record.connection_id if record is not None else None
+        if connection_id is None:
+            return
+        from sshpilot.api.models.connection_sharing import ConnectionSharingScope
+
+        reporter.report(
+            connection_id, str(session_id), ConnectionSharingScope.TERMINAL, observation
+        )
 
     def _on_ssh_grace_expired(self, session_id: SessionId) -> None:
         """Fall back to PTY connection evidence when diagnostics stay pending.

@@ -716,7 +716,9 @@ def test_listdir_many_matches_listdir_attr(client, tmp_path):
 
 
 def test_listdir_many_over_a_slow_link_lists_a_level_together(tmp_path):
-    delay = 0.05
+    # Windows' local work for 40 directories is worth a few 50 ms round
+    # trips on its own (8.9 against the bound once); serial listing is ~120.
+    delay = 0.25 if os.name == "nt" else 0.05
     dirs = []
     for index in range(40):
         path = tmp_path / f"d{index}"

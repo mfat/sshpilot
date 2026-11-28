@@ -212,3 +212,28 @@ def test_denied_after_an_accepted_method_was_attempted_is_not_flagged():
 def test_other_failures_are_not_flagged():
     result = _feed("ssh: connect to host example.test port 22: Connection refused\n")
     assert result.no_accepted_method_tried is False
+
+
+def test_master_that_cannot_listen_fails_after_authenticated():
+    """A missing ControlPath directory: ssh authenticates, then exits 255."""
+    parser = SshDiagnosticParser()
+    first = parser.feed(
+        b'Authenticated to example.test ([127.0.0.1]:22) using "publickey".\n'
+        b"unix_listener: cannot bind to path /home/u/cm/35b51b69.hXhvnOwTeT9kHHHs: "
+        b"No such file or directory\n"
+    )
+    assert first is not None
+    assert first.state is SshDiagnosticState.AUTHENTICATED
+    second = parser.feed(b"")
+    assert second is not None
+    assert second.state is SshDiagnosticState.FAILED
+    assert second.detail.startswith("unix_listener: cannot bind to path")
+
+
+def test_control_path_too_long_fails_before_connecting():
+    result = _feed(
+        "ControlPath too long ('/home/u/cm/35b51b69cd6b6926659231ffe7f53eb46ae9e8bd' "
+        ">= 108 bytes)\n"
+    )
+    assert result is not None
+    assert result.state is SshDiagnosticState.FAILED

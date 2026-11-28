@@ -133,6 +133,20 @@ class SidebarHoverReveal:
             self._revealed = True
         return GLib.SOURCE_REMOVE
 
+    def claim(self) -> None:
+        """An explicit action (the header toggle) now owns the popup.
+
+        A popup this hover revealed stays open rather than hiding once the
+        pointer leaves it, and nothing is revealed again under the resting
+        pointer until it leaves the hot zone and comes back: while the sidebar
+        is collapsed it stays "hidden" through the toggle's own clicks, so the
+        zone would otherwise still be armed from before them.
+        """
+        self._revealed = False
+        self._armed = False
+        self._cancel_reveal()
+        self._cancel_hide()
+
     def _hide(self):
         self._hide_id = 0
         popup = self._popup_func()

@@ -85,6 +85,20 @@ def user_dirs_sandbox():
     return types.SimpleNamespace(root=USER_DIRS_SANDBOX, real_dirs=REAL_USER_DIRS)
 
 
+@pytest.fixture
+def short_runtime_dir(monkeypatch):
+    """An ``XDG_RUNTIME_DIR`` short enough to hold control sockets.
+
+    A ControlPath may take 90 bytes once ``%C`` is expanded, which pytest's
+    ``tmp_path`` alone can exceed; the app then injects no multiplexing.
+    """
+    base = "/tmp" if os.path.isdir("/tmp") else None
+    path = tempfile.mkdtemp(prefix="sp-", dir=base)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", path)
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
@@ -483,7 +497,7 @@ def load_file_manager_window(monkeypatch):
 # normal stubbed suite. See tests/_gui_harness.py for the helpers.
 
 @pytest.fixture(scope='session')
-def _gui_app_session(tmp_path_factory):
+def _gui_app_session():
     """Boot the real app once per session in a hermetic temp HOME/XDG/runtime.
 
     Isolates the GUI suite from the developer's user daemon socket by giving
@@ -495,7 +509,12 @@ def _gui_app_session(tmp_path_factory):
     from tests._gui_harness import GuiApp, requires_gui
 
     requires_gui()
-    cfg = tmp_path_factory.mktemp('sshpilot-gui-home')
+    # Not ``tmp_path_factory``: its path leaves ``~/.ssh/sockets/%C`` longer
+    # than a socket may be, and the editor refuses to save such a path.
+    from pathlib import Path
+
+    cfg = Path(tempfile.mkdtemp(
+        prefix='sp-gui-', dir='/tmp' if os.path.isdir('/tmp') else None))
     runtime = cfg / 'runtime'
     runtime.mkdir(mode=0o700)
     keys = (
@@ -539,6 +558,7 @@ def _gui_app_session(tmp_path_factory):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        shutil.rmtree(cfg, ignore_errors=True)
 
 
 @pytest.fixture

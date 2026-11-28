@@ -343,4 +343,11 @@ class ConnectionDialogValidationMixin:
             res = self._validate_field_row('port', self.port_row, context="SSH")
             if not res.is_valid:
                 return self.port_row
+        # Multiplexing: Socket path and Keep open, which OpenSSH would refuse
+        # only once a connection is tried.
+        multiplex = getattr(self, '_validate_multiplex_rows', None)
+        if callable(multiplex):
+            row = multiplex()
+            if row is not None:
+                return row
         return None

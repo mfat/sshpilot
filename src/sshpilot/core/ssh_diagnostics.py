@@ -27,6 +27,7 @@ from enum import Enum
 from typing import Optional
 
 from .connection_evidence import SSH_FAILURE_MARKERS
+from .connection_sharing import ConnectionSharingTracker
 
 # ``debug1: Authenticated to example.com ([127.0.0.1]:22) using "publickey".``
 _AUTHENTICATED_RE = re.compile(
@@ -121,6 +122,10 @@ class SshDiagnosticParser:
         self._latched: Optional[SshDiagnosticResult] = None
         self._pending_emit: Optional[SshDiagnosticResult] = None
         self._attempted: set = set()
+        #: What the launch did with the host's shared connection; read with
+        #: ``sharing.take()`` after each :meth:`feed`. It sees every line the
+        #: parser consumes, including the one that latches a failure.
+        self.sharing = ConnectionSharingTracker()
 
     def feed(self, data: bytes) -> Optional[SshDiagnosticResult]:
         """Consume *data* and return a newly observed decisive result."""
@@ -175,6 +180,7 @@ class SshDiagnosticParser:
     def _consume_line(self, line: str) -> None:
         if not line:
             return
+        self.sharing.feed_line(line)
         if (
             self._latched is not None
             and self._latched.state.value in _AUTH_SUCCESS_STATES

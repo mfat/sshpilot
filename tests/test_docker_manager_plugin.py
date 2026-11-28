@@ -904,9 +904,11 @@ def test_settings_dialog_exposes_refresh_interval():
 
     seen = {}
     dlg = DockerConsoleSettingsDialog(
-        None, reuse_ssh=True, on_reuse_ssh_changed=lambda v: None,
-        refresh_interval=12, on_refresh_interval_changed=lambda n: seen.__setitem__("n", n))
+        None, refresh_interval=12,
+        on_refresh_interval_changed=lambda n: seen.__setitem__("n", n))
     assert dlg._interval_row.get_value() == 12
+    dlg._interval_row.set_value(20)
+    assert seen == {"n": 20}
 
 
 def test_create_dialog_rejects_unbalanced_command():
@@ -944,41 +946,6 @@ def test_page_host_button_shows_initial_host():
     assert page._host_label.get_label() == "beta"
 
 
-def test_page_reuse_ssh_toggle_defaults_on_and_persists():
-    _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
-
-    store = {}
-    acquired, released = [], []
-
-    class Conn:
-        def __init__(self, n):
-            self.nickname = n
-            self.protocol = "ssh"
-
-    ctx = types.SimpleNamespace(
-        run_command=lambda *a, **k: FakeResult(),
-        run_on_ui_thread=lambda fn, *a: fn(*a),
-        settings=types.SimpleNamespace(
-            get=lambda k, d=None: store.get(k, d), set=store.__setitem__),
-        list_connections=lambda: [Conn("web")],
-        open_command_terminal=lambda *a, **k: True,
-        acquire_multiplex=lambda n: acquired.append(n),
-        release_multiplex=lambda n: released.append(n),
-        ui=types.SimpleNamespace(notify=lambda *a, **k: None),
-    )
-    page = DockerConsolePage(ctx, initial_host="web")
-    # Default ON.
-    assert page._multiplex_enabled() is True
-    # Acquire keeps the master for the current host.
-    page._acquire_multiplex("web")
-    assert acquired == ["web"] and page._mux_nick == "web"
-    # Toggling off persists the setting and releases.
-    page._set_multiplex_enabled(False)
-    assert store.get("controlmaster") is False
-    assert released == ["web"] and page._mux_nick is None
-
-
 def test_details_dialog_renders_inspect_data():
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.dialogs import ContainerDetailsDialog
@@ -997,20 +964,6 @@ def test_details_dialog_renders_inspect_data():
     assert titles == ["General", "State", "Ports", "Networks",
                       "Mounts / volumes", "Labels"]
     assert ContainerDetailsDialog._env_pairs(data) == [("TZ", "UTC")]
-
-
-def test_settings_dialog_reuse_ssh_switch():
-    _gtk_or_skip()
-    from sshpilot.plugins.builtin.docker_manager.dialogs import (
-        DockerConsoleSettingsDialog)
-
-    changes = []
-    dlg = DockerConsoleSettingsDialog(
-        None, reuse_ssh=True, on_reuse_ssh_changed=changes.append)
-    assert dlg._reuse_row.get_active() is True
-    assert dlg._reuse_row.get_title() == "Reuse SSH connection"
-    dlg._reuse_row.set_active(False)
-    assert changes == [False]
 
 
 def test_create_and_textview_dialogs_construct():
@@ -1647,3 +1600,143 @@ def test_filter_entries_on_images_volumes_networks_compose():
         search.emit("search-changed")
         assert _visible_rows(listbox) == len(rows)
         assert not _placeholder_shown(ph)
+
+
+# --- daemon socket (rootless / custom DOCKER_HOST) -------------------------
+
+@pytest.mark.parametrize("value,expected", [
+    ("", ""),
+    ("  ", ""),
+    (None, ""),
+    ("/run/user/1000/docker.sock", "unix:///run/user/1000/docker.sock"),
+    ("unix:///run/user/1000/docker.sock", "unix:///run/user/1000/docker.sock"),
+    ("tcp://10.0.0.5:2375", "tcp://10.0.0.5:2375"),
+])
+def test_normalize_docker_host(value, expected):
+    from sshpilot.plugins.builtin.docker_manager.client import normalize_docker_host
+    assert normalize_docker_host(value) == expected
+
+
+def test_docker_host_adds_flag_to_captured_and_interactive_commands():
+    calls = []
+
+    def run_command(nickname, command, *, timeout=None, input=None):
+        calls.append(command)
+        return FakeResult(stdout="")
+
+    sock = "unix:///run/user/1000/docker.sock"
+    client = DockerClient(run_command, "srv", "docker", docker_host=sock)
+    client.ping()
+    assert calls[-1] == f"docker -H {sock} ps -q"
+    assert client.exec_shell_command("abc").startswith(f"docker -H {sock} exec -it ")
+
+    sudo = DockerClient(run_command, "srv", "docker", use_sudo=True, docker_host=sock)
+    sudo.ping()
+    assert calls[-1] == f"sudo -n docker -H {sock} ps -q"
+
+    podman = DockerClient(run_command, "srv", "podman", docker_host=sock)
+    podman.ping()
+    assert calls[-1] == f"podman --url {sock} ps -q"
+
+    # A bare path is taken as a unix socket; no host keeps the plain runtime.
+    DockerClient(run_command, "srv", docker_host="/tmp/d.sock").ping()
+    assert calls[-1] == "docker -H unix:///tmp/d.sock ps -q"
+    DockerClient(run_command, "srv").ping()
+    assert calls[-1] == "docker ps -q"
+
+
+def test_missing_socket_is_not_a_permission_error():
+    text = ("failed to connect to the docker API at "
+            "unix:///home/user/.docker/run/docker.sock; check if the path is "
+            "correct and if the daemon is running: dial unix "
+            "/home/user/.docker/run/docker.sock: connect: no such file or directory")
+    assert DockerClient.is_missing_socket_error(text) is True
+    assert DockerClient.is_permission_error(text) is False
+    assert DockerClient.is_missing_socket_error(
+        "dial unix /var/run/docker.sock: connect: permission denied") is False
+
+
+def test_find_rootless_socket():
+    seen = []
+
+    def found(nickname, command, *, timeout=None):
+        seen.append(command)
+        return FakeResult(stdout="/run/user/1000/docker.sock\n")
+
+    client = DockerClient(found, "srv")
+    assert client.find_rootless_socket() == "unix:///run/user/1000/docker.sock"
+    assert seen[-1].startswith("sh -c ")
+    assert not seen[-1].startswith("sudo")
+
+    def missing(nickname, command, *, timeout=None):
+        return FakeResult(exit_code=1)
+
+    assert DockerClient(missing, "srv").find_rootless_socket() is None
+
+
+def _probe_page(settings, rc):
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    ctx = _sudo_ctx(settings)
+    ctx.run_command = rc
+    page = DockerConsolePage(ctx, initial_host="web")
+    page._ensure_ssh_password = lambda nick: True
+    page._run_async = lambda fn, done: done(fn(), None)
+    page._finish_probe_and_refresh = lambda: None
+    return page
+
+
+_MISSING = ("dial unix /var/run/docker.sock: connect: no such file or directory")
+_ROOTLESS = "unix:///run/user/1000/docker.sock"
+
+
+def test_probe_detects_rootless_socket_instead_of_sudo():
+    _gtk_or_skip()
+    calls = []
+
+    def rc(nick, command, *, timeout=None, input=None):
+        calls.append(command)
+        if command.startswith("sh -c 'command -v"):
+            return FakeResult(stdout="docker\n")
+        if command.startswith("sh -c"):
+            return FakeResult(stdout="/run/user/1000/docker.sock\n")
+        if command == f"docker -H {_ROOTLESS} ps -q":
+            return FakeResult()
+        return FakeResult(exit_code=1, stderr=_MISSING)
+
+    settings = {"runtime_mode:web": "docker"}
+    page = _probe_page(settings, rc)
+    page._on_host_changed()
+    assert settings["docker_host_auto:web"] == _ROOTLESS
+    assert not any(c.startswith("sudo") for c in calls)
+    assert settings.get("sudo:web") is not True
+    assert page._client().docker_host == _ROOTLESS
+
+
+def test_probe_respects_user_socket_and_skips_detection():
+    _gtk_or_skip()
+    calls = []
+
+    def rc(nick, command, *, timeout=None, input=None):
+        calls.append(command)
+        return FakeResult(exit_code=1, stderr=_MISSING)
+
+    settings = {"runtime_mode:web": "docker",
+                "docker_host:web": "unix:///srv/docker.sock"}
+    page = _probe_page(settings, rc)
+    page._on_host_changed()
+    assert calls == ["docker -H unix:///srv/docker.sock ps -q"]
+    assert "docker_host_auto:web" not in settings
+
+
+def test_settings_dialog_docker_host_row():
+    _gtk_or_skip()
+    from sshpilot.plugins.builtin.docker_manager.dialogs import DockerConsoleSettingsDialog
+
+    seen = []
+    dlg = DockerConsoleSettingsDialog(
+        None, host_name="web", docker_host="unix:///srv/docker.sock",
+        on_docker_host_changed=seen.append)
+    assert dlg._docker_host_row.get_text() == "unix:///srv/docker.sock"
+    dlg._docker_host_row.emit("apply")
+    assert seen == ["unix:///srv/docker.sock"]

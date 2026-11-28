@@ -1086,7 +1086,7 @@ class CommandEditDialog(Adw.Window):
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/add_folder_dialog.ui")
 class AddFolderDialog(Adw.Window):
-    """Simple dialog to name a new folder."""
+    """Simple dialog to name a new folder, or rename one given its current name."""
 
     __gtype_name__ = "SshPilotAddFolderDialog"
 
@@ -1098,11 +1098,15 @@ class AddFolderDialog(Adw.Window):
     create_btn = Gtk.Template.Child()
     name_row = Gtk.Template.Child()
 
-    def __init__(self, parent: Gtk.Window) -> None:
+    def __init__(self, parent: Gtk.Window, current_name: str | None = None) -> None:
         super().__init__()
         self.set_transient_for(parent)
         install_esc_to_close(self)
         self._build_ui()
+        if current_name is not None:
+            self.set_title(_("Rename Folder"))
+            self.create_btn.set_label(_("Rename"))
+            self._name_row.set_text(current_name)
 
     def _build_ui(self) -> None:
         # Static shell (header Cancel/Create + name entry row) is in the template.
@@ -1357,6 +1361,13 @@ class CommandBlocksPanel(Gtk.Box):
             folder_cmds = cmds_by_folder.get(fid, [])
             folder_row = FolderRow(folder, len(folder_cmds))
             folder_row.connect("folder-toggled", self._on_folder_toggled)
+            right_click = Gtk.GestureClick()
+            right_click.set_button(3)
+            right_click.connect(
+                "pressed",
+                lambda g, n, x, y, r=folder_row, f=folder: self._show_folder_context_menu(r, f),
+            )
+            folder_row.add_controller(right_click)
             self._tree_list.append(folder_row)
             if folder.get("expanded", True):
                 for cmd in folder_cmds:
@@ -1646,6 +1657,13 @@ class CommandBlocksPanel(Gtk.Box):
         if keyval == Gdk.KEY_e and mods == primary and cmd:
             self._open_edit_dialog(cmd)
             return True
+        if isinstance(selected, FolderRow):
+            if keyval == Gdk.KEY_Delete and mods == 0:
+                self._delete_folder(selected._folder)
+                return True
+            if (keyval == Gdk.KEY_F2 and mods == 0) or (keyval == Gdk.KEY_e and mods == primary):
+                self._open_rename_folder_dialog(selected._folder)
+                return True
         return False
 
     # ------------------------------------------------------------------
@@ -2401,6 +2419,24 @@ class CommandBlocksPanel(Gtk.Box):
         )
         menu.show(row)
 
+    def _show_folder_context_menu(self, row: Gtk.ListBoxRow, folder: dict) -> None:
+        listbox = row.get_parent()
+        if listbox:
+            listbox.select_row(row)
+
+        menu = IconContextMenu()
+        menu.add_section(
+            menu.add_item(
+                "document-edit-symbolic",
+                _("Rename"),
+                lambda: self._open_rename_folder_dialog(folder),
+            ),
+        )
+        menu.add_section(
+            menu.add_item("user-trash-symbolic", _("Delete"), lambda: self._delete_folder(folder)),
+        )
+        menu.show(row)
+
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
@@ -2414,6 +2450,21 @@ class CommandBlocksPanel(Gtk.Box):
         dlg = AddFolderDialog(self.window)
         dlg.connect("created", lambda d, name: (self.store.add_folder(name), self.refresh()))
         dlg.present()
+
+    def _open_rename_folder_dialog(self, folder: dict) -> None:
+        dlg = AddFolderDialog(self.window, current_name=folder.get("name", ""))
+        dlg.connect("created", lambda d, name: self._rename_folder(folder, name))
+        dlg.present()
+
+    def _rename_folder(self, folder: dict, name: str) -> None:
+        self.store.update_folder(folder["id"], name=name)
+        self.refresh()
+
+    def _delete_folder(self, folder: dict) -> None:
+        # The store moves the folder's commands to the top level; none are lost.
+        self.store.delete_folder(folder["id"])
+        self.refresh()
+        self._show_toast(_("Folder deleted"), timeout=2)
 
     def _delete_command(self, cmd: dict) -> None:
         self.store.delete_command(cmd["id"])

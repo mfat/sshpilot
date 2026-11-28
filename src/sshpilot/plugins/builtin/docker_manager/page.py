@@ -27,7 +27,7 @@ from gi.repository import GLib, Gtk, Adw, Gdk, GdkPixbuf  # noqa: E402
 _MARK_RESOURCE = "/io/github/mfat/sshpilot/icons/scalable/actions/docker-mark-ocean-blue.svg"
 
 from ... import api as plugin_api  # noqa: E402
-from .client import DockerClient  # noqa: E402
+from .client import DockerClient, normalize_docker_host  # noqa: E402
 from .dialogs import DockerConsoleSettingsDialog  # noqa: E402
 from . import widgets as w  # noqa: E402
 from .tab_compose import ComposeTabMixin  # noqa: E402
@@ -473,6 +473,29 @@ class DockerConsolePage(
     def _use_sudo_for(self, nickname: str) -> bool:
         return bool(self.ctx.settings.get(f"sudo:{nickname}", False))
 
+    def _docker_host_override(self, nickname: Optional[str]) -> str:
+        """Daemon socket the user set for this host ('' = auto)."""
+        if not nickname:
+            return ""
+        return self.ctx.settings.get(f"docker_host:{nickname}", "") or ""
+
+    def _docker_host_for(self, nickname: Optional[str]) -> str:
+        """Daemon socket to use: the user's, else one the probe detected
+        (a rootless socket), else '' for the CLI's own default."""
+        if not nickname:
+            return ""
+        return (self._docker_host_override(nickname)
+                or self.ctx.settings.get(f"docker_host_auto:{nickname}", "")
+                or "")
+
+    def _on_docker_host_changed(self, nickname: str, value: str) -> None:
+        value = normalize_docker_host(value)
+        if value == self._docker_host_override(nickname):
+            return
+        self.ctx.settings.set(f"docker_host:{nickname}", value)
+        if nickname == self._current_nickname():
+            self._on_host_changed()  # re-probe under the new socket
+
     def _sudo_password_for(self, nickname: str) -> Optional[str]:
         """Verified sudo password for this host, if one is needed/known."""
         return self._sudo_passwords.get(nickname) if nickname else None
@@ -505,7 +528,8 @@ class DockerConsolePage(
             return None
         return DockerClient(self._run_command_for(nick), nick, self._runtime_for(nick),
                             use_sudo=self._use_sudo_for(nick),
-                            sudo_password=self._sudo_password_for(nick))
+                            sudo_password=self._sudo_password_for(nick),
+                            docker_host=self._docker_host_for(nick))
 
     @staticmethod
     def _is_local(nickname: Optional[str]) -> bool:
@@ -824,6 +848,7 @@ class DockerConsolePage(
             self._refresh_visible()
 
     def _open_settings(self) -> None:
+        nick = self._current_nickname()
         DockerConsoleSettingsDialog(
             self._window(),
             refresh_interval=self._refresh_interval(),
@@ -832,6 +857,13 @@ class DockerConsolePage(
             on_log_tail_changed=self._on_log_tail_changed,
             max_log_lines=self._max_log_lines_setting(),
             on_max_log_lines_changed=self._on_max_log_lines_changed,
+            host_name=nick,
+            docker_host=self._docker_host_override(nick),
+            detected_docker_host=(
+                self.ctx.settings.get(f"docker_host_auto:{nick}", "") if nick else ""),
+            on_docker_host_changed=(
+                (lambda value: self._on_docker_host_changed(nick, value))
+                if nick else None),
         ).present()
 
     def _on_log_tail_changed(self, value: int) -> None:
@@ -1070,6 +1102,10 @@ class DockerConsolePage(
         # Snapshot session password on the UI thread so the worker probe does not
         # read ``_sudo_passwords`` while another callback may be writing it.
         session_pw = self._sudo_passwords.get(nick)
+        host_override = self._docker_host_override(nick)
+        docker_host = self._docker_host_for(nick)
+        # Rootless socket the probe settles on (None = leave the setting alone).
+        rootless: dict = {"host": None}
 
         # Each stage reports a status line under the pulsing mark — real
         # pipeline steps and parsed command output, not cosmetic filler.
@@ -1099,13 +1135,38 @@ class DockerConsolePage(
             # `ps` — the only open question is whether sudo needs a password.
             if want_sudo:
                 return (runtime, *self._resolve_sudo(
-                    rc, nick, runtime, session_pw=session_pw))
+                    rc, nick, runtime, session_pw=session_pw,
+                    docker_host=docker_host))
             # sudo not requested: try plain, and fall back to sudo only on a
             # docker-socket *permission* error (user not in the 'docker' group).
             self._status(
                 _("Checking {runtime} access…").format(runtime=runtime)
             )
-            plain = DockerClient(rc, nick, runtime, use_sudo=False).ping()
+            plain = DockerClient(rc, nick, runtime, use_sudo=False,
+                                 docker_host=docker_host).ping()
+            text = (getattr(plain, "stderr", "") or "") + (getattr(plain, "stdout", "") or "")
+            # The socket the CLI tried isn't there: a rootless daemon keeps its
+            # socket under $XDG_RUNTIME_DIR, which a non-interactive SSH shell
+            # doesn't point DOCKER_HOST at. Look for one (unless the user set
+            # the socket themselves) before suggesting sudo.
+            if (getattr(plain, "exit_code", 0) != 0 and not host_override
+                    and runtime == "docker"
+                    and (DockerClient.is_missing_socket_error(text)
+                         or "cannot connect to the docker daemon" in text.lower())):
+                self._status(_("Looking for a rootless Docker socket…"))
+                found = DockerClient(rc, nick, runtime).find_rootless_socket()
+                if found and found != docker_host:
+                    retry = DockerClient(rc, nick, runtime, use_sudo=False,
+                                         docker_host=found).ping()
+                    if getattr(retry, "exit_code", 1) == 0:
+                        rootless["host"] = found
+                        plain = retry
+                elif not found and docker_host:
+                    # The remembered socket is gone: back to the CLI default.
+                    rootless["host"] = ""
+                    plain = DockerClient(rc, nick, runtime, use_sudo=False).ping()
+                    text = ((getattr(plain, "stderr", "") or "")
+                            + (getattr(plain, "stdout", "") or ""))
             if getattr(plain, "exit_code", 0) == 0:
                 self._status(
                     _("{runtime} is reachable").format(
@@ -1113,7 +1174,6 @@ class DockerConsolePage(
                     )
                 )
                 return runtime, False, None, None
-            text = (getattr(plain, "stderr", "") or "") + (getattr(plain, "stdout", "") or "")
             if DockerClient.is_permission_error(text):
                 self._status(
                     _(
@@ -1122,7 +1182,8 @@ class DockerConsolePage(
                     )
                 )
                 return (runtime, *self._resolve_sudo(
-                    rc, nick, runtime, session_pw=session_pw))
+                    rc, nick, runtime, session_pw=session_pw,
+                    docker_host=docker_host))
             self._status(w.describe_docker_failure(text))
             return runtime, False, None, None  # other error — refresh surfaces it
 
@@ -1138,6 +1199,8 @@ class DockerConsolePage(
                 return
             runtime, use_sudo, status, pw = result
             self.ctx.settings.set(f"runtime:{nick}", runtime)
+            if rootless["host"] is not None:
+                self.ctx.settings.set(f"docker_host_auto:{nick}", rootless["host"])
             if status == "not_sudoers":
                 self._disable_sudo(nick)
                 self._toast(
@@ -1171,12 +1234,14 @@ class DockerConsolePage(
         self._run_async(probe, done)
 
     def _resolve_sudo(self, rc: Any, nick: str, runtime: str, *,
-                      session_pw: Optional[str] = None):
+                      session_pw: Optional[str] = None,
+                      docker_host: Optional[str] = None):
         """Decide how sudo authenticates on this host (runs on a worker thread):
         ``(use_sudo, status, password)`` — passwordless, a verified cached/stored
         password, ``needs_password`` (prompt the user), or ``not_sudoers``."""
         self._status(_("Checking sudo access…"))
-        sudo = DockerClient(rc, nick, runtime, use_sudo=True).ping()  # sudo -n
+        sudo = DockerClient(rc, nick, runtime, use_sudo=True,
+                            docker_host=docker_host).ping()  # sudo -n
         if getattr(sudo, "exit_code", 1) == 0:
             self._status(_("Sudo works without a password"))
             return True, None, None  # passwordless sudo
@@ -1189,19 +1254,22 @@ class DockerConsolePage(
         # reads or writes a frontend secret store; a daemon operation may still
         # use the verified value for the current command/session.
         pw = session_pw
-        if pw and self._verify_sudo(rc, nick, runtime, pw):
+        if pw and self._verify_sudo(rc, nick, runtime, pw,
+                                    docker_host=docker_host):
             self._status(_("Sudo password accepted"))
             return True, "password", pw
         self._status(_("Sudo needs a password"))
         return True, "needs_password", None
 
     @staticmethod
-    def _check_sudo(rc: Any, nick: str, runtime: str, password: str):
+    def _check_sudo(rc: Any, nick: str, runtime: str, password: str, *,
+                    docker_host: Optional[str] = None):
         """Single ``sudo -S`` ping → ``(ok, status)``: ``status`` is ``None`` when
         it succeeds, else ``not_sudoers`` or ``wrong_password``. One ping so a
         wrong password isn't tried twice against PAM faillock."""
         chk = DockerClient(rc, nick, runtime, use_sudo=True,
-                           sudo_password=password).ping()
+                           sudo_password=password,
+                           docker_host=docker_host).ping()
         if getattr(chk, "exit_code", 1) == 0:
             return True, None
         text = ((getattr(chk, "stderr", "") or "")
@@ -1211,9 +1279,11 @@ class DockerConsolePage(
         return False, "wrong_password"
 
     @staticmethod
-    def _verify_sudo(rc: Any, nick: str, runtime: str, password: str) -> bool:
+    def _verify_sudo(rc: Any, nick: str, runtime: str, password: str, *,
+                     docker_host: Optional[str] = None) -> bool:
         """True if ``password`` lets ``sudo -S docker ps`` succeed on the host."""
-        ok, _unused = DockerConsolePage._check_sudo(rc, nick, runtime, password)
+        ok, _unused = DockerConsolePage._check_sudo(
+            rc, nick, runtime, password, docker_host=docker_host)
         return ok
 
     def _prompt_for_sudo_password(self, nick: str, runtime: str,
@@ -1239,9 +1309,11 @@ class DockerConsolePage(
             return
 
         rc = self._run_command_for(nick)
+        docker_host = self._docker_host_for(nick)
 
         def verify():
-            ok, kind = self._check_sudo(rc, nick, runtime, password)
+            ok, kind = self._check_sudo(rc, nick, runtime, password,
+                                        docker_host=docker_host)
             return "ok" if ok else kind
 
         def after(result: Optional[str], _err: Optional[Exception]) -> None:

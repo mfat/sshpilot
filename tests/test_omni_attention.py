@@ -529,6 +529,9 @@ class _TabWindow:
             '_is_start_tab_page',
             'has_user_tabs',
             '_apply_sidebar_visible',
+            '_sidebar_collapsed',
+            '_sidebar_shown',
+            '_sidebar_overlay_shown',
             'on_tab_selected',
         ):
             setattr(self, name, getattr(MainWindow, name).__get__(self, type(self)))

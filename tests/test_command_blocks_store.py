@@ -175,6 +175,16 @@ def test_add_folder_shape_and_order():
     assert [f["id"] for f in store.get_folders()] == [f1["id"], f2["id"]]
 
 
+def test_rename_folder_keeps_id_and_commands():
+    store, _ = _seeded_store()
+    f = store.add_folder("Prod")
+    c = store.add_command("up", "uptime", folder_id=f["id"])
+    store.update_folder(f["id"], name="Production")
+    [renamed] = store.get_folders()
+    assert renamed["id"] == f["id"] and renamed["name"] == "Production"
+    assert store.get_commands()[0]["folder_id"] == f["id"] == c["folder_id"]
+
+
 def test_delete_folder():
     store, _ = _seeded_store()
     f = store.add_folder("X")

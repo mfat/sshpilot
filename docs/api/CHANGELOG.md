@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- New event `connection.sharing` (payload `ConnectionSharingNotice`, with
+  `ConnectionSharingOutcome` and `ConnectionSharingScope`): what each
+  terminal session and SFTP service did with its host's shared OpenSSH
+  connection (`opened`, `joined`, `refused`, `unavailable`, `failed`), read
+  from the launch's own OpenSSH log and broadcast to every client. A host
+  that does not share publishes nothing. Additive. The API implementation
+  version is 0.121; Protocol remains 1.0.
 - `connections.evaluate_connection_edit(EvaluateConnectionEditRequest)`
   returns OpenSSH's answer for a connection as a save of the given
   `UpdateConnectionRequest` (or `CreateConnectionRequest`) would write it:
