@@ -879,15 +879,16 @@ class DaemonConnectionLaunchProvider:
                 extra_args=extra_args,
             )
         # The daemon PTY is the semantic boundary for interactive terminals
-        # (SSH and protocol plugins such as mosh). Authentication helpers
-        # intentionally preserve the caller environment, but a missing or
-        # ``dumb`` TERM is not usable — mosh aborts immediately without TERM
-        # when the app is launched from Finder/Dock (issue #1263). Keep valid
-        # terminal types intact. The same launches often inherit C/ASCII
-        # locales; mosh-client requires a UTF-8 native locale.
-        term = environment.get("TERM")
-        if not term or term.lower() == "dumb":
-            environment["TERM"] = "xterm-256color"
+        # (SSH and protocol plugins such as mosh). The terminal is sshPilot's
+        # own view, so TERM is always xterm-256color, as for local shells
+        # (terminal.sanitize_local_shell_env). Protocol plugins copy the
+        # daemon's environment, whose TERM describes whatever the app was
+        # started from: missing or ``dumb`` from Finder/Dock, where mosh
+        # aborts (issue #1263), or a host-only type such as xterm-ghostty
+        # that the Flatpak's terminfo lacks, where mosh also aborts (#1432).
+        # The same launches often inherit C/ASCII locales; mosh-client
+        # requires a UTF-8 native locale.
+        environment["TERM"] = "xterm-256color"
         _ensure_utf8_locale(environment)
         return argv, environment
 

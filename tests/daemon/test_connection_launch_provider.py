@@ -466,15 +466,17 @@ def test_forward_launch_disables_preference_multiplex(provider):
         ("", "xterm-256color"),
         ("dumb", "xterm-256color"),
         ("DUMB", "xterm-256color"),
-        ("foot", "foot"),
-        ("kitty", "kitty"),
+        ("foot", "xterm-256color"),
+        ("kitty", "xterm-256color"),
+        ("xterm-ghostty", "xterm-256color"),
+        ("tmux-256color", "xterm-256color"),
         ("xterm-256color", "xterm-256color"),
     ],
 )
-def test_terminal_launch_normalizes_unusable_term_at_provider_boundary(
+def test_terminal_launch_sets_term_for_the_embedded_terminal(
     provider, monkeypatch, term, expected
 ):
-    """Interactive SSH launches always provide a usable terminal type."""
+    """Interactive SSH launches describe sshPilot's terminal, not the launching one."""
     import sshpilot.ssh_connection_builder as builder
 
     class Prepared:
@@ -503,15 +505,21 @@ def test_terminal_launch_normalizes_unusable_term_at_provider_boundary(
         ("", "xterm-256color"),
         ("dumb", "xterm-256color"),
         ("DUMB", "xterm-256color"),
-        ("foot", "foot"),
-        ("kitty", "kitty"),
+        ("foot", "xterm-256color"),
+        ("kitty", "xterm-256color"),
+        ("xterm-ghostty", "xterm-256color"),
+        ("tmux-256color", "xterm-256color"),
         ("xterm-256color", "xterm-256color"),
     ],
 )
-def test_protocol_terminal_launch_normalizes_unusable_term_at_provider_boundary(
+def test_protocol_terminal_launch_sets_term_for_the_embedded_terminal(
     provider, monkeypatch, term, expected
 ):
-    """Non-SSH interactive launches get the same TERM default (issue #1263)."""
+    """Non-SSH interactive launches get the same TERM (issues #1263, #1432).
+
+    Plugins copy the daemon's environment; an inherited host-only type such as
+    xterm-ghostty is missing from the Flatpak's terminfo and mosh aborts.
+    """
     from sshpilot.plugins.api import SpawnSpec
     import sshpilot.plugins.builtin.mosh_protocol as mosh_mod
 
