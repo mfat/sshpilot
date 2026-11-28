@@ -3588,7 +3588,9 @@ class FilePane(Gtk.Box):
         dialog.add_response("cancel", _("Cancel"))
         if editable:
             dialog.add_response("edit", _("Edit as Text"))
-        if self._download_to_computer_available():
+        # Beside this computer's pane, Download already lands on this
+        # computer; asking for a folder too would offer the same thing twice.
+        if transfer != "download" and self._download_to_computer_available():
             dialog.add_response("download_to_computer", _("Download to This Computer…"))
         default = transfer or "edit"
         if transfer is not None:

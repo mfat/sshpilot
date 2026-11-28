@@ -125,7 +125,7 @@ def test_remote_file_offers_download_and_edit(load_file_manager_window, monkeypa
 
     (dialog,) = _FakeAlertDialog.instances
     assert dialog.heading == "report.txt"
-    assert dialog.responses == ["cancel", "edit", "download_to_computer", "download"]
+    assert dialog.responses == ["cancel", "edit", "download"]
     assert dialog.presented_on is pane
     assert opened == []
     assert pane.emitted == []
@@ -189,7 +189,7 @@ def test_remote_non_text_file_offers_download_only(load_file_manager_window, mon
     pane._on_list_activate(None, 1)
 
     (dialog,) = _FakeAlertDialog.instances
-    assert dialog.responses == ["cancel", "download_to_computer", "download"]
+    assert dialog.responses == ["cancel", "download"]
     assert dialog.body == "Download the file to this computer?"
 
 

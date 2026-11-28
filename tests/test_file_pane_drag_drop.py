@@ -839,7 +839,8 @@ def test_activating_a_server_file_beside_this_computer_offers_download(
     dialog = _RecordingAlertDialog.last
     assert dialog.default == "download"
     assert "copy_to_other" not in dialog.responses
-    assert dialog.responses["download_to_computer"] == "Download to This Computer…"
+    # Download already lands on this computer: no second download button.
+    assert "download_to_computer" not in dialog.responses
     assert "this computer" in dialog.body
 
 
