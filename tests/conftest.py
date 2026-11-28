@@ -275,7 +275,21 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 SRC = os.path.join(ROOT, 'src')
-if os.path.isdir(SRC) and SRC not in sys.path:
+# SSHPILOT_TEST_INSTALLED_APP=1 tests the installed app instead of this
+# checkout's src/ (scripts/run-flatpak-gui-tests.sh: the Flatpak's /app). A
+# module the package lost must fail there, not be found here.
+INSTALLED_APP = os.environ.get('SSHPILOT_TEST_INSTALLED_APP') == '1'
+if INSTALLED_APP:
+    import importlib.util
+
+    _spec = importlib.util.find_spec('sshpilot')
+    _origin = os.path.realpath(getattr(_spec, 'origin', None) or '') if _spec else ''
+    if not _origin or _origin.startswith(os.path.realpath(ROOT) + os.sep):
+        raise pytest.UsageError(
+            f"SSHPILOT_TEST_INSTALLED_APP=1 but sshpilot resolves to {_origin or 'nothing'}, "
+            "not an installed copy"
+        )
+elif os.path.isdir(SRC) and SRC not in sys.path:
     sys.path.insert(0, SRC)
 
 
@@ -354,7 +368,9 @@ if _USE_REAL_GTK:
 # Without this, transitive imports of template-decorated widgets fail with
 # "resource does not exist" in subprocess environments (e.g. the smoke harness).
 def _preload_gresource():
-    if 'gi' not in sys.modules:
+    if 'gi' not in sys.modules or INSTALLED_APP:
+        # The installed app registers its own bundle; the checkout's would
+        # hide a resource the package is missing.
         return
     try:
         from gi.repository import Gio as _Gio

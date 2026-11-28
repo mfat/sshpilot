@@ -25,18 +25,22 @@ def _free_port() -> int:
 def container_runtime() -> Optional[str]:
     """Return an available local container runtime, or None."""
 
+    from tests.fixtures import host_tools
+
     for name in ("podman", "docker"):
-        path = shutil.which(name)
+        # Inside the Flatpak test run, the host's runtime (a bare name).
+        path = host_tools.which(name)
         if path is None:
             continue
         try:
-            probe = subprocess.run(
+            probe = host_tools.run(
                 (path, "info"),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
-                timeout=5,
+                # flatpak-spawn adds a round trip to the host.
+                timeout=20 if host_tools.IN_FLATPAK else 5,
             )
         except subprocess.TimeoutExpired:
             continue

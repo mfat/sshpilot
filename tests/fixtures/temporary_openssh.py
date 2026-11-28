@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Optional
 
 from tests.daemon.password_sshd import container_runtime
+from tests.fixtures import host_tools
 from tests.daemon.integration_environment import skip_or_fail
 
 AuthMode = Literal["password", "key", "key_plain"]
@@ -39,7 +40,13 @@ _ATEXIT_REGISTERED = False
 
 
 def _login_home() -> Path:
-    """Return the account home, ignoring an isolated test ``HOME`` override."""
+    """Return the account home, ignoring an isolated test ``HOME`` override.
+
+    SSHPILOT_HOST_HOME names it where the account entry cannot: inside the
+    Flatpak test run, whose sandbox lists the scratch home there.
+    """
+    if os.environ.get("SSHPILOT_HOST_HOME"):
+        return Path(os.environ["SSHPILOT_HOST_HOME"])
     try:
         return Path(pwd.getpwuid(os.getuid()).pw_dir)
     except Exception:
@@ -88,7 +95,8 @@ def _run_container(
     check: bool = False,
     timeout: Optional[float] = 60.0,
 ) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    # Inside the Flatpak test run the runtime is on the host (host_tools).
+    return host_tools.run(
         (runtime, *args),
         stdin=subprocess.DEVNULL,
         capture_output=True,

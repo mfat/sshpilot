@@ -15,7 +15,9 @@ with a ``TERM`` no terminfo database knows. Mosh refuses to start with one
 provides.
 
 Each protocol skips when its client program or target cannot run here: CI's
-"Protocol tabs in a real window" job installs all of them.
+"Protocol tabs in a real window" job installs all of them, and the Flatpak job
+runs this file inside the installed Flatpak (scripts/run-flatpak-gui-tests.sh),
+where the servers below run on the host (tests/fixtures/host_tools.py).
 
 Opt-in: SSHPILOT_GUI_TESTS=1 xvfb-run -a pytest -m gui tests/gui/test_protocol_tabs.py
 """
@@ -23,17 +25,18 @@ Opt-in: SSHPILOT_GUI_TESTS=1 xvfb-run -a pytest -m gui tests/gui/test_protocol_t
 from __future__ import annotations
 
 import os
-import pwd
 import secrets
-import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
 from tests._gui_harness import requires_gui
+from tests.fixtures import host_tools
+from tests.gui._tab_proof import open_and_prove_shell, wait_for
 
 Gtk, Adw, Gio, GLib = requires_gui()
 
@@ -47,15 +50,14 @@ except Exception as error:  # pragma: no cover
 
 pytestmark = pytest.mark.gui
 
-COMMAND = "printf 'SHELL_%s_OK\\n' $((6*7))\n"
-MARKER = "SHELL_42_OK"
 TERM_COMMAND = "printf 'TERM_%s_OK\\n' \"$TERM\"\n"
 TERM_MARKER = "TERM_xterm-256color_OK"
-UNKNOWN_TERM = "sshpilot-unknown-term"
 ALPINE = "docker.io/library/alpine:3.20"
 
 # Read before the harness points HOME at a scratch directory.
-_LOGIN_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+from tests.fixtures.temporary_openssh import _login_home  # noqa: E402
+
+_LOGIN_HOME = _login_home()
 _KUBECONFIG = os.environ.get("KUBECONFIG") or str(_LOGIN_HOME / ".kube" / "config")
 
 
@@ -86,7 +88,7 @@ def _wait_for_tcp(port: int, timeout: float = 30.0) -> None:
 
 
 def _require(*programs: str) -> None:
-    missing = [name for name in programs if shutil.which(name) is None]
+    missing = [name for name in programs if host_tools.which(name) is None]
     if missing:
         pytest.skip(f"not installed: {', '.join(missing)}")
 
@@ -94,10 +96,10 @@ def _require(*programs: str) -> None:
 def _runtime_works(runtime: str) -> bool:
     from tests.fixtures.temporary_openssh import _container_env
 
-    if shutil.which(runtime) is None:
+    if host_tools.which(runtime) is None:
         return False
     try:
-        return subprocess.run(
+        return host_tools.run(
             [runtime, "info"],
             env=_container_env(),
             stdin=subprocess.DEVNULL,
@@ -112,7 +114,7 @@ def _runtime_works(runtime: str) -> bool:
 def _container(runtime: str, *args: str, timeout: float = 180.0):
     from tests.fixtures.temporary_openssh import _container_env
 
-    return subprocess.run(
+    return host_tools.run(
         [runtime, *args],
         env=_container_env(),
         stdin=subprocess.DEVNULL,
@@ -161,110 +163,6 @@ def _add_plugin_connection(h, nickname: str, protocol: str, fields: dict):
     return connection
 
 
-def _terminal_text(term) -> str:
-    vte = getattr(term, "vte", None) or getattr(getattr(term, "backend", None), "vte", None)
-    if vte is None:
-        return ""
-    content = vte.get_text_format(Vte.Format.TEXT)
-    return (content[0] if isinstance(content, tuple) else content) or ""
-
-
-def _child_processes() -> str:
-    """This test's descendant processes, to show where a launch hangs."""
-    parents: dict[int, int] = {}
-    commands: dict[int, str] = {}
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            stat = (entry / "stat").read_text()
-            cmdline = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
-        except OSError:
-            continue
-        parents[int(entry.name)] = int(stat.rsplit(")", 1)[1].split()[1])
-        commands[int(entry.name)] = cmdline.strip()
-    found, todo = [], [os.getpid()]
-    while todo:
-        pid = todo.pop()
-        children = [child for child, parent in parents.items() if parent == pid]
-        found += children
-        todo += children
-    return "; ".join(f"{pid}: {commands[pid][:200]}" for pid in sorted(found)) or "none"
-
-
-def _evidence(term) -> str:
-    return f"terminal shows {_terminal_text(term)[-400:]!r}; processes: {_child_processes()}"
-
-
-def _wait_for(h, term, marker: str, *, timeout: float = 30.0) -> str:
-    from tests.gui._phase14_harness import Phase14EvidenceError
-
-    try:
-        return h.wait_for_marker(marker, terminal=term, timeout=timeout)
-    except Phase14EvidenceError as error:
-        raise AssertionError(
-            f"{error}; {_evidence(term)}"
-        ) from error
-
-
-def _wait_for_prompt(h, term, *, timeout: float) -> None:
-    """Type only once the shell shows a prompt, as a person would.
-
-    Clients such as ``docker exec -it`` switch their terminal to raw mode
-    with a flush once attached, which discards anything typed before.
-    """
-    def _prompt():
-        lines = [line.rstrip() for line in _terminal_text(term).splitlines() if line.strip()]
-        return bool(lines) and lines[-1][-1:] in ("$", "#", ">", "%")
-
-    try:
-        try:
-            h.pump_until(_prompt, timeout=10.0, label="shell prompt")
-        except AssertionError:
-            # A serial console prints nothing until it is poked: its first
-            # prompt went out before the client opened the line.
-            h.emit_terminal_input("\n", term)
-            h.pump_until(_prompt, timeout=timeout, label="shell prompt after Enter")
-    except AssertionError as error:
-        raise AssertionError(f"{error}; {_evidence(term)}") from error
-
-
-def _open_and_prove_shell(h, connection, *, monkeypatch, timeout: float = 60.0):
-    """Open the tab from the window and prove a live shell sits behind it."""
-    monkeypatch.setenv("TERM", UNKNOWN_TERM)
-    win = h.gui.window
-    win.terminal_manager.connect_to_host(connection, force_new=True)
-    h.pump_until(
-        lambda: h.find_terminal_widget(connection) is not None,
-        timeout=20.0,
-        label="terminal widget created",
-    )
-    term = h.find_terminal_widget(connection)
-    h.pump_until(
-        lambda: bool(getattr(term, "is_connected", False)),
-        timeout=timeout,
-        label=f"{connection.protocol} tab connected",
-    )
-    try:
-        h.ensure_input_ready(term, timeout=20.0)
-    except AssertionError as error:
-        raise AssertionError(f"{error}; {_evidence(term)}") from error
-    _wait_for_prompt(h, term, timeout=timeout)
-    h.emit_terminal_input(COMMAND, term)
-    assert MARKER in _wait_for(h, term, MARKER, timeout=timeout)
-
-    # The session is up and answering, so nothing may still cover the
-    # terminal (#1432).
-    h.pump_until(
-        lambda: getattr(term, "_overlay_mode", None) == "none",
-        timeout=10.0,
-        label=f"Connecting veil lifted (mode={getattr(term, '_overlay_mode', None)!r})",
-    )
-    assert not term.connecting_bg.get_visible()
-    assert not term.connecting_box.get_visible()
-    return term
-
-
 # -- protocols ---------------------------------------------------------------
 
 
@@ -273,7 +171,7 @@ def test_telnet_tab_runs_a_remote_command(phase14_harness, monkeypatch):
     h = phase14_harness
     port = _free_tcp_port()
     # A shell per TCP connection; "fork" keeps the readiness probe harmless.
-    server = subprocess.Popen(
+    server = host_tools.popen(
         [
             "socat",
             f"TCP-LISTEN:{port},bind=127.0.0.1,reuseaddr,fork",
@@ -288,7 +186,7 @@ def test_telnet_tab_runs_a_remote_command(phase14_harness, monkeypatch):
         conn = _add_plugin_connection(
             h, "GuiTelnet", "telnet", {"host": "127.0.0.1", "port": port}
         )
-        _open_and_prove_shell(h, conn, monkeypatch=monkeypatch)
+        open_and_prove_shell(h, conn, monkeypatch=monkeypatch)
     finally:
         _stop(server)
 
@@ -298,7 +196,7 @@ def test_serial_tab_runs_a_command_on_the_device(phase14_harness, monkeypatch, t
     h = phase14_harness
     device = tmp_path / "ttyGUI"
     # The far end of the pty pair is a shell, standing in for a device console.
-    line = subprocess.Popen(
+    line = host_tools.popen(
         [
             "socat",
             f"PTY,raw,echo=0,link={device}",
@@ -310,16 +208,18 @@ def test_serial_tab_runs_a_command_on_the_device(phase14_harness, monkeypatch, t
     )
     try:
         deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and not device.exists():
+        # The link names a pty of whoever made it: in the Flatpak run that is
+        # the host, whose /dev/pts the sandbox may not resolve.
+        while time.monotonic() < deadline and not os.path.lexists(device):
             time.sleep(0.1)
-        assert device.exists(), "socat did not create the serial device"
+        assert os.path.lexists(device), "socat did not create the serial device"
         conn = _add_plugin_connection(
             h,
             "GuiSerial",
             "serial",
             {"device": str(device), "baud": "115200", "flow": "none"},
         )
-        _open_and_prove_shell(h, conn, monkeypatch=monkeypatch)
+        open_and_prove_shell(h, conn, monkeypatch=monkeypatch)
     finally:
         _stop(line)
 
@@ -340,8 +240,10 @@ def test_container_tab_runs_a_command_in_the_container(
         # socket: the editor's "Daemon host" field.
         from tests.fixtures.temporary_openssh import _container_env
 
-        sock = Path(f"/tmp/sshpilot-gui-podman-{secrets.token_hex(4)}.sock")
-        service = subprocess.Popen(
+        # Short: a unix socket path has ~100 bytes. TMPDIR is shared with
+        # the host in the Flatpak run, where podman makes the socket.
+        sock = Path(tempfile.gettempdir()) / f"sp-podman-{secrets.token_hex(4)}.sock"
+        service = host_tools.popen(
             ["podman", "system", "service", "--time=0", f"unix://{sock}"],
             env=_container_env(),
             stdin=subprocess.DEVNULL,
@@ -356,7 +258,7 @@ def test_container_tab_runs_a_command_in_the_container(
     try:
         _start_alpine(runtime, name, ALPINE, "sleep", "600")
         conn = _add_plugin_connection(h, f"Gui{runtime.title()}", "docker", fields)
-        _open_and_prove_shell(h, conn, monkeypatch=monkeypatch)
+        open_and_prove_shell(h, conn, monkeypatch=monkeypatch)
     finally:
         _remove_container(runtime, name)
         if service is not None:
@@ -365,7 +267,7 @@ def test_container_tab_runs_a_command_in_the_container(
 
 
 def _kubectl(*args: str, timeout: float = 60.0):
-    return subprocess.run(
+    return host_tools.run(
         ["kubectl", "--kubeconfig", _KUBECONFIG, *args],
         stdin=subprocess.DEVNULL,
         capture_output=True,
@@ -376,9 +278,10 @@ def _kubectl(*args: str, timeout: float = 60.0):
 
 def _cluster_problem() -> str:
     """Why no cluster can be used here, or "" when one answers."""
-    if shutil.which("kubectl") is None:
+    if host_tools.which("kubectl") is None:
         return "kubectl not installed"
-    if not Path(_KUBECONFIG).is_file():
+    # kubectl reads it on the host in the Flatpak run, which cannot see it.
+    if not host_tools.IN_FLATPAK and not Path(_KUBECONFIG).is_file():
         return f"no kubeconfig at {_KUBECONFIG}"
     problem = ""
     # A busy single-node cluster can miss one short probe.
@@ -416,7 +319,7 @@ def test_kubernetes_tab_runs_a_command_in_the_pod(phase14_harness, monkeypatch):
             "k8s",
             {"pod": pod, "namespace": "default", "kubeconfig": _KUBECONFIG, "command": "sh"},
         )
-        _open_and_prove_shell(h, conn, monkeypatch=monkeypatch)
+        open_and_prove_shell(h, conn, monkeypatch=monkeypatch)
     finally:
         _kubectl("delete", "pod", pod, "--now", "--wait=false")
 
@@ -465,8 +368,8 @@ exec /usr/sbin/sshd -D -e
                 ),
             },
         )
-        term = _open_and_prove_shell(h, conn, monkeypatch=monkeypatch, timeout=90.0)
+        term = open_and_prove_shell(h, conn, monkeypatch=monkeypatch, timeout=90.0)
         h.emit_terminal_input(TERM_COMMAND, term)
-        assert TERM_MARKER in _wait_for(h, term, TERM_MARKER)
+        assert TERM_MARKER in wait_for(h, term, TERM_MARKER)
     finally:
         _remove_container(runtime, name)

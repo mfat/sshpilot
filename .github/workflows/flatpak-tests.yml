@@ -1,0 +1,120 @@
+name: Flatpak tests
+
+# Builds the Flatpak from this commit with the Flathub manifest
+# (scripts/flatpak-dev-manifest.py), installs it on a fresh runner and runs GUI
+# tests inside it (scripts/run-flatpak-gui-tests.sh), so they exercise what
+# users install, not the source tree:
+# - SSH and local terminal tabs on every terminal backend the Flatpak ships;
+# - a connection added in the New Connection dialog, logging in with the
+#   password and the key passphrase saved there (through the secret portal);
+# - every non-SSH protocol tab: telnet, serial, Docker, Podman, Kubernetes, Mosh.
+# Built modules are cached by manifest, so a push that changes only sshPilot
+# rebuilds only sshPilot.
+
+on:
+  push:
+    branches: [dev, main]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flatpak-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build the Flatpak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write the manifest that builds this checkout
+        run: python3 scripts/flatpak-dev-manifest.py
+
+      - name: Build
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: sshpilot-test.flatpak
+          manifest-path: io.github.mfat.sshpilot.yaml
+          cache-key: flatpak-tests-${{ hashFiles('flatpak/**') }}
+          arch: x86_64
+          upload-artifact: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-test-flatpak
+          path: sshpilot-test.flatpak
+          retention-days: 7
+
+  test:
+    name: GUI tests inside the Flatpak
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sshpilot-test-flatpak
+
+      - name: Install Flatpak, the runtime and the test servers' tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            flatpak xdg-desktop-portal gnome-keyring dbus xvfb xauth \
+            python3-pip telnet socat picocom podman
+          # Ubuntu 24.04 confines unprivileged user namespaces, which the
+          # Flatpak sandbox (bubblewrap) and WebKit's sub-sandbox need.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//51
+          flatpak install --user -y --noninteractive --bundle sshpilot-test.flatpak
+          flatpak info --user io.github.mfat.sshpilot
+
+      - name: Let the secret portal use the keyring
+        # A Flatpak saves passwords through the portal, which hands the
+        # sandbox a key from the keyring; nothing picks a backend on a runner.
+        run: |
+          mkdir -p ~/.config/xdg-desktop-portal
+          printf '[preferred]\ndefault=*\norg.freedesktop.impl.portal.Secret=gnome-keyring\n' \
+            > ~/.config/xdg-desktop-portal/portals.conf
+
+      - name: Start a Kubernetes cluster
+        run: |
+          if ! command -v kind >/dev/null; then
+            curl -fsSLo kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
+            sudo install -m 0755 kind /usr/local/bin/kind
+          fi
+          kind create cluster --name sshpilot --wait 180s
+          kubectl get --raw=/readyz
+
+      - name: Run the GUI tests inside the Flatpak
+        # Every backend the Flatpak ships must run: a missing one fails
+        # instead of skipping, and so does any skipped test.
+        env:
+          SSHPILOT_EXPECT_BACKENDS: vte,xterm.js,gtkghostty,libghostty-vt
+        run: |
+          dbus-run-session -- bash -ceu '
+            printf "ci" | gnome-keyring-daemon --unlock --replace --components=secrets >/dev/null
+            xvfb-run -a -s "-screen 0 1400x900x24" scripts/run-flatpak-gui-tests.sh \
+              tests/gui/test_terminal_backends.py \
+              tests/gui/test_connection_dialog_saved_secrets.py \
+              tests/gui/test_protocol_tabs.py \
+              --junitxml="$RUNNER_TEMP/flatpak-tests.xml"
+          '
+          skipped="$(grep -o "<skipped[^>]*message=\"[^\"]*\"" "$RUNNER_TEMP/flatpak-tests.xml" || true)"
+          if [ -n "$skipped" ]; then
+            echo "$skipped"
+            echo "::error::A test skipped inside the Flatpak; every one must run in CI"
+            exit 1
+          fi
