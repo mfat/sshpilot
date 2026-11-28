@@ -47,12 +47,12 @@ def test_copy_cut_toasts_translate_before_format_and_keep_clipboard(monkeypatch,
     )
 
     window._op_copy_cut(pane, "copy", {"entries": [_entry("alpha.txt")], "directory": str(tmp_path)})
-    pane.show_toast.assert_called_with("alpha.txt copied-localized")
+    pane.show_toast.assert_called_with("alpha.txt copied-localized", informational=True)
     assert window._clipboard_entries[0].name == "alpha.txt"
     assert window._clipboard_operation == "copy"
 
     window._op_copy_cut(pane, "cut", {"entries": [_entry("a"), _entry("b")], "directory": str(tmp_path)})
-    pane.show_toast.assert_called_with("2 cut-localized")
+    pane.show_toast.assert_called_with("2 cut-localized", informational=True)
     assert [item.name for item in window._clipboard_entries] == ["a", "b"]
     assert window._clipboard_operation == "cut"
 
@@ -186,7 +186,7 @@ def test_rename_and_delete_dialogs_keep_file_operations(monkeypatch, tmp_path):
     _dialog_response(dialogs[0][1])(dialogs[0][1], "ok")
     assert not source.exists()
     assert (tmp_path / "new.txt").read_text() == "payload"
-    pane.show_toast.assert_any_call("translated:Renamed to new.txt")
+    pane.show_toast.assert_any_call("translated:Renamed to new.txt", informational=True)
 
     window._op_delete(pane, {"entries": [_entry("new.txt")], "directory": str(tmp_path)})
     assert dialogs[1][0] == ("translated:Delete Item", "translated:Delete new.txt?")

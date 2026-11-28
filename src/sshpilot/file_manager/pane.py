@@ -2847,7 +2847,7 @@ class FilePane(Gtk.Box):
         payload = {"paths": source_paths, "destination": destination}
         self.emit("request-operation", "upload", payload)
         if len(entries) == 1:
-            self.show_toast(_("Uploading {name}…").format(name=entries[0].name))
+            self.show_toast(_("Uploading {name}…").format(name=entries[0].name), informational=True)
         else:
             self.show_toast(ngettext(
                 "Uploading {count} item…", "Uploading {count} items…", len(entries)
@@ -2891,7 +2891,7 @@ class FilePane(Gtk.Box):
         }
         self.emit("request-operation", "download", payload)
         if len(entries) == 1:
-            self.show_toast(_("Downloading {name}…").format(name=entries[0].name))
+            self.show_toast(_("Downloading {name}…").format(name=entries[0].name), informational=True)
         else:
             self.show_toast(ngettext(
                 "Downloading {count} item…", "Downloading {count} items…", len(entries)
@@ -2958,7 +2958,7 @@ class FilePane(Gtk.Box):
                         # Switch to it immediately
                         self.toolbar.path_entry.set_text(path)
                         self.toolbar.path_entry.emit("activate")
-                        self.show_toast(_("Access granted to: {path}").format(path=_pretty_path_for_display(path)))
+                        self.show_toast(_("Access granted to: {path}").format(path=_pretty_path_for_display(path)), informational=True)
                         
                         # Hide the Request Access button since access is now granted
                         self._hide_request_access_button()
@@ -2969,7 +2969,7 @@ class FilePane(Gtk.Box):
                         if path:
                             self.toolbar.path_entry.set_text(path)
                             self.toolbar.path_entry.emit("activate")
-                            self.show_toast(_("Access granted to: {path}").format(path=_pretty_path_for_display(path)))
+                            self.show_toast(_("Access granted to: {path}").format(path=_pretty_path_for_display(path)), informational=True)
                             # Hide the Request Access button since access is now granted
                             self._hide_request_access_button()
             dlg.destroy()
@@ -4308,14 +4308,19 @@ class FilePane(Gtk.Box):
         if self._current_path:
             self._set_current_pathbar_text(self._current_path)
 
-    def show_toast(self, text: str, timeout: int = -1) -> None:
-        """Show a toast; messages too long for a toast escalate to an alert."""
+    def show_toast(
+        self, text: str, timeout: int = -1, *, informational: bool = False
+    ) -> None:
+        """Show a toast; error messages too long for a toast escalate to an alert.
+
+        Pass ``informational=True`` for status messages ("Downloading x…"):
+        they embed a filename of any length and must never turn into an
+        "Error" dialog (#1438); a long one is simply shown as a toast.
+        """
         # Messages routinely embed a filename or path, which on the local side
         # may not be valid UTF-8; GTK refuses to encode those.
         text = safe_display_text(text)
-        if toast_overflows(text):
-            # ponytail: long toasts are always errors today; revisit if a
-            # long informational toast ever appears.
+        if not informational and toast_overflows(text):
             present_error_alert(self, text)
             return
         try:

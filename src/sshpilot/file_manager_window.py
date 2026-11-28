@@ -2186,7 +2186,7 @@ class FileManagerWindow(Adw.Window):
                         # Show toast about skipped files
                         if conflict_count == 1:
                             filename = os.path.basename(conflicts[0][1])
-                            self._left_pane.show_toast(_("Skipped existing file: {filename}").format(filename=filename))
+                            self._left_pane.show_toast(_("Skipped existing file: {filename}").format(filename=filename), informational=True)
                         else:
                             self._left_pane.show_toast(ngettext(
                                 "Skipped {count} existing file",
@@ -2422,7 +2422,7 @@ class FileManagerWindow(Adw.Window):
             else:
                 template = ngettext("Copied {count} item", "Copied {count} items", len(entries))
             message = template.format(count=len(entries))
-        pane.show_toast(message)
+        pane.show_toast(message, informational=True)
 
     def _op_paste(self, pane, payload) -> None:
         if not self._clipboard_entries or self._clipboard_source_pane is None:
@@ -2663,7 +2663,7 @@ class FileManagerWindow(Adw.Window):
                 except Exception as exc:
                     pane.show_toast(_("Failed to rename item: {error}").format(error=exc))
                 else:
-                    pane.show_toast(_("Renamed to {name}").format(name=new_name))
+                    pane.show_toast(_("Renamed to {name}").format(name=new_name), informational=True)
                     self._pending_highlights[self._left_pane] = new_name
                     self._load_local(base_dir)
             else:
@@ -2680,7 +2680,7 @@ class FileManagerWindow(Adw.Window):
                         logger.error(f"rename failed: {e}")
                 
                 future.add_done_callback(_on_rename_done)
-                pane.show_toast(_("Renaming to {name}…").format(name=new_name))
+                pane.show_toast(_("Renaming to {name}…").format(name=new_name), informational=True)
             dialog.close()
 
         def _focus_entry():
@@ -2992,7 +2992,7 @@ class FileManagerWindow(Adw.Window):
             pane.show_toast(_("Selected items are not accessible"))
             return
         if missing and available_paths:
-            pane.show_toast(_("Skipping inaccessible items: {name}").format(name=missing[0].name))
+            pane.show_toast(_("Skipping inaccessible items: {name}").format(name=missing[0].name), informational=True)
 
         # Prepare list of files to transfer for conflict checking
         files_to_transfer = []
