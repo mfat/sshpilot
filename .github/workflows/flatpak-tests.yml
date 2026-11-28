@@ -8,8 +8,10 @@ name: Flatpak tests
 # - a connection added in the New Connection dialog, logging in with the
 #   password and the key passphrase saved there (through the secret portal);
 # - every non-SSH protocol tab: telnet, serial, Docker, Podman, Kubernetes, Mosh.
-# Built modules are cached by manifest, so a push that changes only sshPilot
-# rebuilds only sshPilot.
+# flatpak-builder's build cache (.flatpak-builder) is saved after every build
+# and the newest one is restored before the next, so a push rebuilds only the
+# modules that changed (normally just sshPilot). The dependencies rebuild only
+# when the manifest changes them or Flathub publishes a new SDK.
 
 on:
   push:
@@ -39,12 +41,39 @@ jobs:
       - name: Write the manifest that builds this checkout
         run: python3 scripts/flatpak-dev-manifest.py
 
+      - name: Move the runtimes off the image layer
+        # flatpak-builder updates the SDK in the image's system installation
+        # before building. In a container that installation sits on overlayfs,
+        # where renaming a directory that came from the image fails with
+        # "Invalid cross-device link"; a build died on it. A copy on the
+        # runner's disk updates normally.
+        run: |
+          inst="$(flatpak --system --installations)"
+          du -sh "$inst"
+          cp -a "$inst" "$RUNNER_TEMP/flatpak-system"
+          mount --bind "$RUNNER_TEMP/flatpak-system" "$inst"
+
+      - name: Restore the newest build cache
+        # The action only restores an exact key, and a cache key is never
+        # overwritten, so with a fixed key the cache froze at its first build:
+        # after a Flathub SDK update every run rebuilt every module. Each build
+        # saves under its own key instead and the newest one is restored here.
+        uses: actions/cache/restore@v4
+        with:
+          path: .flatpak-builder
+          key: flatpak-tests-${{ hashFiles('flatpak/**') }}-${{ github.run_id }}-x86_64
+          restore-keys: |
+            flatpak-tests-${{ hashFiles('flatpak/**') }}-
+            flatpak-tests-
+
       - name: Build
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: sshpilot-test.flatpak
           manifest-path: io.github.mfat.sshpilot.yaml
-          cache-key: flatpak-tests-${{ hashFiles('flatpak/**') }}
+          # Saved under this run's key (the action appends the arch).
+          cache-key: flatpak-tests-${{ hashFiles('flatpak/**') }}-${{ github.run_id }}
+          restore-cache: false
           arch: x86_64
           upload-artifact: false
 
@@ -53,6 +82,29 @@ jobs:
           name: sshpilot-test-flatpak
           path: sshpilot-test.flatpak
           retention-days: 7
+
+  prune-cache:
+    name: Drop older build caches
+    # Every build saves ~400 MB; keep only the newest for this ref so the
+    # repository's 10 GB cache budget is not spent on stale copies.
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SUFFIX: -${{ github.run_id }}-x86_64
+        run: |
+          caches="$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" \
+              --key flatpak-tests- --limit 100 --json id,key)"
+          # Delete nothing unless this run's cache was saved.
+          if ! jq -e --arg s "$RUN_SUFFIX" 'any(.[]; .key | endswith($s))' <<<"$caches" >/dev/null; then
+            echo "This run saved no cache; keeping the older ones"
+            exit 0
+          fi
+          jq -r --arg s "$RUN_SUFFIX" '.[] | select(.key | endswith($s) | not) | .id' <<<"$caches" |
+            while read -r id; do gh cache delete --repo "$GITHUB_REPOSITORY" "$id"; done
 
   test:
     name: GUI tests inside the Flatpak
