@@ -38,6 +38,9 @@ class Refusal(str, Enum):
     MATCH_HOST_AFTER_HOSTNAME = "match_host_after_hostname"
     #: A Match line that checks more than the host name typed.
     MATCH_NOT_HOST_NAMES = "match_not_host_names"
+    #: Capital letters: ``Host`` matches case by case, ``originalhost``
+    #: ignores case, so the block would apply to other names.
+    PATTERNS_CASE_SENSITIVE = "patterns_case_sensitive"
 
 
 def converted_patterns(kind: str, patterns: str, to: str):
@@ -47,6 +50,13 @@ def converted_patterns(kind: str, patterns: str, to: str):
     ``Host a b`` is ``Match originalhost a,b``: ``Host`` checks the name as
     typed, and so does ``originalhost`` (``Match host`` checks the name
     after a HostName line replaced it). ``Host *`` is ``Match all``.
+
+    ``Host`` compares letters case by case and ``originalhost`` ignores
+    case (``ssh -G``: ``Host EXAMPLE`` leaves ``example`` alone, ``Match
+    originalhost EXAMPLE`` takes it). Patterns with a capital letter are
+    refused both ways: the block would apply to the lower-case names people
+    type, or stop applying to them. Lower-case patterns still differ for a
+    name typed with capitals, which ``Host`` never matched.
     """
     tokens = (patterns or "").split()
     if kind == to:
@@ -58,6 +68,8 @@ def converted_patterns(kind: str, patterns: str, to: str):
             return Refusal.HOST_PATTERNS_UNCONVERTIBLE
         if tokens == ["*"]:
             return "all"
+        if _has_capitals(patterns):
+            return Refusal.PATTERNS_CASE_SENSITIVE
         return "originalhost " + ",".join(tokens)
     if kind == MATCH and to == HOST:
         if [t.lower() for t in tokens] == ["all"]:
@@ -79,6 +91,8 @@ def converted_patterns(kind: str, patterns: str, to: str):
         pieces = names.split(",")
         if '"' in names or not all(pieces):
             return Refusal.MATCH_NOT_HOST_NAMES
+        if _has_capitals(names):
+            return Refusal.PATTERNS_CASE_SENSITIVE
         if negated:
             # "!originalhost a,b" is every name but a and b: "Host * !a !b".
             # A negation inside it (a not of a not) is left to the Raw view.
@@ -87,6 +101,10 @@ def converted_patterns(kind: str, patterns: str, to: str):
             return " ".join(["*"] + ["!" + piece for piece in pieces])
         return " ".join(pieces)
     return Refusal.MATCH_NOT_HOST_NAMES
+
+
+def _has_capitals(text: str) -> bool:
+    return text != text.lower()
 
 
 def can_place(blocks: Sequence[Block]) -> bool:

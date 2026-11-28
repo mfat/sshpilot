@@ -19515,3 +19515,7 @@ msgstr "此 Match 块检查的不只是主机名，因此无法在不改变其�
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "认证尝试 {attempt}"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "These host names contain capital letters. A Host line matches them exactly, but a Match line ignores case, so the block would apply to different connections. Change the line in the Raw view."
+msgstr "这些主机名包含大写字母。Host 行会精确匹配它们，而 Match 行忽略大小写，因此该块会作用于不同的连接。请在“原始”视图中修改该行。"

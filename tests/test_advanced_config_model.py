@@ -217,6 +217,56 @@ def test_negated_and_equals_written_originalhost_become_a_host_line(conditions, 
     assert converted_patterns(MATCH, conditions, HOST) == host
 
 
+@pytest.mark.parametrize("kind, patterns, to", [
+    (HOST, "EXAMPLE", MATCH),
+    (HOST, "web1 Ex*", MATCH),
+    (MATCH, "originalhost EXAMPLE", HOST),
+    (MATCH, "!originalhost Bastion", HOST),
+    (MATCH, "OriginalHost=a,B", HOST),
+])
+def test_capital_letters_are_refused_both_ways(kind, patterns, to):
+    # Host matches case by case, originalhost ignores case.
+    assert converted_patterns(kind, patterns, to) is Refusal.PATTERNS_CASE_SENSITIVE
+
+
+def _ssh_port(tmp_path, config: str, name: str) -> str:
+    import subprocess
+    path = tmp_path / "config"
+    path.write_text(config)
+    out = subprocess.run(
+        ["ssh", "-F", str(path), "-G", name],
+        capture_output=True, text=True, check=True, timeout=10,
+    ).stdout
+    return next(line.split()[1] for line in out.splitlines() if line.startswith("port "))
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ssh"), reason="needs OpenSSH")
+@pytest.mark.parametrize("host_patterns", ["EXAMPLE", "Ex*", "example", "web1 *.example"])
+def test_conversion_against_openssh_for_mixed_case_names(tmp_path, host_patterns):
+    """What each refusal is for, and that what is converted means the same
+    for the lower-case names people type, checked by ``ssh -G``."""
+    match = converted_patterns(HOST, host_patterns, MATCH)
+    names = ["example", "web1", "a.example"]
+    host_ports = [
+        _ssh_port(tmp_path, f"Host {host_patterns}\n    Port 2001\n", n) for n in names
+    ]
+    if isinstance(match, Refusal):
+        # The Match line it would have written takes names Host left alone.
+        tokens = ",".join(host_patterns.split())
+        match_ports = [
+            _ssh_port(tmp_path, f"Match originalhost {tokens}\n    Port 2001\n", n)
+            for n in names
+        ]
+        assert match_ports != host_ports
+        assert converted_patterns(MATCH, f"originalhost {tokens}", HOST) is match
+        return
+    match_ports = [
+        _ssh_port(tmp_path, f"Match {match}\n    Port 2001\n", n) for n in names
+    ]
+    assert match_ports == host_ports
+    assert converted_patterns(MATCH, match, HOST) == host_patterns
+
+
 def test_set_kind_rewrites_the_header_and_keeps_the_rest(editor):
     _glob, web, _star = editor.blocks
     assert editor.set_kind(web.uid, MATCH) is True

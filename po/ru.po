@@ -20512,3 +20512,7 @@ msgstr "Этот блок Match проверяет не только имя уз
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "Попытка аутентификации {attempt}"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "These host names contain capital letters. A Host line matches them exactly, but a Match line ignores case, so the block would apply to different connections. Change the line in the Raw view."
+msgstr "Эти имена хостов содержат заглавные буквы. Строка Host сравнивает их точно, а строка Match не учитывает регистр, поэтому блок применялся бы к другим подключениям. Измените строку в представлении «Необработанные данные»."

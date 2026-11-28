@@ -20160,3 +20160,7 @@ msgstr "این بلوک Match چیزی بیش از نام میزبان را بر
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "تلاش برای احراز هویت {attempt}"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "These host names contain capital letters. A Host line matches them exactly, but a Match line ignores case, so the block would apply to different connections. Change the line in the Raw view."
+msgstr "این نام‌های میزبان حروف بزرگ دارند. خط Host آن‌ها را دقیقاً مقایسه می‌کند، اما خط Match بزرگی و کوچکی حروف را نادیده می‌گیرد، پس این بلوک روی اتصال‌های دیگری اعمال می‌شود. خط را در نمای «خام» تغییر دهید."

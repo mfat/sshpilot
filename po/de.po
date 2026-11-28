@@ -20617,3 +20617,7 @@ msgstr "Dieser Match-Block prüft mehr als den Hostnamen und kann daher kein Hos
 #, python-brace-format
 #~ msgid "Authentication attempt {attempt}"
 #~ msgstr "Authentifizierungsversuch {attempt}"
+
+#: src/sshpilot/advanced_config_window.py
+msgid "These host names contain capital letters. A Host line matches them exactly, but a Match line ignores case, so the block would apply to different connections. Change the line in the Raw view."
+msgstr "Diese Hostnamen enthalten Großbuchstaben. Eine Host-Zeile vergleicht sie exakt, eine Match-Zeile ignoriert jedoch die Groß- und Kleinschreibung, sodass der Block für andere Verbindungen gelten würde. Ändern Sie die Zeile in der Ansicht „Rohdaten“."

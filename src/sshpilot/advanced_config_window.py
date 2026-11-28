@@ -1240,6 +1240,12 @@ class AdvancedConfigBase:
                 "This Match block checks more than the host name, so it cannot "
                 "become a Host block without applying to different connections."
             )
+        elif refusal is Refusal.PATTERNS_CASE_SENSITIVE:
+            text = _(
+                "These host names contain capital letters. A Host line matches "
+                "them exactly, but a Match line ignores case, so the block would "
+                "apply to different connections. Change the line in the Raw view."
+            )
         else:
             return
         self._toasts.add_toast(Adw.Toast.new(text))
