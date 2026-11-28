@@ -250,3 +250,244 @@ def test_overwrite_round_trips_and_is_omitted_when_unset():
     assert "overwrite" not in sftp_copy_request_to_wire(SftpCopyRequest("sftp-1", "/a", "/b"))
     with pytest.raises(TypeError):
         SftpCopyRequest("sftp-1", "/a", "/b", overwrite="yes")
+
+
+# -- servers without posix-rename, differently rooted sessions, handles -------
+
+from sshpilot.sftp import protocol as sftp_proto  # noqa: E402
+
+
+def _without_posix_rename(sftp):
+    """ProFTPD, AWS Transfer, Dropbear: plain RENAME only."""
+    sftp.extensions.pop("posix-rename@openssh.com", None)
+    return sftp
+
+
+def _failing_publish(sftp, destination, code):
+    """Putting a file in at *destination* once the old one is set aside
+    fails with *code*; after a lost connection nothing gets through."""
+    real_rename, real_remove = sftp.rename, sftp.remove
+    dead = []
+
+    def rename(old, new):
+        if dead:
+            raise sftp_proto.SFTPError(sftp_proto.FX_CONNECTION_LOST)
+        if new == str(destination) and not old.endswith(".old") and not os.path.lexists(new):
+            if code == sftp_proto.FX_CONNECTION_LOST:
+                dead.append(True)
+            raise sftp_proto.SFTPError(code)
+        return real_rename(old, new)
+
+    def remove(path):
+        if dead:
+            raise sftp_proto.SFTPError(sftp_proto.FX_CONNECTION_LOST)
+        return real_remove(path)
+
+    sftp.rename, sftp.remove = rename, remove
+    return sftp
+
+
+@pytest.fixture
+def raw_sessions():
+    sessions = []
+
+    def start():
+        sessions.append(_start_client())
+        return sessions[-1][0]
+
+    yield start
+    for session in sessions:
+        _stop_client(*session)
+
+
+@pytest.mark.parametrize("same_connection", [False, True])
+def test_replace_without_posix_rename_swaps_the_file_in(tmp_path, raw_sessions, same_connection):
+    source = tmp_path / "a.txt"
+    source.write_bytes(b"new")
+    destination = tmp_path / "dest" / "a.txt"
+    destination.parent.mkdir()
+    destination.write_bytes(b"old")
+    first = _without_posix_rename(raw_sessions())
+    second = _without_posix_rename(raw_sessions())
+    runtime, ops, a, b = _two_services(first, second, same_connection=same_connection)
+
+    done = _copy(runtime, ops, a, b, source, destination, overwrite=True)
+
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert destination.read_bytes() == b"new"
+    assert sorted(p.name for p in destination.parent.iterdir()) == ["a.txt"]
+
+
+@pytest.mark.parametrize("move", [False, True])
+def test_a_failed_replace_without_posix_rename_keeps_the_destination(
+    tmp_path, raw_sessions, move
+):
+    source = tmp_path / "a.txt"
+    source.write_bytes(b"new")
+    destination = tmp_path / "dest" / "a.txt"
+    destination.parent.mkdir()
+    destination.write_bytes(b"old")
+    sftp = _failing_publish(
+        _without_posix_rename(raw_sessions()), destination, sftp_proto.FX_PERMISSION_DENIED
+    )
+    runtime, ops, a, b = _two_services(sftp, _Unused(), same_connection=True)
+
+    done = _copy(runtime, ops, a, b, source, destination, move=move, overwrite=True)
+
+    assert done.state is OperationState.FAILED
+    assert destination.read_bytes() == b"old"
+    assert source.read_bytes() == b"new"
+    assert sorted(p.name for p in destination.parent.iterdir()) == ["a.txt"]
+
+
+def test_a_connection_lost_mid_replace_never_deletes_the_destination(tmp_path, raw_sessions):
+    source = tmp_path / "a.txt"
+    source.write_bytes(b"new")
+    destination = tmp_path / "dest" / "a.txt"
+    destination.parent.mkdir()
+    destination.write_bytes(b"old")
+    sftp = _failing_publish(
+        _without_posix_rename(raw_sessions()), destination, sftp_proto.FX_CONNECTION_LOST
+    )
+    runtime, ops, a, b = _two_services(sftp, _Unused(), same_connection=True)
+
+    done = _copy(runtime, ops, a, b, source, destination, overwrite=True)
+
+    assert done.state is OperationState.FAILED
+    # Set aside under a hidden name, not removed.
+    kept = [p.read_bytes() for p in destination.parent.iterdir()]
+    assert b"old" in kept
+
+
+class _Unused:
+    """The destination session of a same-connection copy: never used."""
+
+    def __getattr__(self, name):
+        raise AssertionError(f"destination session used: {name}")
+
+
+class _Rooted:
+    """A session whose ``/`` is *root* on the server, as a chrooted SFTP
+    account sees it: ``/report`` here is ``<root>/report`` elsewhere."""
+
+    def __init__(self, target, root):
+        self._target = target
+        self._root = str(root).rstrip("/")
+
+    def _in(self, value):
+        if isinstance(value, str) and value.startswith("/"):
+            return self._root + value if value != "/" else self._root
+        return value
+
+    def realpath(self, path):
+        real = self._target.realpath(self._in(path))
+        if real == self._root:
+            return "/"
+        assert real.startswith(self._root + "/"), real
+        return real[len(self._root):]
+
+    def __getattr__(self, name):
+        attr = getattr(self._target, name)
+        if not callable(attr):
+            return attr
+        return lambda *a, **k: attr(*(self._in(v) for v in a), **k)
+
+
+def test_a_move_never_replaces_a_file_with_itself_seen_from_another_root(
+    tmp_path, raw_sessions
+):
+    """``<tmp>/share/report.txt`` in one session is ``/report.txt`` in a
+    session rooted at ``<tmp>/share``: replacing it, then removing the
+    source, would delete the only copy."""
+    share = tmp_path / "share"
+    share.mkdir()
+    path = share / "report.txt"
+    path.write_bytes(b"precious")
+    rooted = _Rooted(raw_sessions(), share)
+    runtime, ops, a, b = _two_services(raw_sessions(), rooted)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, str(path), "/report.txt", as_operation=True,
+        destination_service_id=b, move=True, overwrite=True,
+    ))
+
+    assert _failure(done) is SftpFailureCode.DESTINATION_ALREADY_EXISTS
+    assert path.read_bytes() == b"precious"
+    assert sorted(p.name for p in share.iterdir()) == ["report.txt"]
+
+
+def test_another_root_still_replaces_a_different_file(tmp_path, raw_sessions):
+    share = tmp_path / "share"
+    share.mkdir()
+    (share / "report.txt").write_bytes(b"old")
+    source = tmp_path / "report.txt"
+    source.write_bytes(b"new")
+    rooted = _Rooted(raw_sessions(), share)
+    runtime, ops, a, b = _two_services(raw_sessions(), rooted)
+
+    done = _run(runtime, ops, SftpCopyRequest(
+        a, str(source), "/report.txt", as_operation=True,
+        destination_service_id=b, move=True, overwrite=True,
+    ))
+
+    assert done.state is OperationState.SUCCEEDED, done.failure
+    assert (share / "report.txt").read_bytes() == b"new"
+    assert not source.exists()
+
+
+class _CountingHandles:
+    """Counts the files the destination opens and the ones it closes."""
+
+    def __init__(self, target):
+        self._target = target
+        self.opened = 0
+        self.closed = 0
+
+    def open(self, *args, **kwargs):
+        handle = self._target.open(*args, **kwargs)
+        self.opened += 1
+        counter = self
+        real_exit = handle.__exit__
+        real_close = handle.close
+
+        class _Counted:
+            def __getattr__(self, name):
+                return getattr(handle, name)
+
+            def __enter__(self):
+                handle.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                counter.closed += 1
+                return real_exit(*exc)
+
+            def close(self):
+                counter.closed += 1
+                return real_close()
+
+        return _Counted()
+
+    def __getattr__(self, name):
+        return getattr(self._target, name)
+
+
+@pytest.mark.parametrize("conflict", ["folder", "same_file"])
+def test_a_refused_replace_closes_its_staging_file(tmp_path, raw_sessions, conflict):
+    if conflict == "folder":
+        source = tmp_path / "name"
+        source.write_bytes(b"file")
+        destination = tmp_path / "dest" / "name"
+        destination.mkdir(parents=True)
+    else:
+        source = destination = tmp_path / "report.txt"
+        source.write_bytes(b"precious")
+    counting = _CountingHandles(raw_sessions())
+    runtime, ops, a, b = _two_services(raw_sessions(), counting)
+
+    for _ in range(3):
+        done = _copy(runtime, ops, a, b, source, destination, move=True, overwrite=True)
+        assert _failure(done) is SftpFailureCode.DESTINATION_ALREADY_EXISTS
+
+    assert counting.opened == 3
+    assert counting.closed == counting.opened

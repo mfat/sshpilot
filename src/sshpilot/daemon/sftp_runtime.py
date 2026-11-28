@@ -2197,15 +2197,16 @@ class SftpServiceRuntime:
             replaced = _existing(destination_path) if request.overwrite else None
             try:
                 with client.open(source_path, "rb") as source_file:
-                    staging_file = destination_client.open(staging, "xb")
-                    created = True
-                    if replaced is not None:
-                        if replaced.is_dir() and not replaced.is_symlink():
-                            raise _exists_error()
-                        if _is_same_file(source_path, destination_path, staging):
-                            # Replacing a file by itself would lose it in a move.
-                            raise _exists_error()
-                    with staging_file:
+                    # Entered at once: a refusal below closes the handle too,
+                    # or each refused replace would leak one on the server.
+                    with destination_client.open(staging, "xb") as staging_file:
+                        created = True
+                        if replaced is not None:
+                            if replaced.is_dir() and not replaced.is_symlink():
+                                raise _exists_error()
+                            if _is_same_file(source_path, destination_path, staging):
+                                # Replacing a file by itself would lose it in a move.
+                                raise _exists_error()
                         _copy_bytes(source_file, staging_file, size)
                 if cancel is not None and cancel():
                     raise OperationCancelled()
@@ -2361,10 +2362,11 @@ class SftpServiceRuntime:
         def _shares_filesystem(seen_by_destination: str) -> bool:
             """Whether a path the destination just made shows up through the
             source: two saved connections can reach one machine."""
-            if same_server:
-                return True
+            return same_server or _seen_by_source(seen_by_destination)
+
+        def _seen_by_source(path: str) -> bool:
             try:
-                client.lstat(seen_by_destination)
+                client.lstat(path)
             except Exception:
                 return False
             return True
@@ -2372,9 +2374,23 @@ class SftpServiceRuntime:
         def _is_same_file(source_path: str, destination_path: str, staging: str) -> bool:
             """Whether replacing *destination_path* would replace the source
             itself. Unknown counts as the same: a wrong "no" loses the file
-            in a move, a wrong "yes" only refuses one replace."""
+            in a move, a wrong "yes" only refuses one replace.
+
+            The staging file just made is the probe. Two sessions can see one
+            machine from different roots (``/srv/share/report`` and, in a
+            session rooted at ``/srv/share``, ``/report``), so it is looked
+            for under its own path and, by its unique name, beside the
+            source: found there, both folders are one, and the same name is
+            the same file."""
+            beside_source = posixpath.join(
+                posixpath.dirname(source_path), posixpath.basename(staging)
+            )
             if not _shares_filesystem(staging):
-                return False
+                if not _seen_by_source(beside_source):
+                    return False
+                return posixpath.basename(source_path) == posixpath.basename(
+                    destination_path
+                )
             try:
                 return _resolved(source_path) == _resolved(destination_path)
             except Exception:

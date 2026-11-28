@@ -191,7 +191,9 @@ def test_atomic_rename_falls_back_when_posix_rename_is_absent():
         client.close()
 
     assert server.extended == []
-    assert server.removes == ["/srv/file"]
+    # A plain RENAME first: the destination is never removed before its
+    # replacement is in place (a failed rename would lose it).
+    assert server.removes == []
     assert server.renames == [("/srv/.tmp", "/srv/file")]
 
 
@@ -204,5 +206,5 @@ def test_atomic_rename_falls_back_when_posix_rename_is_rejected():
         client.close()
 
     assert server.extended == [("posix-rename@openssh.com", "/srv/.tmp", "/srv/file")]
-    assert server.removes == ["/srv/file"]
+    assert server.removes == []
     assert server.renames == [("/srv/.tmp", "/srv/file")]

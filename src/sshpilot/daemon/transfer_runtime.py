@@ -1794,8 +1794,8 @@ class TransferRuntime:
         server's umask as OpenSSH's ``sftp put`` does. The local mtime is kept.
 
         Commit uses ``atomic_rename`` (OpenSSH posix-rename when available,
-        otherwise remove + standard RENAME) so non-OpenSSH SFTP servers still
-        accept the upload.
+        otherwise standard RENAME with the old file set aside until the new
+        one is in place) so non-OpenSSH SFTP servers still accept the upload.
         """
         local_info = os.stat(local_src)
         create_mode = 0o600 if existing_mode is not None else stat.S_IMODE(local_info.st_mode)
@@ -1835,7 +1835,8 @@ class TransferRuntime:
         client.close_handle(handle)
         try:
             # OpenSSH: posix-rename. Others (mod_sftp, AWS Transfer, …):
-            # remove+FXP_RENAME — see OpenSSHSFTPClient.atomic_rename.
+            # FXP_RENAME, setting an existing destination aside until the
+            # rename is done — see OpenSSHSFTPClient.atomic_rename.
             client.atomic_rename(remote_temp, remote_dst)
         except Exception:
             self._cleanup_remote_temp(record)

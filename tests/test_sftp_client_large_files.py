@@ -674,6 +674,29 @@ def test_atomic_upload_many_replaces_files_without_posix_rename(client, tmp_path
     assert sorted(os.listdir(remote_dir)) == [Path(i.remote_dst).name for i in items]
 
 
+def test_atomic_upload_many_failed_replace_keeps_the_old_file(client, tmp_path):
+    """Without posix-rename an existing destination is set aside, not
+    removed: when the new file cannot take its name, the old one is back."""
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    items = _upload_items(tmp_path, remote_dir, 1)
+    destination = Path(items[0].remote_dst)
+    destination.write_bytes(b"old")
+    client.extensions.pop("posix-rename@openssh.com", None)
+    real_rename = client.rename
+
+    def rename(old, new):
+        if new == str(destination) and old == items[0].remote_temp and not destination.exists():
+            raise proto.SFTPError(proto.FX_PERMISSION_DENIED)
+        return real_rename(old, new)
+
+    client.rename = rename
+    with pytest.raises(proto.SFTPError):
+        client.atomic_upload_many(items)
+    assert destination.read_bytes() == b"old"
+    assert os.listdir(remote_dir) == [destination.name]
+
+
 def test_atomic_upload_many_writes_a_file_that_outgrew_one_chunk(client, tmp_path):
     remote_dir = tmp_path / "remote"
     remote_dir.mkdir()

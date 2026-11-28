@@ -7,6 +7,8 @@ in GObject/GTK.
 from __future__ import annotations
 
 import logging
+import posixpath
+import secrets
 import threading
 import time
 from collections import deque
@@ -551,8 +553,9 @@ class OpenSSHSFTPClient:
 
         Prefers OpenSSH ``posix-rename`` when the server advertises it. Servers
         that reject the extension (ProFTPD mod_sftp, AWS Transfer Family,
-        Dropbear, many appliances) get remove-destination then standard
-        ``FXP_RENAME`` instead of a hard failure.
+        Dropbear, many appliances) get a standard ``FXP_RENAME``, and when
+        ``new`` exists, :meth:`_replace_setting_aside`: the destination is
+        never removed before its replacement is in place.
         """
         if self.supports_posix_rename():
             try:
@@ -561,15 +564,57 @@ class OpenSSHSFTPClient:
             except proto.SFTPError as exc:
                 if exc.code == proto.FX_CONNECTION_LOST:
                     raise
-                logger.debug(
-                    "posix-rename failed (%s); falling back to remove+rename",
-                    exc,
-                )
+                logger.debug("posix-rename failed (%s); renaming instead", exc)
         try:
-            self.remove(new)
-        except (FileNotFoundError, proto.SFTPError):
-            pass
-        self.rename(old, new)
+            self.rename(old, new)
+            return
+        except proto.SFTPError as exc:
+            if exc.code == proto.FX_CONNECTION_LOST:
+                raise
+            refusal = exc
+        self._replace_setting_aside(old, new, refusal)
+
+    def _replace_setting_aside(self, old: str, new: str, refusal: BaseException) -> None:
+        """Replace *new* with *old* using plain RENAMEs only.
+
+        *new* is renamed to a hidden sibling first, *old* takes its name, and
+        only then is the set-aside copy removed. When *old* cannot take the
+        name, the set-aside copy is renamed back. A connection lost between
+        the two leaves the old file under the hidden name, never deleted.
+        *refusal* (why the plain rename failed) is raised when there is
+        nothing at *new* to set aside, or a folder a file must not replace.
+        """
+        try:
+            existing = self.lstat(new)
+        except (FileNotFoundError, proto.SFTPError) as exc:
+            if getattr(exc, "code", None) == proto.FX_CONNECTION_LOST:
+                raise
+            raise refusal
+        if existing.is_dir() and not existing.is_symlink():
+            raise refusal
+        aside = posixpath.join(
+            posixpath.dirname(new), f".sshpilot-{secrets.token_hex(16)}.old"
+        )
+        self.rename(new, aside)
+        try:
+            self.rename(old, new)
+        except BaseException:
+            try:
+                self.rename(aside, new)
+            except BaseException:
+                logger.warning(
+                    "Could not put %s back after a failed replace; it is kept at %s",
+                    new,
+                    aside,
+                )
+            raise
+        try:
+            self.remove(aside)
+        except Exception as exc:
+            # The replace is done; only the old copy is left over.
+            logger.warning(
+                "Replaced %s but could not remove its old copy at %s: %s", new, aside, exc
+            )
 
     def atomic_upload_many(
         self,
@@ -655,9 +700,6 @@ class OpenSSHSFTPClient:
         opened: List[Tuple[AtomicUploadItem, bytes]] = []
         # Temps that exist on the server and are not yet renamed into place.
         pending_temps: List[str] = []
-        # Temps whose destination was already removed: the temp is now the
-        # only copy, so it must survive a failure.
-        keep_temps: List[str] = []
 
         def _cancel() -> None:
             if check_cancel is not None:
@@ -779,7 +821,7 @@ class OpenSSHSFTPClient:
                 )
             else:
                 # Plain RENAME succeeds for new destinations without touching
-                # anything; only existing ones need the remove+rename fallback.
+                # anything; only existing ones are replaced one at a time.
                 rename_errors = self._status_results(
                     [
                         (
@@ -790,33 +832,18 @@ class OpenSSHSFTPClient:
                         for item in items
                     ]
                 )
-            retry: List[AtomicUploadItem] = []
+            retry: List[Tuple[AtomicUploadItem, BaseException]] = []
             for item, exc in zip(items, rename_errors):
                 if exc is None:
                     pending_temps.remove(item.remote_temp)
                 elif isinstance(exc, proto.SFTPError) and exc.code != proto.FX_CONNECTION_LOST:
-                    retry.append(item)
+                    retry.append((item, exc))
                 else:
                     raise exc
-            # Fallback one file at a time so at most one destination is ever
-            # missing while its replacement is still a temp.
-            for item in retry:
-                logger.debug(
-                    "rename of %s failed; falling back to remove+rename", item.remote_temp
-                )
-                try:
-                    self.remove(item.remote_dst)
-                    removed = True
-                except (FileNotFoundError, proto.SFTPError) as exc:
-                    if getattr(exc, "code", None) == proto.FX_CONNECTION_LOST:
-                        raise
-                    removed = False
-                if removed:
-                    keep_temps.append(item.remote_temp)
-                self.rename(item.remote_temp, item.remote_dst)
+            for item, exc in retry:
+                logger.debug("rename of %s failed; replacing instead", item.remote_temp)
+                self._replace_setting_aside(item.remote_temp, item.remote_dst, exc)
                 pending_temps.remove(item.remote_temp)
-                if removed:
-                    keep_temps.remove(item.remote_temp)
         except BaseException:
             if opened:
                 try:
@@ -825,16 +852,9 @@ class OpenSSHSFTPClient:
                     )
                 except BaseException:
                     pass
-            for path in keep_temps:
-                logger.warning(
-                    "Upload interrupted after its destination was removed; "
-                    "keeping the new content at %s",
-                    path,
-                )
-            doomed = [path for path in pending_temps if path not in keep_temps]
-            if doomed:
+            if pending_temps:
                 try:
-                    self.remove_many(doomed, continue_on_error=True)
+                    self.remove_many(pending_temps, continue_on_error=True)
                 except BaseException:
                     pass
             raise
