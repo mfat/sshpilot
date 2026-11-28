@@ -32,6 +32,11 @@ def _patch_gio(monkeypatch):
         icon_utils.Gio, 'File',
         type('_File', (), {'new_for_uri': staticmethod(lambda uri: uri)}),
     )
+    monkeypatch.setattr(icon_utils.Gio, 'resources_get_info', _no_resource)
+
+
+def _no_resource(path, _flags):
+    raise RuntimeError(f"no resource at {path}")
 
 
 def test_mapped_name_resolves_to_its_bundled_resource_file(monkeypatch):
@@ -81,3 +86,49 @@ def test_get_gicon_for_icon_name_caches_by_name():
     sentinel = object()
     icon_utils._gicon_cache['folder-symbolic'] = sentinel  # type: ignore[assignment]
     assert icon_utils.get_gicon_for_icon_name('folder-symbolic') is sentinel
+
+
+def test_bundled_svg_missing_from_the_map_still_loads_the_bundled_file(monkeypatch):
+    # process-stop-symbolic ships in resources but was not in the map, so on
+    # Ubuntu the transfer list's Cancel button showed Yaru's round icon.
+    icon_utils._gicon_cache.clear()
+    _patch_gio(monkeypatch)
+    assert 'process-stop-symbolic' not in icon_utils._ICON_RESOURCE_MAP
+    shipped = icon_utils._ACTIONS_RESOURCE_DIR + 'process-stop-symbolic.svg'
+
+    def _get_info(path, _flags):
+        if path != shipped:
+            raise RuntimeError("no such resource")
+        return (True, 1, 0)
+
+    monkeypatch.setattr(icon_utils.Gio, 'resources_get_info', _get_info)
+    gicon = icon_utils.get_gicon_for_icon_name('process-stop-symbolic')
+    assert isinstance(gicon, _RecordingFileIcon)
+    assert gicon.file_obj == f'resource://{shipped}'
+    other = icon_utils.get_gicon_for_icon_name('some-unbundled-system-icon-symbolic')
+    assert isinstance(other, _RecordingThemedIcon)
+
+
+def test_every_shipped_action_svg_resolves_to_the_bundled_file(monkeypatch):
+    import pathlib
+
+    icon_utils._gicon_cache.clear()
+    _patch_gio(monkeypatch)
+    actions = (
+        pathlib.Path(icon_utils.__file__).resolve().parent
+        / 'resources' / 'icons' / 'scalable' / 'actions'
+    )
+    shipped = {
+        icon_utils._ACTIONS_RESOURCE_DIR + svg.name for svg in actions.glob('*.svg')
+    }
+
+    def _get_info(path, _flags):
+        if path not in shipped:
+            raise RuntimeError("no such resource")
+        return (True, 1, 0)
+
+    monkeypatch.setattr(icon_utils.Gio, 'resources_get_info', _get_info)
+    for svg in sorted(actions.glob('*.svg')):
+        gicon = icon_utils.get_gicon_for_icon_name(svg.stem)
+        assert isinstance(gicon, _RecordingFileIcon), svg.stem
+    icon_utils._gicon_cache.clear()

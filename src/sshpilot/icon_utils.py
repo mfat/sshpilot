@@ -192,13 +192,31 @@ _ICON_RESOURCE_MAP = {
 }
 
 
+_ACTIONS_RESOURCE_DIR = '/io/github/mfat/sshpilot/icons/scalable/actions/'
+
+
+def _bundled_action_path(icon_name: str) -> Optional[str]:
+    """The resource path of a bundled ``actions/<name>.svg``, or None.
+
+    Every SVG we ship is bundled for a reason; one missing from
+    ``_ICON_RESOURCE_MAP`` would otherwise resolve by name and pick up the
+    system theme's icon (Yaru's round process-stop on the transfer list).
+    """
+    path = f'{_ACTIONS_RESOURCE_DIR}{icon_name}.svg'
+    try:
+        Gio.resources_get_info(path, Gio.ResourceLookupFlags.NONE)
+    except Exception:
+        return None
+    return path
+
+
 def get_gicon_for_icon_name(icon_name: str) -> Gio.Icon:
     """Return a cached Gio.Icon for icon_name (bundled FileIcon, else ThemedIcon)."""
     cached = _gicon_cache.get(icon_name)
     if cached is not None:
         return cached
 
-    resource_path = _ICON_RESOURCE_MAP.get(icon_name)
+    resource_path = _ICON_RESOURCE_MAP.get(icon_name) or _bundled_action_path(icon_name)
     if resource_path:
         file_obj = Gio.File.new_for_uri(f'resource://{resource_path}')
         icon: Gio.Icon = Gio.FileIcon.new(file_obj)
