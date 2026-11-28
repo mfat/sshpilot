@@ -8182,8 +8182,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     else:
                         ssh_terminals.append(term)
 
+        # A remote desktop in an embedded RDP tab is held in this process, not
+        # in a terminal, and quitting ends it just the same.
+        from .daemon_quit_policy import count_embedded_rdp_sessions
+
         # If there are SSH terminals, always show warning
-        if ssh_terminals:
+        if ssh_terminals or count_embedded_rdp_sessions(self):
             self.show_quit_confirmation_dialog()
             return True  # Prevent close, let dialog handle it
 

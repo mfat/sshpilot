@@ -22,6 +22,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
+from .connection_model import ConnectionState  # noqa: E402
 from .rdp_failure import RdpFailureKind, classify_failure  # noqa: E402
 from .rdp_view_policy import (  # noqa: E402
     CERT_ACCEPT_AND_STORE,
@@ -160,12 +161,16 @@ class RdpTab(Gtk.Box):
             self._target_text(),
             buttons=False,
         )
+        self._report_status(ConnectionState.CONNECTING, "Connecting")
         self._run_pre_connect(lambda: self._reveal_password(self._start))
 
     def close_session(self) -> None:
         """End the session; used when the tab closes."""
 
         self._closing = True
+        self._connected = False
+        # A session the user closed reports nothing, as for a closed SSH tab.
+        self._report_status(None)
         if self._display is not None:
             try:
                 self._display.close()
@@ -175,6 +180,29 @@ class RdpTab(Gtk.Box):
     @property
     def connected(self) -> bool:
         return self._connected
+
+    # ---- sidebar status -------------------------------------------------
+
+    def _report_status(self, state: Optional[ConnectionState], reason: str = "") -> None:
+        """Tell the sidebar how this tab's session is doing.
+
+        The session runs in this process, so the daemon-fed status store
+        never hears of it; without this the host showed no indicator while a
+        remote desktop was open.
+        """
+
+        store = getattr(self.window, "connection_runtime_status", None)
+        setter = getattr(store, "set_local_status", None)
+        if not callable(setter):
+            return
+        try:
+            from .api.connection_identity import connection_id_for
+            from .gtk.connection_runtime_status import ConnectionRuntimeStatus
+
+            status = None if state is None else ConnectionRuntimeStatus(state, reason)
+            setter(f"rdp-tab-{id(self):x}", connection_id_for(self.connection), status)
+        except Exception:
+            logger.debug("Could not report the RDP tab's status", exc_info=True)
 
     # ---- connection -----------------------------------------------------
 
@@ -233,6 +261,7 @@ class RdpTab(Gtk.Box):
             # failed; the toast says which and why.
             self._show_status("dialog-error-symbolic", _("Could Not Connect"),
                               self._target_text())
+            self._report_status(ConnectionState.FAILED, _("Could Not Connect"))
 
         threading.Thread(target=worker, name="rdp-pre-connect", daemon=True).start()
 
@@ -333,6 +362,7 @@ class RdpTab(Gtk.Box):
         logger.info("RDP connected to %s (display %sx%s)", self._target_text(),
                     display.get_width(), display.get_height())
         self._password_button.set_visible(False)
+        self._report_status(ConnectionState.CONNECTED, "Connected")
         pending, self._pending_password = self._pending_password, None
         if pending:
             # Only a password that actually worked is worth keeping.
@@ -373,10 +403,17 @@ class RdpTab(Gtk.Box):
             title, description = self._failure_status(was_connected)
             self._show_status("dialog-error-symbolic", title, description)
             self._password_button.set_visible(self._can_retry_password(was_connected))
+            # Like an SSH tab: a session that was up and went down is
+            # "Disconnected"; one that never came up failed, and says why.
+            if was_connected:
+                self._report_status(ConnectionState.DISCONNECTED, description)
+            else:
+                self._report_status(ConnectionState.FAILED, description)
         else:
             self._password_button.set_visible(False)
             self._show_status("network-offline-symbolic", _("Disconnected"),
                               _("The remote session ended."))
+            self._report_status(ConnectionState.DISCONNECTED, _("The remote session ended."))
 
     def _failure_status(self, was_connected: bool) -> tuple[str, str]:
         """The status page's title and description for FreeRDP's sentence.

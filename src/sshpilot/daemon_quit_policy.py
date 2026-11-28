@@ -62,6 +62,17 @@ def count_daemon_terminals(window) -> int:
     return total
 
 
+def count_embedded_rdp_sessions(window) -> int:
+    """How many embedded RDP tabs hold a live remote desktop.
+
+    Their FreeRDP session runs in this process, so the daemon's counts never
+    include it; quitting ends it all the same, so it needs confirming too.
+    Tabs moved into a window of their own are still tracked here.
+    """
+    tabs = getattr(window, "__dict__", {}).get("_rdp_tabs", {}) or {}
+    return sum(1 for tab in tabs.values() if getattr(tab, "connected", False))
+
+
 def window_has_daemon_terminals(window) -> bool:
     """True when any mapped terminal is on the daemon SSH path."""
     return count_daemon_terminals(window) > 0
@@ -98,8 +109,11 @@ def daemon_active_work_summary(client) -> dict[str, int]:
 
 
 def has_daemon_active_work(window, client=None) -> bool:
-    """Whether quitting would end live daemon work, so it needs confirming."""
-    if window_has_daemon_terminals(window):
+    """Whether quitting would end live remote work, so it needs confirming.
+
+    That is daemon work, or an embedded RDP tab's in-process session.
+    """
+    if window_has_daemon_terminals(window) or count_embedded_rdp_sessions(window):
         return True
     client = client if client is not None else getattr(window, "client", None)
     summary = daemon_active_work_summary(client)
@@ -618,6 +632,7 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
         # transport hiccup) while tabs are plainly open. Count what the window
         # is showing rather than telling the user they have nothing running.
         sessions = count_daemon_terminals(window)
+    sessions += count_embedded_rdp_sessions(window)
     body = ngettext(
         "{n} running session",
         "{n} running sessions",

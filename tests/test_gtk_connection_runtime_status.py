@@ -511,3 +511,108 @@ def test_client_without_sftp_listing_still_tracks_sessions():
     store.attach_client(client)
 
     assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+
+
+# --- in-process sessions (embedded RDP tab) ---------------------------------
+
+
+def test_in_process_session_lights_and_clears_the_indicator():
+    """The embedded RDP tab is no daemon session; it reports itself."""
+    changed = []
+    store = ConnectionRuntimeStatusStore(
+        on_changed=lambda cid, status: changed.append((cid, status.state))
+    )
+    store.attach_client(Client("daemon-a", []))
+
+    store.set_local_status(
+        "rdp-1", "connection-1",
+        ConnectionRuntimeStatus(ConnectionState.CONNECTING, "Connecting"),
+    )
+    store.set_local_status(
+        "rdp-1", "connection-1",
+        ConnectionRuntimeStatus(ConnectionState.CONNECTED, "Connected"),
+    )
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+
+    store.set_local_status("rdp-1", "connection-1", None)
+    assert store.status_for("connection-1").state is ConnectionState.UNKNOWN
+    assert changed == [
+        ("connection-1", ConnectionState.CONNECTING),
+        ("connection-1", ConnectionState.CONNECTED),
+        ("connection-1", ConnectionState.UNKNOWN),
+    ]
+
+
+def test_live_in_process_session_outranks_a_failed_daemon_session():
+    client = Client(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.FAILED)],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(client)
+    assert store.status_for("connection-1").state is ConnectionState.FAILED
+
+    store.set_local_status(
+        "rdp-1", "connection-1",
+        ConnectionRuntimeStatus(ConnectionState.CONNECTED, "Connected"),
+    )
+
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+
+
+def test_live_daemon_session_outranks_a_failed_in_process_one():
+    client = Client(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.RUNNING)],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(client)
+
+    store.set_local_status(
+        "rdp-1", "connection-1",
+        ConnectionRuntimeStatus(ConnectionState.FAILED, "Could Not Connect"),
+    )
+
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+
+
+def test_in_process_failure_keeps_its_reason():
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(Client("daemon-a", []))
+
+    store.set_local_status(
+        "rdp-1", "connection-1",
+        ConnectionRuntimeStatus(ConnectionState.FAILED, "Authentication Failed"),
+    )
+
+    assert store.status_for("connection-1") == ConnectionRuntimeStatus(
+        ConnectionState.FAILED, "Authentication Failed"
+    )
+
+
+def test_in_process_sessions_survive_a_daemon_reconnect():
+    """A new daemon snapshot does not erase a remote desktop held in-process."""
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(Client("daemon-a", []))
+    store.set_local_status(
+        "rdp-1", "connection-1",
+        ConnectionRuntimeStatus(ConnectionState.CONNECTED, "Connected"),
+    )
+
+    store.attach_client(Client("daemon-b", []))
+
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+
+
+def test_in_process_sessions_are_kept_apart_by_key_and_connection():
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(Client("daemon-a", []))
+    live = ConnectionRuntimeStatus(ConnectionState.CONNECTED, "Connected")
+    store.set_local_status("rdp-1", "connection-1", live)
+    store.set_local_status("rdp-2", "connection-1", live)
+    store.set_local_status("rdp-3", "connection-2", live)
+
+    store.set_local_status("rdp-1", "connection-1", None)
+
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+    assert store.status_for("connection-2").state is ConnectionState.CONNECTED

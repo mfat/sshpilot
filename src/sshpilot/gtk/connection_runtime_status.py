@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from threading import RLock
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
@@ -73,6 +73,10 @@ class ConnectionRuntimeStatusStore:
         self._sessions: Dict[str, SessionSummary] = {}
         self._sftp: Dict[str, SftpServiceSummary] = {}
         self._statuses: Dict[str, ConnectionRuntimeStatus] = {}
+        # Sessions sshPilot runs in-process, so the daemon never reports them
+        # (the embedded RDP tab): key -> (connection id, status, report order).
+        self._local: Dict[str, Tuple[str, ConnectionRuntimeStatus, int]] = {}
+        self._local_order = 0
         self._client = None
         self._subscription = None
         self._generation = 0
@@ -86,6 +90,33 @@ class ConnectionRuntimeStatusStore:
         connection_id = self._connection_id(connection_or_id)
         with self._lock:
             return self._statuses.get(connection_id, UNKNOWN_RUNTIME_STATUS)
+
+    def set_local_status(
+        self,
+        key: str,
+        connection_or_id,
+        status: Optional[ConnectionRuntimeStatus],
+    ) -> None:
+        """Report a session that runs in this process, not in the daemon.
+
+        The embedded RDP tab holds its FreeRDP session in the GTK process, so
+        no daemon event ever describes it and its host showed no indicator.
+        ``key`` names the session; ``None`` (or UNKNOWN) withdraws it, as for
+        a tab the user closed. It folds into the connection's status like
+        another session: any live one makes the host connected.
+        """
+        connection_id = self._connection_id(connection_or_id)
+        with self._lock:
+            previous = dict(self._statuses)
+            if status is None or status.state is ConnectionState.UNKNOWN or not connection_id:
+                self._local.pop(key, None)
+            else:
+                self._local_order += 1
+                self._local[key] = (connection_id, status, self._local_order)
+            self._statuses = self._aggregate_locked()
+            current = dict(self._statuses)
+            generation = self._generation
+        self._notify_changes(previous, current, generation)
 
     def attach_client(self, client) -> None:
         """Subscribe first, then snapshot runtime state without an event-loss gap."""
@@ -143,6 +174,7 @@ class ConnectionRuntimeStatusStore:
             previous = dict(self._statuses)
             self._sessions = {}
             self._sftp = {}
+            self._local = {}
             self._statuses = {}
             self._pending_events = []
             self._refreshing = False
@@ -211,7 +243,30 @@ class ConnectionRuntimeStatusStore:
             status = self._aggregate_records(records)
             if status.state is not ConnectionState.UNKNOWN:
                 statuses[connection_id] = status
+
+        local: Dict[str, list] = {}
+        for connection_id, status, order in self._local.values():
+            local.setdefault(connection_id, []).append((order, status))
+        for connection_id, entries in local.items():
+            statuses[connection_id] = self._merge_local(
+                statuses.get(connection_id, UNKNOWN_RUNTIME_STATUS), entries
+            )
         return statuses
+
+    @staticmethod
+    def _merge_local(daemon_status, entries) -> ConnectionRuntimeStatus:
+        """Same precedence as ``_aggregate_records``: live, then starting, then
+        the daemon's outcome, then the latest in-process outcome."""
+        reported = [status for _order, status in entries]
+        for state in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
+            if daemon_status.state is state:
+                return daemon_status
+            match = next((status for status in reported if status.state is state), None)
+            if match is not None:
+                return match
+        if daemon_status.state is not ConnectionState.UNKNOWN:
+            return daemon_status
+        return max(entries, key=lambda entry: entry[0])[1]
 
     @staticmethod
     def _is_live(record) -> bool:
