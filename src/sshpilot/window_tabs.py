@@ -1332,7 +1332,15 @@ class WindowTabsMixin:
                 total += sum(pane.get_terminal_count() for pane in child._panes)
             elif child in self.terminal_to_connection:
                 total += 1
+            elif getattr(child, 'connected', False) and self._is_rdp_tab(child):
+                # A live remote desktop in an embedded RDP tab.
+                total += 1
         return total
+
+    @staticmethod
+    def _is_rdp_tab(child) -> bool:
+        from .rdp_tab import RdpTab
+        return isinstance(child, RdpTab)
 
     def teardown_page_terminals(self, page) -> None:
         """Disconnect every terminal a page hosts, as an ordinary close would.
@@ -1474,7 +1482,8 @@ class WindowTabsMixin:
             return
         window = RdpWindow(self, page.get_title(),
                            on_move_back=self._attach_rdp_window,
-                           on_close=self._close_rdp_window)
+                           on_close=self._close_rdp_window,
+                           confirm_close=self._confirm_rdp_window_close)
         # Keep the remote desktop its current size: the header bar is extra.
         width, height = tab.get_width(), tab.get_height()
         window.set_default_size(max(width, 640), max(height + 47, 480))
@@ -1510,11 +1519,7 @@ class WindowTabsMixin:
         if tab is None:
             return
         tab.detached_window = None
-        tab.close_session()
-        tabs = self.__dict__.get('_rdp_tabs', {})
-        for connection, open_tab in list(tabs.items()):
-            if open_tab is tab:
-                del tabs[connection]
+        self._end_rdp_tab(tab)
 
     def _forget_rdp_window(self, window) -> None:
         windows = self.__dict__.get('_rdp_windows', [])
@@ -1553,6 +1558,74 @@ class WindowTabsMixin:
         tab.connect_session()
         return tab
 
+    def _should_confirm_rdp_close(self, tab) -> bool:
+        """Whether closing this RDP tab asks first: a live remote desktop,
+        confirm-disconnect on, and no close or quit already confirmed."""
+        if not getattr(tab, 'connected', False):
+            return False
+        if getattr(self, '_suppress_close_confirmation', False) or getattr(self, '_is_quitting', False):
+            return False
+        try:
+            from . import file_manager_window as fmw
+            if fmw._quit_confirmed:
+                return False
+        except Exception:
+            pass
+        config = getattr(self, 'config', None)
+        return bool(config is None or config.get_setting('confirm-disconnect', True))
+
+    def _ask_close_rdp_session(self, parent, tab, *, on_close, on_cancel=None) -> None:
+        """The terminal tab's close question, for a remote desktop."""
+        connection = getattr(tab, 'connection', None)
+        name = (
+            getattr(connection, 'display_name', None)
+            or getattr(connection, 'nickname', None)
+            or _get_connection_host(connection)
+            or "RDP"
+        )
+        dialog = Adw.AlertDialog(
+            heading=_("Close connection to {name}").format(name=name),
+            body=_("Are you sure you want to close this connection?"),
+        )
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('close', _("Close"))
+        dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response('close')
+        dialog.set_close_response('cancel')
+        checkbox = self._add_disconnect_opt_out(dialog)
+
+        def _on_response(_dialog, response_id) -> None:
+            if response_id == 'close':
+                self._persist_disconnect_opt_out(checkbox)
+                on_close()
+            elif on_cancel is not None:
+                on_cancel()
+
+        dialog.connect('response', _on_response)
+        dialog.present(parent)
+        mark_default_response_visible(parent)
+
+    def _end_rdp_tab(self, tab) -> None:
+        """End an RDP tab's session and forget the tab."""
+        tab.close_session()
+        tabs = self.__dict__.get('_rdp_tabs', {})
+        for connection, open_tab in list(tabs.items()):
+            if open_tab is tab:
+                del tabs[connection]
+
+    def _confirm_rdp_window_close(self, window) -> bool:
+        """The detached RDP window's close: the tab's question."""
+        tab = window.tab
+        if getattr(window, '_close_confirmed', False) or not self._should_confirm_rdp_close(tab):
+            return False
+
+        def _confirmed() -> None:
+            window._close_confirmed = True
+            window.close()
+
+        self._ask_close_rdp_session(window, tab, on_close=_confirmed)
+        return True
+
     def _open_rdp_in_window(self, connection):
         """The tab's "Open in FreeRDP Window" button: the usual external
         route, bypassing the tab choice."""
@@ -1565,15 +1638,25 @@ class WindowTabsMixin:
             return not getattr(self, '_closing_start_tab', False)
 
         # Embedded RDP: end the session; the widget frees itself once its
-        # session thread has stopped.
+        # session thread has stopped. A live remote desktop is asked about
+        # first, like a terminal's connection.
         child = page.get_child() if hasattr(page, 'get_child') else None
         from .rdp_tab import RdpTab
         if isinstance(child, RdpTab):
-            child.close_session()
-            tabs = self.__dict__.get('_rdp_tabs', {})
-            for connection, tab in list(tabs.items()):
-                if tab is child:
-                    del tabs[connection]
+            if self._should_confirm_rdp_close(child):
+                def _close() -> None:
+                    self._end_rdp_tab(child)
+                    tab_view.close_page_finish(page, True)
+                    self._update_tab_button_visibility()
+                    if not self.has_user_tabs():
+                        self.show_start_tab()
+
+                self._ask_close_rdp_session(
+                    self, child, on_close=_close,
+                    on_cancel=lambda: tab_view.close_page_finish(page, False),
+                )
+                return True
+            self._end_rdp_tab(child)
             return False
 
         # If we are closing pages programmatically (e.g., after deleting a

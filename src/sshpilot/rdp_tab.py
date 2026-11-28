@@ -363,6 +363,10 @@ class RdpTab(Gtk.Box):
                     display.get_width(), display.get_height())
         self._password_button.set_visible(False)
         self._report_status(ConnectionState.CONNECTED, "Connected")
+        # The start page's Recent list, as for a terminal that connects.
+        manager = getattr(self.window, "terminal_manager", None)
+        if manager is not None and callable(getattr(manager, "record_last_used", None)):
+            manager.record_last_used(self.connection)
         pending, self._pending_password = self._pending_password, None
         if pending:
             # Only a password that actually worked is worth keeping.

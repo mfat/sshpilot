@@ -1373,18 +1373,14 @@ class TerminalManager:
         except Exception as e:
             logger.error(f"Failed to show daemon error dialog: {e}")
 
-    # Terminal signal handlers
-    def on_terminal_connected(self, terminal):
-        # Aggregate across all terminals of this connection (OR-logic) and set
-        # the authoritative state in the reporting layer instead of writing the
-        # boolean here.
-        self.window._recompute_connection_state(terminal.connection)
-
-        # Stamp last-used time so the start page can order Recent connections.
+    def record_last_used(self, connection) -> None:
+        """Stamp the connection's last-used time; the start page's Recent
+        list is ordered by it. Called once a session is up: a terminal, or
+        an embedded RDP tab (which is no terminal)."""
         try:
             import time
 
-            nickname = getattr(terminal.connection, "nickname", None)
+            nickname = getattr(connection, "nickname", None)
             if nickname:
                 self.window.client.update_connection_metadata(nickname, {"last_used": time.time()})
                 welcome = getattr(self.window, "welcome_view", None)
@@ -1392,6 +1388,14 @@ class TerminalManager:
                     welcome.refresh_recent()
         except Exception:
             logger.debug("Failed to record last-used time", exc_info=True)
+
+    # Terminal signal handlers
+    def on_terminal_connected(self, terminal):
+        # Aggregate across all terminals of this connection (OR-logic) and set
+        # the authoritative state in the reporting layer instead of writing the
+        # boolean here.
+        self.window._recompute_connection_state(terminal.connection)
+        self.record_last_used(terminal.connection)
         for row in self.window._rows_for_connection(terminal.connection):
             row.update_status()
             row.queue_draw()
