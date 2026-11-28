@@ -28,6 +28,26 @@ fi
 read -rp "Branch to release from [$DEFAULT_BRANCH]: " BRANCH
 BRANCH=${BRANCH:-$DEFAULT_BRANCH}
 
+# The workflow releases origin/$BRANCH, not this checkout. Refuse when the
+# two differ, or the release would quietly ship something other than what
+# was tested here (unpushed commits left out, or commits never pulled).
+if ! git fetch --quiet origin "$BRANCH"; then
+  echo "ERROR: Could not fetch origin/$BRANCH." >&2
+  exit 1
+fi
+if ! LOCAL=$(git rev-parse --verify --quiet "refs/heads/$BRANCH"); then
+  echo "ERROR: No local branch $BRANCH." >&2
+  exit 1
+fi
+REMOTE=$(git rev-parse "origin/$BRANCH")
+if [[ "$LOCAL" != "$REMOTE" ]]; then
+  AHEAD=$(git rev-list --count "origin/$BRANCH..$BRANCH")
+  BEHIND=$(git rev-list --count "$BRANCH..origin/$BRANCH")
+  echo "ERROR: Local $BRANCH and origin/$BRANCH differ ($AHEAD unpushed, $BEHIND not pulled)." >&2
+  echo "The release is built from origin/$BRANCH. Push or pull first, then rerun." >&2
+  exit 1
+fi
+
 read -rp "Publish as [R]elease or [P]re-release? [R]: " RELEASE_KIND
 RELEASE_KIND=${RELEASE_KIND:-R}
 case "$RELEASE_KIND" in
