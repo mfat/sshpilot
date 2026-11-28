@@ -2,10 +2,10 @@ name: Test environment
 
 # Builds the test-environment image (real mosh/kubectl/kind/docker/socat/picocom)
 # and runs the integration tests against those real tools, plus a real login
-# in a real window, on every push to dev and main and when a release is
-# tagged. The rest of the headless suite runs in tests.yml. The virtual-FIDO
-# job needs runner kernel modules GitHub keeps changing: it runs only when
-# started by hand.
+# and every non-SSH protocol tab in a real window, on every push to dev and
+# main and when a release is tagged. The rest of the headless suite runs in
+# tests.yml. The virtual-FIDO job needs runner kernel modules GitHub keeps
+# changing: it runs only when started by hand.
 
 on:
   push:
@@ -116,6 +116,58 @@ jobs:
                 "tests/gui/test_phase14_terminal_integration.py::test_connect_via_terminal_manager_daemon_route" \
                 tests/gui/test_gtk_client_bridge_dispatch.py
           '
+
+  protocol-tabs:
+    name: Protocol tabs in a real window
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.virtual_fido_only != true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GTK stack, virtual display and protocol clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gi-cairo python3-venv \
+            gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-vte-3.91 \
+            gir1.2-gtksource-5 gir1.2-secret-1 \
+            openssh-client xvfb dbus gnome-keyring \
+            telnet socat picocom mosh podman
+
+      - name: Install Python test dependencies
+        run: |
+          python3 -m venv --system-site-packages .venv-gui
+          .venv-gui/bin/pip install -r requirements-dev.txt
+
+      - name: Start a Kubernetes cluster
+        # The runner image ships kind and kubectl; install them if it stops.
+        run: |
+          if ! command -v kind >/dev/null; then
+            curl -fsSLo kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
+            sudo install -m 0755 kind /usr/local/bin/kind
+          fi
+          kind create cluster --name sshpilot --wait 180s
+          kubectl get --raw=/readyz
+
+      - name: Open telnet, serial, Docker, Podman, Kubernetes and Mosh tabs
+        # Each test saves a connection, opens it from the main window, makes
+        # the far side compute $((6*7)) and checks the Connecting veil lifts.
+        # The suite must not skip here: CI is where every protocol is present.
+        env:
+          SSHPILOT_GUI_TESTS: "1"
+        run: |
+          dbus-run-session -- bash -ceu '
+            printf "ci" | gnome-keyring-daemon --unlock --replace --components=secrets >/dev/null
+            xvfb-run -a -s "-screen 0 1400x900x24" \
+              .venv-gui/bin/python -m pytest -ra -o addopts="" -n0 -m gui \
+                tests/gui/test_protocol_tabs.py \
+                --junitxml=protocol-tabs.xml
+          '
+          if grep -q "<skipped" protocol-tabs.xml; then
+            echo "::error::A protocol tab test skipped; every protocol must run in CI"
+            exit 1
+          fi
 
   virtual-fido:
     name: Virtual HID FIDO (hosted runner)
