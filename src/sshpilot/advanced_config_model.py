@@ -62,17 +62,30 @@ def converted_patterns(kind: str, patterns: str, to: str):
     if kind == MATCH and to == HOST:
         if [t.lower() for t in tokens] == ["all"]:
             return "*"
-        if len(tokens) == 2 and tokens[0].lower() in ("originalhost", "host"):
-            if tokens[0].lower() == "host":
-                return Refusal.MATCH_HOST_AFTER_HOSTNAME
-            names = tokens[1]
-            if len(names) >= 2 and names[0] == names[-1] == '"':
-                names = names[1:-1]
-            pieces = names.split(",")
-            if '"' in names or not all(pieces):
+        if len(tokens) == 1 and "=" in tokens[0]:
+            tokens = tokens[0].split("=", 1)     # OpenSSH reads "originalhost=a,b" too
+        if len(tokens) != 2:
+            return Refusal.MATCH_NOT_HOST_NAMES
+        criterion = tokens[0].lower()
+        negated = criterion.startswith("!")
+        criterion = criterion[1:] if negated else criterion
+        if criterion == "host":
+            return Refusal.MATCH_HOST_AFTER_HOSTNAME
+        if criterion != "originalhost":
+            return Refusal.MATCH_NOT_HOST_NAMES
+        names = tokens[1]
+        if len(names) >= 2 and names[0] == names[-1] == '"':
+            names = names[1:-1]
+        pieces = names.split(",")
+        if '"' in names or not all(pieces):
+            return Refusal.MATCH_NOT_HOST_NAMES
+        if negated:
+            # "!originalhost a,b" is every name but a and b: "Host * !a !b".
+            # A negation inside it (a not of a not) is left to the Raw view.
+            if any(piece.startswith("!") for piece in pieces):
                 return Refusal.MATCH_NOT_HOST_NAMES
-            return " ".join(pieces)
-        return Refusal.MATCH_NOT_HOST_NAMES
+            return " ".join(["*"] + ["!" + piece for piece in pieces])
+        return " ".join(pieces)
     return Refusal.MATCH_NOT_HOST_NAMES
 
 

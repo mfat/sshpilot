@@ -192,7 +192,9 @@ def test_host_patterns_a_match_line_reads_otherwise_are_refused(patterns):
     ("host web1", Refusal.MATCH_HOST_AFTER_HOSTNAME),
     ("user admin", Refusal.MATCH_NOT_HOST_NAMES),
     ("originalhost a user b", Refusal.MATCH_NOT_HOST_NAMES),
-    ("!originalhost a", Refusal.MATCH_NOT_HOST_NAMES),
+    ("!originalhost a,!b", Refusal.MATCH_NOT_HOST_NAMES),
+    ("!host a", Refusal.MATCH_HOST_AFTER_HOSTNAME),
+    ("originalhost=", Refusal.MATCH_NOT_HOST_NAMES),
     ("originalhost a,,b", Refusal.MATCH_NOT_HOST_NAMES),
     ("exec true", Refusal.MATCH_NOT_HOST_NAMES),
 ])
@@ -203,6 +205,16 @@ def test_match_conditions_no_host_line_says_are_refused(conditions, expected):
 def test_quoted_and_capitalised_originalhost_become_a_host_line():
     assert converted_patterns(MATCH, 'OriginalHost "a,b"', HOST) == "a b"
     assert converted_patterns(MATCH, "ALL", HOST) == "*"
+
+
+@pytest.mark.parametrize("conditions, host", [
+    ("!originalhost bastion", "* !bastion"),
+    ("!OriginalHost a,b*", "* !a !b*"),
+    ("OriginalHost=a,b", "a b"),
+    ("!originalhost=bastion", "* !bastion"),
+])
+def test_negated_and_equals_written_originalhost_become_a_host_line(conditions, host):
+    assert converted_patterns(MATCH, conditions, HOST) == host
 
 
 def test_set_kind_rewrites_the_header_and_keeps_the_rest(editor):
