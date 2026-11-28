@@ -46,3 +46,17 @@ def test_transfer_still_sizing_is_left_out():
 def test_progress_stays_in_range():
     assert combined_fraction([_snap(1.7, 10)]) == 1.0
     assert combined_fraction([_snap(-0.3, 10)]) == 0.0
+
+
+def test_attention_pulse_is_the_accent_colour_on_the_button():
+    """The start/finish pulse must be visible (#1437): accent colour on the
+    rounded button node plus a brief grow, not a grey tint on menubutton."""
+    import pathlib
+
+    source = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "src" / "sshpilot" / "file_manager" / "transfer_indicator.py"
+    ).read_text()
+    assert ".fm-transfer-attention > button" in source
+    assert "@accent_bg_color" in source
+    assert "transform: scale(" in source

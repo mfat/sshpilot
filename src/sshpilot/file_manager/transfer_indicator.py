@@ -49,13 +49,27 @@ def _ensure_css() -> None:
         from gi.repository import Gdk
 
         provider = Gtk.CssProvider()
+        # As Nautilus's needs-attention: the accent colour, on the button
+        # node so it keeps the button's rounded shape. A grey tint on the
+        # menubutton node was easy to miss (#1437), so the button also grows
+        # and settles back once, then the colour fades over the two seconds.
         provider.load_from_data(b"""
 @keyframes fm-transfer-attention {
-    from { background-color: transparent; }
-    to { background-color: alpha(currentColor, 0.25); }
+    0% { }
+    12% {
+        background-color: @accent_bg_color;
+        color: @accent_fg_color;
+        transform: scale(1.3);
+    }
+    30% {
+        background-color: @accent_bg_color;
+        color: @accent_fg_color;
+        transform: scale(1);
+    }
+    100% { }
 }
-.fm-transfer-attention {
-    animation: fm-transfer-attention 0.5s ease-in-out 4 alternate;
+.fm-transfer-attention > button {
+    animation: fm-transfer-attention 2s ease-in-out;
 }
 """)
         Gtk.StyleContext.add_provider_for_display(
