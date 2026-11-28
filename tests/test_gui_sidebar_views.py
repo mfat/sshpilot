@@ -384,8 +384,8 @@ def test_without_the_background_service_the_connections_stay(window):
 
 
 def test_the_rail_stays_with_the_sidebar_hidden(window):
-    """The view shown again hides or shows the sidebar; the other view
-    brings the sidebar back."""
+    """The view shown again brings a hidden sidebar back, and never hides
+    it; the other view brings the sidebar back too."""
     calls = []
     window._sidebar_visible = True
 
@@ -399,16 +399,17 @@ def test_the_rail_stays_with_the_sidebar_hidden(window):
 
     window.on_sidebar_toggle = toggle
     window._apply_sidebar_visible = show
-    _click(window, "connections")             # the view shown: hidden
-    assert calls == [("toggle", False)] and _current(window) == "connections"
-    _click(window, "sections")                # the other: shown, with the sidebar
-    assert calls[-1] == ("show", True) and _current(window) == "sections"
-    _click(window, "sections")                # hidden again
-    assert calls[-1] == ("toggle", False)
-    _click(window, "sections")                # and shown
-    assert calls[-1] == ("toggle", True)
-    _click(window, "connections")             # the sidebar shown: left as it is
-    assert len(calls) == 4 and _current(window) == "connections"
+    _click(window, "connections")             # the view shown: left as it is
+    assert calls == [] and _current(window) == "connections"
+    window._sidebar_visible = False           # hidden by F9
+    _click(window, "connections")             # the view shown: brought back
+    assert calls == [("show", True)] and _current(window) == "connections"
+    _click(window, "sections")                # the other: shown, sidebar left
+    assert len(calls) == 1 and _current(window) == "sections"
+    window._sidebar_visible = False
+    _click(window, "connections")             # the other, sidebar hidden: shown
+    assert calls[-1] == ("show", True) and _current(window) == "connections"
+    assert ("toggle", False) not in calls     # never hidden by the rail
 
 
 def test_ctrl_f_is_the_search_of_the_view_on_screen(window):

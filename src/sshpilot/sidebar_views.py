@@ -2,8 +2,8 @@
 
 A rail at the window's leading edge switches the whole window between them.
 It is outside the sidebar, so it stays when the sidebar is hidden: choosing
-the other view shows the sidebar again, and choosing the view already shown
-hides or shows the sidebar, as F9 does.
+choosing either view shows the sidebar again. It never hides it: that is
+F9's, and the header button's.
 
 Settings ▸ Sidebar ▸ View Rail (``ui.view_rail``) can hide it with the
 sidebar or for good. Whenever the rail is not on screen, Advanced
@@ -388,12 +388,18 @@ def _sync_rail(window) -> None:
 
 
 def choose_view(window, name: str) -> None:
-    """A click on the rail: *name* is shown, with the sidebar; the view
-    already shown hides or shows the sidebar instead."""
+    """A click on the rail: *name* is shown, with the sidebar. The view
+    already shown brings a hidden sidebar back and otherwise does nothing:
+    a click on the button of the view one is in must not take its list
+    away."""
     if current_view(window) == name:
-        toggle = getattr(window, "on_sidebar_toggle", None)
-        if callable(toggle):
-            toggle(None)
+        reveal = getattr(window, "_reveal_sidebar", None)
+        if callable(reveal):
+            reveal()                    # docked, or floated when too narrow
+        elif not getattr(window, "_sidebar_visible", True):
+            show = getattr(window, "_apply_sidebar_visible", None)
+            if callable(show):
+                show(True)
         return
     show_view(window, name)
     if current_view(window) == name and not getattr(window, "_sidebar_visible", True):

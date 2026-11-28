@@ -149,3 +149,16 @@ def test_the_menu_item_always_opens_the_window(monkeypatch):
     app = types.SimpleNamespace(_action_window=lambda: win)
     SshPilotApplication.on_advanced_ssh_config(app)
     assert [c if c == "view" else c.kind for c in calls] == ["window"]
+
+
+@pytest.mark.parametrize("hidden, revealed", [(False, 0), (True, 1)])
+def test_the_current_view_button_never_hides_the_sidebar(hidden, revealed):
+    """A click on the view one is in brings a hidden sidebar back, and
+    leaves a shown one alone (it used to toggle it away)."""
+    win = _window(RAIL_ALWAYS, sidebar=not hidden)
+    calls = []
+    win.on_sidebar_toggle = lambda _b: calls.append("toggle")
+    win._reveal_sidebar = lambda: calls.append("reveal") if win._sidebar_hidden_by_toggle() else None
+    sidebar_views.choose_view(win, CONNECTIONS)
+    assert "toggle" not in calls
+    assert calls.count("reveal") == revealed
