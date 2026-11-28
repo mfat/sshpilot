@@ -757,6 +757,11 @@ class SftpCopyRequest:
     ``destination_service_id`` names a second SFTP service (another server,
     or another session on the same one) that receives the copy; the source
     paths stay on ``service_id``. Such a copy always runs as an operation.
+
+    ``overwrite`` replaces what is already at the destination: a file is
+    swapped in whole by one rename once its copy is complete, and a folder is
+    merged, replacing the files it shares with the source. A file is never
+    replaced by itself, nor a folder by one of another kind.
     """
 
     service_id: SftpServiceId
@@ -769,6 +774,7 @@ class SftpCopyRequest:
     # waits for the whole copy, which a large file can outlast.
     as_operation: bool = False
     destination_service_id: Optional[SftpServiceId] = None
+    overwrite: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.service_id, "SFTP service id")
@@ -784,6 +790,7 @@ class SftpCopyRequest:
             type(self.recursive) is not bool
             or type(self.move) is not bool
             or type(self.as_operation) is not bool
+            or type(self.overwrite) is not bool
         ):
             raise TypeError("SFTP copy flags must be booleans")
 

@@ -115,7 +115,17 @@ def test_a_listing_from_the_left_server_never_lands_in_the_right_pane():
     assert window._pending_paths[window._right_pane] == "/root"
 
 
-def test_paste_between_two_server_panes_copies_through_the_daemon():
+def _done(value):
+    from concurrent.futures import Future
+
+    future = Future()
+    future.set_result(value)
+    return future
+
+
+def _two_server_window(monkeypatch, existing=()):
+    """A window with a server in each pane; *existing* names the paths the
+    right (destination) server already has."""
     window_module = _module()
     window = _window(window_module)
     left_manager = MagicMock(name="left-manager")
@@ -124,6 +134,48 @@ def test_paste_between_two_server_panes_copies_through_the_daemon():
     window._connection = _connection("googlerouter")
     window._show_progress_dialog = MagicMock()
     window._attach_refresh = MagicMock()
+    window._embedded_parent = None
+    window.get_transient_for = lambda: None
+    window._manager.path_exists.side_effect = lambda path: _done(path in existing)
+    # The conflict check finishes on the main loop; run it at once.
+    monkeypatch.setattr(
+        window_module.GLib, "idle_add", lambda fn, *args: fn(*args), raising=False
+    )
+    return window_module, window, left_manager
+
+
+class _Dialog:
+    last = None
+
+    def __init__(self, heading, body):
+        self.heading, self.body, self.responses = heading, body, {}
+        _Dialog.last = self
+
+    @classmethod
+    def new(cls, heading, body):
+        return cls(heading, body)
+
+    def add_response(self, response_id, label):
+        self.responses[response_id] = label
+
+    def set_default_response(self, *_args):
+        pass
+
+    def set_close_response(self, *_args):
+        pass
+
+    def connect(self, _signal, handler):
+        self.handler = handler
+
+    def present(self, *_args):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_paste_between_two_server_panes_copies_through_the_daemon(monkeypatch):
+    _module_, window, left_manager = _two_server_window(monkeypatch)
     entry = SimpleNamespace(name="docs", is_dir=True)
 
     window._perform_pane_to_pane_remote_operation(
@@ -133,9 +185,49 @@ def test_paste_between_two_server_panes_copies_through_the_daemon():
 
     left_manager.copy_remote.assert_called_once_with(
         "/root/docs", "/srv/docs", recursive=True, move=False,
-        destination_manager=window._manager,
+        destination_manager=window._manager, overwrite=False,
     )
     window._manager.copy_remote.assert_not_called()
+
+
+def _copy_over_an_existing_name(monkeypatch, response):
+    window_module, window, left_manager = _two_server_window(
+        monkeypatch, existing={"/srv/report.txt"}
+    )
+    monkeypatch.setattr(window_module.Adw, "AlertDialog", _Dialog, raising=False)
+    entries = [SimpleNamespace(name="report.txt", is_dir=False),
+               SimpleNamespace(name="new.txt", is_dir=False)]
+
+    window._perform_pane_to_pane_remote_operation(
+        entries, "/root", "/srv", False,
+        source_pane=window._left_pane, destination_pane=window._right_pane,
+    )
+
+    dialog = _Dialog.last
+    assert left_manager.copy_remote.call_count == 0  # asks first
+    assert set(dialog.responses) == {"cancel", "skip", "replace"}
+    assert "report.txt" in dialog.body
+    dialog.handler(dialog, response)
+    return {
+        call.args[1]: call.kwargs["overwrite"]
+        for call in left_manager.copy_remote.call_args_list
+    }
+
+
+def test_a_copy_over_an_existing_name_asks_and_replace_replaces(monkeypatch):
+    """#1431: a copy between two servers failed on a name the other pane
+    had; it now asks, as a download does."""
+    copies = _copy_over_an_existing_name(monkeypatch, "replace")
+    assert copies == {"/srv/report.txt": True, "/srv/new.txt": True}
+
+
+def test_skip_existing_copies_only_the_new_names(monkeypatch):
+    copies = _copy_over_an_existing_name(monkeypatch, "skip")
+    assert copies == {"/srv/new.txt": False}
+
+
+def test_cancel_copies_nothing(monkeypatch):
+    assert _copy_over_an_existing_name(monkeypatch, "cancel") == {}
 
 
 def test_f3_and_the_menu_move_the_layout_switch_with_them():

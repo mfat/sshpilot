@@ -813,9 +813,11 @@ class DaemonSftpManager(GObject.GObject):
         recursive: bool = False,
         move: bool = False,
         destination_manager: Optional["DaemonSftpManager"] = None,
+        overwrite: bool = False,
     ) -> Future:
         """Copy or move *source* to *destination* on this server, or, with
-        *destination_manager*, to the server that manager is connected to."""
+        *destination_manager*, to the server that manager is connected to.
+        *overwrite* replaces what is already there (folders merge)."""
         future: Future = Future()
         source = self._expand(source)
         destination_service_id = None
@@ -854,6 +856,8 @@ class DaemonSftpManager(GObject.GObject):
             {"destination_service_id": destination_service_id}
             if destination_service_id is not None else {}
         )
+        if overwrite:
+            extra["overwrite"] = True
         self._sftp_controller.copy(
             source,
             destination,

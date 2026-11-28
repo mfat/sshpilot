@@ -5,6 +5,16 @@ notes remain separate.
 
 ## Unreleased
 
+- `SftpCopyRequest` gains `overwrite`: the copy (or move) replaces what is
+  already at the destination instead of failing with
+  `destination_already_exists`. A file is swapped in whole by one rename once
+  its copy is complete and keeps the replaced file's permission bits; a folder
+  is merged. A file never replaces a folder or the reverse, nor itself, and a
+  merge never lands inside the folder being copied (also between two
+  connections that reach one machine). The file manager asks Skip Existing or
+  Replace All before a copy between two server panes, as for a download. The
+  field is sent only when set. The API implementation version is 0.122;
+  Protocol remains 1.0.
 - New event `connection.sharing` (payload `ConnectionSharingNotice`, with
   `ConnectionSharingOutcome` and `ConnectionSharingScope`): what each
   terminal session and SFTP service did with its host's shared OpenSSH

@@ -57,6 +57,20 @@ refused. When the server cannot rename there (another filesystem, say), the
 move copies and then removes the source. A move between connections always
 copies.
 
+`SftpCopyRequest.overwrite` replaces what is already at the destination
+instead of failing with `destination_already_exists`. A file is still written
+to its staging sibling first and only then swapped in, by `posix-rename`
+(or remove and `RENAME` on servers without it), so the old file stays whole
+until the copy is; it keeps the old file's permission bits. A folder is merged:
+files it shares with the source are replaced, the rest is left. Even with
+`overwrite`, a file never replaces a folder or a folder a file, a file is never
+replaced by itself (a `move` would then lose it), and a merge never lands
+inside the folder being copied; all fail as before. Two connections can reach
+one machine, so between connections the daemon asks the files: a staging file
+or probe folder made through the destination that shows up through the source
+means one filesystem. A `move` with `overwrite` within one connection replaces
+a file by one rename and merges a folder by copy and remove.
+
 The generic `ServiceFailure` contract was not changed by the SFTP migration.
 Native SCP has its own strict `ScpFailure` contract; unrelated service
 summaries retain `ServiceFailure`.

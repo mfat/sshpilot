@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.121",
+  "api_implementation_version": "0.122",
   "client_method_contract": {
     "acknowledge_terminal_output": {
       "capability": "terminal.flow_control",
@@ -9070,6 +9070,13 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[SftpServiceId]"
+        },
+        {
+          "default": false,
+          "name": "overwrite",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"

@@ -2071,14 +2071,23 @@ class FileManagerWindow(Adw.Window):
             logger.warning(f"Failed to restore Flatpak folder access: {e}")
         return False  # Don't repeat this idle callback
 
-    def _check_file_conflicts(self, files_to_transfer: List[Tuple[str, str]], operation_type: str, callback: Callable[[List[Tuple[str, str]]], None], *, remote_pane: Optional[FilePane] = None) -> None:
+    def _check_file_conflicts(self, files_to_transfer: List[Tuple[str, str]], operation_type: str, callback: Callable[..., None], *, remote_pane: Optional[FilePane] = None) -> None:
         """Check for file conflicts and show resolution dialog if needed.
 
         Args:
             files_to_transfer: List of (source, destination) tuples
-            operation_type: "upload" or "download"
+            operation_type: "upload", "download", or "copy" (between two
+                server panes; *remote_pane* is the destination's, and the
+                callback also gets ``replace=``, whether the user chose to
+                replace what is there, since a copy only replaces when told)
             callback: Function to call with resolved file list
         """
+        if operation_type == "copy":
+            resolved = callback
+
+            def callback(items, *, _replace=False):
+                resolved(items, replace=_replace)
+
         # The server side of the transfer: the right pane's, or the pane
         # given (a left pane browsing a server of its own).
         if remote_pane is None:
@@ -2185,7 +2194,10 @@ class FileManagerWindow(Adw.Window):
                             ).format(count=conflict_count))
                 elif policy is OverwritePolicy.OVERWRITE:
                     # Transfer all files, replacing existing ones
-                    callback(files_to_transfer)
+                    if operation_type == "copy":
+                        callback(files_to_transfer, _replace=True)
+                    else:
+                        callback(files_to_transfer)
 
             dialog.connect("response", _on_conflict_response)
             
@@ -2228,7 +2240,7 @@ class FileManagerWindow(Adw.Window):
             _finalize_conflicts(conflicts)
             return
 
-        if operation_type == "upload":
+        if operation_type in ("upload", "copy"):
             if not files_to_transfer:
                 _finalize_conflicts([])
                 return
@@ -3785,8 +3797,9 @@ class FileManagerWindow(Adw.Window):
 
         The daemon moves the bytes from one SFTP session to the other; when
         both panes browse the same server it copies there instead, so the
-        server can copy for itself. Existing destinations are refused by the
-        daemon, like a paste within one pane.
+        server can copy for itself. When names already exist in the
+        destination, the user chooses to skip or replace them, as for a
+        download (#1431); replaced folders merge.
         """
         if not entries:
             return
@@ -3811,7 +3824,9 @@ class FileManagerWindow(Adw.Window):
             ]
             invalid = []
 
-        def _run(work_items: List[Tuple[str, str, FileEntry]]) -> None:
+        def _start(
+            work_items: List[Tuple[str, str, FileEntry]], replace: bool
+        ) -> None:
             if not work_items:
                 return
             if on_started is not None:
@@ -3824,6 +3839,7 @@ class FileManagerWindow(Adw.Window):
                     recursive=entry.is_dir,
                     move=move,
                     destination_manager=destination_manager,
+                    overwrite=replace,
                 )
                 self._show_progress_dialog(
                     operation,
@@ -3847,6 +3863,19 @@ class FileManagerWindow(Adw.Window):
                 )
                 if move:
                     self._attach_refresh(future, refresh_remote=source_pane)
+
+        def _run(work_items: List[Tuple[str, str, FileEntry]]) -> None:
+            if not work_items:
+                return
+            by_pair = {(item[0], item[1]): item for item in work_items}
+            self._check_file_conflicts(
+                list(by_pair),
+                "copy",
+                lambda pairs, *, replace: _start(
+                    [by_pair[pair] for pair in pairs], replace
+                ),
+                remote_pane=destination_pane,
+            )
 
         if not invalid:
             _run(valid)

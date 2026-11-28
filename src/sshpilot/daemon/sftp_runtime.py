@@ -2192,19 +2192,34 @@ class SftpServiceRuntime:
                 raise OperationCancelled()
             staging = _staging_path(destination_path)
             created = False
+            # With overwrite, what is there is replaced only once the copy is
+            # whole, by one rename; until then it stays as it was.
+            replaced = _existing(destination_path) if request.overwrite else None
             try:
                 with client.open(source_path, "rb") as source_file:
                     staging_file = destination_client.open(staging, "xb")
                     created = True
+                    if replaced is not None:
+                        if replaced.is_dir() and not replaced.is_symlink():
+                            raise _exists_error()
+                        if _is_same_file(source_path, destination_path, staging):
+                            # Replacing a file by itself would lose it in a move.
+                            raise _exists_error()
                     with staging_file:
                         _copy_bytes(source_file, staging_file, size)
                 if cancel is not None and cancel():
                     raise OperationCancelled()
+                if replaced is not None and not replaced.is_symlink():
+                    _keep_mode(staging, replaced)
                 try:
-                    destination_client.rename(staging, destination_path)
+                    if request.overwrite:
+                        destination_client.atomic_rename(staging, destination_path)
+                    else:
+                        destination_client.rename(staging, destination_path)
                 except Exception as exc:
                     if (
-                        isinstance(_unwrap_destination_error(exc), sftp_proto.SFTPError)
+                        not request.overwrite
+                        and isinstance(_unwrap_destination_error(exc), sftp_proto.SFTPError)
                         and _path_exists(destination_path)
                     ):
                         # Another client took the name during the copy.
@@ -2263,7 +2278,7 @@ class SftpServiceRuntime:
                 destination_file.write(chunk)
                 _advance(len(chunk))
 
-        def _moved_by_rename() -> bool:
+        def _moved_by_rename(source_is_dir: bool) -> bool:
             """Move within one server by renaming, as ``mv`` does (#1356).
 
             Plain SFTP RENAME never replaces an existing destination. When it
@@ -2278,6 +2293,8 @@ class SftpServiceRuntime:
                 return False
             if cancel is not None and cancel():
                 raise OperationCancelled()
+            if request.overwrite and _destination_exists():
+                return _replaced_by_rename(source_is_dir)
             try:
                 client.rename(source, destination)
             except sftp_proto.SFTPError as exc:
@@ -2295,6 +2312,106 @@ class SftpServiceRuntime:
 
         def _destination_exists() -> bool:
             return _path_exists(destination)
+
+        def _replaced_by_rename(source_is_dir: bool) -> bool:
+            """A move with overwrite onto something already there: a file
+            replaces it in one rename; a folder merges by copy and remove."""
+            if source_is_dir:
+                return False
+            existing = _existing(destination)
+            if existing is not None and existing.is_dir() and not existing.is_symlink():
+                raise _exists_error()
+            try:
+                same = _resolved(source) == _resolved(destination)
+            except Exception:
+                logger.warning("Could not resolve the paths of a replace; refusing it", exc_info=True)
+                same = True
+            if same:
+                raise _exists_error()
+            try:
+                client.atomic_rename(source, destination)
+            except sftp_proto.SFTPError as exc:
+                if exc.code == sftp_proto.FX_CONNECTION_LOST:
+                    raise
+                logger.debug("Replacing rename for a move failed; copying instead: %s", exc)
+                return False
+            if progress is not None:
+                progress(1.0)
+            return True
+
+        def _existing(path: str) -> Any:
+            """What the destination has at *path* (lstat), or None."""
+            try:
+                return destination_client.lstat(path)
+            except Exception as exc:
+                missing = _unwrap_destination_error(exc)
+                if (
+                    isinstance(missing, sftp_proto.SFTPError)
+                    and getattr(missing, "errno", None) == errno.ENOENT
+                ):
+                    return None
+                raise
+
+        def _resolved(path: str) -> str:
+            """*path* as the source session resolves it, the last name left
+            alone (a link there is the link itself, not its target)."""
+            parent = client.realpath(posixpath.dirname(path) or "/")
+            return posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
+
+        def _shares_filesystem(seen_by_destination: str) -> bool:
+            """Whether a path the destination just made shows up through the
+            source: two saved connections can reach one machine."""
+            if same_server:
+                return True
+            try:
+                client.lstat(seen_by_destination)
+            except Exception:
+                return False
+            return True
+
+        def _is_same_file(source_path: str, destination_path: str, staging: str) -> bool:
+            """Whether replacing *destination_path* would replace the source
+            itself. Unknown counts as the same: a wrong "no" loses the file
+            in a move, a wrong "yes" only refuses one replace."""
+            if not _shares_filesystem(staging):
+                return False
+            try:
+                return _resolved(source_path) == _resolved(destination_path)
+            except Exception:
+                logger.warning(
+                    "Could not resolve the paths of a replace; refusing it "
+                    "rather than risk replacing the file with itself",
+                    exc_info=True,
+                )
+                return True
+
+        def _keep_mode(staging: str, replaced: Any) -> None:
+            """Give the replacing file the permissions of the one it replaces,
+            as an upload over a file does."""
+            mode = getattr(replaced, "st_mode", None)
+            if mode is None:
+                return
+            try:
+                destination_client.chmod(staging, stat_module.S_IMODE(mode))
+            except Exception as exc:
+                if (
+                    isinstance(_unwrap_destination_error(exc), sftp_proto.SFTPError)
+                    and _unwrap_destination_error(exc).code == sftp_proto.FX_CONNECTION_LOST
+                ):
+                    raise
+                logger.debug("Could not keep the replaced file's mode: %s", exc)
+
+        def _merge_into(path: str) -> bool:
+            """With overwrite, whether the folder at *path* is merged into
+            (True) or made (False); anything else there refuses the copy."""
+            if not request.overwrite:
+                return False
+            existing = _existing(path)
+            if existing is None:
+                return False
+            if existing.is_dir() and not existing.is_symlink():
+                return True
+            raise _exists_error()
 
         def _path_exists(path: str) -> bool:
             """lstat, never stat: a symlink there, dangling or not, is taken."""
@@ -2358,6 +2475,29 @@ class SftpServiceRuntime:
                 return True
             return real_target == real_source or real_target.startswith(real_source + "/")
 
+        def _refuse_merging_into_source() -> None:
+            """Merging into a folder that already exists, through another
+            connection: as for a new root, only the files can tell whether it
+            lies inside the tree being copied. A probe folder made through
+            the destination that shows up through the source settles it."""
+            if not _resolves_into_source():
+                return
+            probe = _staging_path(posixpath.join(destination, "probe"))
+            try:
+                destination_client.mkdir(probe)
+            except Exception:
+                # Cannot tell; the merge could not write here anyway.
+                raise _into_itself_error()
+            try:
+                shared = _shares_filesystem(probe)
+            finally:
+                try:
+                    destination_client.rmdir(probe)
+                except Exception:
+                    logger.debug("Could not remove probe folder %s", probe, exc_info=True)
+            if shared:
+                raise _into_itself_error()
+
         def _make_root_unless_inside_source() -> None:
             """Create the destination root of a copy between two connections.
 
@@ -2396,7 +2536,7 @@ class SftpServiceRuntime:
             nonlocal pending_files
             if cancel is not None and cancel():
                 raise OperationCancelled()
-            if not made:
+            if not made and not _merge_into(destination_path):
                 destination_client.mkdir(destination_path)
             entries = client.listdir_attr(source_path)
             pending_files += sum(
@@ -2425,7 +2565,7 @@ class SftpServiceRuntime:
                     SftpFailureCode.RECURSIVE_COPY_SYMLINK_UNSUPPORTED,
                     details={"service_id": record.service_id},
                 )
-            if _destination_exists():
+            if not request.overwrite and _destination_exists():
                 raise _exists_error()
             if source_attr.is_dir():
                 if not request.recursive:
@@ -2438,9 +2578,12 @@ class SftpServiceRuntime:
                 if same_server:
                     if _resolves_into_source():
                         raise _into_itself_error()
-                    if _moved_by_rename():
+                    if _moved_by_rename(True):
                         return
                     _copy_directory(source, destination)
+                elif _merge_into(destination):
+                    _refuse_merging_into_source()
+                    _copy_directory(source, destination, made=True)
                 else:
                     _make_root_unless_inside_source()
                     _copy_directory(source, destination, made=True)
@@ -2452,7 +2595,7 @@ class SftpServiceRuntime:
                         SftpFailureCode.RECURSIVE_COPY_REQUIRES_DIRECTORY_SOURCE,
                         details={"service_id": record.service_id},
                     )
-                if _moved_by_rename():
+                if _moved_by_rename(False):
                     return
                 _copy_file(source, destination, size=source_attr.st_size)
             if progress is not None:

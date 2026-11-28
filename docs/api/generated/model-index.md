@@ -5567,6 +5567,11 @@ Synthetic representation:
 or another session on the same one) that receives the copy; the source
 paths stay on ``service_id``. Such a copy always runs as an operation.
 
+``overwrite`` replaces what is already at the destination: a file is
+swapped in whole by one rename once its copy is complete, and a folder is
+merged, replacing the files it shares with the source. A file is never
+replaced by itself, nor a folder by one of another kind.
+
 **Related methods:** `sftp_copy`
 **Related events:** None
 
@@ -5579,6 +5584,7 @@ paths stay on ``service_id``. Such a copy always runs as an operation.
 | `move` | `bool` | No | `false` | No |
 | `as_operation` | `bool` | No | `false` | No |
 | `destination_service_id` | `Optional[SftpServiceId]` | No | `null` | No |
+| `overwrite` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -5588,6 +5594,7 @@ Synthetic representation:
   "destination_path": {},
   "destination_service_id": null,
   "move": false,
+  "overwrite": false,
   "recursive": false,
   "service_id": {},
   "source_path": {}

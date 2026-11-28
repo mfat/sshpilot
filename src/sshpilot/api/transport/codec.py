@@ -5465,6 +5465,8 @@ def sftp_copy_request_to_wire(request: SftpCopyRequest) -> Dict[str, Any]:
         wire["as_operation"] = True
     if request.destination_service_id is not None:
         wire["destination_service_id"] = request.destination_service_id
+    if request.overwrite:
+        wire["overwrite"] = True
     return wire
 
 
@@ -5472,7 +5474,9 @@ def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
     data = _strict_fields(
         value,
         required={"service_id", "source_path", "destination_path"},
-        optional={"recursive", "move", "as_operation", "destination_service_id"},
+        optional={
+            "recursive", "move", "as_operation", "destination_service_id", "overwrite",
+        },
         context="SFTP copy request",
     )
     destination_service_id = data.get("destination_service_id")
@@ -5487,6 +5491,7 @@ def sftp_copy_request_from_wire(value: Any) -> SftpCopyRequest:
             None if destination_service_id is None
             else _sftp_service_id(destination_service_id, "SFTP destination service id")
         ),
+        overwrite=_boolean(data.get("overwrite", False), "SFTP copy overwrite"),
     )
 
 
