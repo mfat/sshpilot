@@ -19519,3 +19519,23 @@ msgstr "此 Match 块检查的不只是主机名，因此无法在不改变其�
 #: src/sshpilot/advanced_config_window.py
 msgid "These host names contain capital letters. A Host line matches them exactly, but a Match line ignores case, so the block would apply to different connections. Change the line in the Raw view."
 msgstr "这些主机名包含大写字母。Host 行会精确匹配它们，而 Match 行忽略大小写，因此该块会作用于不同的连接。请在“原始”视图中修改该行。"
+
+#: src/sshpilot/preferences.py
+msgid "View Rail"
+msgstr "视图栏"
+
+#: src/sshpilot/preferences.py
+msgid "The Connections and Configuration buttons at the window's edge. Without them, Advanced Configuration opens in its own window"
+msgstr "窗口边缘的“连接”和“配置”按钮。没有它们时，高级配置会在单独的窗口中打开"
+
+#: src/sshpilot/preferences.py
+msgid "Always Shown"
+msgstr "始终显示"
+
+#: src/sshpilot/preferences.py
+msgid "Hidden With the Sidebar"
+msgstr "随侧边栏隐藏"
+
+#: src/sshpilot/preferences.py
+msgid "Never Shown"
+msgstr "从不显示"

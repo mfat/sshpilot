@@ -636,6 +636,12 @@ class WindowFullscreenController:
             return
         self._set_sidebar_visible(saved.get('sidebar_visible'))
         self._set_widget_visible('view_rail', saved.get('view_rail_visible'))
+        # Settings ▸ Sidebar ▸ View Rail may have changed meanwhile.
+        try:
+            from .sidebar_views import sync_rail_visibility
+            sync_rail_visibility(self.window)
+        except Exception:
+            logger.debug('View rail sync failed', exc_info=True)
         self._set_widget_visible('header_bar', saved.get('header_visible'))
         if restore_tab_bar:
             self._set_widget_visible('tab_bar', saved.get('tab_bar_visible'))

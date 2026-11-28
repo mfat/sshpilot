@@ -6418,12 +6418,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         It is shown in the main window, as the Configuration view
         (``sidebar_views``), unless the call comes from a dialog that stays
         up over it (*over* without *new_block*: the connection editor's
-        dialog closes once it has handed a new block over).
+        dialog closes once it has handed a new block over), or the view rail
+        is not on screen (Settings ▸ Sidebar ▸ View Rail): the view needs it
+        to lead back to the connections.
 
         Returns the window or the view, or None when it could not be opened.
         """
         window = None
-        if over is None or new_block:
+        from .sidebar_views import opens_in_window
+        if (over is None or new_block) and not opens_in_window(self):
             try:
                 from .sidebar_views import open_sections
                 view = open_sections(
@@ -7273,6 +7276,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._sync_sidebar_toggle_button(False)
 
     def _on_sidebar_collapsed_changed(self, collapsed: bool) -> None:
+        from .sidebar_views import sync_rail_visibility
+        sync_rail_visibility(self)
         if not collapsed:
             popup = getattr(self, '_search_popup', None)
             if popup is not None and popup.visible:
@@ -7417,6 +7422,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     logger.debug(f"Set Gtk.Paned sidebar visibility to: {is_visible}")
         except Exception as e:
             logger.error(f"Failed to toggle sidebar visibility: {e}")
+        from .sidebar_views import sync_rail_visibility
+        sync_rail_visibility(self)
 
 
     def on_scp_button_clicked(self, button):
@@ -8062,6 +8069,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         logger.debug(f"Setting changed: {key} = {value}")
 
         # Apply relevant changes
+        if key == 'ui.view_rail':
+            from .sidebar_views import on_rail_setting_changed
+            on_rail_setting_changed(self)
         if key.startswith('terminal.'):
             # Update terminal themes/fonts
             for terms in self.connection_to_terminals.values():

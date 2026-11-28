@@ -157,6 +157,9 @@ def get_default_config() -> Dict[str, Any]:
             # 'none' | 'hide'. ('minimize' / icon strip is retired; migration
             # rewrites any persisted 'minimize' to 'none'.)
             'sidebar_on_terminal_open': 'none',
+            # When the view rail is on screen: 'always' | 'with_sidebar' |
+            # 'never' (sidebar_views.py).
+            'view_rail': 'always',
             # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
             'headerbar_show_split_view': False,
             'headerbar_show_tab_button': True,

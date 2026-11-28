@@ -5,6 +5,13 @@ It is outside the sidebar, so it stays when the sidebar is hidden: choosing
 the other view shows the sidebar again, and choosing the view already shown
 hides or shows the sidebar, as F9 does.
 
+Settings ▸ Sidebar ▸ View Rail (``ui.view_rail``) can hide it with the
+sidebar or for good. Whenever the rail is not on screen, Advanced
+Configuration opens in its own window, not as the Configuration view: the
+view needs the rail to lead back to the connections. So the rail stays while
+the Configuration view is shown, and leaving the rail for good leaves that
+view.
+
 * **Connections**: the connection list, and the tabs and terminals beside it.
 * **Configuration**: the sidebar lists every block of the configuration in
   file order (the options above all blocks, each ``Host`` and ``Match``
@@ -36,6 +43,69 @@ logger = logging.getLogger(__name__)
 
 CONNECTIONS = "connections"
 SECTIONS = "sections"
+
+# ui.view_rail: when the rail is on screen.
+RAIL_ALWAYS = "always"
+RAIL_WITH_SIDEBAR = "with_sidebar"
+RAIL_NEVER = "never"
+RAIL_MODES = (RAIL_ALWAYS, RAIL_WITH_SIDEBAR, RAIL_NEVER)
+RAIL_SETTING = "ui.view_rail"
+
+
+def rail_mode(window) -> str:
+    config = getattr(window, "config", None)
+    try:
+        mode = config.get_setting(RAIL_SETTING, RAIL_ALWAYS) if config else RAIL_ALWAYS
+    except Exception:
+        mode = RAIL_ALWAYS
+    return mode if mode in RAIL_MODES else RAIL_ALWAYS
+
+
+def rail_wanted(window) -> bool:
+    """Whether the rail belongs on screen now (terminal fullscreen aside)."""
+    mode = rail_mode(window)
+    if mode == RAIL_NEVER:
+        return False
+    if mode == RAIL_ALWAYS or current_view(window) == SECTIONS:
+        return True
+    hidden = getattr(window, "_sidebar_hidden_by_toggle", None)
+    if callable(hidden):
+        try:
+            return not hidden()
+        except Exception:
+            return True
+    return bool(getattr(window, "_sidebar_visible", True))
+
+
+def sync_rail_visibility(window) -> None:
+    """Show or hide the rail as ``ui.view_rail`` and the sidebar say."""
+    rail = getattr(window, "view_rail", None)
+    if rail is None:
+        return
+    fullscreen = getattr(window, "fullscreen_controller", None)
+    if fullscreen is not None and getattr(fullscreen, "terminal_presentation_active", False):
+        return                          # it hides the rail, and restores it
+    wanted = rail_wanted(window)
+    if rail.get_visible() != wanted:
+        rail.set_visible(wanted)
+
+
+def on_rail_setting_changed(window) -> None:
+    """``ui.view_rail`` changed: never leaves no way back from the
+    Configuration view, so that view is left (a draft in it is kept, and
+    quitting still asks about it)."""
+    if rail_mode(window) == RAIL_NEVER:
+        leave_sections(window)
+    sync_rail_visibility(window)
+
+
+def opens_in_window(window) -> bool:
+    """Whether Advanced Configuration opens in its own window: when the
+    rail, the way back to the connections, is not on screen."""
+    rail = getattr(window, "view_rail", None)
+    if rail_mode(window) == RAIL_NEVER:
+        return True
+    return rail is not None and not rail.get_visible()
 
 
 def current_view(window) -> str:
@@ -144,7 +214,12 @@ def confirm_quit(window, proceed) -> bool:
         window._config_discard_answered = True
         proceed()
 
-    view._confirm_discard(discard)
+    def stay():
+        # Shown only to ask: without the rail there is no way back.
+        if rail_mode(window) == RAIL_NEVER:
+            show_view(window, CONNECTIONS)
+
+    view._confirm_discard(discard, stay)
     return True
 
 
@@ -170,6 +245,7 @@ def show_view(window, name: str) -> None:
     was = current_view(window)
     stack.set_visible_child_name(name)
     _sync_rail(window)
+    sync_rail_visibility(window)
     # The search, the New menu, the view options (sort, tag filter,
     # hostnames) and the buttons under the list are the connections': the
     # list of blocks has its own search and New Block button.
@@ -378,6 +454,7 @@ def build_view_rail(window) -> Gtk.Widget:
     window._view_rail_buttons = buttons
     window.view_rail = rail
     _sync_rail(window)
+    sync_rail_visibility(window)
     return rail
 
 

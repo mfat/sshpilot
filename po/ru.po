@@ -20516,3 +20516,23 @@ msgstr "Этот блок Match проверяет не только имя уз
 #: src/sshpilot/advanced_config_window.py
 msgid "These host names contain capital letters. A Host line matches them exactly, but a Match line ignores case, so the block would apply to different connections. Change the line in the Raw view."
 msgstr "Эти имена хостов содержат заглавные буквы. Строка Host сравнивает их точно, а строка Match не учитывает регистр, поэтому блок применялся бы к другим подключениям. Измените строку в представлении «Необработанные данные»."
+
+#: src/sshpilot/preferences.py
+msgid "View Rail"
+msgstr "Панель видов"
+
+#: src/sshpilot/preferences.py
+msgid "The Connections and Configuration buttons at the window's edge. Without them, Advanced Configuration opens in its own window"
+msgstr "Кнопки «Подключения» и «Конфигурация» у края окна. Без них расширенная конфигурация открывается в отдельном окне"
+
+#: src/sshpilot/preferences.py
+msgid "Always Shown"
+msgstr "Показывать всегда"
+
+#: src/sshpilot/preferences.py
+msgid "Hidden With the Sidebar"
+msgstr "Скрывать вместе с боковой панелью"
+
+#: src/sshpilot/preferences.py
+msgid "Never Shown"
+msgstr "Не показывать"

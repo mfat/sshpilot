@@ -20164,3 +20164,23 @@ msgstr "این بلوک Match چیزی بیش از نام میزبان را بر
 #: src/sshpilot/advanced_config_window.py
 msgid "These host names contain capital letters. A Host line matches them exactly, but a Match line ignores case, so the block would apply to different connections. Change the line in the Raw view."
 msgstr "این نام‌های میزبان حروف بزرگ دارند. خط Host آن‌ها را دقیقاً مقایسه می‌کند، اما خط Match بزرگی و کوچکی حروف را نادیده می‌گیرد، پس این بلوک روی اتصال‌های دیگری اعمال می‌شود. خط را در نمای «خام» تغییر دهید."
+
+#: src/sshpilot/preferences.py
+msgid "View Rail"
+msgstr "نوار نماها"
+
+#: src/sshpilot/preferences.py
+msgid "The Connections and Configuration buttons at the window's edge. Without them, Advanced Configuration opens in its own window"
+msgstr "دکمه‌های «اتصال‌ها» و «پیکربندی» در لبهٔ پنجره. بدون آن‌ها، پیکربندی پیشرفته در پنجرهٔ جداگانه‌ای باز می‌شود"
+
+#: src/sshpilot/preferences.py
+msgid "Always Shown"
+msgstr "همیشه نمایش داده شود"
+
+#: src/sshpilot/preferences.py
+msgid "Hidden With the Sidebar"
+msgstr "همراه نوار کناری پنهان شود"
+
+#: src/sshpilot/preferences.py
+msgid "Never Shown"
+msgstr "هرگز نمایش داده نشود"

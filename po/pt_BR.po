@@ -20347,3 +20347,23 @@ msgstr "Este bloco Match verifica mais do que o nome do host, então não pode s
 #: src/sshpilot/advanced_config_window.py
 msgid "These host names contain capital letters. A Host line matches them exactly, but a Match line ignores case, so the block would apply to different connections. Change the line in the Raw view."
 msgstr "Estes nomes de host contêm letras maiúsculas. Uma linha Host os compara exatamente, mas uma linha Match ignora maiúsculas e minúsculas, então o bloco se aplicaria a outras conexões. Altere a linha na visualização “Dados brutos”."
+
+#: src/sshpilot/preferences.py
+msgid "View Rail"
+msgstr "Barra de visualizações"
+
+#: src/sshpilot/preferences.py
+msgid "The Connections and Configuration buttons at the window's edge. Without them, Advanced Configuration opens in its own window"
+msgstr "Os botões Conexões e Configuração na borda da janela. Sem eles, a configuração avançada abre em uma janela própria"
+
+#: src/sshpilot/preferences.py
+msgid "Always Shown"
+msgstr "Sempre exibir"
+
+#: src/sshpilot/preferences.py
+msgid "Hidden With the Sidebar"
+msgstr "Ocultar com a barra lateral"
+
+#: src/sshpilot/preferences.py
+msgid "Never Shown"
+msgstr "Nunca exibir"

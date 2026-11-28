@@ -2009,6 +2009,29 @@ class PreferencesWindow(Adw.Window):
 
         sidebar_behavior_group = Adw.PreferencesGroup(title=_("Behavior"))
 
+        # The Connections / Configuration buttons beside the sidebar
+        # (sidebar_views.py).
+        from .sidebar_views import RAIL_MODES, RAIL_SETTING, rail_mode
+
+        self.view_rail_row = Adw.ComboRow()
+        self.view_rail_row.set_title(_("View Rail"))
+        self.view_rail_row.set_subtitle(_(
+            "The Connections and Configuration buttons at the window's edge. "
+            "Without them, Advanced Configuration opens in its own window"
+        ))
+        rail_model = Gtk.StringList()
+        for label in (_("Always Shown"), _("Hidden With the Sidebar"), _("Never Shown")):
+            rail_model.append(label)
+        self.view_rail_row.set_model(rail_model)
+        self.view_rail_row.set_selected(RAIL_MODES.index(rail_mode(self)))
+        self.view_rail_row.connect(
+            'notify::selected',
+            lambda r, _p: self.config.set_setting(
+                RAIL_SETTING, RAIL_MODES[min(r.get_selected(), len(RAIL_MODES) - 1)]
+            ),
+        )
+        sidebar_behavior_group.add(self.view_rail_row)
+
         hide_on_startup_switch = self.hide_on_startup_switch = Adw.SwitchRow()
         hide_on_startup_switch.set_title(_("Hide Sidebar on Startup"))
         hide_on_startup_switch.set_subtitle(_("Start with the sidebar collapsed"))
