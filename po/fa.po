@@ -20184,3 +20184,11 @@ msgstr "همراه نوار کناری پنهان شود"
 #: src/sshpilot/preferences.py
 msgid "Never Shown"
 msgstr "هرگز نمایش داده نشود"
+
+#: src/sshpilot/file_manager/progress_dialog.py:754
+msgid "Stalled"
+msgstr "متوقف مانده"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:18
+msgid "The server stopped responding, so the connection was closed"
+msgstr "سرور دیگر پاسخ نمی‌داد، بنابراین اتصال بسته شد"

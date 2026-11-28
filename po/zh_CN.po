@@ -19539,3 +19539,11 @@ msgstr "随侧边栏隐藏"
 #: src/sshpilot/preferences.py
 msgid "Never Shown"
 msgstr "从不显示"
+
+#: src/sshpilot/file_manager/progress_dialog.py:754
+msgid "Stalled"
+msgstr "已停滞"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:18
+msgid "The server stopped responding, so the connection was closed"
+msgstr "服务器停止响应，因此连接已关闭"

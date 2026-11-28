@@ -135,7 +135,14 @@ class OpenSSHSFTPClient:
     stdin/stdout). A background thread reads responses and wakes the matching
     request by id, so requests can pipeline and never block the reader."""
 
-    def __init__(self, stdin, stdout, on_close=None) -> None:
+    def __init__(
+        self,
+        stdin,
+        stdout,
+        on_close=None,
+        *,
+        inactivity_timeout: Optional[float] = None,
+    ) -> None:
         self._stdin = stdin
         self._stdout = stdout
         # Optional transport teardown that makes the read side EOF so the reader
@@ -158,6 +165,22 @@ class OpenSSHSFTPClient:
         # Peak outstanding depth from the most recent transfer pipeline (tests /
         # diagnostics). Updated by ``iter_read`` and ``PipelinedWriter``.
         self.last_transfer_peak_pending = _INITIAL_PIPELINE_DEPTH
+        # Inactivity watchdog (as FileZilla's OPTION_TIMEOUT): while requests
+        # are pending, a reply must arrive within *inactivity_timeout*
+        # seconds or the connection is closed, which fails every waiter.
+        # Without it a silently dead link (Wi-Fi gone, laptop asleep, server
+        # frozen) held a transfer until ssh's own keepalive gave up -- or
+        # forever with ServerAliveInterval 0 (#1435). Idle time does not
+        # count: the clock starts when a request is sent with none pending.
+        self._inactivity_timeout = inactivity_timeout
+        self._last_activity = time.monotonic()
+        # Requests the server may legitimately answer only when done (a
+        # server-side copy-data); sftp-server answers in order, so nothing
+        # else replies meanwhile and the watchdog stands down.
+        self._unbounded_requests = 0
+        self._timed_out_after: Optional[float] = None
+        self._watchdog: Optional[threading.Thread] = None
+        self._watchdog_stop = threading.Event()
 
     # -- framing ----------------------------------------------------------
     def _read_exact(self, n: int) -> bytes:
@@ -195,6 +218,11 @@ class OpenSSHSFTPClient:
             target=self._reader_loop, name="sftp-reader", daemon=True
         )
         self._reader.start()
+        if self._inactivity_timeout and self._inactivity_timeout > 0:
+            self._watchdog = threading.Thread(
+                target=self._watchdog_loop, name="sftp-watchdog", daemon=True
+            )
+            self._watchdog.start()
         self._load_limits()
 
     def _load_limits(self) -> None:
@@ -237,6 +265,7 @@ class OpenSSHSFTPClient:
         try:
             while not self._closed:
                 ptype, payload = self._read_packet()
+                self._last_activity = time.monotonic()
                 rid = proto.response_request_id(ptype, payload)
                 slot = self._pending.pop(rid, None)
                 if slot is not None:
@@ -250,8 +279,57 @@ class OpenSSHSFTPClient:
                 slot.event.set()
             self._pending.clear()
 
+    # -- inactivity watchdog ---------------------------------------------
+    def stalled_for(self) -> float:
+        """Seconds the client has waited on the server with no reply.
+
+        0 while nothing is pending, after close, or while an unbounded
+        request (server-side copy) is in flight.
+        """
+        if self._closed or not self._pending or self._unbounded_requests:
+            return 0.0
+        return max(0.0, time.monotonic() - self._last_activity)
+
+    @property
+    def timed_out(self) -> bool:
+        """True once the watchdog (or :meth:`abort_stalled`) closed the client."""
+        return self._timed_out_after is not None
+
+    def abort_stalled(self, seconds: Optional[float] = None) -> None:
+        """Close the connection because the server stopped answering.
+
+        Pending and later requests fail with :class:`SFTPConnectionTimeout`.
+        """
+        if self._closed:
+            return
+        waited = self.stalled_for() if seconds is None else seconds
+        self._timed_out_after = round(waited, 1)
+        logger.warning(
+            "SFTP server sent nothing for %.1f s with requests pending; "
+            "closing the connection",
+            waited,
+        )
+        self.close()
+
+    def _watchdog_loop(self) -> None:
+        timeout = float(self._inactivity_timeout or 0)
+        interval = min(1.0, timeout / 4) if timeout > 0 else 1.0
+        while not self._watchdog_stop.wait(interval):
+            if self._closed:
+                return
+            waited = self.stalled_for()
+            if waited >= timeout:
+                self.abort_stalled(timeout)
+                return
+
+    def _connection_lost(self) -> proto.SFTPError:
+        if self._timed_out_after is not None:
+            return proto.SFTPConnectionTimeout(self._timed_out_after)
+        return proto.SFTPError(proto.FX_CONNECTION_LOST, "SFTP session lost")
+
     def close(self) -> None:
         self._closed = True
+        self._watchdog_stop.set()
         # Tear down the transport first: this EOFs our read side so the reader
         # thread returns from its blocked readinto() instead of us yanking the
         # fd out from under the file objects (which caused EBADF on finalize).
@@ -284,11 +362,16 @@ class OpenSSHSFTPClient:
     def _send(self, ptype: int, payload: bytes) -> _Pending:
         """Send a request without waiting; pass the slot to ``_wait``."""
         if self._closed:
+            if self._timed_out_after is not None:
+                raise self._connection_lost()
             raise proto.SFTPError(proto.FX_CONNECTION_LOST, "SFTP session closed")
         with self._id_lock:
             self._next_id = (self._next_id + 1) & 0xFFFFFFFF
             rid = self._next_id
             slot = _Pending()
+            if not self._pending:
+                # Waiting starts now; time spent idle is not inactivity.
+                self._last_activity = time.monotonic()
             self._pending[rid] = slot
         # The reader marks the session closed before it wakes the pending
         # slots, so a slot registered after that sweep is woken here.
@@ -300,14 +383,13 @@ class OpenSSHSFTPClient:
         except (OSError, ValueError) as exc:
             # The write pipe may close before the reader observes EOF.
             self._pending.pop(rid, None)
-            raise proto.SFTPError(proto.FX_CONNECTION_LOST, "SFTP session lost") from exc
+            raise self._connection_lost() from exc
         return slot
 
-    @staticmethod
-    def _wait(slot: _Pending) -> Tuple[int, bytes]:
+    def _wait(self, slot: _Pending) -> Tuple[int, bytes]:
         slot.event.wait()
         if slot.response is None:
-            raise proto.SFTPError(proto.FX_CONNECTION_LOST, "SFTP session lost")
+            raise self._connection_lost()
         return slot.response
 
     @staticmethod
@@ -1097,7 +1179,16 @@ class OpenSSHSFTPClient:
             + proto.pack_string(destination_handle)
             + proto.pack_uint64(0)  # write offset
         )
-        self._expect_ok(self._request(proto.FXP_EXTENDED, payload))
+        # The server replies only when the whole copy is done.
+        with self._id_lock:
+            self._unbounded_requests += 1
+        try:
+            self._expect_ok(self._request(proto.FXP_EXTENDED, payload))
+        finally:
+            with self._id_lock:
+                self._unbounded_requests -= 1
+            # The copy's silence was expected; the clock restarts here.
+            self._last_activity = time.monotonic()
 
     def supports_statvfs(self) -> bool:
         return "statvfs@openssh.com" in self.extensions

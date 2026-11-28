@@ -111,6 +111,20 @@ class SFTPError(IOError):
             self.errno = _errno.EIO
 
 
+class SFTPConnectionTimeout(SFTPError):
+    """The server stopped answering: requests were pending and nothing came
+    back for the client's inactivity timeout, so the client closed the
+    connection (FileZilla's "Connection timed out after N seconds of
+    inactivity")."""
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+        super().__init__(
+            FX_CONNECTION_LOST,
+            f"SFTP server did not respond for {seconds:g} seconds",
+        )
+
+
 @dataclasses.dataclass
 class SFTPAttributes:
     """Decoded file attributes. Field names mirror paramiko's SFTPAttributes

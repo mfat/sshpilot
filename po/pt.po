@@ -20459,3 +20459,11 @@ msgstr "Ocultar com a barra lateral"
 #: src/sshpilot/preferences.py
 msgid "Never Shown"
 msgstr "Nunca mostrar"
+
+#: src/sshpilot/file_manager/progress_dialog.py:754
+msgid "Stalled"
+msgstr "Parado"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:18
+msgid "The server stopped responding, so the connection was closed"
+msgstr "O servidor deixou de responder, pelo que a ligação foi fechada"

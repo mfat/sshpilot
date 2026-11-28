@@ -20536,3 +20536,11 @@ msgstr "Скрывать вместе с боковой панелью"
 #: src/sshpilot/preferences.py
 msgid "Never Shown"
 msgstr "Не показывать"
+
+#: src/sshpilot/file_manager/progress_dialog.py:754
+msgid "Stalled"
+msgstr "Зависло"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:18
+msgid "The server stopped responding, so the connection was closed"
+msgstr "Сервер перестал отвечать, поэтому соединение было закрыто"

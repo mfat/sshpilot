@@ -40,6 +40,9 @@ class SftpFailureCode(str, Enum):
 
     SESSION_ESTABLISHMENT_FAILED = "session_establishment_failed"
     CONNECTION_LOST = "connection_lost"
+    # The server sent nothing while requests waited, so the client closed
+    # the connection (inactivity timeout).
+    CONNECTION_TIMED_OUT = "connection_timed_out"
     COMMAND_QUEUE_FULL = "command_queue_full"
     PROCESS_TERMINATION_FAILED = "process_termination_failed"
     SERVICE_NOT_FOUND = "service_not_found"

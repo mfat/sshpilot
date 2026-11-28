@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.122",
+  "api_implementation_version": "0.123",
   "client_method_contract": {
     "acknowledge_terminal_output": {
       "capability": "terminal.flow_control",
@@ -1892,6 +1892,7 @@
     "SftpFailureCode": [
       "session_establishment_failed",
       "connection_lost",
+      "connection_timed_out",
       "command_queue_full",
       "process_termination_failed",
       "service_not_found",

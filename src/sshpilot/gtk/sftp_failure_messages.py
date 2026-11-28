@@ -14,6 +14,9 @@ _SFTP_FAILURE_TEMPLATES = {
         "The SFTP session could not be established"
     ),
     SftpFailureCode.CONNECTION_LOST: N_("The SFTP connection was lost"),
+    SftpFailureCode.CONNECTION_TIMED_OUT: N_(
+        "The server stopped responding, so the connection was closed"
+    ),
     SftpFailureCode.COMMAND_QUEUE_FULL: N_(
         "The daemon SFTP command queue is full"
     ),

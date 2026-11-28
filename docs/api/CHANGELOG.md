@@ -5,6 +5,13 @@ notes remain separate.
 
 ## Unreleased
 
+- `SftpFailureCode.CONNECTION_TIMED_OUT` (`connection_timed_out`, no
+  parameters): the server sent nothing for the SFTP client's inactivity
+  timeout (30 s) while requests were waiting, so the daemon closed the
+  connection. A transfer whose connection drops now fails with
+  `connection_lost` instead of the generic `transfer_failed`, and a transfer
+  cancelled while stalled ends `cancelled` rather than `failed`. The API
+  implementation version is 0.123; Protocol remains 1.0.
 - `SftpCopyRequest` gains `overwrite`: the copy (or move) replaces what is
   already at the destination instead of failing with
   `destination_already_exists`. A file is swapped in whole by one rename once

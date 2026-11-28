@@ -75,6 +75,9 @@ DEFAULT_MAX_RETAINED_COMPLETED_TRANSFERS = 200
 DEFAULT_CHUNK_SIZE = 32768
 DEFAULT_PROGRESS_MIN_INTERVAL_SECONDS = 0.2
 DEFAULT_PROGRESS_MIN_BYTES = 1024 * 1024
+# A cancel finds the server silent this long: close the connection rather
+# than wait for the inactivity timeout to end the blocked copy.
+DEFAULT_CANCEL_STALL_SECONDS = 3.0
 _TEMP_PREFIX = ".sshpilot-tmp-"
 _TERMINAL_STATES = frozenset(
     {
@@ -186,6 +189,28 @@ def _sftp_service_failure(error: SshPilotError) -> SftpFailure:
         ErrorCode.SERVICE_OWNER_REQUIRED: SftpFailureCode.SERVICE_OWNER_REQUIRED,
     }.get(error.code, SftpFailureCode.TRANSFER_START_FAILED)
     return SftpFailure(code=code, error_code=error.code)
+
+
+def _connection_lost_failure(error: BaseException) -> Optional[SftpFailure]:
+    """The failure for a transfer whose SFTP connection died, else None.
+
+    A server that stopped answering (the client's inactivity timeout closed
+    the connection) is told apart from a connection that dropped.
+    """
+    if isinstance(error, sftp_proto.SFTPConnectionTimeout):
+        return SftpFailure(
+            code=SftpFailureCode.CONNECTION_TIMED_OUT,
+            error_code=ErrorCode.SFTP_PROTOCOL_LOST,
+        )
+    if isinstance(error, sftp_proto.SFTPError) and error.code in (
+        sftp_proto.FX_CONNECTION_LOST,
+        sftp_proto.FX_NO_CONNECTION,
+    ):
+        return SftpFailure(
+            code=SftpFailureCode.CONNECTION_LOST,
+            error_code=ErrorCode.SFTP_PROTOCOL_LOST,
+        )
+    return None
 
 
 def _scp_start_failure(error: BaseException) -> ScpFailure:
@@ -340,6 +365,7 @@ class TransferRuntime:
         monotonic: Callable[[], float] = time.monotonic,
         id_factory: Callable[[], TransferId] = new_transfer_id,
         shutdown_timeout_seconds: float = 5.0,
+        cancel_stall_seconds: float = DEFAULT_CANCEL_STALL_SECONDS,
         max_concurrent_transfers: int = DEFAULT_MAX_CONCURRENT_TRANSFERS,
         max_concurrent_transfers_provider: Optional[Callable[[], int]] = None,
         max_queued_transfers: int = DEFAULT_MAX_QUEUED_TRANSFERS,
@@ -367,6 +393,7 @@ class TransferRuntime:
         self._monotonic = monotonic
         self._id_factory = id_factory
         self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
+        self._cancel_stall_seconds = float(cancel_stall_seconds)
         self._max_concurrent_transfers = max_concurrent_transfers
         self._max_concurrent_transfers_provider = max_concurrent_transfers_provider
         self._max_queued_transfers = max_queued_transfers
@@ -814,7 +841,14 @@ class TransferRuntime:
                         error_code=error.code,
                     ),
                 )
-        except Exception:
+        except Exception as exc:
+            lost = _connection_lost_failure(exc)
+            if lost is not None and record.backend is TransferBackend.SFTP:
+                logger.info(
+                    "Transfer %s stopped: %s", transfer_id, exc,
+                )
+                self._fail_sftp(record, lost)
+                return
             with log_context(
                 transfer=transfer_id,
                 client=record.owner_client_id,
@@ -1465,6 +1499,8 @@ class TransferRuntime:
         try:
             source_attr = client.lstat(remote_root)
         except Exception as exc:
+            if _connection_lost_failure(exc) is not None:
+                raise
             raise _sftp_transfer_error(
                 SftpFailureCode.REMOTE_SOURCE_DIRECTORY_UNREADABLE,
                 ErrorCode.TRANSFER_IO_FAILED,
@@ -1657,6 +1693,8 @@ class TransferRuntime:
         try:
             client.mkdir(remote_dir)
         except Exception as exc:
+            if _connection_lost_failure(exc) is not None:
+                raise
             raise _sftp_transfer_error(
                 SftpFailureCode.REMOTE_DIRECTORY_CREATION_FAILED,
                 ErrorCode.TRANSFER_IO_FAILED,
@@ -2040,6 +2078,11 @@ class TransferRuntime:
         self._publish(events)
 
     def _fail_scp(self, record: _TransferRecord, failure: ScpFailure) -> None:
+        if record.state is TransferState.CANCELLING:
+            # Cancelled while stuck: the connection was closed to end it,
+            # so the failure is the cancel taking effect.
+            self._finish_cancelled(record)
+            return
         self._cleanup_local_temp(record)
         self._cleanup_remote_temp(record)
         with self._lock:
@@ -2051,6 +2094,11 @@ class TransferRuntime:
         self._publish((event,))
 
     def _fail_sftp(self, record: _TransferRecord, failure: SftpFailure) -> None:
+        if record.state is TransferState.CANCELLING:
+            # Cancelled while stuck: the connection was closed to end it,
+            # so the failure is the cancel taking effect.
+            self._finish_cancelled(record)
+            return
         self._cleanup_local_temp(record)
         self._cleanup_remote_temp(record)
         with self._lock:
@@ -2089,8 +2137,38 @@ class TransferRuntime:
                 self._pending_run.remove(request.transfer_id)
                 record.completed_at = self._clock()
                 events.append(self._transition_locked(record, TransferState.CANCELLED))
+            stuck_service = (
+                record.sftp_service_id
+                if record.backend is TransferBackend.SFTP
+                and record.state is TransferState.CANCELLING
+                else None
+            )
         self._publish(events)
+        if stuck_service is not None:
+            self._abort_if_stalled(stuck_service, record.owner_client_id)
         return True
+
+    def _abort_if_stalled(self, service_id: SftpServiceId, owner: ClientId) -> None:
+        """Close a connection the server has stopped answering, for a cancel.
+
+        The copy loop sees a cancel between chunks, but a stalled one is
+        blocked waiting on the server and would only notice once the
+        inactivity timeout closed the connection. When the server has
+        already been silent a while, nothing more is lost by closing it now.
+        """
+        try:
+            client, _ = self._sftp_runtime.acquire_active_client(service_id, owner)
+        except Exception:
+            return
+        stalled_for = getattr(client, "stalled_for", None)
+        abort = getattr(client, "abort_stalled", None)
+        if not callable(stalled_for) or not callable(abort):
+            return
+        if stalled_for() < self._cancel_stall_seconds:
+            return
+        threading.Thread(
+            target=abort, name="sshpilot-transfer-cancel-abort", daemon=True
+        ).start()
 
     # -- shutdown -----------------------------------------------------
     def shutdown(self) -> None:

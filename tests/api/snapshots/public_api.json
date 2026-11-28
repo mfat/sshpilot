@@ -15,7 +15,7 @@
     "TerminalSubscription",
     "ValidationReason"
   ],
-  "api_implementation_version": "0.122",
+  "api_implementation_version": "0.123",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -6226,6 +6226,7 @@
     "SftpFailureCode": [
       "session_establishment_failed",
       "connection_lost",
+      "connection_timed_out",
       "command_queue_full",
       "process_termination_failed",
       "service_not_found",

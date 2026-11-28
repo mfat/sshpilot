@@ -123,6 +123,11 @@ DEFAULT_MAX_FILE_BYTES = 1024 * 1024
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 DEFAULT_TERMINATE_GRACE_SECONDS = 2.0
 DEFAULT_PROCESS_POLL_INTERVAL = 0.02
+# A server that sends nothing for this long while requests wait is treated as
+# gone and its connection closed (FileZilla's "Timeout", 20 s by default;
+# a little longer here for slow servers). ssh's keepalive alone took ~60 s,
+# or never with ServerAliveInterval 0 (#1435).
+DEFAULT_INACTIVITY_TIMEOUT_SECONDS = 30.0
 _LOCAL_AUTHORIZED_KEYS_MARKER = "~/.ssh/authorized_keys"
 
 SftpExitCallback = Callable[[Optional[int]], None]
@@ -359,9 +364,11 @@ class SubprocessSftpProcessRunner:
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         poll_interval: float = DEFAULT_PROCESS_POLL_INTERVAL,
         sharing_reporter: Optional[Any] = None,
+        inactivity_timeout: Optional[float] = DEFAULT_INACTIVITY_TIMEOUT_SECONDS,
     ) -> None:
         if not callable(command_builder):
             raise TypeError("SFTP command builder must be callable")
+        self._inactivity_timeout = inactivity_timeout
         #: Logs and publishes each launch's connection-sharing outcome
         #: (``daemon.connection_sharing.ConnectionSharingReporter``).
         self._sharing_reporter = sharing_reporter
@@ -430,6 +437,7 @@ class SubprocessSftpProcessRunner:
             process.stdin,
             process.stdout,
             on_close=lambda: self._terminate_process(process),
+            inactivity_timeout=self._inactivity_timeout,
         )
         try:
             client.start()

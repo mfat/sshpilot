@@ -1445,3 +1445,100 @@ def test_transfer_runtime_client_can_interact_denies_sftp_backed_transfers():
         assert not transfer_runtime.client_can_interact(prepared.id, owner)
     finally:
         transfer_runtime.shutdown()
+
+
+# -- stalled and dropped connections (#1435) --------------------------------
+
+
+class _StallingSftpClient(_FakeSftpClient):
+    """Write blocks like a dead link until the connection is aborted."""
+
+    def __init__(self, stalled_for=10.0):
+        super().__init__()
+        self.write_started = threading.Event()
+        self.aborted = threading.Event()
+        self._stalled_for = stalled_for
+
+    def stalled_for(self):
+        return self._stalled_for
+
+    def abort_stalled(self, seconds=None):
+        self.aborted.set()
+
+    def write(self, handle, offset, chunk):
+        from sshpilot.sftp import protocol as sftp_proto
+
+        self.write_started.set()
+        if not self.aborted.wait(timeout=5.0):
+            raise TimeoutError("stalled write was never aborted")
+        raise sftp_proto.SFTPConnectionTimeout(3.0)
+
+
+def test_cancel_of_a_stalled_upload_closes_the_connection_and_ends_cancelled():
+    owner = ClientId("client:owner")
+    client = _StallingSftpClient()
+    sftp_runtime, service_id, _client = _make_ready_sftp_service(owner, client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    prepared = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source()), client_id=owner
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    assert client.write_started.wait(2)
+
+    transfer_runtime.prepare_cancel_transfer(
+        CancelTransferRequest(transfer_id=prepared.id), client_id=owner
+    )
+
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+    assert client.aborted.is_set()
+    assert summary.state is TransferState.CANCELLED
+    assert summary.failure is None
+
+
+def test_cancel_does_not_close_a_connection_that_is_answering():
+    owner = ClientId("client:owner")
+    client = _StallingSftpClient(stalled_for=0.0)
+    sftp_runtime, service_id, _client = _make_ready_sftp_service(owner, client)
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    prepared = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source()), client_id=owner
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    assert client.write_started.wait(2)
+    transfer_runtime.prepare_cancel_transfer(
+        CancelTransferRequest(transfer_id=prepared.id), client_id=owner
+    )
+    time.sleep(0.2)
+    assert not client.aborted.is_set()
+    client.aborted.set()  # let the worker finish
+    assert _wait_for_terminal_state(
+        transfer_runtime, prepared.id
+    ).state is TransferState.CANCELLED
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        ("timeout", SftpFailureCode.CONNECTION_TIMED_OUT),
+        ("lost", SftpFailureCode.CONNECTION_LOST),
+    ],
+)
+def test_dropped_connection_fails_with_its_own_reason(error, code):
+    from sshpilot.sftp import protocol as sftp_proto
+
+    class _Dropping(_FakeSftpClient):
+        def write(self, handle, offset, chunk):
+            if error == "timeout":
+                raise sftp_proto.SFTPConnectionTimeout(30.0)
+            raise sftp_proto.SFTPError(sftp_proto.FX_CONNECTION_LOST, "lost")
+
+    owner = ClientId("client:owner")
+    sftp_runtime, service_id, _client = _make_ready_sftp_service(owner, _Dropping())
+    transfer_runtime = TransferRuntime(sftp_runtime)
+    prepared = transfer_runtime.prepare_start_transfer(
+        _upload_request(service_id, _temp_source()), client_id=owner
+    )
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+    assert summary.state is TransferState.FAILED
+    assert summary.failure.code is code

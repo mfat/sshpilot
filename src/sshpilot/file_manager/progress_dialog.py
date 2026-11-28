@@ -26,7 +26,7 @@ import os
 import posixpath
 import time
 from gettext import gettext as _, ngettext
-from typing import Optional
+from typing import Optional, Tuple
 
 from gi.repository import Adw, Gio, GLib, Gtk, Pango
 
@@ -85,6 +85,9 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
     _CARD_WIDTH = 372
     _RENDER_INTERVAL_MS = 250
     _SPEED_WINDOW_SECONDS = 5.0
+    # No new bytes for this long reads "Stalled" (#1435). A slow link can
+    # take several seconds per acknowledged chunk, so not much less.
+    _STALL_SECONDS = 15.0
 
     def __init__(self, parent=None, operation_type="transfer", host_label=None,
                  destination_host_label=None):
@@ -412,15 +415,30 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         except Exception:
             return False
 
-    def remaining_seconds(self) -> Optional[float]:
-        """Estimated time left from the recent speed, or None if unknown."""
-        if self._total_bytes <= 0 or len(self._byte_samples) < 2:
-            return None
+    def _rate(self, now: Optional[float] = None) -> Tuple[Optional[float], bool]:
+        """(bytes per second, stalled) from the recent samples.
+
+        Measured up to *now*, not to the last sample, so the speed falls
+        while nothing arrives instead of freezing at its last value, as
+        FileZilla's does; ``stalled`` once nothing came for _STALL_SECONDS.
+        """
+        if not self._byte_samples:
+            return None, False
+        now = time.monotonic() if now is None else now
         t0, b0 = self._byte_samples[0]
         t1, b1 = self._byte_samples[-1]
-        if t1 <= t0 or b1 <= b0:
+        stalled = self._transferred_bytes > 0 and now - t1 >= self._STALL_SECONDS
+        if stalled or b1 <= b0 or now <= t0:
+            return None, stalled
+        return (b1 - b0) / (now - t0), False
+
+    def remaining_seconds(self) -> Optional[float]:
+        """Estimated time left from the recent speed, or None if unknown."""
+        if self._total_bytes <= 0:
             return None
-        rate = (b1 - b0) / (t1 - t0)
+        rate, _stalled = self._rate()
+        if not rate:
+            return None
         return max(0, self._total_bytes - self._transferred_bytes) / rate
 
     @property
@@ -660,7 +678,9 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         now = time.monotonic()
         self._byte_samples.append((now, transferred_int))
         cutoff = now - self._SPEED_WINDOW_SECONDS
-        while self._byte_samples and self._byte_samples[0][0] < cutoff:
+        # Keep one sample from before the window as the anchor: on a slow
+        # link samples arrive further apart than the window itself.
+        while len(self._byte_samples) >= 2 and self._byte_samples[1][0] < cutoff:
             self._byte_samples.popleft()
 
     def _bytes_text(self) -> str:
@@ -726,20 +746,20 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         # Speed (sliding-window) + ETA from real byte counts.
         speed_text = None
         eta_text = None
-        if len(self._byte_samples) >= 2:
-            t0, b0 = self._byte_samples[0]
-            t1, b1 = self._byte_samples[-1]
-            dt = t1 - t0
-            db = b1 - b0
-            if dt > 0 and db > 0:
-                bps = db / dt
-                speed_text = self._format_speed(bps)
-                if self._total_bytes > 0 and bps > 0:
-                    remaining = max(0, self._total_bytes - self._transferred_bytes)
-                    eta_text = (
-                        _("Almost done…") if remaining == 0
-                        else self._format_time(remaining / bps)
-                    )
+        bps, stalled = self._rate()
+        if stalled:
+            # Nothing for a while: say so instead of an old speed and a time
+            # left that never moves. The connection's inactivity timeout
+            # ends the transfer if the server does not come back.
+            speed_text = _("Stalled")
+        elif bps:
+            speed_text = self._format_speed(bps)
+            if self._total_bytes > 0:
+                remaining = max(0, self._total_bytes - self._transferred_bytes)
+                eta_text = (
+                    _("Almost done…") if remaining == 0
+                    else self._format_time(remaining / bps)
+                )
         self._speed_text, self._eta_text = speed_text, eta_text
         try:
             self._set_speed_and_time(speed_text, eta_text)
