@@ -2335,6 +2335,18 @@ class SftpServiceRuntime:
             except Exception:
                 logger.warning("Could not resolve the paths of a replace; refusing it", exc_info=True)
                 same = True
+            if not same:
+                # REALPATH may leave a link unresolved (Win32-OpenSSH): ask
+                # the folders themselves. One folder: the same name, in any
+                # case, is the same file. Unknown counts as the same.
+                one_folder = _one_folder(
+                    posixpath.dirname(source), posixpath.dirname(destination)
+                )
+                same = one_folder is None or (
+                    one_folder
+                    and posixpath.basename(source).casefold()
+                    == posixpath.basename(destination).casefold()
+                )
             if same:
                 raise _exists_error()
             try:
@@ -2347,6 +2359,30 @@ class SftpServiceRuntime:
             if progress is not None:
                 progress(1.0)
             return True
+
+        def _one_folder(source_folder: str, destination_folder: str) -> Optional[bool]:
+            """Whether two folders are one, whatever names lead there: a
+            probe folder made in *source_folder* shows up in
+            *destination_folder*. None when the probe cannot be made."""
+            probe = _staging_path(posixpath.join(source_folder or "/", "probe"))
+            try:
+                client.mkdir(probe)
+            except Exception:
+                logger.debug("Could not make probe folder %s", probe, exc_info=True)
+                return None
+            try:
+                try:
+                    destination_client.lstat(
+                        posixpath.join(destination_folder or "/", posixpath.basename(probe))
+                    )
+                except Exception:
+                    return False
+                return True
+            finally:
+                try:
+                    client.rmdir(probe)
+                except Exception:
+                    logger.debug("Could not remove probe folder %s", probe, exc_info=True)
 
         def _existing(path: str) -> Any:
             """What the destination has at *path* (lstat), or None."""
@@ -2384,21 +2420,26 @@ class SftpServiceRuntime:
             itself. Unknown counts as the same: a wrong "no" loses the file
             in a move, a wrong "yes" only refuses one replace.
 
-            The staging file just made is the probe. Two sessions can see one
-            machine from different roots (``/srv/share/report`` and, in a
-            session rooted at ``/srv/share``, ``/report``), so it is looked
-            for under its own path and, by its unique name, beside the
-            source: found there, both folders are one, and the same name is
-            the same file."""
+            The staging file just made is the probe. It is looked for, by
+            its unique name, beside the source: found there, both folders
+            are one, whatever names lead to it -- another root
+            (``/srv/share/report`` and, in a session rooted at
+            ``/srv/share``, ``/report``) or a link the server's REALPATH
+            leaves unresolved (Win32-OpenSSH does). In one folder the same
+            name is the same file, and so is a name differing only in case:
+            NTFS and APFS fold case, and a wrong "yes" is the safe one.
+            Not found there, the paths are still compared resolved, when
+            both sessions see one filesystem.
+            """
             beside_source = posixpath.join(
                 posixpath.dirname(source_path), posixpath.basename(staging)
             )
-            if not _shares_filesystem(staging):
-                if not _seen_by_source(beside_source):
-                    return False
-                return posixpath.basename(source_path) == posixpath.basename(
+            if _seen_by_source(beside_source):
+                return posixpath.basename(source_path).casefold() == posixpath.basename(
                     destination_path
-                )
+                ).casefold()
+            if not _shares_filesystem(staging):
+                return False
             try:
                 return _resolved(source_path) == _resolved(destination_path)
             except Exception:
@@ -2497,7 +2538,43 @@ class SftpServiceRuntime:
             )
             if real_source == "/":
                 return True
-            return real_target == real_source or real_target.startswith(real_source + "/")
+            if real_target == real_source or real_target.startswith(real_source + "/"):
+                return True
+            return _probe_seen_from_destination()
+
+        def _probe_seen_from_destination() -> bool:
+            """Whether a folder made inside the source shows up in the
+            destination or one of the folders above it: then the destination
+            lies inside the source, whatever the paths say. REALPATH alone
+            misses a link on servers that leave links unresolved
+            (Win32-OpenSSH), and the walk would copy the folder into itself
+            until the path grew too long. A source the probe cannot be made
+            in keeps the REALPATH answer."""
+            probe = _staging_path(posixpath.join(source, "probe"))
+            try:
+                client.mkdir(probe)
+            except Exception:
+                logger.debug("Could not make probe folder %s", probe, exc_info=True)
+                return False
+            try:
+                name = posixpath.basename(probe)
+                folder = posixpath.normpath(destination)
+                while True:
+                    try:
+                        destination_client.lstat(posixpath.join(folder, name))
+                    except Exception:
+                        pass
+                    else:
+                        return True
+                    parent = posixpath.dirname(folder)
+                    if parent == folder:
+                        return False
+                    folder = parent
+            finally:
+                try:
+                    client.rmdir(probe)
+                except Exception:
+                    logger.debug("Could not remove probe folder %s", probe, exc_info=True)
 
         def _refuse_merging_into_source() -> None:
             """Merging into a folder that already exists, through another

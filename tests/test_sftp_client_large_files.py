@@ -11,6 +11,7 @@ Runs against the real sftp-server binary.
 from __future__ import annotations
 
 import heapq
+import dataclasses
 import os
 import shutil
 import subprocess
@@ -42,6 +43,19 @@ _SFTP_SERVER = next(
     ),
     shutil.which("sftp-server"),
 )
+
+def _remote(path) -> str:
+    """*path* as the SFTP server spells it. Win32-OpenSSH answers and
+    expects ``/C:/Users/x``; a bare ``C:\\Users\\x`` has no ``/`` for the
+    client to split, so the sibling names it makes (staging, set-aside)
+    would land in the server's working folder, on another drive in CI."""
+    return "/" + Path(path).as_posix() if os.name == "nt" else str(path)
+
+
+def _local(remote: str) -> str:
+    """The inverse of :func:`_remote`, for checking the disk directly."""
+    return remote[1:] if os.name == "nt" else remote
+
 
 pytestmark = pytest.mark.skipif(_SFTP_SERVER is None, reason="OpenSSH sftp-server not installed")
 
@@ -668,7 +682,12 @@ def test_atomic_upload_many_replaces_files_without_posix_rename(client, tmp_path
         Path(item.remote_dst).write_bytes(b"old")
     client.extensions.pop("posix-rename@openssh.com", None)
     assert not client.supports_posix_rename()
-    client.atomic_upload_many(items)
+    client.atomic_upload_many([
+        dataclasses.replace(
+            item, remote_temp=_remote(item.remote_temp), remote_dst=_remote(item.remote_dst)
+        )
+        for item in items
+    ])
     for item in items:
         assert Path(item.remote_dst).read_bytes() == Path(item.local_path).read_bytes()
     assert sorted(os.listdir(remote_dir)) == [Path(i.remote_dst).name for i in items]

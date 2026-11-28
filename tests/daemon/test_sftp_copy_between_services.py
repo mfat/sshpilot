@@ -77,9 +77,9 @@ def _two_services(source_fs, destination_fs, *, same_connection=False):
     return runtime, ops, services[0], services[1]
 
 
-def _run(runtime, ops, request):
+def _run(runtime, ops, request, timeout=5.0):
     started = runtime.start_copy(request, client_id=OWNER)
-    return _await_terminal(ops, started.operation_id)
+    return _await_terminal(ops, started.operation_id, timeout=timeout)
 
 
 class _Untouchable(_FsClient):
@@ -453,6 +453,7 @@ def test_move_between_two_panes_on_one_server_is_a_rename():
 
 from tests.test_sftp_client_large_files import (  # noqa: E402
     _SFTP_SERVER,
+    _remote,
     _start_client,
     _stop_client,
 )
@@ -484,10 +485,12 @@ def _timed_real_copy(tmp_path, monkeypatch, *, same_connection):
             sessions[0][0], sessions[1][0], same_connection=same_connection
         )
         started = time.monotonic()
+        # Wait well past the slowest passing copy (24 round trips): a
+        # timeout here would hide the round-trip count the test is about.
         done = _run(runtime, ops, SftpCopyRequest(
-            a, str(source), str(destination), as_operation=True,
+            a, _remote(source), _remote(destination), as_operation=True,
             destination_service_id=b,
-        ))
+        ), timeout=60 * delay)
         round_trips = (time.monotonic() - started) / delay
     finally:
         for session in sessions:

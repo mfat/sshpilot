@@ -12,6 +12,7 @@ they are the same, which is where replacing gets dangerous.
 from __future__ import annotations
 
 import os
+import posixpath
 
 import pytest
 
@@ -19,7 +20,13 @@ from sshpilot.api.errors import SshPilotError
 from sshpilot.api.models.operations import OperationState, SftpCopyRequest, SftpFailureCode
 
 from tests.daemon.test_sftp_copy_between_services import _run, _two_services
-from tests.test_sftp_client_large_files import _SFTP_SERVER, _start_client, _stop_client
+from tests.test_sftp_client_large_files import (
+    _SFTP_SERVER,
+    _local,
+    _remote,
+    _start_client,
+    _stop_client,
+)
 
 pytestmark = pytest.mark.skipif(_SFTP_SERVER is None, reason="OpenSSH sftp-server not installed")
 
@@ -42,7 +49,7 @@ def services():
 
 def _copy(runtime, ops, a, b, source, destination, **flags):
     return _run(runtime, ops, SftpCopyRequest(
-        a, str(source), str(destination), as_operation=True,
+        a, _remote(source), _remote(destination), as_operation=True,
         destination_service_id=b, **flags,
     ))
 
@@ -68,7 +75,9 @@ def test_replace_swaps_the_file_in_and_keeps_its_mode(tmp_path, services, same_c
     assert done.state is OperationState.SUCCEEDED, done.failure
     assert destination.read_bytes() == b"new contents\n"
     # Replacing an executable script keeps it executable, as an upload does.
-    assert destination.stat().st_mode & 0o777 == 0o755
+    # NTFS has no permission bits to keep (every file reads back 0o666).
+    if os.name != "nt":
+        assert destination.stat().st_mode & 0o777 == 0o755
     assert source.read_bytes() == b"new contents\n"
     assert sorted(p.name for p in destination.parent.iterdir()) == ["new.sh"]
 
@@ -272,7 +281,7 @@ def _failing_publish(sftp, destination, code):
     def rename(old, new):
         if dead:
             raise sftp_proto.SFTPError(sftp_proto.FX_CONNECTION_LOST)
-        if new == str(destination) and not old.endswith(".old") and not os.path.lexists(new):
+        if new == _remote(destination) and not old.endswith(".old") and not os.path.lexists(_local(new)):
             if code == sftp_proto.FX_CONNECTION_LOST:
                 dead.append(True)
             raise sftp_proto.SFTPError(code)
@@ -372,7 +381,7 @@ class _Rooted:
 
     def __init__(self, target, root):
         self._target = target
-        self._root = str(root).rstrip("/")
+        self._root = _remote(root).rstrip("/")
 
     def _in(self, value):
         if isinstance(value, str) and value.startswith("/"):
@@ -407,7 +416,7 @@ def test_a_move_never_replaces_a_file_with_itself_seen_from_another_root(
     runtime, ops, a, b = _two_services(raw_sessions(), rooted)
 
     done = _run(runtime, ops, SftpCopyRequest(
-        a, str(path), "/report.txt", as_operation=True,
+        a, _remote(path), "/report.txt", as_operation=True,
         destination_service_id=b, move=True, overwrite=True,
     ))
 
@@ -426,7 +435,7 @@ def test_another_root_still_replaces_a_different_file(tmp_path, raw_sessions):
     runtime, ops, a, b = _two_services(raw_sessions(), rooted)
 
     done = _run(runtime, ops, SftpCopyRequest(
-        a, str(source), "/report.txt", as_operation=True,
+        a, _remote(source), "/report.txt", as_operation=True,
         destination_service_id=b, move=True, overwrite=True,
     ))
 
@@ -491,3 +500,109 @@ def test_a_refused_replace_closes_its_staging_file(tmp_path, raw_sessions, confl
 
     assert counting.opened == 3
     assert counting.closed == counting.opened
+
+
+# -- servers whose REALPATH leaves links unresolved (Win32-OpenSSH) ----------
+
+
+class _LinksUnresolved:
+    """A session whose REALPATH only tidies the text, as Win32-OpenSSH's
+    does: ``alias/report.txt`` stays ``alias/report.txt`` even when
+    ``alias`` is a link to ``real``."""
+
+    def __init__(self, target):
+        self._target = target
+
+    def realpath(self, path):
+        return posixpath.normpath(path)
+
+    def __getattr__(self, name):
+        return getattr(self._target, name)
+
+
+def _linked_folder(tmp_path):
+    (tmp_path / "real").mkdir()
+    (tmp_path / "alias").symlink_to(tmp_path / "real")
+    return tmp_path / "real", tmp_path / "alias"
+
+
+def _copy_or_refusal(runtime, ops, a, b, source, destination, **flags):
+    """The failure code, whether refused up front or by the operation."""
+    try:
+        done = _copy(runtime, ops, a, b, source, destination, **flags)
+    except SshPilotError as exc:
+        return SftpFailureCode(exc.details["sftp_failure_code"])
+    return _failure(done)
+
+
+@pytest.mark.parametrize("same_connection", [False, True])
+def test_a_move_through_an_unresolved_link_never_replaces_the_file_with_itself(
+    tmp_path, raw_sessions, same_connection
+):
+    """Found on a Windows server: the move succeeded and the file was gone."""
+    real, alias = _linked_folder(tmp_path)
+    path = real / "report.txt"
+    path.write_bytes(b"precious")
+    runtime, ops, a, b = _two_services(
+        _LinksUnresolved(raw_sessions()), _LinksUnresolved(raw_sessions()),
+        same_connection=same_connection,
+    )
+
+    done = _copy(runtime, ops, a, b, path, alias / "report.txt", move=True, overwrite=True)
+
+    assert _failure(done) is SftpFailureCode.DESTINATION_ALREADY_EXISTS
+    assert path.read_bytes() == b"precious"
+    assert sorted(p.name for p in real.iterdir()) == ["report.txt"]
+
+
+@pytest.mark.parametrize("merge", [False, True])
+@pytest.mark.parametrize("same_connection", [False, True])
+def test_a_folder_is_never_copied_into_itself_through_an_unresolved_link(
+    tmp_path, raw_sessions, same_connection, merge
+):
+    """Found on a Windows server: the copy nested ``sub/real`` twenty
+    levels deep before the path grew too long."""
+    real, alias = _linked_folder(tmp_path)
+    (real / "sub").mkdir()
+    (real / "a.txt").write_bytes(b"a")
+    if merge:
+        (real / "sub" / "real").mkdir()
+    runtime, ops, a, b = _two_services(
+        _LinksUnresolved(raw_sessions()), _LinksUnresolved(raw_sessions()),
+        same_connection=same_connection,
+    )
+
+    failure = _copy_or_refusal(
+        runtime, ops, a, b, real, alias / "sub" / "real", recursive=True, overwrite=merge,
+    )
+
+    assert failure is SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF
+    left = sorted(p.name for p in (real / "sub").iterdir())
+    assert left == (["real"] if merge else [])
+    if merge:
+        assert list((real / "sub" / "real").iterdir()) == []
+    # The probe folder is gone again.
+    assert sorted(p.name for p in real.iterdir()) == ["a.txt", "sub"]
+
+
+@pytest.mark.parametrize("same_connection", [False, True])
+def test_a_move_onto_the_same_name_in_another_case_is_refused(
+    tmp_path, raw_sessions, same_connection
+):
+    """On NTFS (and APFS) ``Report.txt`` and ``report.txt`` are one file:
+    found on a Windows server, the move replaced it with itself and removed
+    it. A case-sensitive server cannot be told apart, so the replace is
+    refused everywhere, which only costs one refused replace."""
+    source = tmp_path / "Report.txt"
+    source.write_bytes(b"precious")
+    other = tmp_path / "report.txt"
+    other.write_bytes(b"other")
+    runtime, ops, a, b = _two_services(
+        raw_sessions(), raw_sessions(), same_connection=same_connection
+    )
+
+    done = _copy(runtime, ops, a, b, source, other, move=True, overwrite=True)
+
+    assert _failure(done) is SftpFailureCode.DESTINATION_ALREADY_EXISTS
+    assert source.read_bytes() == b"precious"
+    assert other.read_bytes() == b"other"
