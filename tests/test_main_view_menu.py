@@ -56,7 +56,6 @@ def test_view_submenu_exposes_titlebar_commands(monkeypatch):
 
     assert view_menu.entries == [
         ('item', 'Toggle Full Screen', 'win.toggle-fullscreen'),
-        ('item', 'Sidebar Toggle Button', 'win.headerbar-sidebar-toggle'),
         ('item', 'Split View Button', 'win.headerbar-split-view'),
         ('item', 'Tab Overview Button', 'win.headerbar-tab-button'),
         ('item', 'Command Snippets Button', 'win.headerbar-commands'),
@@ -147,11 +146,13 @@ def test_headerbar_menu_action_updates_shared_preference(monkeypatch):
 
     window = Window()
     actions._register_headerbar_visibility_actions(window)
-    action = window.actions['headerbar-sidebar-toggle']
+    # The sidebar toggle is always shown: the View menu cannot hide it.
+    assert 'headerbar-sidebar-toggle' not in window.actions
+    action = window.actions['headerbar-tab-button']
 
     assert action.get_state().get_boolean() is True
     action.change_state(Variant(False))
-    assert window.config.values['ui.headerbar_show_sidebar_toggle'] is False
+    assert window.config.values['ui.headerbar_show_tab_button'] is False
     assert action.get_state().get_boolean() is False
     assert window.update_count == 1
 

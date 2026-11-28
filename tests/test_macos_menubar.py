@@ -122,7 +122,6 @@ def test_build_menubar_uses_existing_actions():
         "win.toggle_sidebar",
         "win.toggle-fullscreen",
         "app.tab-overview",
-        "win.headerbar-sidebar-toggle",
         "win.headerbar-split-view",
         "win.headerbar-tab-button",
         "win.headerbar-commands",

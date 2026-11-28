@@ -2070,16 +2070,10 @@ class PreferencesWindow(Adw.Window):
         if row is None:
             return
         row.set_visible(any(s.get_active() for s in self._sidebar_hide_switches))
-        if self.config.get_setting('ui.headerbar_show_sidebar_toggle', True):
-            row.set_subtitle(_(
-                "While the sidebar is hidden, rest the pointer on the sidebar "
-                "button in the header bar to float it over the terminal"
-            ))
-        else:
-            row.set_subtitle(_(
-                "Turn on the Sidebar Toggle Button under Interface › Header "
-                "Bar Buttons to reveal the hidden sidebar by hovering it"
-            ))
+        row.set_subtitle(_(
+            "While the sidebar is hidden, rest the pointer on the sidebar "
+            "button in the header bar to float it over the terminal"
+        ))
 
     def on_sidebar_on_terminal_open_changed(self, switch_row, _param):
         """Persist whether the sidebar hides when a terminal tab opens."""
@@ -2112,11 +2106,6 @@ class PreferencesWindow(Adw.Window):
             row.connect('notify::active', _on_toggled)
             headerbar_group.add(row)
 
-        _add_headerbar_switch(
-            _("Sidebar Toggle Button"),
-            _("Show the button that hides/shows the sidebar (F9 still works when hidden)"),
-            'ui.headerbar_show_sidebar_toggle',
-        )
         _add_headerbar_switch(
             _("Split View Button"),
             _("Show the split-view button (the grid icon that starts a split view)"),
@@ -5878,8 +5867,6 @@ class PreferencesWindow(Adw.Window):
             self._group_terminal_color_sync = False
 
     def _on_config_setting_changed(self, _config, key, value):
-        if key == 'ui.headerbar_show_sidebar_toggle':
-            self._sync_sidebar_peek_row()
         if key in ('app-startup-behavior', 'ui.sidebar_hide_on_startup'):
             # Deferred: the change may come from one of these controls while
             # its radio group is mid-toggle, and setting a radio re-entrantly

@@ -27,19 +27,12 @@ def test_hint_shows_each_start_until_dont_show_again(gui):
     window, config = gui.window, gui.window.config
     key = sidebar_peek_hint.HINT_DISMISSED_KEY
     old_dismissed = config.get_setting(key, False)
-    old_button = config.get_setting('ui.headerbar_show_sidebar_toggle', True)
     try:
         config.set_setting(key, False)
         window._apply_sidebar_visible(True)
         assert sidebar_peek_hint.show_if_needed(window) is None, 'sidebar is visible'
 
         window._apply_sidebar_visible(False)
-        config.set_setting('ui.headerbar_show_sidebar_toggle', False)
-        window.update_headerbar_buttons()
-        assert _settle(gui, lambda: not window.sidebar_toggle_button.get_mapped())
-        assert sidebar_peek_hint.show_if_needed(window) is None, 'no button to hover'
-
-        config.set_setting('ui.headerbar_show_sidebar_toggle', True)
         window.update_headerbar_buttons()
         assert _settle(gui, lambda: window.sidebar_toggle_button.get_mapped())
         popover = sidebar_peek_hint.show_if_needed(window)
@@ -60,6 +53,4 @@ def test_hint_shows_each_start_until_dont_show_again(gui):
         assert sidebar_peek_hint.show_if_needed(window) is None, 'dismissed for good'
     finally:
         config.set_setting(key, old_dismissed)
-        config.set_setting('ui.headerbar_show_sidebar_toggle', old_button)
-        window.update_headerbar_buttons()
         window._apply_sidebar_visible(True)

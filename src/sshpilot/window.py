@@ -2700,9 +2700,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def update_headerbar_buttons(self):
         """Show/hide the toggleable header-bar buttons per preferences
-        (Settings ▸ Interface ▸ Header Bar)."""
+        (Settings ▸ Interface ▸ Header Bar). The sidebar toggle is not one
+        of them: it is always shown, being the way back to a hidden sidebar."""
         mapping = (
-            ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', True),
             ('split_view_button', 'ui.headerbar_show_split_view', False),
             ('tab_button', 'ui.headerbar_show_tab_button', True),
             ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', False),

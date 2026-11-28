@@ -158,7 +158,6 @@ def get_default_config() -> Dict[str, Any]:
             # rewrites any persisted 'minimize' to 'none'.)
             'sidebar_on_terminal_open': 'none',
             # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
-            'headerbar_show_sidebar_toggle': True,
             'headerbar_show_split_view': False,
             'headerbar_show_tab_button': True,
             'headerbar_show_commands': False,
