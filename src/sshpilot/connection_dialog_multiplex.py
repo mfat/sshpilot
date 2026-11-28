@@ -163,7 +163,10 @@ class ConnectionDialogMultiplexMixin:
         group.add(self.multiplex_row)
 
         # Adw.EntryRow has no subtitle: the hint lives in the tooltip.
-        self.multiplex_path_row = Adw.EntryRow(title=_("Socket path"))
+        # The OpenSSH option name is a literal, never translated.
+        self.multiplex_path_row = Adw.EntryRow(
+            title=f'{_("Socket path")} (ControlPath)'
+        )
         self.multiplex_path_row.set_tooltip_text(
             _("Where the shared connection's socket is kept (ControlPath). "
               "%C names it after the host, user and port.")
